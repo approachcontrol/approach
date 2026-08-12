@@ -311,6 +311,18 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
+	// One store for the whole process: it is handed to the model below so the
+	// TUI's Flow mutators write through this same pool.
+	//
+	// Deliberately NOT closed after p.Run(). Bubble Tea does not wait for command
+	// goroutines — it cannot cancel them, so it leaks them — and main returns
+	// immediately after this, so a Flow mutation still in flight at quit races
+	// process exit either way. Closing does not make it land; it only converts
+	// that race into a guaranteed loss ("sql: database is closed", with the
+	// failure message delivered to a dead program). What closing would buy is an
+	// exit-time WAL checkpoint on a process that is exiting anyway, and the WAL is
+	// durable and recovered on the next open. Genuinely fixing the last-write
+	// window means draining in-flight mutations before returning, not closing.
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
 	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
@@ -346,6 +358,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		ReadTranscript:   sessionStore.ReadTranscript,
 		ListPlans:        planStore.List,
 		ListFlows:        flowStore.List,
+		FlowStore:        flowStore,
 		ReadPlan:         planStore.ReadPlan,
 		LaunchTerminal: func(path string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchWithOptions(path, launchOpts)

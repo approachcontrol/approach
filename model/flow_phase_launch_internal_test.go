@@ -16,7 +16,7 @@ type flowPhaseLaunchTestTerminal struct {
 }
 
 func (t flowPhaseLaunchTestTerminal) VisibleLines(width, height int) []string { return nil }
-func (t flowPhaseLaunchTestTerminal) Write([]byte) (int, error)               { return 0, nil }
+func (t flowPhaseLaunchTestTerminal) Write(p []byte) (int, error)             { return len(p), nil }
 func (t flowPhaseLaunchTestTerminal) Resize(width, height int) error          { return nil }
 func (t flowPhaseLaunchTestTerminal) Terminate() error                        { return nil }
 func (t flowPhaseLaunchTestTerminal) Wait(context.Context) error              { return nil }
@@ -35,9 +35,12 @@ func TestFlowPhaseLaunchCoordinatorSelectsFirstLaunchablePhase(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 
-	gotRecord, gotPhase, ok := m.selectedFlowNextLaunchablePhase()
+	gotRecord, gotPhase, ok := m.previewFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+	})
 	if !ok {
-		t.Fatal("selectedFlowNextLaunchablePhase() found no launchable phase")
+		t.Fatal("previewFlowLaunch() found no launchable phase")
 	}
 	if gotRecord.FlowID != "flow-1" || gotPhase.PhaseID != "review-loop" {
 		t.Fatalf("selected launch target = flow %q phase %q, want flow-1 review-loop", gotRecord.FlowID, gotPhase.PhaseID)
@@ -94,7 +97,7 @@ func TestFlowPhaseLaunchPreflightRequiresPlanForReviewKindCustomID(t *testing.T)
 	}
 }
 
-func TestSelectedFlowNextLaunchablePhaseSkipsDuplicateReadyRow(t *testing.T) {
+func TestPreviewFlowLaunchSkipsDuplicateReadyRow(t *testing.T) {
 	record := flowstore.FlowRecord{
 		FlowID:   "flow-1",
 		RepoPath: "/dev/alpha",
@@ -107,12 +110,15 @@ func TestSelectedFlowNextLaunchablePhaseSkipsDuplicateReadyRow(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 
-	_, phase, ok := m.selectedFlowNextLaunchablePhase()
+	_, phase, ok := m.previewFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+	})
 	if !ok {
-		t.Fatal("selectedFlowNextLaunchablePhase() found no launchable phase")
+		t.Fatal("previewFlowLaunch() found no launchable phase")
 	}
 	if phase.PhaseID != "step-2" {
-		t.Fatalf("selectedFlowNextLaunchablePhase() = %q, want step-2", phase.PhaseID)
+		t.Fatalf("previewFlowLaunch() = %q, want step-2", phase.PhaseID)
 	}
 }
 

@@ -108,7 +108,7 @@ func setupModelRepo(t *testing.T) (model.Model, string) {
 func setupModelRepoWithOptions(t *testing.T, opts model.Options) (model.Model, string) {
 	t.Helper()
 	_, dir := setupModelRepo(t)
-	m := model.NewWithOptions([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}}, opts)
+	m := newTestModel([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}}, opts)
 	return m, dir
 }
 
@@ -138,7 +138,7 @@ func setupModelPullRequestRepoWithOptions(t *testing.T, opts model.Options) (mod
 	}
 	mustGit(t, local, "config", "user.email", "test@test.com")
 	mustGit(t, local, "config", "user.name", "Test")
-	m := model.NewWithOptions([]scanner.Repo{{Path: local, DisplayName: filepath.Base(local)}}, opts)
+	m := newTestModel([]scanner.Repo{{Path: local, DisplayName: filepath.Base(local)}}, opts)
 	return m, local
 }
 

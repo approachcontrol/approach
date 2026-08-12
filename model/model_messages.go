@@ -347,6 +347,22 @@ type FlowAutoModeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowHeadlessSetMsg struct {
+	RepoPath        string
+	FlowID          string
+	Flow            flowstore.FlowRecord
+	Enabled         bool
+	AllRepositories bool
+}
+
+type FlowHeadlessSetFailedMsg struct {
+	RepoPath        string
+	FlowID          string
+	Enabled         bool
+	Err             string
+	AllRepositories bool
+}
+
 type FlowManualMergeSetMsg struct {
 	RepoPath string
 	FlowID   string
@@ -594,6 +610,7 @@ type ActionFailedMsg struct {
 	Err                     string
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
+	AutoAdvanceLaunchID     string
 }
 
 // --- Message handlers ---
@@ -1274,6 +1291,16 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	if msg.AutoAdvanceLaunchID != "" {
+		if attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		}
+		// An outdated AutoMode command is an intentional no-op. It returns this
+		// message only so the async reservation can be released in Update.
+		if msg.Err == "" {
+			return m, nil
+		}
+	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {
@@ -1400,14 +1427,16 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m = m.seedAutoAdvanceSnapshot(msg.Flows)
+	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
+	m = m.pruneAcknowledgedFlowMutations()
+	m = m.seedAutoAdvanceSnapshot(flows)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
 	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
-	m.flows = m.flows.SetItems(msg.Flows)
+	m.flows = m.flows.SetItems(flows)
 	if selectedFlowID != "" {
 		m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool {
 			return record.FlowID == selectedFlowID
@@ -1428,8 +1457,10 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
-	m = m.seedAutoAdvanceSnapshot(msg.Flows)
-	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
+	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
+	m = m.pruneAcknowledgedFlowMutations()
+	m = m.seedAutoAdvanceSnapshot(flows)
+	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
 	if m.terminalFocus != terminalFocusTerminal {
@@ -1442,7 +1473,7 @@ func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {
 	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
-	return m.replaceFlowRecord(msg.Flow)
+	return m.replaceFlowRecord(msg.Flow, flowMutationAutoMode, flowAutoModeOverlay(msg.Enabled))
 }
 
 func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
@@ -1456,11 +1487,56 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 	return m.setStatus(statusOther, errText)
 }
 
+func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
+	// Toggles queued behind this write may have been entered from a different
+	// surface. Honour the latest intent's scope so a result that satisfies it is
+	// not rejected as off-repo, including when coalescing needs no follow-up.
+	if queued, ok := m.queuedFlowHeadlessValue(msg.FlowID); ok {
+		msg.AllRepositories = msg.AllRepositories || queued.allRepositories
+	}
+	m, followUp := m.resolveFlowHeadlessWrite(msg)
+	if msg.FlowID == "" || msg.Flow.FlowID != msg.FlowID || msg.Flow.Headless != msg.Enabled {
+		return m, followUp
+	}
+	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
+		return m, followUp
+	}
+	if !sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
+		return m, followUp
+	}
+	return m.replaceFlowRecord(msg.Flow, flowMutationHeadless, flowHeadlessOverlay(msg.Flow.Headless)), followUp
+}
+
+func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
+	// The write left the stored preference untouched, so the toggles queued
+	// behind it are unreachable. Retrying here could ping-pong against a
+	// persistent failure, so report the dropped intent instead of hiding it.
+	queued, dropped := m.queuedFlowHeadlessValue(msg.FlowID)
+	dropped = dropped && queued.enabled == msg.Enabled
+	m = m.clearFlowHeadlessWritePending(msg.FlowID)
+	// The queued intent may have been entered from a different surface, so honour
+	// its scope rather than the failed write's when deciding to report.
+	if dropped {
+		msg.AllRepositories = msg.AllRepositories || queued.allRepositories
+	}
+	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to set Flow headless mode"
+	}
+	if dropped {
+		errText += "; headless mode is unchanged, press h again to retry"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
 func (m Model) handleFlowManualMergeSet(msg FlowManualMergeSetMsg) Model {
 	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
-	return m.replaceFlowRecord(msg.Flow)
+	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
 }
 
 func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) Model {
@@ -1472,15 +1548,16 @@ func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) M
 		errText = "failed to mark Flow as merged"
 	}
 	if msg.Flow.FlowID != "" {
-		m = m.replaceFlowRecord(msg.Flow)
+		m = m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
 	}
 	return m.setStatus(statusOther, errText)
 }
 
-func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
+func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationField, apply func(flowstore.FlowRecord) flowstore.FlowRecord) Model {
 	if flow.FlowID == "" {
 		return m
 	}
+	m = m.rememberFlowMutation(flow, field, apply)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1490,11 +1567,12 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
 	replacedFlows := false
 	for i := range items {
-		if items[i].FlowID == flow.FlowID {
-			items[i] = flow
-			replacedFlows = true
-			break
+		if items[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(items[i].UpdatedAt) {
+			continue
 		}
+		items[i] = flow
+		replacedFlows = true
+		break
 	}
 	if replacedFlows {
 		m.flows = m.flows.SetItems(items)
@@ -1510,11 +1588,12 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
 	replacedActive := false
 	for i := range activeRecords {
-		if activeRecords[i].FlowID == flow.FlowID {
-			activeRecords[i] = flow
-			replacedActive = true
-			break
+		if activeRecords[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+			continue
 		}
+		activeRecords[i] = flow
+		replacedActive = true
+		break
 	}
 	if replacedActive {
 		m.activeFlowRecords = activeRecords
@@ -1524,6 +1603,148 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	}
 	m = m.syncActiveFlowsFromCache()
 	return m.clampSelectionsAfterFilter()
+}
+
+// cachedFlowMutation retains a Flow write this process persisted, together with
+// the list request generation current when the write completed. The generation
+// is a causal version: a fetch issued at a later generation already observes the
+// write, so the cached copy can be dropped. Wall-clock UpdatedAt cannot serve
+// that role because a peer writing the shared state root may have a clock behind
+// this process.
+//
+// apply re-applies only the field this process changed. A fetch issued before
+// the write can still read the store after a peer wrote a causally newer record,
+// so restoring a whole cached record would hide the peer's phase completions and
+// other metadata. Toggles that change one scalar therefore carry an apply
+// function and never replace the incoming record.
+type cachedFlowMutation struct {
+	record     flowstore.FlowRecord
+	generation uint64
+	field      flowMutationField
+	apply      func(flowstore.FlowRecord) flowstore.FlowRecord
+}
+
+// flowMutationField identifies what a cached write changed, so writes to
+// different fields of one Flow are cached independently.
+type flowMutationField uint8
+
+const (
+	// flowMutationWholeRecord covers writes that change phases and derived
+	// state together, which cannot be expressed as a single-field overlay.
+	flowMutationWholeRecord flowMutationField = iota
+	flowMutationHeadless
+	flowMutationAutoMode
+)
+
+func flowHeadlessOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
+	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		record.Headless = enabled
+		return record
+	}
+}
+
+func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
+	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		record.AutoMode = enabled
+		return record
+	}
+}
+
+// preferNewerCachedFlowRecords re-applies mutations that a fetch issued before
+// the write could not have seen. Mutations the fetch supersedes are dropped by
+// pruneAcknowledgedFlowMutations.
+//
+// The generation alone cannot decide the merge: a request is numbered when it is
+// issued, but the store read happens later and unlocked, so an older request can
+// still return a record that already carries this write plus a newer peer write.
+//
+// Reconciliation therefore runs in two steps. UpdatedAt selects the base record: a cached
+// record stamped later than the incoming one carries phase and status metadata
+// the write result proved newer, so it becomes the base; otherwise the incoming
+// record wins and a peer's newer work is kept. Overlays are then re-applied on
+// top of whichever base was chosen, so a toggle this process persisted survives
+// either way, and a whole-record write that read the store before a concurrent
+// toggle cannot revert it.
+//
+// UpdatedAt is the strongest ordering signal the store offers today, and it is
+// not a causal version: a peer may have a clock behind this process, and a
+// record-level stamp cannot separate a peer deliberately writing a field from a
+// peer carrying a stale copy of it while writing others. Every residual case
+// self-heals on the next refresh. Removing them needs a persisted per-record
+// revision, tracked in approach-mfb.
+func preferNewerCachedFlowRecords(incoming []flowstore.FlowRecord, request uint64, mutations []cachedFlowMutation) []flowstore.FlowRecord {
+	merged := append([]flowstore.FlowRecord(nil), incoming...)
+	for i, record := range merged {
+		for _, mutation := range mutations {
+			if !unacknowledgedFlowMutationFor(mutation, request, record) {
+				continue
+			}
+			if merged[i].UpdatedAt.Before(mutation.record.UpdatedAt) {
+				merged[i] = mutation.record
+			}
+		}
+		for _, mutation := range mutations {
+			if mutation.apply == nil || !unacknowledgedFlowMutationFor(mutation, request, record) {
+				continue
+			}
+			merged[i] = mutation.apply(merged[i])
+		}
+	}
+	return merged
+}
+
+func unacknowledgedFlowMutationFor(mutation cachedFlowMutation, request uint64, record flowstore.FlowRecord) bool {
+	return mutation.generation >= request &&
+		mutation.record.FlowID == record.FlowID &&
+		sameRepoPath(mutation.record.RepoPath, record.RepoPath)
+}
+
+// pruneAcknowledgedFlowMutations drops mutations that every surface able to
+// accept a Flow result has already observed. Repository Flows and Active Flows
+// keep separate request counters and both accept results, so a repository fetch
+// started while an Active Flows fetch is still outstanding must not retire a
+// mutation that the older request still needs. A hidden Active Flows surface
+// rejects its own results and re-fetches on entry, so it never holds pruning
+// back.
+func (m Model) pruneAcknowledgedFlowMutations() Model {
+	threshold := m.currentListRequest(ui.ModeFlows)
+	if active := m.currentListRequest(ui.ModeActiveFlows); m.activeFlowSurfaceVisible() && active < threshold {
+		threshold = active
+	}
+	retained := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
+	for _, mutation := range m.latestFlowMutations {
+		if mutation.generation >= threshold {
+			retained = append(retained, mutation)
+		}
+	}
+	if len(retained) == len(m.latestFlowMutations) {
+		return m
+	}
+	m.latestFlowMutations = retained
+	return m
+}
+
+// rememberFlowMutation caches one write per Flow and field. Writes to different
+// fields are independent, so a later auto-mode write must not evict a headless
+// write that an in-flight fetch has still not observed.
+func (m Model) rememberFlowMutation(flow flowstore.FlowRecord, field flowMutationField, apply func(flowstore.FlowRecord) flowstore.FlowRecord) Model {
+	if flow.FlowID == "" || strings.TrimSpace(flow.RepoPath) == "" {
+		return m
+	}
+	mutation := cachedFlowMutation{record: flow, generation: m.listRequestSeq, field: field, apply: apply}
+	mutations := append([]cachedFlowMutation(nil), m.latestFlowMutations...)
+	for i, cached := range mutations {
+		if cached.field != field || cached.record.FlowID != flow.FlowID || !sameRepoPath(cached.record.RepoPath, flow.RepoPath) {
+			continue
+		}
+		if !flow.UpdatedAt.Before(cached.record.UpdatedAt) {
+			mutations[i] = mutation
+		}
+		m.latestFlowMutations = mutations
+		return m
+	}
+	m.latestFlowMutations = append(mutations, mutation)
+	return m
 }
 
 func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {

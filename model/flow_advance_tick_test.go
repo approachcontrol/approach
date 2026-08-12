@@ -131,6 +131,10 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
 		t.Fatalf("updates = %#v, want branch-a launch", updates)
 	}
+	// This unit test inspects the prepared message without feeding it through
+	// Update, so explicitly model the handoff that would replace the attempt
+	// with a terminal/session owner in the running program.
+	m = m.releaseFlowLaunchAttempt(launch.LaunchContext.FlowID, launch.LaunchContext.LaunchID)
 
 	branchARunning := autoAdvanceCustomFlow(map[string]string{
 		"root":     flowstore.PhaseCompleted,

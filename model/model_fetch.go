@@ -592,6 +592,7 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			SessionStateRoot:            m.sessionStateRoot,
 			FlowPromptTemplates:         m.flowPromptTemplates,
 			FlowPromptTemplatesProvided: true,
+			Headless:                    flowHeadlessPointer(headless),
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
@@ -599,11 +600,11 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 		if result.LaunchSkipped {
 			return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title}
 		}
-		return flowPlanLaunchMessage(result.LaunchContext, headless)
+		return flowPlanLaunchMessage(result.LaunchContext)
 	}
 }
 
-func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) tea.Cmd {
+func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.createFlow(FlowStartRequest{
@@ -614,6 +615,7 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) 
 			AgentCommand:    command,
 			Model:           model,
 			ReasoningEffort: reasoningEffort,
+			Headless:        flowHeadlessPointer(headless),
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
@@ -640,16 +642,19 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 	}
 }
 
-func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, headless bool) tea.Msg {
+func flowPlanLaunchMessage(ctx actions.AgentLaunchContext) tea.Msg {
 	switch agent.Normalize(ctx.Command) {
 	case agent.CommandCodex, agent.CommandClaude:
 		ctx.Embedded = true
-		ctx.Headless = headless
 		ctx.FlowLaunchTracked = true
 		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
 	default:
 		return PlanLaunchRequestedMsg{LaunchContext: ctx}
 	}
+}
+
+func flowHeadlessPointer(value bool) *bool {
+	return &value
 }
 
 func (m Model) deleteFlowCommand(repoPath, flowID, title string) tea.Cmd {

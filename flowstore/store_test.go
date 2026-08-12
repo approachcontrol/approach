@@ -1,12 +1,13 @@
 package flowstore_test
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -86,29 +87,21 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 		t.Fatalf("record did not round-trip: %#v", read)
 	}
 
-	meta := filepath.Join(root, "flows", record.FlowID, "meta.json")
-	metaJSON, err := os.ReadFile(meta)
-	if err != nil {
-		t.Fatalf("read meta.json: %v", err)
-	}
+	metaJSON := readSQLiteRecordForTest(t, root, record.FlowID)
 	if strings.Contains(string(metaJSON), "0001-01-01") || strings.Contains(string(metaJSON), "merged_at") {
-		t.Fatalf("pending flow metadata should not serialize a zero merge timestamp:\n%s", metaJSON)
+		t.Fatalf("pending flow storage should not serialize a zero merge timestamp:\n%s", metaJSON)
 	}
-	info, err := os.Stat(meta)
+	databasePath := filepath.Join(root, "approach.db")
+	info, err := os.Stat(databasePath)
 	if err != nil {
-		t.Fatalf("stat meta.json: %v", err)
+		t.Fatalf("stat approach.db: %v", err)
 	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("meta.json mode = %o, want 0600", info.Mode().Perm())
+		t.Fatalf("approach.db mode = %o, want 0600", info.Mode().Perm())
 	}
 	assertMode(t, root, 0o700)
-	assertMode(t, filepath.Join(root, "flows"), 0o700)
-	dirInfo, err := os.Stat(filepath.Dir(meta))
-	if err != nil {
-		t.Fatalf("stat flow dir: %v", err)
-	}
-	if dirInfo.Mode().Perm() != 0o700 {
-		t.Fatalf("flow dir mode = %o, want 0700", dirInfo.Mode().Perm())
+	if _, err := os.Stat(filepath.Join(root, "flows")); !os.IsNotExist(err) {
+		t.Fatalf("fresh SQLite store unexpectedly created flows/: %v", err)
 	}
 }
 
@@ -132,6 +125,136 @@ func TestStoreCreateDefaultsAutoModeOnEvenWhenCallerPassesFalse(t *testing.T) {
 	if !record.AutoMode {
 		t.Fatal("AutoMode = false, want Create to default every new flow to auto mode enabled")
 	}
+}
+
+func TestStoreCreateHeadlessPreferenceDefaultsOnAndPreservesExplicitValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		headless *bool
+		want     bool
+	}{
+		{name: "omitted defaults on", want: true},
+		{name: "explicit on", headless: testBoolPtr(true), want: true},
+		{name: "explicit off", headless: testBoolPtr(false), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.CreateWithOptions(flowstore.FlowRecord{
+				Title:        "Headless Preference",
+				Instructions: "Persist the launch preference.",
+				RepoPath:     filepath.Join(root, "repo"),
+			}, flowstore.CreateOptions{Headless: tt.headless})
+			if err != nil {
+				t.Fatalf("CreateWithOptions() error = %v", err)
+			}
+			if record.Headless != tt.want {
+				t.Fatalf("CreateWithOptions().Headless = %v, want %v", record.Headless, tt.want)
+			}
+			read, err := store.Read(record.FlowID)
+			if err != nil {
+				t.Fatalf("Read() error = %v", err)
+			}
+			listed, err := store.List(flowstore.FlowFilter{RepoPath: record.RepoPath})
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+			if read.Headless != tt.want || len(listed) != 1 || listed[0].Headless != tt.want {
+				t.Fatalf("headless preference did not round-trip: read=%#v list=%#v", read, listed)
+			}
+			data := readSQLiteRecordForTest(t, root, record.FlowID)
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatalf("Unmarshal(SQLite record) error = %v", err)
+			}
+			if _, ok := raw["headless"]; !ok {
+				t.Fatalf("SQLite record omitted headless:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestStoreSetHeadlessUpdatesOnlyTargetAndNoOpPreservesTimestamp(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	create := func(title string) flowstore.FlowRecord {
+		record, err := store.Create(flowstore.FlowRecord{Title: title, Instructions: "Test isolation.", RepoPath: filepath.Join(root, "repo")})
+		if err != nil {
+			t.Fatalf("Create(%q) error = %v", title, err)
+		}
+		return record
+	}
+	first := create("First Flow")
+	second := create("Second Flow")
+
+	now = now.Add(time.Minute)
+	updated, err := store.SetHeadless(flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false})
+	if err != nil {
+		t.Fatalf("SetHeadless(false) error = %v", err)
+	}
+	if updated.Headless || !updated.UpdatedAt.Equal(now) {
+		t.Fatalf("SetHeadless(false) = %#v, want disabled with updated timestamp", updated)
+	}
+	unchanged, err := store.SetHeadless(flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false})
+	if err != nil {
+		t.Fatalf("SetHeadless(false) no-op error = %v", err)
+	}
+	if !unchanged.UpdatedAt.Equal(updated.UpdatedAt) {
+		t.Fatalf("no-op UpdatedAt = %s, want %s", unchanged.UpdatedAt, updated.UpdatedAt)
+	}
+	other, err := store.Read(second.FlowID)
+	if err != nil {
+		t.Fatalf("Read(second) error = %v", err)
+	}
+	if !other.Headless {
+		t.Fatalf("second Flow Headless = false after first update: %#v", other)
+	}
+}
+
+func TestStoreReadLegacyRecordWithoutHeadlessDefaultsOnWithoutRewriting(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260811T163138Z-legacy-headless"
+	writeRawFlowMeta(t, root, flowID, `
+  "phases": [
+    {"phase_id": "plan", "title": "Plan", "kind": "plan", "status": "ready", "order": 1,
+     "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+	legacyPath := filepath.Join(root, "flows", flowID, "meta.json")
+	before, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("ReadFile(legacy meta.json) error = %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if !read.Headless {
+		t.Fatalf("legacy Read().Headless = false: %#v", read)
+	}
+	after, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) after read error = %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("retained legacy source changed during migration/read\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+func testBoolPtr(value bool) *bool {
+	return &value
 }
 
 func TestStoreSetAutoModeDisablesNewlyCreatedFlow(t *testing.T) {
@@ -186,14 +309,6 @@ func TestStoreReadPreservesLegacyOmittedAutoModeAsDisabled(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{
-		Root: root,
-		Now:  func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-
 	flowID := "20260607T120000Z-legacy-flow"
 	meta := filepath.Join(root, "flows", flowID, "meta.json")
 	if err := os.MkdirAll(filepath.Dir(meta), 0o700); err != nil {
@@ -229,6 +344,13 @@ func TestStoreReadPreservesLegacyOmittedAutoModeAsDisabled(t *testing.T) {
 	}
 	if err := os.WriteFile(meta, data, 0o600); err != nil {
 		t.Fatalf("write legacy meta.json: %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
 	}
 
 	read, err := store.Read(flowID)
@@ -1285,7 +1407,7 @@ func TestStoreResetAwaitingSessionPhaseRejectsIneligiblePhases(t *testing.T) {
 				return record
 			},
 			phaseID: "beta",
-			want:    "requires running recoverable phase",
+			want:    "requires satisfied predecessors",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1464,9 +1586,6 @@ func TestStoreResetRecoverableRunningPhaseRejectsLiveSessionMergedFromDuplicateR
 	}
 	for i := range read.Phases {
 		wantStatus := record.Phases[i].Status
-		if record.Phases[i].PhaseID == "omega" {
-			wantStatus = flowstore.PhaseReady
-		}
 		if read.Phases[i].PhaseID != record.Phases[i].PhaseID ||
 			read.Phases[i].Status != wantStatus ||
 			strings.Join(read.Phases[i].LaunchIDs, ",") != strings.Join(record.Phases[i].LaunchIDs, ",") ||
@@ -1521,9 +1640,6 @@ func TestStoreResetRecoverableRunningPhaseRejectsOtherLiveLaunchMergedFromDuplic
 	}
 	for i := range read.Phases {
 		wantStatus := record.Phases[i].Status
-		if record.Phases[i].PhaseID == "omega" {
-			wantStatus = flowstore.PhaseReady
-		}
 		if read.Phases[i].PhaseID != record.Phases[i].PhaseID ||
 			read.Phases[i].Status != wantStatus ||
 			strings.Join(read.Phases[i].LaunchIDs, ",") != strings.Join(record.Phases[i].LaunchIDs, ",") ||
@@ -2486,7 +2602,7 @@ func TestStoreSetPhaseTrimsPlanReviewOutcome(t *testing.T) {
 	}
 }
 
-func TestStoreReadMigratesLegacyPlanReviewApproval(t *testing.T) {
+func TestStoreReadDoesNotHealCanonicalPlanReviewApproval(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
@@ -2514,13 +2630,8 @@ func TestStoreReadMigratesLegacyPlanReviewApproval(t *testing.T) {
 		record.Phases[i].UpdatedAt = now
 	}
 	record.Status = flowstore.StatusInProgress
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		t.Fatalf("MarshalIndent() error = %v", err)
-	}
-	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o600); err != nil {
-		t.Fatalf("WriteFile(meta.json) error = %v", err)
+	if err := writeFlowRecordForTest(root, record); err != nil {
+		t.Fatalf("write legacy-shaped SQLite record: %v", err)
 	}
 
 	read, err := store.Read(record.FlowID)
@@ -2528,8 +2639,8 @@ func TestStoreReadMigratesLegacyPlanReviewApproval(t *testing.T) {
 		t.Fatalf("Read() error = %v", err)
 	}
 	review := phaseByID(t, read, "plan-review")
-	if review.Status != flowstore.PhaseCompleted || review.Outcome != flowstore.OutcomeApproved {
-		t.Fatalf("plan-review = %#v, want completed approved legacy migration", review)
+	if review.Status != flowstore.PhaseCompleted || review.Outcome != "" {
+		t.Fatalf("plan-review = %#v, want canonical row returned without runtime healing", review)
 	}
 	if got := phaseByID(t, read, "implementation").Status; got != flowstore.PhaseReady {
 		t.Fatalf("implementation status = %q, want ready after legacy approval migration", got)
@@ -2763,31 +2874,28 @@ func TestStoreSetPhaseReportsLockTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	lockPath := flowLockPath(root, record.FlowID)
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	contender, err := sql.Open("sqlite", "file:"+filepath.Join(root, "approach.db")+"?_txlock=immediate")
 	if err != nil {
-		t.Fatalf("open lock file: %v", err)
+		t.Fatalf("open contending database handle: %v", err)
 	}
-	defer lockFile.Close()
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatalf("flock lock file: %v", err)
+	defer contender.Close()
+	tx, err := contender.Begin()
+	if err != nil {
+		t.Fatalf("begin contending immediate transaction: %v", err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-	if _, err := lockFile.WriteString("held\n"); err != nil {
-		t.Fatalf("write lock file: %v", err)
-	}
+	defer tx.Rollback()
 
 	_, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
 		PhaseID: "plan",
 		Status:  flowstore.PhaseRunning,
 	})
-	if err == nil || !strings.Contains(err.Error(), "timed out waiting for flow lock") {
-		t.Fatalf("SetPhase() error = %v, want lock timeout", err)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "locked") {
+		t.Fatalf("SetPhase() error = %v, want SQLite locked timeout", err)
 	}
 }
 
-func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
+func TestStoreSetPhaseIgnoresLegacyFlowLockArtifacts(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 	if err != nil {
@@ -2802,6 +2910,9 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	oldRecordLockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
+	if err := os.MkdirAll(filepath.Dir(oldRecordLockPath), 0o700); err != nil {
+		t.Fatalf("create legacy flow directory: %v", err)
+	}
 	if err := os.WriteFile(oldRecordLockPath, []byte("not a live lock\n"), 0o600); err != nil {
 		t.Fatalf("write lock file: %v", err)
 	}
@@ -2827,15 +2938,9 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 	if string(oldLockData) != "not a live lock\n" {
 		t.Fatalf("old in-record lock marker was modified: %q", oldLockData)
 	}
-	lockPath := flowLockPath(root, record.FlowID)
-	lockData, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatalf("read lock file: %v", err)
+	if _, err := os.Stat(flowLockPath(root, record.FlowID)); !os.IsNotExist(err) {
+		t.Fatalf("SQLite update unexpectedly created a Flow flock artifact: %v", err)
 	}
-	if !strings.Contains(string(lockData), "\n") || strings.Contains(string(lockData), "not a live lock") {
-		t.Fatalf("lock marker was not refreshed: %q", lockData)
-	}
-	assertMode(t, lockPath, 0o600)
 }
 
 func TestStoreDeleteRemovesOnlyFlowArtifacts(t *testing.T) {
@@ -2891,9 +2996,6 @@ func TestStoreDeleteRemovesOnlyFlowArtifacts(t *testing.T) {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "flows", record.FlowID)); !os.IsNotExist(err) {
-		t.Fatalf("flow directory still exists or stat failed with non-not-exist error: %v", err)
-	}
 	if _, err := store.Read(record.FlowID); !flowstore.IsNotFound(err) {
 		t.Fatalf("Read(deleted) error = %v, want not found", err)
 	}
@@ -2909,8 +3011,8 @@ func TestStoreDeleteRemovesOnlyFlowArtifacts(t *testing.T) {
 			t.Fatalf("Delete() removed or damaged non-flow artifact %s: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(flowLockPath(root, record.FlowID)); err != nil {
-		t.Fatalf("Delete() should leave an out-of-record lock file: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "approach.db")); err != nil {
+		t.Fatalf("Delete() removed the shared Flow database: %v", err)
 	}
 }
 
@@ -3239,7 +3341,7 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 	}
 }
 
-func TestStoreSetPRNormalizesLegacyPlanReviewApprovalBeforeRefresh(t *testing.T) {
+func TestStoreSetPRPreservesCanonicalPlanReviewApprovalBeforeRefresh(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
@@ -3274,16 +3376,11 @@ func TestStoreSetPRNormalizesLegacyPlanReviewApprovalBeforeRefresh(t *testing.T)
 	}
 	for i := range record.Phases {
 		if record.Phases[i].PhaseID == "plan-review" {
-			record.Phases[i].Outcome = ""
+			record.Phases[i].Outcome = flowstore.OutcomeApproved
 		}
 	}
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		t.Fatalf("MarshalIndent() error = %v", err)
-	}
-	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o600); err != nil {
-		t.Fatalf("WriteFile(meta.json) error = %v", err)
+	if err := writeFlowRecordForTest(root, record); err != nil {
+		t.Fatalf("write legacy-shaped SQLite record: %v", err)
 	}
 
 	updated, err := store.SetPR(flowstore.PRUpdate{
@@ -3300,7 +3397,7 @@ func TestStoreSetPRNormalizesLegacyPlanReviewApprovalBeforeRefresh(t *testing.T)
 	}
 
 	if got := phaseByID(t, updated, "plan-review").Outcome; got != flowstore.OutcomeApproved {
-		t.Fatalf("plan-review outcome after SetPR = %q, want legacy approved normalization", got)
+		t.Fatalf("plan-review outcome after SetPR = %q, want canonical approval preserved", got)
 	}
 	if got := phaseByID(t, updated, "implementation").Status; got != flowstore.PhaseCompleted {
 		t.Fatalf("implementation status after SetPR = %q, want completed", got)
@@ -3426,10 +3523,7 @@ func TestStoreSetIssueDoesNotRefreshCustomFlowReadiness(t *testing.T) {
 	if got := phaseByID(t, updated, "build").Status; got != flowstore.PhaseRunning {
 		t.Fatalf("build status after SetIssue = %q, want running", got)
 	}
-	metaJSON, err := os.ReadFile(filepath.Join(root, "flows", record.FlowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("read meta.json: %v", err)
-	}
+	metaJSON := readSQLiteRecordForTest(t, root, record.FlowID)
 	var persisted flowstore.FlowRecord
 	if err := json.Unmarshal(metaJSON, &persisted); err != nil {
 		t.Fatalf("decode meta.json: %v", err)
@@ -3913,10 +4007,6 @@ func TestStoreMarkManualMergeCompletesMergeAndRecordsMetadata(t *testing.T) {
 func TestStoreMarkManualMergeRejectsUnresolvedMissingDependsOn(t *testing.T) {
 	root := t.TempDir()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-unresolved-manual-merge"
 	writeRawFlowMeta(t, root, flowID, `
   "branch": "flow/manual-merge",
@@ -3927,7 +4017,12 @@ func TestStoreMarkManualMergeRejectsUnresolvedMissingDependsOn(t *testing.T) {
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "completed", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "ready", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
+	before := readSQLiteRecordForTest(t, root, flowID)
 	_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   flowID,
 		PRNumber: 116,
@@ -3938,22 +4033,9 @@ func TestStoreMarkManualMergeRejectsUnresolvedMissingDependsOn(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unresolved missing dependencies") {
 		t.Fatalf("MarkManualMerge() error = %v, want unresolved graph error", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
-	var raw struct {
-		Phases []map[string]json.RawMessage `json:"phases"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
-	}
-	for _, phase := range raw.Phases {
-		if strings.Contains(string(phase["phase_id"]), "draft") {
-			if _, ok := phase["depends_on"]; ok {
-				t.Fatalf("draft depends_on was persisted after rejected manual merge:\n%s", data)
-			}
-		}
+	after := readSQLiteRecordForTest(t, root, flowID)
+	if string(after) != string(before) {
+		t.Fatalf("rejected manual merge changed authoritative record\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 }
 
@@ -5670,14 +5752,11 @@ func TestFlowPhaseDependsOnRoundTrip(t *testing.T) {
 	if got := phaseByID(t, updated, "publish").DependsOn; len(got) != 1 || got[0] != "root" {
 		t.Fatalf("updated publish DependsOn = %#v, want [root]", got)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "flows", record.FlowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
+	data := readSQLiteRecordForTest(t, root, record.FlowID)
 	if !strings.Contains(string(data), `"depends_on": [
         "root"
       ]`) {
-		t.Fatalf("meta.json did not persist depends_on edge:\n%s", data)
+		t.Fatalf("SQLite record did not persist depends_on edge:\n%s", data)
 	}
 }
 
@@ -5733,12 +5812,9 @@ func TestDependsOnNullCountsAsPresentEmpty(t *testing.T) {
 	if got := phaseByID(t, updated, "beta").Status; got != flowstore.PhaseReady {
 		t.Fatalf("beta status = %q after alpha regression, want ready as independent root", got)
 	}
-	data, err := os.ReadFile(filepath.Join(flowDir, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
+	data := readSQLiteRecordForTest(t, root, flowID)
 	if strings.Contains(string(data), `"depends_on": null`) {
-		t.Fatalf("meta.json kept null depends_on:\n%s", data)
+		t.Fatalf("SQLite record kept null depends_on:\n%s", data)
 	}
 }
 
@@ -5785,10 +5861,6 @@ func TestExplicitEmptyDependsOnDefaultGraphMeansRoots(t *testing.T) {
 func TestReadBackfillsLinearDependsOn(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-legacy-default"
 	flowDir := filepath.Join(root, "flows", flowID)
 	if err := os.MkdirAll(flowDir, 0o700); err != nil {
@@ -5812,6 +5884,10 @@ func TestReadBackfillsLinearDependsOn(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read(flowID)
 	if err != nil {
@@ -5828,10 +5904,6 @@ func TestReadBackfillsLinearDependsOn(t *testing.T) {
 func TestReadMissingDependsOnForLegacyCustomFlowStaysUnresolved(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-legacy-custom"
 	flowDir := filepath.Join(root, "flows", flowID)
 	if err := os.MkdirAll(flowDir, 0o700); err != nil {
@@ -5853,6 +5925,10 @@ func TestReadMissingDependsOnForLegacyCustomFlowStaysUnresolved(t *testing.T) {
 }`
 	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
 	}
 
 	read, err := store.Read(flowID)
@@ -5878,14 +5954,6 @@ func TestReadMissingDependsOnForLegacyCustomFlowStaysUnresolved(t *testing.T) {
 func TestReadRestoresMissingDependsOnFromNamedPreset(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{
-		Root:    root,
-		Now:     func() time.Time { return now },
-		Presets: []flowstore.Preset{researchPresetForStoreTest()},
-	})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	writeRawFlowMeta(t, root, "20260607T120000Z-preset-recovery", `
   "preset_name": "research",
   "phases": [
@@ -5893,13 +5961,19 @@ func TestReadRestoresMissingDependsOnFromNamedPreset(t *testing.T) {
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root, Now: func() time.Time { return now }, Presets: []flowstore.Preset{researchPresetForStoreTest()},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read("20260607T120000Z-preset-recovery")
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if read.GraphRecovery.Status != flowstore.GraphRecoveryPresetEdgesRestored {
-		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryPresetEdgesRestored)
+	if read.GraphRecovery.Status != "" {
+		t.Fatalf("GraphRecovery.Status = %q, want fully recovered graph marker omitted", read.GraphRecovery.Status)
 	}
 	if got := phaseByID(t, read, "draft").DependsOn; len(got) != 1 || got[0] != "research" {
 		t.Fatalf("draft DependsOn = %#v, want [research]", got)
@@ -5909,20 +5983,13 @@ func TestReadRestoresMissingDependsOnFromNamedPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(records) != 1 || records[0].GraphRecovery.Status != flowstore.GraphRecoveryPresetEdgesRestored {
+	if len(records) != 1 || records[0].GraphRecovery.Status != "" {
 		t.Fatalf("List() recovery = %#v", records)
 	}
 }
 
 func TestReadRestoresPartiallyMissingDependsOnFromNamedPreset(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{
-		Root:    root,
-		Presets: []flowstore.Preset{researchPresetForStoreTest()},
-	})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	writeRawFlowMeta(t, root, "20260607T120000Z-partial-preset-recovery", `
   "preset_name": "research",
   "phases": [
@@ -5930,13 +5997,17 @@ func TestReadRestoresPartiallyMissingDependsOnFromNamedPreset(t *testing.T) {
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "publish", "title": "Publish", "kind": "merge", "depends_on": ["draft"], "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: []flowstore.Preset{researchPresetForStoreTest()}})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read("20260607T120000Z-partial-preset-recovery")
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if read.GraphRecovery.Status != flowstore.GraphRecoveryPresetEdgesRestored {
-		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryPresetEdgesRestored)
+	if read.GraphRecovery.Status != "" {
+		t.Fatalf("GraphRecovery.Status = %q, want fully recovered graph marker omitted", read.GraphRecovery.Status)
 	}
 	if got := phaseByID(t, read, "draft").DependsOn; len(got) != 1 || got[0] != "research" {
 		t.Fatalf("draft DependsOn = %#v, want [research]", got)
@@ -5945,16 +6016,16 @@ func TestReadRestoresPartiallyMissingDependsOnFromNamedPreset(t *testing.T) {
 
 func TestReadMissingNamedPresetEdgesUnresolvedWhenPresetUnavailable(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	writeRawFlowMeta(t, root, "20260607T120000Z-missing-preset", `
   "preset_name": "research",
   "phases": [
     {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "completed", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read("20260607T120000Z-missing-preset")
 	if err != nil {
@@ -5970,10 +6041,6 @@ func TestReadMissingNamedPresetEdgesUnresolvedWhenPresetUnavailable(t *testing.T
 
 func TestReadMissingNamedPresetDoesNotBackfillDefaultEdges(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	writeRawFlowMeta(t, root, "20260607T120000Z-missing-default-shaped-preset", `
   "preset_name": "custom",
   "phases": [
@@ -5981,6 +6048,10 @@ func TestReadMissingNamedPresetDoesNotBackfillDefaultEdges(t *testing.T) {
     {"phase_id": "implementation", "title": "Implementation", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "review-loop", "title": "Review loop", "kind": "review_loop", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read("20260607T120000Z-missing-default-shaped-preset")
 	if err != nil {
@@ -5999,16 +6070,16 @@ func TestReadMissingNamedPresetDoesNotBackfillDefaultEdges(t *testing.T) {
 
 func TestReadPartiallyMissingUnavailableNamedPresetDoesNotSelfHealReadiness(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	writeRawFlowMeta(t, root, "20260607T120000Z-partial-missing-preset", `
   "preset_name": "research",
   "phases": [
     {"phase_id": "research", "title": "Research", "kind": "plan", "depends_on": [], "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read("20260607T120000Z-partial-missing-preset")
 	if err != nil {
@@ -6024,10 +6095,6 @@ func TestReadPartiallyMissingUnavailableNamedPresetDoesNotSelfHealReadiness(t *t
 
 func TestReadUnresolvedGraphWithPlanReviewDoesNotSelfHealReadiness(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	writeRawFlowMeta(t, root, "20260607T120000Z-unresolved-plan-review", `
   "preset_name": "research",
   "phases": [
@@ -6035,6 +6102,10 @@ func TestReadUnresolvedGraphWithPlanReviewDoesNotSelfHealReadiness(t *testing.T)
     {"phase_id": "review", "title": "Review", "kind": "plan_review", "depends_on": ["research"], "status": "completed", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read("20260607T120000Z-unresolved-plan-review")
 	if err != nil {
@@ -6053,10 +6124,6 @@ func TestReadUnresolvedGraphWithPlanReviewDoesNotSelfHealReadiness(t *testing.T)
 
 func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-unresolved-metadata"
 	writeRawFlowMeta(t, root, flowID, `
   "preset_name": "research",
@@ -6065,6 +6132,10 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	if _, err := store.SetIssue(flowstore.IssueUpdate{
 		FlowID:   flowID,
@@ -6074,10 +6145,7 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetIssue() error = %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
+	data := readSQLiteRecordForTest(t, root, flowID)
 	var raw struct {
 		Phases []map[string]json.RawMessage `json:"phases"`
 	}
@@ -6086,10 +6154,21 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 	}
 	for _, phase := range raw.Phases {
 		if strings.Contains(string(phase["phase_id"]), "draft") {
-			if _, ok := phase["depends_on"]; ok {
-				t.Fatalf("draft depends_on was persisted for unresolved graph:\n%s", data)
+			if _, ok := phase["depends_on"]; !ok {
+				t.Fatalf("canonical unresolved draft omitted explicit depends_on:\n%s", data)
 			}
 		}
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatalf("Unmarshal(meta.json) top-level error = %v\n%s", err, data)
+	}
+	var headless bool
+	if value, ok := metadata["headless"]; !ok || json.Unmarshal(value, &headless) != nil || !headless {
+		t.Fatalf("specialized metadata write did not persist normalized headless=true:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"graph_recovery": {`) {
+		t.Fatalf("unresolved graph marker was not persisted:\n%s", data)
 	}
 
 	reread, err := store.Read(flowID)
@@ -6106,10 +6185,6 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 
 func TestSetPhaseRejectsUnresolvedMissingDependsOn(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-unresolved-phase-mutation"
 	writeRawFlowMeta(t, root, flowID, `
   "preset_name": "research",
@@ -6118,39 +6193,24 @@ func TestSetPhaseRejectsUnresolvedMissingDependsOn(t *testing.T) {
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
+	before := readSQLiteRecordForTest(t, root, flowID)
 	_, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "research", Status: flowstore.PhaseCompleted})
 	if err == nil || !strings.Contains(err.Error(), "unresolved missing dependencies") {
 		t.Fatalf("SetPhase() error = %v, want unresolved graph error", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
-	var raw struct {
-		Phases []map[string]json.RawMessage `json:"phases"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
-	}
-	for _, phase := range raw.Phases {
-		if strings.Contains(string(phase["phase_id"]), "draft") {
-			if _, ok := phase["depends_on"]; ok {
-				t.Fatalf("draft depends_on was persisted after rejected mutation:\n%s", data)
-			}
-		}
+	after := readSQLiteRecordForTest(t, root, flowID)
+	if string(after) != string(before) {
+		t.Fatalf("rejected phase mutation changed authoritative record\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 }
 
 func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{
-		Root:    root,
-		Presets: []flowstore.Preset{researchPresetForStoreTest()},
-	})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-preset-mutation-recovery"
 	writeRawFlowMeta(t, root, flowID, `
   "preset_name": "research",
@@ -6159,6 +6219,10 @@ func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: []flowstore.Preset{researchPresetForStoreTest()}})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "research", Status: flowstore.PhaseCompleted})
 	if err != nil {
@@ -6167,14 +6231,11 @@ func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
 	if got := phaseByID(t, updated, "draft").DependsOn; len(got) != 1 || got[0] != "research" {
 		t.Fatalf("updated draft DependsOn = %#v, want [research]", got)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
+	data := readSQLiteRecordForTest(t, root, flowID)
 	if !strings.Contains(string(data), `"depends_on": [
         "research"
       ]`) {
-		t.Fatalf("meta.json did not persist restored depends_on:\n%s", data)
+		t.Fatalf("SQLite record did not persist restored depends_on:\n%s", data)
 	}
 }
 
@@ -6337,19 +6398,29 @@ func TestKindConstantsAndSemanticKind(t *testing.T) {
 	}
 }
 
-func TestReadBackfillsKindFromWellKnownID(t *testing.T) {
+func TestMigrationBackfillsKindFromWellKnownID(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	record := graphRecord(root, "20260607T120000Z-kind-backfill", []flowstore.FlowPhase{
 		graphPhase(now, "plan", flowstore.PhaseCompleted, nil),
 		graphPhase(now, "plan-review", flowstore.PhaseCompleted, nil),
 	})
 	record.Phases[1].Outcome = ""
-	writeFreshFlowRecordForTest(t, root, record)
+	legacyDir := filepath.Join(root, "flows", record.FlowID)
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(legacy) error = %v", err)
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent(legacy) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "meta.json"), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(legacy) error = %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	read, err := store.Read(record.FlowID)
 	if err != nil {
@@ -6725,15 +6796,15 @@ func TestStoreAddPhaseLaunchIDRejectsReadyPhaseWithUnsatisfiedDependency(t *test
 		LaunchID:   "launch-stale-ready",
 		AutoLaunch: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "not ready") {
-		t.Fatalf("AddPhaseLaunchID(stale ready) error = %v, want not ready", err)
+	if err == nil || !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("AddPhaseLaunchID(stale ready) error = %v, want auto-launch outdated", err)
 	}
 	read, err := store.Read(record.FlowID)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if got := phaseByID(t, read, "publish"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhasePending {
-		t.Fatalf("publish after rejected launch = %#v, want demoted pending without launch", got)
+	if got := phaseByID(t, read, "publish"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseReady {
+		t.Fatalf("publish after rejected launch = %#v, want unchanged canonical row without launch", got)
 	}
 }
 
@@ -6892,10 +6963,6 @@ func writeRawFlowMeta(t *testing.T, root, flowID, fields string) {
 
 func writeFreshFlowRecordForTest(t *testing.T, root string, record flowstore.FlowRecord) {
 	t.Helper()
-	flowDir := filepath.Join(root, "flows", record.FlowID)
-	if err := os.MkdirAll(flowDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
 	if err := writeFlowRecordForTest(root, record); err != nil {
 		t.Fatalf("write test flow: %v", err)
 	}
@@ -7016,12 +7083,38 @@ func mustCreateManualMergeFlow(t *testing.T, store *flowstore.Store, root string
 }
 
 func writeFlowRecordForTest(root string, record flowstore.FlowRecord) error {
-	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(metaPath, append(data, '\n'), 0o600)
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	updatedAt := record.UpdatedAt.UTC()
+	projectionTime := fmt.Sprintf("%04d-%02d-%02dT%02d:%02d:%02d.%09dZ",
+		updatedAt.Year(), updatedAt.Month(), updatedAt.Day(), updatedAt.Hour(), updatedAt.Minute(), updatedAt.Second(), updatedAt.Nanosecond())
+	_, err = db.Exec(`
+INSERT INTO flows(flow_id, repo_path, status, updated_at, record) VALUES(?, ?, ?, ?, ?)
+ON CONFLICT(flow_id) DO UPDATE SET repo_path=excluded.repo_path, status=excluded.status,
+updated_at=excluded.updated_at, record=excluded.record`,
+		record.FlowID, filepath.Clean(record.RepoPath), record.Status, projectionTime, data)
+	return err
+}
+
+func readSQLiteRecordForTest(t *testing.T, root, flowID string) []byte {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatalf("open approach.db: %v", err)
+	}
+	defer db.Close()
+	var data []byte
+	if err := db.QueryRow("SELECT record FROM flows WHERE flow_id = ?", flowID).Scan(&data); err != nil {
+		t.Fatalf("read SQLite record %q: %v", flowID, err)
+	}
+	return data
 }
 
 func assertPhaseOrder(t *testing.T, record flowstore.FlowRecord, phaseIDs []string) {
@@ -7083,10 +7176,7 @@ func TestCreateWithOptionsStampsPhaseAgentSettings(t *testing.T) {
 		}
 	}
 
-	data, err := os.ReadFile(filepath.Join(root, "flows", record.FlowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
+	data := readSQLiteRecordForTest(t, root, record.FlowID)
 	var raw struct {
 		Phases []map[string]json.RawMessage `json:"phases"`
 	}
@@ -7160,15 +7250,7 @@ func TestCreateWithOptionsValidatesPhaseAgentSettings(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("CreateWithOptions() error = %v, want error containing %q", err, tc.wantErr)
 			}
-			entries, readErr := os.ReadDir(filepath.Join(root, "flows"))
-			if readErr != nil && !os.IsNotExist(readErr) {
-				t.Fatalf("ReadDir(flows) error = %v", readErr)
-			}
-			for _, entry := range entries {
-				if entry.Name() != ".locks" {
-					t.Fatalf("flow record %q was written for rejected settings", entry.Name())
-				}
-			}
+			assertNoSQLiteFlowRows(t, root)
 		})
 	}
 }
@@ -7196,7 +7278,7 @@ func TestCreateWithOptionsAcceptsEmptyPhaseAgentSettings(t *testing.T) {
 			t.Fatalf("phase %q settings = %#v, want zero", phase.PhaseID, got)
 		}
 	}
-	assertNoPhaseAgentKeys(t, filepath.Join(root, "flows", record.FlowID, "meta.json"))
+	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
 }
 
 func TestLegacyFlowRecordWithoutPhaseAgentSettingsStaysClean(t *testing.T) {
@@ -7213,8 +7295,7 @@ func TestLegacyFlowRecordWithoutPhaseAgentSettingsStaysClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
-	assertNoPhaseAgentKeys(t, metaPath)
+	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
 
 	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   record.FlowID,
@@ -7248,23 +7329,23 @@ func TestLegacyFlowRecordWithoutPhaseAgentSettingsStaysClean(t *testing.T) {
 			t.Fatalf("phase %q settings = %#v, want zero", phase.PhaseID, got)
 		}
 	}
-	assertNoPhaseAgentKeys(t, metaPath)
+	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
 }
 
 func TestMetadataOnlyUpdatePreservesPhaseAgentSettingsOnUnresolvedGraph(t *testing.T) {
 	root := t.TempDir()
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	flowID := "20260607T120000Z-unresolved-agent-settings"
 	writeRawFlowMeta(t, root, flowID, `
   "preset_name": "research",
   "phases": [
     {"phase_id": "research", "title": "Research", "kind": "plan", "status": "running", "order": 1, "agent": " CLAUDE ", "model": "Claude-Opus-5", "reasoning_effort": "HIGH ", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "agent": "claude", "model": "claude-opus-5", "reasoning_effort": "high", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
-    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "agent": "claude", "model": "claude-opus-5", "reasoning_effort": "high", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
-  ]`)
+	    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "agent": "claude", "model": "claude-opus-5", "reasoning_effort": "high", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+	  ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
 
 	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{
 		FlowID:  flowID,
@@ -7288,10 +7369,7 @@ func TestMetadataOnlyUpdatePreservesPhaseAgentSettingsOnUnresolvedGraph(t *testi
 		}
 	}
 
-	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
-	}
+	data := readSQLiteRecordForTest(t, root, flowID)
 	var raw struct {
 		Phases []map[string]json.RawMessage `json:"phases"`
 	}
@@ -7545,12 +7623,24 @@ func TestPhaseAgentSettingsFromResolvedAgentSettings(t *testing.T) {
 	}
 }
 
-func assertNoPhaseAgentKeys(t *testing.T, metaPath string) {
+func assertNoSQLiteFlowRows(t *testing.T, root string) {
 	t.Helper()
-	data, err := os.ReadFile(metaPath)
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
 	if err != nil {
-		t.Fatalf("ReadFile(%s) error = %v", metaPath, err)
+		t.Fatalf("open approach.db: %v", err)
 	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM flows").Scan(&count); err != nil {
+		t.Fatalf("count SQLite Flow rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("SQLite Flow row count = %d, want zero after rejected settings", count)
+	}
+}
+
+func assertNoPhaseAgentKeys(t *testing.T, data []byte) {
+	t.Helper()
 	var raw struct {
 		Phases []map[string]json.RawMessage `json:"phases"`
 	}

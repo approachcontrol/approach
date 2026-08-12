@@ -150,19 +150,11 @@ func NormalizePhaseID(id string) string {
 // AllocateTimestampedID returns a timestamp+slug ID that does not already have
 // a record directory in the configured collection.
 func AllocateTimestampedID(opts IDOptions) (string, error) {
-	if opts.Now.IsZero() {
-		opts.Now = time.Now().UTC()
-	}
-	if opts.MaxAttempts <= 0 {
-		opts.MaxAttempts = defaultCollisionTries
-	}
 	kind := opts.Kind
 	if kind == "" {
 		kind = "artifact"
 	}
-	base := opts.Now.UTC().Format("20060102T150405Z") + "-" + Slug(opts.Title, opts.FallbackSlug)
-	candidate := base
-	for i := 2; i < opts.MaxAttempts; i++ {
+	for _, candidate := range TimestampedIDCandidates(opts) {
 		_, err := os.Stat(RecordDir(opts.Root, opts.Collection, candidate))
 		if os.IsNotExist(err) {
 			return candidate, nil
@@ -170,9 +162,32 @@ func AllocateTimestampedID(opts IDOptions) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("check %s id collision: %w", kind, err)
 		}
-		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+	if opts.MaxAttempts <= 0 {
+		opts.MaxAttempts = defaultCollisionTries
 	}
 	return "", fmt.Errorf("could not allocate a unique %s id for %q after %d attempts", kind, opts.Title, opts.MaxAttempts)
+}
+
+// TimestampedIDCandidates returns the exact candidate sequence used by
+// AllocateTimestampedID. Storage backends use it to preserve file-allocation
+// naming and exhaustion behavior while checking uniqueness in their own
+// authority.
+func TimestampedIDCandidates(opts IDOptions) []string {
+	if opts.Now.IsZero() {
+		opts.Now = time.Now().UTC()
+	}
+	if opts.MaxAttempts <= 0 {
+		opts.MaxAttempts = defaultCollisionTries
+	}
+	base := opts.Now.UTC().Format("20060102T150405Z") + "-" + Slug(opts.Title, opts.FallbackSlug)
+	candidates := make([]string, 0, opts.MaxAttempts-1)
+	candidate := base
+	for i := 2; i < opts.MaxAttempts; i++ {
+		candidates = append(candidates, candidate)
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+	return candidates
 }
 
 // Slug lowercases text, keeps [a-z0-9-], collapses separator runs, trims

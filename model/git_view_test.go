@@ -474,9 +474,6 @@ func TestGitSubview_HeadlessToggleKeepsFlowsMeaning(t *testing.T) {
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %d, want ModeFlows after h", m.Mode())
 	}
-	if model.FlowHeadlessForTest(m) {
-		t.Fatalf("flow headless = true, want toggled off")
-	}
 }
 
 func TestGitSubview_EachLetterSelectsItsSubview(t *testing.T) {

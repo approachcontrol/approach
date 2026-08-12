@@ -24,7 +24,7 @@ import (
 func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T) {
 	createCalls := 0
 	var readyRepos []string
-	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return []scanner.Repo{
 				{Path: "/dev/bravo", DisplayName: "bravo"},
@@ -83,7 +83,7 @@ func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T)
 func TestBeadsReadyCreateFlowRequiresUsableBeadIDAndToleratesEmptyTitle(t *testing.T) {
 	newReadyModel := func(t *testing.T, beads []beadsquery.Bead, create func(model.FlowStartRequest) (model.FlowStartResult, error)) model.Model {
 		t.Helper()
-		m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+		m := inBeadsPane(newTestModel(testRepos(), model.Options{
 			ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			CreateFlow:     create,
@@ -197,7 +197,7 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 			}
 			repos := []scanner.Repo{{Path: repoPath, DisplayName: "repo"}}
 
-			ready := inBeadsPane(model.NewWithOptions(repos, opts))
+			ready := inBeadsPane(newTestModel(repos, opts))
 			ready, _ = update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			ready, _ = update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 			ready, readyCmd := update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -223,7 +223,7 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 				t.Fatalf("calls after Ready path = %q, want %q", got, wantCalls)
 			}
 
-			parked := inBeadsPane(model.NewWithOptions(repos, opts))
+			parked := inBeadsPane(newTestModel(repos, opts))
 			parked, _ = update(parked, tea.KeyMsg{Type: tea.KeyTab})
 			parked, _ = update(parked, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 			_, parkedCmd := submitNewFlowPromptsWithCreateOptions(t, parked, "Parked "+injected, "Plan later", "main", true, false)
@@ -243,7 +243,7 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 				t.Fatalf("calls after parked path = %q, want %q", got, wantCalls)
 			}
 
-			planned := inBeadsPane(model.NewWithOptions(repos, opts))
+			planned := inBeadsPane(newTestModel(repos, opts))
 			planned, _ = update(planned, tea.KeyMsg{Type: tea.KeyTab})
 			planned, _ = update(planned, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 			_, plannedCmd := submitNewFlowPrompts(t, planned, "Planned "+injected, "Plan now", "main")
@@ -267,7 +267,7 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 }
 
 func TestBeadsReadyCreateFlowFailureWithoutDetailReportsFallback(t *testing.T) {
-	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
 		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 		},
@@ -299,7 +299,7 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 	showCalls := 0
 	createCalls := 0
 	var createdRequest model.FlowStartRequest
-	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
 		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
 			readyCalls++
 			if repoPath != "/dev/alpha" {
@@ -372,7 +372,8 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 	}
 	if createdRequest.RepoPath != "/dev/alpha" || createdRequest.BaseRef != "" ||
 		createdRequest.AgentCommand != "" || createdRequest.Model != "" || createdRequest.ReasoningEffort != "" ||
-		createdRequest.PlanPhaseID != "" || createdRequest.PlanPhaseTitle != "" || createdRequest.PlanPhaseStatus != "" {
+		createdRequest.PlanPhaseID != "" || createdRequest.PlanPhaseTitle != "" || createdRequest.PlanPhaseStatus != "" ||
+		createdRequest.Headless != nil {
 		t.Fatalf("Ready create request carried launch metadata: %#v", createdRequest)
 	}
 	if got := m.TransientError(); got != "Created flow: bd-selected: Selected work" {
@@ -386,7 +387,7 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 	newReadyModel := func(t *testing.T, beads []beadsquery.Bead, available bool, create func(model.FlowStartRequest) (model.FlowStartResult, error)) model.Model {
 		t.Helper()
-		m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+		m := inBeadsPane(newTestModel(testRepos(), model.Options{
 			ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			CreateFlow:     create,
@@ -442,7 +443,7 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			assertNoCreate(t, m)
 		}
 
-		m = inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+		m = inBeadsPane(newTestModel(testRepos(), model.Options{
 			ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			CreateFlow:     create,
@@ -507,7 +508,7 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			createCalls := 0
-			m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+			m := inBeadsPane(newTestModel(testRepos(), model.Options{
 				ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 					return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 				},
@@ -582,7 +583,7 @@ func TestBeadsReadyCreateFlowCompletionRefreshesVisibleFlowSurface(t *testing.T)
 			}
 			t.Run(tt.name+"/"+outcome, func(t *testing.T) {
 				listCalls := 0
-				m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+				m := inBeadsPane(newTestModel(testRepos(), model.Options{
 					ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 						return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 					},
@@ -626,7 +627,7 @@ func TestBeadsReadyCreateFlowCompletionRefreshesVisibleFlowSurface(t *testing.T)
 }
 
 func TestBeadsReadyCreateFlowSameRepoFilterAndCursorChangesKeepRequestCurrent(t *testing.T) {
-	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
 		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}, {ID: "bd-2", Title: "Two"}}, nil
 		},
@@ -651,7 +652,7 @@ func TestBeadsReadyCreateFlowSameRepoFilterAndCursorChangesKeepRequestCurrent(t 
 func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 	newModel := func(t *testing.T) model.Model {
 		t.Helper()
-		m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+		m := inBeadsPane(newTestModel(testRepos(), model.Options{
 			ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 				return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 			},
@@ -722,7 +723,7 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 
 func TestBeadsReadyCreateFlowPickerConsumesFWithoutCreating(t *testing.T) {
 	createCalls := 0
-	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
 		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 		},

@@ -1997,14 +1997,14 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 		if !sp.ActiveFlows {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 		}
-		headlessLabel := "headless off"
-		headlessSuccessSuffix := ""
-		if sp.FlowHeadless {
-			headlessLabel = "headless on"
-			headlessSuccessSuffix = "on"
-		}
-		flowModeControls = append(flowModeControls, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 		if sp.FlowSelected {
+			headlessLabel := "headless off"
+			headlessSuccessSuffix := ""
+			if sp.FlowHeadless {
+				headlessLabel = "headless on"
+				headlessSuccessSuffix = "on"
+			}
+			flowModeControls = append(flowModeControls, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 			if sp.FlowRepairReady {
 				actions = append(actions, shortcutHint{Key: "R", Label: "repair"})

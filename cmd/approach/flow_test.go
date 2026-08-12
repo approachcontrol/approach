@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -415,11 +417,15 @@ func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 		record.BaseRef != "main" ||
 		record.Status != flowstore.StatusPending ||
 		!record.AutoMode ||
+		!record.Headless ||
 		len(record.Phases) != 7 {
 		t.Fatalf("unexpected flow record: %#v", record)
 	}
-	if _, err := os.Stat(filepath.Join(root, "flows", record.FlowID, "meta.json")); err != nil {
-		t.Fatalf("expected persisted flow metadata: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "approach.db")); err != nil {
+		t.Fatalf("expected persisted Flow database: %v", err)
+	}
+	if _, err := mustFlowStore(t, root).Read(record.FlowID); err != nil {
+		t.Fatalf("expected persisted Flow record: %v", err)
 	}
 }
 
@@ -1517,7 +1523,7 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 				}
 				return record
 			},
-			want: "requires running recoverable phase",
+			want: "requires satisfied predecessors",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1542,9 +1548,6 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 			}
 			after := phaseByID(read, "implementation")
 			wantAfterStatus := before.Status
-			if tc.name == "unsatisfied predecessors" {
-				wantAfterStatus = flowstore.PhasePending
-			}
 			if after.Status != wantAfterStatus || strings.Join(before.LaunchIDs, ",") != strings.Join(after.LaunchIDs, ",") || len(before.Sessions) != len(after.Sessions) {
 				t.Fatalf("record changed after rejected reset: before=%#v after=%#v", before, after)
 			}
@@ -1830,10 +1833,10 @@ func TestRunFlowCreateStateRootPrecedence(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(flowRoot, "flows", record.FlowID, "meta.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(flowRoot, "approach.db")); err != nil {
 		t.Fatalf("expected flow under APPROACH_FLOW_STATE_ROOT: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(planRoot, "flows", record.FlowID, "meta.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(planRoot, "approach.db")); !os.IsNotExist(err) {
 		t.Fatalf("flow should not be under plan root")
 	}
 }
@@ -1871,7 +1874,7 @@ func TestRunFlowCreateFallsBackToPlanThenSessionRoot(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
 				t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
 			}
-			if _, err := os.Stat(filepath.Join(roots[tc.rootKey], "flows", record.FlowID, "meta.json")); err != nil {
+			if _, err := os.Stat(filepath.Join(roots[tc.rootKey], "approach.db")); err != nil {
 				t.Fatalf("expected flow under %s: %v", tc.envKey, err)
 			}
 		})
@@ -2281,11 +2284,20 @@ func overwriteFlowRecord(t *testing.T, root string, record flowstore.FlowRecord)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(root, "flows", record.FlowID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o600)
+	defer db.Close()
+	updatedAt := record.UpdatedAt.UTC()
+	projectionTime := fmt.Sprintf("%04d-%02d-%02dT%02d:%02d:%02d.%09dZ",
+		updatedAt.Year(), updatedAt.Month(), updatedAt.Day(), updatedAt.Hour(), updatedAt.Minute(), updatedAt.Second(), updatedAt.Nanosecond())
+	_, err = db.Exec(`
+INSERT INTO flows(flow_id, repo_path, status, updated_at, record) VALUES(?, ?, ?, ?, ?)
+ON CONFLICT(flow_id) DO UPDATE SET repo_path=excluded.repo_path, status=excluded.status,
+updated_at=excluded.updated_at, record=excluded.record`,
+		record.FlowID, filepath.Clean(record.RepoPath), record.Status, projectionTime, data)
+	return err
 }
 
 func phaseByID(record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {

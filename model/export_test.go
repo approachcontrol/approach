@@ -38,12 +38,14 @@ func ActiveFlowsForTest(m Model) []flowstore.FlowRecord {
 	return flows
 }
 
-func SelectedActiveFlowPhaseIDForTest(m Model) string {
-	return m.selectedActiveFlowPhaseID
+// ActiveFlowRecordsForTest exposes the cross-repository Flow cache, which
+// outlives the visible Active Flows rows across repository selection changes.
+func ActiveFlowRecordsForTest(m Model) []flowstore.FlowRecord {
+	return m.activeFlowRecords
 }
 
-func FlowHeadlessForTest(m Model) bool {
-	return m.flowHeadless
+func SelectedActiveFlowPhaseIDForTest(m Model) string {
+	return m.selectedActiveFlowPhaseID
 }
 
 func EmbeddedTerminalTickMsgForTest(m Model) any {

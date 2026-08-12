@@ -28,9 +28,9 @@ func TestCreateDefaultSeedGolden(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(root, "flows", record.FlowID, "meta.json"))
+	got, _, err := encodeStoredFlow(record)
 	if err != nil {
-		t.Fatalf("ReadFile(meta.json) error = %v", err)
+		t.Fatalf("encodeStoredFlow() error = %v", err)
 	}
 	want, err := os.ReadFile(filepath.Join("testdata", "default_seed.golden.json"))
 	if err != nil {
@@ -338,7 +338,7 @@ func TestPresetValidationUnknownKindMessageOmitsChildKind(t *testing.T) {
 	}
 }
 
-func TestReadToleratesUnknownKindRecord(t *testing.T) {
+func TestReadDoesNotHealCanonicalUnknownKindRecord(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	store, err := NewStore(StoreOptions{Root: root})
@@ -369,8 +369,8 @@ func TestReadToleratesUnknownKindRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() with unknown kind error = %v", err)
 	}
-	if got := phaseByIDForPresetTest(t, read, "next").Status; got != PhaseReady {
-		t.Fatalf("next status = %q, want ready via default gate on unknown kind", got)
+	if got := phaseByIDForPresetTest(t, read, "next").Status; got != PhasePending {
+		t.Fatalf("next status = %q, want stored pending status without runtime healing", got)
 	}
 }
 
