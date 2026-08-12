@@ -9,8 +9,11 @@
 .vercel
 
 # env files (never commit secrets; .env.example is the template)
-.env
-.env*.local
+# Ignore every `.env*` rather than enumerating names: Next also loads
+# `.env.development`, `.env.production`, and `.env.test`, and any of them can
+# hold APPROACH_API_TOKEN. The unignore keeps the committed template.
+.env*
+!.env.example
 
 # typescript
 *.tsbuildinfo

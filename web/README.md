@@ -5,14 +5,21 @@ read-only GraphQL API served by `approach serve`. It is a browser-accessible
 view of the same state the TUI shows: a repo list, a repo detail with its
 Flows, and a Flow detail with phases and status.
 
-It is a **separate deployable**, not part of the Go build. `make build`, `make
-test`, and `make fmt-check` never look inside `web/`; CI runs it as its own job
-(`.github/workflows/ci.yml`).
+It is a **separate deployable**: no Go code compiles anything here, and CI runs
+it as its own job (`.github/workflows/ci.yml`). `make build` and `make fmt-check`
+ignore `web/` entirely.
+
+`make test` is the one exception, and it is deliberate. It runs
+`graphqlapi/web_documents_test.go`, which *reads* `web/src/lib/approach-api.ts`
+to hold this app's GraphQL documents against the real schema — see [Layout](#layout).
+It reads the file as text; it does not build the app.
 
 One wrinkle: `web/node_modules` lives inside the repo tree and some npm packages
-ship Go files, so *bare* `go test ./...` and `gofmt -l .` do pick them up once
-you have run `npm install`. That is why the gate targets exist — use `make test`
-and `make fmt-check`, not the bare commands.
+ship Go files, so once you have run `npm install` it is on the path of anything
+that walks the tree. The go command skips it via the `ignore web/node_modules`
+directive in `go.mod`, which covers bare `go test ./...` too. `gofmt` does not
+read `go.mod` and still descends into it, so use `make fmt-check` rather than a
+bare `gofmt -l .`.
 
 ## How it talks to Approach
 
@@ -56,6 +63,32 @@ npm run dev                    # http://localhost:3000
 
 A loopback `approach serve` needs no token, so leave `APPROACH_API_TOKEN`
 empty for that setup.
+
+`npm run dev` passes `-H 127.0.0.1` deliberately. Next's own default is
+`0.0.0.0`, and this app has no authentication of its own: on the default it
+would answer anyone who can reach port 3000 and render your Flow state to them,
+fetching the loopback API on their behalf. That would undo the exact protection
+`approach serve` gives you by binding loopback and demanding a token anywhere
+else.
+
+To reach the dev server from another device, do not drop the flag, and do not
+reuse the `cloudflared` recipe from the section below: those are *public*
+tunnels. That is fine for the API, which checks a bearer token on every request,
+and not fine for this app, which checks nothing — the tunnel would simply publish
+your Flow state at a URL. Forward the port over a channel that authenticates:
+
+```bash
+# From the other device. The viewer stays bound to loopback on the host.
+ssh -N -L 3000:127.0.0.1:3000 you@host
+```
+
+An authenticating proxy in front of the tunnel (Cloudflare Access, say) works
+too. Plain tunnel plus no app auth does not.
+
+`npm start` (`next start`, after `npm run build`) keeps Next's `0.0.0.0`
+default, because a self-hosted container has to bind the wildcard to be reachable
+at all. Nothing here documents running it on a workstation; if you do, pass
+`-H 127.0.0.1` yourself or front it with authentication.
 
 ### Checks
 
@@ -119,8 +152,10 @@ environment variables are account-level actions in the Vercel dashboard.
    - `APPROACH_GRAPHQL_URL` = `https://<tunnel-host>/graphql`
    - `APPROACH_API_TOKEN` = the token the server was started with
 4. **Enable Deployment Protection** (Project → Settings → Deployment
-   Protection). See the warning below — decide this before the first deploy,
-   not after.
+   Protection) and set the *scope* to **All Deployments**, not the default
+   Standard Protection. See the warning below — the scope is the part that
+   matters, and both it and the plan it requires are decisions to make before
+   the first deploy, not after.
 5. Deploy. The Git integration then gives preview deploys per pull request and
    a production deploy on merge to `main`.
 6. Verify the deployed instance: load `/`, open a repository, and confirm a
@@ -136,15 +171,47 @@ If the tunnel URL changes (quick tunnels get a new one per run), update
 **A deployed instance republishes machine-local data.** The views render
 repository absolute paths, Flow titles, branch names, phase summaries, and
 issue/PR links — data the API's own auth posture treats as never leaving your
-machine. Deployment Protection is the default posture here:
+machine. Deployment Protection is the default posture here — but read the scope
+carefully, because the free configuration does **not** cover the URL this app
+will actually be served from.
 
-- **Vercel Authentication** — free on all plans; only members of your Vercel
-  team can load the deployment.
-- **Password Protection** — a paid alternative if you need to share a link
-  with someone outside the team.
+Vercel splits Deployment Protection into a *method* (who gets in) and a *scope*
+(which URLs are gated), and the scope is where the trap is:
+
+| Scope | Covers | Plan |
+| --- | --- | --- |
+| **Standard Protection** (default) | Every URL **except production domains** | All plans |
+| **All Deployments** | Everything, production domains included | Pro (as part of the paid Advanced Deployment Protection add-on) or Enterprise |
+
+Standard Protection is the recommended default for an ordinary site, where the
+production domain is *supposed* to be public. That is exactly backwards here.
+Step 5 promotes `main` to production, so on the Hobby plan the documented setup
+leaves `<project>.vercel.app` — the URL you would actually open — serving
+repository paths, Flow titles, branches, and phase summaries to anyone, while
+the dashboard reads "protected" because the preview and generated deployment
+URLs are. Vercel's own docs state it plainly: on Hobby, "your production domain
+remains publicly accessible."
+
+Methods, once the scope is right:
+
+- **Vercel Authentication** — free on all plans, restricts access to Vercel
+  users with access to the project. Free covers the *method*, not the
+  production-domain *scope*.
+- **Password Protection** — Enterprise, or part of the same paid Pro add-on.
+  Use it to share a link with someone outside the team.
+
+So there are three honest options, and no free one that protects production:
+
+1. Pay for the add-on (or Enterprise) and set the scope to All Deployments.
+2. Stay on Hobby and never create a production deployment — deploy previews
+   only, which Standard Protection does cover.
+3. Do not deploy this at all; `npm run dev` against a loopback `approach serve`
+   needs no hosting.
 
 Leaving the instance public is a deliberate decision to publish that data, not
-a default. Make it knowingly.
+a default — and on Hobby it is the decision you make by *not* choosing. Make it
+knowingly, and verify it by loading the production URL in a logged-out private
+window rather than trusting the settings page.
 
 The app narrows the exposure on its own too: it never selects
 `Flow.instructions` or `Phase.notes`, the two largest agent-authored free-text

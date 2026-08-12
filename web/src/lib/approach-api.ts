@@ -95,6 +95,14 @@ function kindForStatus(status: number): ApproachApiErrorKind {
   }
 }
 
+// `AbortSignal.timeout` rejects with a DOMException named `TimeoutError`; an
+// explicit `controller.abort()` produces `AbortError`. Either way the deadline
+// fired, which says nothing about whatever status may already have arrived.
+function isAbort(caught: unknown): boolean {
+  const name = caught instanceof Error ? caught.name : ''
+  return name === 'TimeoutError' || name === 'AbortError'
+}
+
 function fail(kind: ApproachApiErrorKind, detail: unknown): never {
   // Server-side only: `detail` may name the endpoint host.
   console.error(`approach-api ${kind}:`, detail)
@@ -135,22 +143,42 @@ async function query<T>(document: string, variables?: Record<string, unknown>): 
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   } catch (caught) {
-    const name = caught instanceof Error ? caught.name : ''
-    if (name === 'TimeoutError' || name === 'AbortError') {
+    if (isAbort(caught)) {
       fail('timeout', caught)
     }
     fail('unreachable', caught)
   }
 
-  let body: GraphQLResponse<T>
+  let parsed: unknown
   try {
-    body = (await response.json()) as GraphQLResponse<T>
+    parsed = await response.json()
   } catch (caught) {
+    // The deadline is still armed once the headers land, so a tunnel that
+    // answers 200 and then stalls mid-body aborts *here*, not above. That is
+    // precisely the hung tunnel this client's own abort exists to catch, and
+    // classifying it by the status already in hand would render the generic
+    // panel for a 200 instead of the timeout one.
+    if (isAbort(caught)) {
+      fail('timeout', caught)
+    }
     // A tunnel or proxy error page arrives as HTML, including on a 200. The
     // status still classifies it: a 504 from the API and a 504 from the tunnel
     // mean the same thing to the reader.
     fail(kindForStatus(response.status), `status ${response.status}: unparseable body: ${caught}`)
   }
+
+  // A successful parse is not an object: JSON's grammar admits bare `null`,
+  // numbers, and strings, and a proxy that answers `null` is parseable. Reading
+  // `.errors` off it would throw a TypeError, and `load()` rethrows anything
+  // that is not an ApproachApiError — so the reader would get the generic
+  // boundary instead of the panel this whole module exists to reach.
+  if (typeof parsed !== 'object' || parsed === null) {
+    fail(
+      kindForStatus(response.status),
+      `status ${response.status}: non-object body: ${JSON.stringify(parsed) ?? typeof parsed}`,
+    )
+  }
+  const body = parsed as GraphQLResponse<T>
 
   if (!response.ok) {
     // Transport, auth, and limit failures. The server's own messages are fixed
@@ -328,17 +356,54 @@ const FLOW_QUERY = `query Flow($id: ID!) {
   }
 }`
 
+/**
+ * `data` being non-null does not make it the shape the operation asked for.
+ * `{"data":{}}` is a perfectly good GraphQL envelope, and a stale tunnel URL
+ * that now resolves to some other JSON service can produce one — the README
+ * warns that quick tunnels change URL on every run. Without this check the
+ * selection comes back `undefined`, and the page throws on `.length` or
+ * `.phases`, landing in the generic boundary instead of the sanitized panel.
+ *
+ * These check the top-level selection only: present, and the right broad shape.
+ * Validating every field would mean a schema validator and a dependency, and
+ * the real defence against field-level drift is already
+ * `graphqlapi/web_documents_test.go`, which holds these documents to the live
+ * schema at `make test` time.
+ */
+function requireList<T>(value: unknown, operation: string): T[] {
+  if (!Array.isArray(value)) {
+    fail('http', `${operation} returned ${describe(value)} where a list was selected`)
+  }
+  return value as T[]
+}
+
+function requireNodeOrNull<T>(value: unknown, operation: string): T | null {
+  if (value === null) {
+    return null
+  }
+  // `typeof [] === 'object'`, so the array case needs saying out loud: a list
+  // here would sail past and then throw on `.flows` or `.phases`.
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    fail('http', `${operation} returned ${describe(value)} where an object or null was selected`)
+  }
+  return value as T
+}
+
+function describe(value: unknown): string {
+  return value === undefined ? 'no such field' : `a ${Array.isArray(value) ? 'list' : typeof value}`
+}
+
 export async function getRepos(): Promise<RepoSummary[]> {
   const data = await query<{ repos: RepoSummary[] }>(REPOS_QUERY)
-  return data.repos
+  return requireList<RepoSummary>(data.repos, 'repos')
 }
 
 export async function getRepo(id: string): Promise<RepoDetail | null> {
   const data = await query<{ repo: RepoDetail | null }>(REPO_QUERY, { id })
-  return data.repo
+  return requireNodeOrNull<RepoDetail>(data.repo, 'repo')
 }
 
 export async function getFlow(id: string): Promise<FlowDetail | null> {
   const data = await query<{ flow: FlowDetail | null }>(FLOW_QUERY, { id })
-  return data.flow
+  return requireNodeOrNull<FlowDetail>(data.flow, 'flow')
 }

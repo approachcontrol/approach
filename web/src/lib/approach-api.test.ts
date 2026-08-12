@@ -177,10 +177,45 @@ describe('approach api client', () => {
       await expect(getRepos()).rejects.toMatchObject({ kind: 'timeout' })
     })
 
+    // The deadline stays armed after the headers arrive, so a tunnel that sends
+    // `200 OK` and then stalls aborts during the body read. Classifying that by
+    // the status already in hand would call a hung tunnel a malformed 200.
+    it.each([['TimeoutError'], ['AbortError']])(
+      'maps a %s during the body read to a timeout, not the status',
+      async (name) => {
+        fetchMock.mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.reject(Object.assign(new Error('aborted'), { name })),
+        } as unknown as Response)
+
+        await expect(getRepos()).rejects.toMatchObject({ kind: 'timeout' })
+      },
+    )
+
     it('maps an unparseable body to an http error', async () => {
       fetchMock.mockResolvedValue(new Response('<html>gateway</html>', { status: 200 }))
 
       await expect(getRepos()).rejects.toMatchObject({ kind: 'http' })
+    })
+
+    // A *parseable* body that is not an object is the case the parse guard
+    // misses: `null` and bare scalars are valid JSON, and reading `.errors` off
+    // `null` throws a TypeError that `load()` rethrows straight past the
+    // rendered panel into the generic boundary.
+    it.each([
+      ['null', null, 200, 'http'],
+      ['a bare string', 'ok', 200, 'http'],
+      ['a number', 0, 200, 'http'],
+      // The status still classifies it, exactly as for an unparseable body.
+      ['null behind a failing gateway', null, 504, 'timeout'],
+    ])('maps %s to an ApproachApiError, not a TypeError', async (_label, body, status, kind) => {
+      fetchMock.mockResolvedValue(jsonResponse(body, status as number))
+
+      const error = await getRepos().catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(ApproachApiError)
+      expect(error).toMatchObject({ kind })
     })
 
     it('never leaks the endpoint or the token in an error message', async () => {
@@ -193,6 +228,52 @@ describe('approach api client', () => {
       const message = (error as Error).message
       expect(message).not.toContain('tunnel.example')
       expect(message).not.toContain('s3cret')
+    })
+  })
+
+  describe('payload shape', () => {
+    // `{"data":{}}` is a valid envelope. Before these guards the selection came
+    // back `undefined` and the page threw on `.length`, escaping the panel.
+    it('rejects a data object missing the selection', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: {} }))
+
+      const error = await getRepos().catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(ApproachApiError)
+      expect(error).toMatchObject({ kind: 'http' })
+    })
+
+    it('rejects a scalar where a list was selected', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: { repos: 'nope' } }))
+
+      await expect(getRepos()).rejects.toBeInstanceOf(ApproachApiError)
+    })
+
+    it('rejects a scalar where a node was selected', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: { flow: 7 } }))
+
+      await expect(getFlow('f1')).rejects.toBeInstanceOf(ApproachApiError)
+    })
+
+    // `typeof [] === 'object'`, so an array would otherwise pass the node guard.
+    it('rejects a list where a node was selected', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: { repo: [] } }))
+
+      await expect(getRepo('r1')).rejects.toBeInstanceOf(ApproachApiError)
+    })
+
+    // `null` is the API's real answer for an unknown id and must survive: the
+    // routes turn it into a 404, which is not an error condition.
+    it('passes a null node through for the 404 path', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: { flow: null } }))
+
+      await expect(getFlow('missing')).resolves.toBeNull()
+    })
+
+    it('passes an empty list through', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: { repos: [] } }))
+
+      await expect(getRepos()).resolves.toEqual([])
     })
   })
 

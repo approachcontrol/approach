@@ -4,10 +4,10 @@
   "private": true,
   "description": "Next.js viewer for the Approach read-only GraphQL API",
   "engines": {
-    "node": ">=20.9.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
