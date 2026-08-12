@@ -388,6 +388,12 @@ func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessi
 }
 
 func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, bool, error, tea.Cmd) {
+	release, err := m.reserveFlowSpawn(ctx)
+	if err != nil {
+		return m, false, err, nil
+	}
+	defer release()
+
 	activeNum := m.activeTerminalNum
 	requested := m.terminalDockVisible
 	if !ctx.FlowAutoLaunch && !ctx.Headless {

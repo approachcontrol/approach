@@ -141,7 +141,7 @@ type Model struct {
 	closeFlow                 func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
-	reserveFlowResumeLaunch   func(string) (flowstore.FlowRecord, func(), error)
+	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -263,7 +263,7 @@ type Options struct {
 	CloseFlow                func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
 	ReopenFlow               func(flowID string) (flowstore.FlowRecord, error)
 	ReserveFlowRepairLaunch  func(flowID string) (flowstore.FlowRecord, func(), error)
-	ReserveFlowResumeLaunch  func(flowID string) (flowstore.FlowRecord, func(), error)
+	ReserveFlowLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase           func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow               func(flowID string) error
@@ -501,14 +501,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return store.ReserveRepairLaunch(flowID)
 		}
 	}
-	reserveFlowResumeLaunch := opts.ReserveFlowResumeLaunch
-	if reserveFlowResumeLaunch == nil {
-		reserveFlowResumeLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+	reserveFlowLaunch := opts.ReserveFlowLaunch
+	if reserveFlowLaunch == nil {
+		reserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
 			store, err := newFlowStore()
 			if err != nil {
 				return flowstore.FlowRecord{}, nil, err
 			}
-			return store.ReserveUntrackedResumeLaunch(flowID)
+			return store.ReserveAgentLaunch(flowID)
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -701,7 +701,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		closeFlow:                closeFlow,
 		reopenFlow:               reopenFlow,
 		reserveFlowRepairLaunch:  reserveFlowRepairLaunch,
-		reserveFlowResumeLaunch:  reserveFlowResumeLaunch,
+		reserveFlowLaunch:        reserveFlowLaunch,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
 		resetFlowPhase:           resetFlowPhase,
 		deleteFlow:               deleteFlow,

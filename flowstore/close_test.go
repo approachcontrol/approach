@@ -644,7 +644,7 @@ func TestRepairLaunchReservationSerializesWithClose(t *testing.T) {
 	}
 }
 
-func TestUntrackedResumeReservationSerializesWithClose(t *testing.T) {
+func TestAgentLaunchReservationSerializesWithClose(t *testing.T) {
 	root := t.TempDir()
 	resumeStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
 	if err != nil {
@@ -656,9 +656,9 @@ func TestUntrackedResumeReservationSerializesWithClose(t *testing.T) {
 	}
 	record := createCloseTestFlow(t, resumeStore, root)
 
-	reserved, release, err := resumeStore.ReserveUntrackedResumeLaunch(record.FlowID)
+	reserved, release, err := resumeStore.ReserveAgentLaunch(record.FlowID)
 	if err != nil {
-		t.Fatalf("ReserveUntrackedResumeLaunch() error = %v", err)
+		t.Fatalf("ReserveAgentLaunch() error = %v", err)
 	}
 	if reserved.FlowID != record.FlowID || flowstore.FlowClosed(reserved) {
 		t.Fatalf("reserved record = %#v, want current open Flow", reserved)
@@ -686,7 +686,7 @@ func TestUntrackedResumeReservationSerializesWithClose(t *testing.T) {
 		t.Fatal("CloseFlow() did not proceed after resume reservation release")
 	}
 
-	if _, _, err := resumeStore.ReserveUntrackedResumeLaunch(record.FlowID); err == nil || !strings.Contains(err.Error(), "closed") {
-		t.Fatalf("ReserveUntrackedResumeLaunch(closed) error = %v, want closed rejection", err)
+	if _, _, err := resumeStore.ReserveAgentLaunch(record.FlowID); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("ReserveAgentLaunch(closed) error = %v, want closed rejection", err)
 	}
 }

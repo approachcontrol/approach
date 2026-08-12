@@ -962,7 +962,7 @@ func TestModel_CodexAppFlowPhaseResumeUsesAuthoritativeCloseReservation(t *testi
 	launches := 0
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
-		ReserveFlowResumeLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
 			return flowstore.FlowRecord{}, nil, errors.New("cannot resume because flow is closed")
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -1002,7 +1002,7 @@ func TestModel_CodexAppFlowPhaseResumeHoldsReservationThroughOpen(t *testing.T) 
 	var launched actions.AgentLaunchContext
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
-		ReserveFlowResumeLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			if flowID != flow.FlowID {
 				t.Fatalf("reserved flow = %q, want %q", flowID, flow.FlowID)
 			}
@@ -1032,6 +1032,51 @@ func TestModel_CodexAppFlowPhaseResumeHoldsReservationThroughOpen(t *testing.T) 
 	}
 	if launched.ResumeSessionID != "codex-review" || launched.FlowID != "" || launched.FlowPhaseID != "" {
 		t.Fatalf("Codex App resume context = %#v, want resumed session with Flow metadata cleared after admission", launched)
+	}
+}
+
+func TestModel_TrackedFlowPhaseResumeRechecksCloseAfterPersistence(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/tracked-resume"
+	flow.Phases = []flowstore.FlowPhase{{
+		PhaseID: "review-loop",
+		Title:   "Review loop",
+		Status:  flowstore.PhaseCompleted,
+		Sessions: []flowstore.Session{{
+			Provider: "codex", SessionID: "codex-review", Status: "ended",
+		}},
+	}}
+	starts := 0
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flow, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, errors.New("flow is closed")
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, persistCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if persistCmd == nil {
+		t.Fatal("expected tracked resume persistence command")
+	}
+	m, launchCmd := update(m, persistCmd())
+	if launchCmd != nil {
+		m = settleModelCommands(t, m, launchCmd, 2)
+	}
+	if starts != 0 {
+		t.Fatalf("closed Flow started %d tracked resume terminals after persistence, want zero", starts)
+	}
+	if !strings.Contains(m.TransientError(), "closed") {
+		t.Fatalf("status = %q, want final-spawn closed rejection", m.TransientError())
 	}
 }
 
@@ -12465,6 +12510,9 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	externalLaunches := 0
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
+		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
 		},
@@ -12882,6 +12930,9 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 	starts := 0
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
+		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
 		},

@@ -1047,7 +1047,7 @@ func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
 	if reason == "" {
 		return FlowRecord{}, errors.New("flow close requires a reason")
 	}
-	release, err := s.acquireRepairLaunchLock(update.FlowID)
+	release, err := s.acquireLaunchCloseLock(update.FlowID)
 	if err != nil {
 		return FlowRecord{}, err
 	}
@@ -1079,19 +1079,19 @@ func (s *Store) ReserveRepairLaunch(flowID string) (FlowRecord, func(), error) {
 	return s.reserveLaunchAgainstClose(flowID, "reserve a repair launch for")
 }
 
-// ReserveUntrackedResumeLaunch orders an untracked agent-session resume with
-// CloseFlow. The caller must hold the returned reservation until the external
-// launcher has either started or failed, so a close and a resume have one
-// authoritative cross-process ordering.
-func (s *Store) ReserveUntrackedResumeLaunch(flowID string) (FlowRecord, func(), error) {
-	return s.reserveLaunchAgainstClose(flowID, "resume a phase session for")
+// ReserveAgentLaunch orders an agent spawn with CloseFlow. The caller must
+// hold the returned reservation until the terminal or external launcher has
+// either started or failed, so a close and a launch have one authoritative
+// cross-process ordering.
+func (s *Store) ReserveAgentLaunch(flowID string) (FlowRecord, func(), error) {
+	return s.reserveLaunchAgainstClose(flowID, "launch an agent for")
 }
 
 func (s *Store) reserveLaunchAgainstClose(flowID, action string) (FlowRecord, func(), error) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, nil, err
 	}
-	release, err := s.acquireRepairLaunchLock(flowID)
+	release, err := s.acquireLaunchCloseLock(flowID)
 	if err != nil {
 		return FlowRecord{}, nil, err
 	}
@@ -1107,11 +1107,13 @@ func (s *Store) reserveLaunchAgainstClose(flowID, action string) (FlowRecord, fu
 	return record, release, nil
 }
 
-func (s *Store) acquireRepairLaunchLock(flowID string) (func(), error) {
+func (s *Store) acquireLaunchCloseLock(flowID string) (func(), error) {
+	// Keep the original filename so mixed-version processes contend on the same
+	// advisory lock while the reservation's scope expands beyond repair.
 	path := filepath.Join(s.canonicalRoot, ".approach.flow-repair."+flowID+".lock")
-	release, err := artifacts.AcquireFileLockNoFollow(path, "Flow repair launch lock", s.lockTimeout)
+	release, err := artifacts.AcquireFileLockNoFollow(path, "Flow launch/close lock", s.lockTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("acquire repair launch reservation for flow %q: %w", flowID, err)
+		return nil, fmt.Errorf("acquire launch/close reservation for flow %q: %w", flowID, err)
 	}
 	return release, nil
 }

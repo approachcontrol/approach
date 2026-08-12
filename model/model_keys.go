@@ -2362,7 +2362,7 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContext) tea.Cmd {
-	reserve := m.reserveFlowResumeLaunch
+	reserve := m.reserveFlowLaunch
 	launchAgent := m.launchAgent
 	flowID := ctx.FlowID
 	repoPath := ctx.RepoPath
@@ -2871,10 +2871,15 @@ func (m Model) withoutPendingFlowPhaseResume(key flowPhaseResumeKey) Model {
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
 	if launch.Interactive {
+		release, err := m.reserveFlowSpawn(ctx)
+		if err != nil {
+			return m.startFlowLaunchFailure(ctx, err.Error())
+		}
 		// approach hands over the TTY until the launch command exits. Some launch
 		// commands are only terminal/multiplexer clients; launch.Detached records
 		// whether provider hooks, not this result, own session completion.
 		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
+			defer release()
 			if err != nil {
 				if launch.Cleanup != nil {
 					launch.Cleanup()
@@ -2887,6 +2892,11 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 	// Detached launch: the command only opens or switches to an external
 	// terminal/multiplexer session and returns while the agent keeps running.
 	return m, func() tea.Msg {
+		release, err := m.reserveFlowSpawn(ctx)
+		if err != nil {
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+		}
+		defer release()
 		if err := launch.Cmd.Run(); err != nil {
 			if launch.Cleanup != nil {
 				launch.Cleanup()
@@ -2895,6 +2905,16 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 		}
 		return AgentResultMsg{LaunchContext: ctx, Detached: true}
 	}
+}
+
+func (m Model) reserveFlowSpawn(ctx actions.AgentLaunchContext) (func(), error) {
+	tracked := ctx.FlowLaunchTracked || (agent.Normalize(ctx.Command) == agent.CommandCodexApp &&
+		strings.TrimSpace(ctx.FlowPhaseID) != "" && strings.TrimSpace(ctx.LaunchID) != "")
+	if strings.TrimSpace(ctx.FlowID) == "" || !tracked || ctx.FlowRepair || m.reserveFlowLaunch == nil {
+		return func() {}, nil
+	}
+	_, release, err := m.reserveFlowLaunch(ctx.FlowID)
+	return release, err
 }
 
 func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText string) (flowstore.PhaseUpdate, bool) {
