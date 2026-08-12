@@ -737,6 +737,16 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 // handoffFlowLaunchTmux is handoffFlowLaunchExternal for the tmux route: the
 // window it opens is not an embedded slot, so the attempt is released at
 // handoff, the result is detached, and provider hooks own completion.
+//
+// Releasing here means the window stops counting as Flow occupancy, which an
+// embedded slot would have provided until its process exited. What still covers
+// the agent's actual work is the persisted phase status: a `running` phase
+// occupies the Flow for both manual and automatic launches, so the gap opens
+// only after the agent has declared its own phase complete and its CLI happens
+// to stay at a prompt. Closing that too would mean polling tmux from the
+// auto-advance drain — a subprocess on a timer, which is exactly what the probe
+// rule forbids — or tracking window liveness in the background, which is the
+// ownership this route exists to give up. See docs/tui-guide.md.
 func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	ctx := msg.Context
 	spec, err := m.buildRepoTmuxAgentLaunch(ctx)

@@ -426,6 +426,15 @@ Limitations:
   recorded: `running` and awaiting session capture if none ever fired. The probe
   then finds no window, so `x` resets it normally; use repair (`R`) if it needs
   more than a reset.
+- **A finished phase's window does not hold the Flow.** An embedded terminal
+  occupies its Flow until the process exits, so the next phase cannot start
+  while the previous agent's terminal is open. A tmux window is not owned that
+  way: while a phase is `running` it occupies the Flow as usual, but once the
+  agent marks its own phase completed, `g` and AutoMode will start the next
+  phase even though that agent's CLI is still sitting at a prompt in its window.
+  Both agents are then in the same worktree, so if you go back and type into the
+  older window you have two agents editing at once. Close a window when you are
+  done with it.
 
 ## Plans View (bottom `2`)
 
