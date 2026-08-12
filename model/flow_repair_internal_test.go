@@ -211,6 +211,42 @@ func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *test
 				t.Fatalf("selectedFlowRepairReady() = true in mode %v with retained %s Flow terminal", mode, state)
 			}
 		}
+		// A repair slot with no terminal is not covered by the broad terminal
+		// predicate — the two overlap rather than nest — so admission's own
+		// repair-terminal disjunct is what withdraws the key here.
+		repairSlot := m
+		repairSlot.embeddedTerminals = []embeddedTerminalSlot{{
+			Scope:      embeddedTerminalScopeFlow,
+			FlowID:     record.FlowID,
+			FlowRepair: true,
+		}}
+		if repairSlot.selectedFlowRepairReady() {
+			t.Fatalf("selectedFlowRepairReady() = true in mode %v with a terminal-less repair slot", mode)
+		}
+		// The headless term lives outside the preview boundary, because
+		// admission's occupancy set has no headless notion and is shared with
+		// kinds that must not inherit one. The footer still has to withdraw for
+		// exactly as long as admission refuses.
+		pendingHeadless := m.markFlowHeadlessWritePending(pendingFlowHeadlessWrite{
+			flowID:   record.FlowID,
+			repoPath: record.RepoPath,
+			enabled:  false,
+		})
+		if pendingHeadless.selectedFlowRepairReady() {
+			t.Fatalf("selectedFlowRepairReady() = true in mode %v during a pending headless write", mode)
+		}
+		// A lifecycle attempt owns the Flow just as a retained slot does.
+		held, ok := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+			Token:  "token-1",
+			Kind:   flowLaunchKindManualPhase,
+			FlowID: record.FlowID,
+		}, flowLaunchStateReading)
+		if !ok {
+			t.Fatalf("reservation should succeed on a free Flow in mode %v", mode)
+		}
+		if held.selectedFlowRepairReady() {
+			t.Fatalf("selectedFlowRepairReady() = true in mode %v while a launch attempt holds the Flow", mode)
+		}
 		// A detached/dismissed terminal has no slot and therefore no occupancy.
 		if !m.selectedFlowRepairReady() {
 			t.Fatalf("selectedFlowRepairReady() = false in mode %v after terminal removal", mode)

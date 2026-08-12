@@ -751,9 +751,14 @@ func TestPhaseResumeOccupancyRefusals(t *testing.T) {
 			wantFooter: true,
 		},
 		{
-			name: "pending repair launch",
+			name: "repair attempt",
 			occupy: func(m Model) Model {
-				return m.withPendingFlowRepairLaunch(record.FlowID, "repair-1")
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:  "repair-1",
+					Kind:   flowLaunchKindRepair,
+					FlowID: record.FlowID,
+				}, flowLaunchStateReading)
+				return next
 			},
 			wantFooter: true,
 		},

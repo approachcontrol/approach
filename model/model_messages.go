@@ -501,13 +501,13 @@ type PlanLaunchRequestedMsg struct {
 	LaunchRelease func()
 }
 
+// FlowEmbeddedLaunchRequestedMsg is what remains of the pre-lifecycle embedded
+// launch path. Only Plan Now still emits it; repair, manual, automatic, and
+// resume launches all route through the launch lifecycle.
 type FlowEmbeddedLaunchRequestedMsg struct {
-	LaunchContext       actions.AgentLaunchContext
-	Request             uint64
-	RepairRecord        flowstore.FlowRecord
-	RepairValidationErr string
-	RepairRelease       func()
-	LaunchRelease       func()
+	LaunchContext actions.AgentLaunchContext
+	Request       uint64
+	LaunchRelease func()
 }
 
 type FlowCreatedMsg struct {

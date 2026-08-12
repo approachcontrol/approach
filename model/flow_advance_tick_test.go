@@ -917,7 +917,11 @@ func TestPendingFlowRepairReservationKeepsAutoAdvanceDrainQueued(t *testing.T) {
 		},
 	})
 	m.autoAdvanceDrainFlows = map[string]struct{}{current.FlowID: {}}
-	m.pendingFlowRepairLaunchIDs = map[string]string{current.FlowID: "repair-launch"}
+	m, _ = m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token:  "repair-launch",
+		Kind:   flowLaunchKindRepair,
+		FlowID: current.FlowID,
+	}, flowLaunchStateReading)
 
 	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{current})
 	if cmd != nil || updates != 0 {

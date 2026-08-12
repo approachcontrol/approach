@@ -2707,41 +2707,24 @@ func (m Model) launchAgentWithContextStatus(ctx actions.AgentLaunchContext, rele
 }
 
 func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
-	if msg.RepairRelease != nil {
-		defer msg.RepairRelease()
-	}
 	if msg.LaunchRelease != nil {
 		defer msg.LaunchRelease()
 	}
-	var repairRecord *flowstore.FlowRecord
-	if msg.LaunchContext.FlowRepair && msg.RepairValidationErr == "" && strings.TrimSpace(msg.RepairRecord.FlowID) != "" {
-		repairRecord = &msg.RepairRecord
-	}
-	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr, msg.LaunchRelease != nil)
+	return m.launchTrackedFlowEmbedded(msg.LaunchContext, msg.LaunchRelease != nil)
 }
 
 func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
-	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "", false)
+	return m.launchTrackedFlowEmbedded(ctx, false)
 }
 
-func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string, launchReserved bool) (Model, tea.Cmd) {
+// launchTrackedFlowEmbedded opens a tracked embedded Flow launch. It is what is
+// left of the pre-lifecycle embedded opener now that repair routes through the
+// lifecycle; Plan Now is its only production caller.
+func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchReserved bool) (Model, tea.Cmd) {
 	ctx.Embedded = true
-	if ctx.FlowRepair {
-		var current bool
-		m, current = m.consumePendingFlowRepairLaunch(ctx, repairRecord, validationErr)
-		if !current {
-			return m, nil
-		}
-		if repairRecord != nil {
-			ctx = refreshFlowRepairLaunchContext(ctx, *repairRecord)
-		}
-		ctx.FlowPhaseID = ""
-		ctx.FlowLaunchTracked = false
-	} else {
-		ctx.FlowLaunchTracked = true
-		if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
-			return m.startFlowLaunchFailure(ctx, "Flow phase launch canceled because a repair terminal is already open for this Flow")
-		}
+	ctx.FlowLaunchTracked = true
+	if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
+		return m.startFlowLaunchFailure(ctx, "Flow phase launch canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	open := m.openFlowEmbeddedTerminal

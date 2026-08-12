@@ -28,7 +28,10 @@ type internalFakeEmbeddedTerminal struct {
 	lines []string
 }
 
-func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) Model {
+// repairEmbeddedLaunchTestModel builds the Model and the reserved repair
+// attempt the launch lifecycle holds when it reaches the install stage, which
+// is where a repair terminal is opened now that R submits an intent.
+func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) (Model, flowLaunchAttempt) {
 	record := repairClassificationRecord(flowstore.FlowPhase{
 		PhaseID: "implementation",
 		Kind:    flowstore.KindImplementation,
@@ -37,8 +40,32 @@ func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) Model {
 	record.FlowID = ctx.FlowID
 	m := modelWithModeForTest(Model{height: 24, activePane: ui.PaneBottom}, ui.ModeFlows)
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
-	m.pendingFlowRepairLaunchIDs = map[string]string{ctx.FlowID: ctx.LaunchID}
-	return m
+	attempt := flowLaunchAttempt{
+		Token:  ctx.LaunchID,
+		Kind:   flowLaunchKindRepair,
+		FlowID: ctx.FlowID,
+		State:  flowLaunchStatePreparing,
+		// handleFlowLaunchEvent marks every successful prepared hop, repair
+		// included. What keeps a failed repair off the phase is the empty
+		// FlowPhaseID, not this flag, which is exactly what these tests pin.
+		MutatedPhase: true,
+	}
+	m, _ = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	return m, attempt
+}
+
+// installRepairLaunch runs the install stage for a prepared repair, the hop
+// that replaced the old FlowEmbeddedLaunchRequestedMsg handling.
+func installRepairLaunch(m Model, attempt flowLaunchAttempt, ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	return m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+		Token:   ctx.LaunchID,
+		Kind:    flowLaunchKindRepair,
+		From:    flowLaunchStatePreparing,
+		FlowID:  ctx.FlowID,
+		Stage:   flowLaunchStagePrepared,
+		Context: ctx,
+		Route:   flowLaunchRouteEmbedded,
+	})
 }
 
 func TestFlowRepairTerminalSlotPreservesRepairIdentityBeforePrefill(t *testing.T) {
@@ -49,14 +76,16 @@ func TestFlowRepairTerminalSlotPreservesRepairIdentityBeforePrefill(t *testing.T
 		FlowRepair:    true,
 		InitialPrompt: "Repair it",
 	}
-	m := repairEmbeddedLaunchTestModel(ctx)
+	m, attempt := repairEmbeddedLaunchTestModel(ctx)
 	m.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 		return internalFakeEmbeddedTerminal{}, nil
 	}
-	nextModel, cmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
-	next := nextModel.(Model)
+	next, cmd := installRepairLaunch(m, attempt, ctx)
 	if cmd == nil {
 		t.Fatal("interactive repair should return a prefill command")
+	}
+	if _, held := next.flowLaunchAttempt(ctx.FlowID); held {
+		t.Fatal("an installed repair slot owns the Flow; its attempt must be released")
 	}
 	if len(next.embeddedTerminals) != 1 {
 		t.Fatalf("embedded terminals = %#v, want one repair slot", next.embeddedTerminals)
@@ -99,31 +128,36 @@ func TestFlowRepairLaunchFailuresNeverMutatePhaseOrAllowAutoDrain(t *testing.T) 
 
 	t.Run("startup", func(t *testing.T) {
 		phaseUpdates := 0
-		m := repairEmbeddedLaunchTestModel(ctx)
+		m, attempt := repairEmbeddedLaunchTestModel(ctx)
 		m.setFlowPhase = func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates++
 			return flowstore.FlowRecord{}, nil
 		}
+		m.launchSeams.SetPhase = m.setFlowPhase
 		m.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			return nil, errors.New("startup failed")
 		}
-		next, _ := m.launchFlowEmbeddedWithContext(ctx)
+		next, _ := installRepairLaunch(m, attempt, ctx)
 		if phaseUpdates != 0 || len(next.pendingRepairAutoDrainFlowIDs) != 0 || !strings.Contains(next.visibleStatusText(), "startup failed") {
 			t.Fatalf("startup failure: updates=%d markers=%#v status=%q", phaseUpdates, next.pendingRepairAutoDrainFlowIDs, next.visibleStatusText())
+		}
+		if _, held := next.flowLaunchAttempt(ctx.FlowID); held {
+			t.Fatal("a failed repair install must release the Flow, not strand it")
 		}
 	})
 
 	t.Run("capacity", func(t *testing.T) {
 		phaseUpdates := 0
-		m := repairEmbeddedLaunchTestModel(ctx)
+		m, attempt := repairEmbeddedLaunchTestModel(ctx)
 		m.setFlowPhase = func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates++
 			return flowstore.FlowRecord{}, nil
 		}
+		m.launchSeams.SetPhase = m.setFlowPhase
 		for i := 1; i <= 9; i++ {
 			m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{Number: i, ID: embeddedTerminalID(i), Terminal: internalFakeEmbeddedTerminal{}})
 		}
-		next, _ := m.launchFlowEmbeddedWithContext(ctx)
+		next, _ := installRepairLaunch(m, attempt, ctx)
 		if phaseUpdates != 0 || len(next.pendingRepairAutoDrainFlowIDs) != 0 || !strings.Contains(next.visibleStatusText(), "Maximum embedded terminals") {
 			t.Fatalf("capacity failure: updates=%d markers=%#v status=%q", phaseUpdates, next.pendingRepairAutoDrainFlowIDs, next.visibleStatusText())
 		}
@@ -132,15 +166,16 @@ func TestFlowRepairLaunchFailuresNeverMutatePhaseOrAllowAutoDrain(t *testing.T) 
 	t.Run("prefill", func(t *testing.T) {
 		phaseUpdates := 0
 		term := &repairPrefillFailureTerminal{}
-		m := repairEmbeddedLaunchTestModel(ctx)
+		m, attempt := repairEmbeddedLaunchTestModel(ctx)
 		m.setFlowPhase = func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates++
 			return flowstore.FlowRecord{}, nil
 		}
+		m.launchSeams.SetPhase = m.setFlowPhase
 		m.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			return term, nil
 		}
-		next, cmd := m.launchFlowEmbeddedWithContext(ctx)
+		next, cmd := installRepairLaunch(m, attempt, ctx)
 		prefillCmd := isolatedFlowPrefillCommandFromLaunchBatch(t, cmd)
 		afterModel, _ := next.Update(prefillCmd())
 		after := afterModel.(Model)

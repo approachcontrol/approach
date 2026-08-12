@@ -580,9 +580,8 @@ On a Flow row or an expanded phase row:
   lifecycle reserves the Flow, re-reads the persisted record, and decides from
   it, so a launch the list advertised can still be refused once the fresh
   record disagrees. A launch is rejected — not merely unadvertised — while an
-  embedded terminal, a pending repair, or another launch or resume already
-  holds that Flow, and while a live session is attached to the phase being
-  launched. Dismiss or detach the Flow's terminal before launching
+  embedded terminal or another launch, resume, or repair already holds that
+  Flow, and while a live session is attached to the phase being launched. Dismiss or detach the Flow's terminal before launching
   its next phase. Both `g` bindings (flows view and Active Flows) behave
   identically.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
@@ -608,9 +607,9 @@ On a Flow row or an expanded phase row:
   that Flow — including a retained slot whose agent has already exited, and
   including a terminal on another phase — with `Close, detach, or dismiss the
   existing Flow terminal before resuming this phase`; `r` is withdrawn from the
-  footer for exactly that case. A lifecycle launch, a pending repair, or an
-  open repair terminal refuses silently, and `codex-app` resumes bypass
-  occupancy entirely. A different live session on the same phase refuses with
+  footer for exactly that case. Any competing lifecycle launch — including a
+  repair — or an open repair terminal refuses silently, and `codex-app` resumes
+  bypass occupancy entirely. A different live session on the same phase refuses with
   `Flow phase already has a running session`; the session being resumed does
   not count against itself, which is what keeps `r` open for a phase whose
   agent died without recording an end. That exemption is keyed on the store's
@@ -658,10 +657,24 @@ terminal Flow status, and manual Merge boundaries are intentionally not repair
 targets. A matched non-ended provider session counts as healthy active work
 even if its phase already says blocked or needs-attention. Any retained Flow terminal slot — including exited-before-auto-close,
 failed, terminated, starting, or prompt-prefill state — blocks repair until it
-is dismissed or detached. A pending repair launch also reserves the Flow, so
-repeated `R` input or a replayed/stale launch message cannot start a second
-repair agent; Approach fresh-reads the persisted Flow and rechecks eligibility
-before allocating the terminal.
+is dismissed or detached, with `Close, detach, or dismiss the existing Flow
+terminal before repairing this Flow`. A repair in flight reserves the Flow from
+the key press onward, so a second `R` reports `A repair launch is already
+pending for this Flow` and a replayed launch message is a silent no-op; a phase
+resume already holding the Flow reports `A phase resume is already pending for
+this Flow`. Approach fresh-reads the persisted Flow and rechecks eligibility
+before allocating the terminal, so a Flow that stopped being repairable in the
+meantime reports `Flow is no longer repairable`.
+
+Repair also refuses while the session store holds a live session belonging to
+any of the Flow's phase launches, with `Flow phase already has a running
+session`. That is wider than the classifier's own rule above, which sees only
+sessions a phase has already mirrored, and its effect is Flow-wide even though
+its evidence is per phase: a repair agent may `phase reset`, `phase set`, and
+`plan set` anywhere in the record, so it must not run beside a live phase agent
+on any phase. A running phase still awaiting session capture with no live
+session record anywhere stays repairable — that stale-launch state is the main
+reason `R` exists.
 
 Repair is an embedded CLI operation and accepts only `codex` or `claude`.
 `codex-app`, an unset agent, or another configured command produces guidance
@@ -692,8 +705,8 @@ always headless and do not change the current view or focus. Approach launches
 at most one phase per Flow at a time: if any phase is running or any
 Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
 It also waits while a manual phase resume or a repair on that Flow is still in
-flight, and while a session recorded against the phase it would launch has not
-ended. Each of those defers the launch silently and it resumes on a
+flight — both hold a launch attempt from their key press onward — and while a
+session recorded against the phase it would launch has not ended. Each of those defers the launch silently and it resumes on a
 later poll.
 
 That last one has no recovery path today. A session is treated as live until it
@@ -708,6 +721,15 @@ into the work — resume deliberately does not count the session it is
 reattaching to as occupancy — but it is not a fix: reattaching does not record
 the old session as ended, so auto mode stays blocked. Clearing the stall means
 editing the Flow record's session metadata by hand.
+
+There is a matching trap one step earlier, before a session is ever attached to
+its phase. A session record is written before the phase attach, and nothing
+finalizes it if the agent dies in between, so a phase that is `running` and
+awaiting session capture can be backed by a permanently live-looking store
+record. Repair cannot tell that from an agent that is genuinely still starting,
+so it refuses with `Flow phase already has a running session` and `R` stays
+withdrawn until that record ends. The route out is the CLI: `approach flow
+phase reset` clears the stale launch without the TUI.
 
 A 3 s status message announces auto-launches, `needs_attention`, and
 merge-ready transitions. Any status from elsewhere in the app blocks all of

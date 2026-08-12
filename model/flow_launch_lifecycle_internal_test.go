@@ -47,6 +47,13 @@ type manualLaunchHarness struct {
 	planBodyErr      error
 	launchAgentErr   error
 	reserveLaunchErr error
+	// Repair reserves through its own store call, whose error verb differs from
+	// the tracked one, so the double is separate too.
+	reserveRepairErr error
+	// repairReserved is the record the repair reservation returns when a test
+	// needs it to diverge from what the authoritative read saw.
+	repairReserved   flowstore.FlowRecord
+	repairReservedOK bool
 
 	agentCommand   string
 	persistedFlows []flowstore.FlowRecord
@@ -57,6 +64,8 @@ type manualLaunchHarness struct {
 	sessionListCalls   int
 	launchReservations int
 	launchReleases     int
+	repairReservations int
+	repairReleases     int
 
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
@@ -140,6 +149,20 @@ func (h *manualLaunchHarness) options() Options {
 			}
 			h.launchReservations++
 			return record, func() { h.launchReleases++ }, nil
+		},
+		ReserveFlowRepairLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if h.reserveRepairErr != nil {
+				return flowstore.FlowRecord{}, nil, h.reserveRepairErr
+			}
+			record := h.repairReserved
+			if !h.repairReservedOK {
+				var err error
+				if record, err = h.persistedFlow(strings.TrimSpace(flowID)); err != nil {
+					return flowstore.FlowRecord{}, nil, err
+				}
+			}
+			h.repairReservations++
+			return record, func() { h.repairReleases++ }, nil
 		},
 		ReadPlan: func(planID string) (string, error) {
 			if h.planBodyErr != nil {
@@ -795,12 +818,18 @@ func TestAutoFlowLaunchOccupancyRefusedAtAdmission(t *testing.T) {
 		release   func(Model) Model
 	}{
 		{
-			name: "pending repair launch",
+			name: "repair attempt",
 			occupy: func(m Model) Model {
-				return m.withPendingFlowRepairLaunch(record.FlowID, "repair-1")
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:  "repair-1",
+					Kind:   flowLaunchKindRepair,
+					FlowID: record.FlowID,
+				}, flowLaunchStateReading)
+				return next
 			},
+			heldToken: "repair-1",
 			release: func(m Model) Model {
-				return m.withoutPendingFlowRepairLaunch(record.FlowID)
+				return m.releaseFlowLaunchAttempt(record.FlowID, "repair-1")
 			},
 		},
 		{
@@ -1711,10 +1740,16 @@ func TestFlowLaunchAdmissionRejectsCompetingOccupancy(t *testing.T) {
 		heldToken string
 	}{
 		{
-			name: "pending repair launch",
+			name: "repair attempt",
 			occupy: func(m Model) Model {
-				return m.withPendingFlowRepairLaunch(record.FlowID, "repair-1")
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:  "repair-1",
+					Kind:   flowLaunchKindRepair,
+					FlowID: record.FlowID,
+				}, flowLaunchStateReading)
+				return next
 			},
+			heldToken: "repair-1",
 		},
 		{
 			name: "phase resume attempt",

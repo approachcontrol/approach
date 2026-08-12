@@ -4932,11 +4932,16 @@ func TestModel_GWithNoLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	}
 }
 
+// repairableFlowForShortcut names the selected repo as its own so a
+// prepare-stage refusal, which reaches the user through the repo-gated
+// ActionFailedMsg, is visible in these tests the way it is to a user looking at
+// the Flow they pressed R on. The worktree is a real directory because repair
+// resolves its launch paths through os.Stat.
 func repairableFlowForShortcut() flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:       "flow-repair",
 		Title:        "Repair shortcut",
-		RepoPath:     os.TempDir(),
+		RepoPath:     "/dev/alpha",
 		WorktreePath: os.TempDir(),
 		Branch:       "flow/repair",
 		Commit:       "abc123",
@@ -4953,6 +4958,22 @@ func repairableFlowForShortcut() flowstore.FlowRecord {
 			Notes:   "persisted metadata is inconsistent",
 		}},
 	}
+}
+
+func repairKey() tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}}
+}
+
+// repairFromKey presses R and settles the launch lifecycle's asynchronous hops.
+// R only submits an intent now: the authoritative read, the cross-process
+// reservation, and the terminal install all land on later messages.
+func repairFromKey(t *testing.T, m model.Model) model.Model {
+	t.Helper()
+	m, cmd := update(m, repairKey())
+	if cmd == nil {
+		t.Fatal("R should submit a repair launch intent")
+	}
+	return settleModelCommands(t, m, cmd, 6)
 }
 
 func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T) {
@@ -4987,19 +5008,9 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 				m = selectFlowPhaseByID(t, m, "implementation")
 			}
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-			if cmd == nil {
-				t.Fatal("R should prepare a Flow repair launch")
-			}
-			msg := cmd()
-			launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-			if !ok {
-				t.Fatalf("R command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-			}
-			ctx := launchMsg.LaunchContext
-			if launchMsg.RepairRecord.FlowID != record.FlowID || launchMsg.RepairValidationErr != "" {
-				t.Fatalf("persisted repair validation = record %#v error %q", launchMsg.RepairRecord, launchMsg.RepairValidationErr)
-			}
+			m = repairFromKey(t, m)
+
+			ctx := started
 			if !ctx.FlowRepair || ctx.FlowID != record.FlowID || ctx.FlowPhaseID != "" || ctx.FlowLaunchTracked {
 				t.Fatalf("repair launch classification = %#v", ctx)
 			}
@@ -5017,23 +5028,29 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 			if strings.Contains(ctx.InitialPrompt, model.FlowPhaseDoneInstructionForTest()) {
 				t.Fatalf("repair prompt contains ordinary phase completion instruction:\n%s", ctx.InitialPrompt)
 			}
-
-			m, _ = update(m, launchMsg)
-			if !started.FlowRepair || started.FlowPhaseID != "" || started.FlowLaunchTracked {
-				t.Fatalf("started repair context = %#v", started)
-			}
 			if launchUpdates != 0 {
 				t.Fatalf("repair recorded %d phase launch updates, want zero", launchUpdates)
+			}
+			if m.TransientError() != "" {
+				t.Fatalf("successful repair set status %q", m.TransientError())
 			}
 		})
 	}
 }
 
+// A Flow that closes between the authoritative read and the cross-process
+// reservation is the race this names: the read still sees an open record, and
+// only the reservation refuses. A close landing before the read is a different
+// refusal now — "Flow is no longer repairable" — because the classifier rejects
+// a closed record.
 func TestModel_RepairReservationRejectsCloseBeforeTerminalStart(t *testing.T) {
 	record := repairableFlowForShortcut()
 	started := 0
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return record, nil
+		},
 		ReserveFlowRepairLaunch: func(string) (flowstore.FlowRecord, func(), error) {
 			return flowstore.FlowRecord{}, nil, errors.New("cannot reserve repair because flow is closed")
 		},
@@ -5044,137 +5061,41 @@ func TestModel_RepairReservationRejectsCloseBeforeTerminalStart(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-	if cmd == nil {
-		t.Fatal("R should schedule the authoritative repair reservation")
-	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("repair command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, _ = update(m, launchMsg)
+	m = repairFromKey(t, m)
 	if started != 0 {
 		t.Fatalf("closed Flow started %d repair terminals, want zero", started)
 	}
-	if !strings.Contains(m.TransientError(), "closed") {
-		t.Fatalf("status = %q, want closed reservation error", m.TransientError())
+	if got := m.TransientError(); !strings.Contains(got, "closed") || !strings.Contains(got, "Reserve persisted Flow for repair: ") {
+		t.Fatalf("status = %q, want the wrapped closed reservation error", got)
+	}
+	if model.FlowLaunchAttemptHeldForTest(m, record.FlowID) {
+		t.Fatal("a refused repair reservation stranded its attempt")
 	}
 }
 
-func TestModel_RepairReservationHeldUntilTerminalStarts(t *testing.T) {
+func TestModel_RIsAvailableAgainAfterAFailedRepair(t *testing.T) {
 	record := repairableFlowForShortcut()
-	released := false
-	started := false
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
-		ReserveFlowRepairLaunch: func(string) (flowstore.FlowRecord, func(), error) {
-			return record, func() { released = true }, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			if released {
-				t.Fatal("repair reservation released before terminal start")
-			}
-			started = true
-			return &fakeEmbeddedTerminal{state: "running"}, nil
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("read failed")
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-	launchMsg := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-	m, _ = update(m, launchMsg)
-	if !started || !released {
-		t.Fatalf("repair start/release = %v/%v, want both true", started, released)
+	m = repairFromKey(t, m)
+	if got := m.TransientError(); !strings.Contains(got, "read failed") {
+		t.Fatalf("fresh-read failure status = %q", got)
 	}
-}
-
-func TestModel_RepairLaunchRefreshUsesAuthoritativeFlowHeadlessPreference(t *testing.T) {
-	for _, tt := range []struct {
-		name          string
-		cached        bool
-		authoritative bool
-	}{
-		{name: "cached on authoritative off", cached: true, authoritative: false},
-		{name: "cached off authoritative on", cached: false, authoritative: true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cached := repairableFlowForShortcut()
-			cached.Headless = tt.cached
-			authoritative := cached
-			authoritative.Headless = tt.authoritative
-			authoritative.UpdatedAt = time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)
-			var started actions.AgentLaunchContext
-			m := newTestModel(testRepos(), model.Options{
-				AgentCommand: "codex",
-				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-					return []flowstore.FlowRecord{authoritative}, nil
-				},
-				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-					started = ctx
-					return &fakeEmbeddedTerminal{state: "running"}, nil
-				},
-			})
-			m = flowsInRightPane(t, m, []flowstore.FlowRecord{cached})
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-			if cmd == nil {
-				t.Fatal("R returned nil repair validation command")
-			}
-			msg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-			if !ok {
-				t.Fatalf("repair validation returned %T", msg)
-			}
-			m, _ = update(m, msg)
-			if started.Headless != tt.authoritative {
-				t.Fatalf("started repair headless = %v, want authoritative %v", started.Headless, tt.authoritative)
-			}
-		})
-	}
-}
-
-func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T) {
-	repoPath := t.TempDir()
-	record := repairableFlowForShortcut()
-	record.RepoPath = repoPath
-	record.WorktreePath = filepath.Join(repoPath, "deleted-before-repair")
-	persisted := record
-	persisted.RepoPath = filepath.Join(repoPath, "deleted-repo-before-validation")
-	persisted.WorktreePath = filepath.Join(repoPath, "deleted-before-validation")
-	var started actions.AgentLaunchContext
-	var validationFilter flowstore.FlowFilter
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			validationFilter = filter
-			return []flowstore.FlowRecord{persisted}, nil
-		},
-		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
-			started = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-	if cmd == nil {
-		t.Fatal("repair with a usable repo fallback should prepare a launch")
-	}
-	launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-	if validationFilter.RepoPath != "" {
-		t.Fatalf("repair validation filter = %#v, want unscoped Flow-ID lookup", validationFilter)
-	}
-	if launch.LaunchContext.WorktreePath != repoPath {
-		t.Fatalf("initial repair worktree = %q, want repo fallback %q", launch.LaunchContext.WorktreePath, repoPath)
-	}
-	m, _ = update(m, launch)
-	if started.RepoPath != repoPath || started.WorktreePath != repoPath {
-		t.Fatalf("refreshed repair paths = repo %q worktree %q, want context fallback %q", started.RepoPath, started.WorktreePath, repoPath)
+	m, retryCmd := update(m, repairKey())
+	if retryCmd == nil || strings.Contains(m.TransientError(), "already pending") {
+		t.Fatalf("fresh-read failure retained its attempt: cmd=%T status=%q", retryCmd, m.TransientError())
 	}
 }
 
 func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
 	for _, retained := range []bool{false, true} {
-		name := "pending validation"
+		name := "pending repair attempt"
 		if retained {
 			name = "retained terminal"
 		}
@@ -5195,12 +5116,16 @@ func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
 				},
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-			m, repairCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-			if repairCmd == nil {
-				t.Fatal("repair should reserve validation")
-			}
 			if retained {
-				m, _ = update(m, repairCmd())
+				m = repairFromKey(t, m)
+			} else {
+				// Stop after the key press: the repair attempt holds the Flow
+				// from admission onward, before any terminal exists.
+				var repairCmd tea.Cmd
+				m, repairCmd = update(m, repairKey())
+				if repairCmd == nil {
+					t.Fatal("repair should reserve a launch attempt")
+				}
 			}
 
 			repaired := record
@@ -5218,87 +5143,62 @@ func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
 	}
 }
 
-func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testing.T) {
-	t.Run("duplicate", func(t *testing.T) {
-		starts := 0
-		record := repairableFlowForShortcut()
-		m := newTestModel(testRepos(), model.Options{
-			AgentCommand: "codex",
-			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-				starts++
-				return &fakeEmbeddedTerminal{state: "running"}, nil
-			},
-			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-				return []flowstore.FlowRecord{record}, nil
-			},
-		})
-		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-
-		m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-		if firstCmd == nil {
-			t.Fatal("first repair command is nil")
-		}
-		if got := m.TransientError(); !strings.Contains(got, "already pending") {
-			t.Fatalf("duplicate repair status = %q", got)
-		}
-		launch := firstCmd().(model.FlowEmbeddedLaunchRequestedMsg)
-		m, _ = update(m, launch)
-		m, _ = update(m, launch)
-		if starts != 1 {
-			t.Fatalf("duplicate repair message started %d terminals, want one", starts)
-		}
+func TestModel_RReservesRepairLaunchAndRejectsDuplicatePresses(t *testing.T) {
+	starts := 0
+	record := repairableFlowForShortcut()
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{record}, nil
+		},
 	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 
-	t.Run("stale eligibility", func(t *testing.T) {
-		starts := 0
-		record := repairableFlowForShortcut()
-		persisted := record
-		persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
-		m := newTestModel(testRepos(), model.Options{
-			AgentCommand: "codex",
-			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-				starts++
-				return &fakeEmbeddedTerminal{state: "running"}, nil
-			},
-			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-				return []flowstore.FlowRecord{persisted}, nil
-			},
-		})
-		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	m, firstCmd := update(m, repairKey())
+	if firstCmd == nil {
+		t.Fatal("first repair command is nil")
+	}
+	// The second press is refused at admission; the only command it returns is
+	// the status expiry timer.
+	m, _ = update(m, repairKey())
+	if got := m.TransientError(); !strings.Contains(got, "already pending") {
+		t.Fatalf("duplicate repair status = %q", got)
+	}
+	m = settleModelCommands(t, m, firstCmd, 6)
+	if starts != 1 {
+		t.Fatalf("duplicate repair press started %d terminals, want one", starts)
+	}
+}
 
-		persisted.Phases[0].Status = flowstore.PhaseReady
-		launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-		m, _ = update(m, launch)
-		if starts != 0 {
-			t.Fatalf("stale repair request started %d terminals, want zero", starts)
-		}
-		if got := m.TransientError(); !strings.Contains(got, "no longer repairable") {
-			t.Fatalf("stale repair status = %q", got)
-		}
+func TestModel_RRefusesWhenPersistedFlowIsNoLongerRepairable(t *testing.T) {
+	starts := 0
+	record := repairableFlowForShortcut()
+	persisted := record
+	persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	persisted.Phases[0].Status = flowstore.PhaseReady
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return persisted, nil
+		},
 	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 
-	t.Run("fresh read failure clears reservation", func(t *testing.T) {
-		record := repairableFlowForShortcut()
-		m := newTestModel(testRepos(), model.Options{
-			AgentCommand: "codex",
-			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-				return nil, errors.New("read failed")
-			},
-		})
-		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-		launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-		m, _ = update(m, launch)
-		if got := m.TransientError(); !strings.Contains(got, "read failed") {
-			t.Fatalf("fresh-read failure status = %q", got)
-		}
-		m, retryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
-		if retryCmd == nil || strings.Contains(m.TransientError(), "already pending") {
-			t.Fatalf("fresh-read failure retained reservation: cmd=%T status=%q", retryCmd, m.TransientError())
-		}
-	})
+	m = repairFromKey(t, m)
+	if starts != 0 {
+		t.Fatalf("stale repair request started %d terminals, want zero", starts)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "no longer repairable") {
+		t.Fatalf("stale repair status = %q", got)
+	}
 }
 
 func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
@@ -5399,7 +5299,7 @@ func TestModel_RIsNoopForHealthyFlowAndExplainsOccupiedRepairSlot(t *testing.T) 
 			FlowPhaseID: "implementation",
 			Headless:    true,
 		}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		m, _ = update(m, repairKey())
 		if starts != 1 {
 			t.Fatalf("occupied repair started %d terminals, want only existing slot", starts)
 		}
@@ -7480,16 +7380,22 @@ func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testi
 		if resumeCmd == nil {
 			t.Fatal("resume should reserve a persistence command")
 		}
-		blocked, _ := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if !model.FlowLaunchAttemptHeldForTest(pending, record.FlowID) {
+			t.Fatal("resume should hold the Flow through a lifecycle attempt")
+		}
+		blocked, _ := update(pending, repairKey())
 		if got := blocked.TransientError(); !strings.Contains(got, "phase resume is already pending") {
 			t.Fatalf("repair status = %q, want pending phase-resume guidance", got)
 		}
 	})
 
 	t.Run("pending repair blocks resume", func(t *testing.T) {
-		pending, repairCmd := update(newModel(), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		pending, repairCmd := update(newModel(), repairKey())
 		if repairCmd == nil {
-			t.Fatal("repair should reserve a validation command")
+			t.Fatal("repair should reserve a launch attempt")
+		}
+		if !model.FlowLaunchAttemptHeldForTest(pending, record.FlowID) {
+			t.Fatal("repair should hold the Flow through a lifecycle attempt")
 		}
 		_, resumeCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 		if resumeCmd != nil {

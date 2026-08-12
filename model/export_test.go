@@ -123,6 +123,13 @@ func FetchForModeForTest(m Model) tea.Cmd {
 	return m.fetchForMode()
 }
 
+// FlowLaunchAttemptHeldForTest reports whether a launch lifecycle attempt owns
+// this Flow. It is the successor to the repair pending map that external tests
+// used to inspect directly.
+func FlowLaunchAttemptHeldForTest(m Model, flowID string) bool {
+	return m.flowLaunchAttemptOccupied(flowID)
+}
+
 func FlowPhaseDoneInstructionForTest() string {
 	return flowPhaseDoneInstruction
 }

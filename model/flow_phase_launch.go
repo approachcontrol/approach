@@ -578,7 +578,9 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
-	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.flowLaunchAttemptOccupied(record.FlowID) {
+	// A pending repair is a lifecycle attempt now, so attempt occupancy covers
+	// it without a second signal.
+	if m.flowLaunchAttemptOccupied(record.FlowID) {
 		return true
 	}
 	for _, phase := range record.Phases {

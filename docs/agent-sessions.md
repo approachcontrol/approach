@@ -136,5 +136,5 @@ validated, never re-derived from the record the write returns. Occupancy is
 Flow-scoped for CLI resumes and matches every other launch kind: an embedded
 terminal on that Flow — on any phase and in any state — refuses the resume out
 loud until it is closed, detached, or dismissed, while another lifecycle attempt
-or a pending repair refuses it silently. `codex-app` navigation is exempt from
+— a manual launch, an auto launch, or a repair — refuses it silently. `codex-app` navigation is exempt from
 all of it.

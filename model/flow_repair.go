@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
-	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -138,223 +137,42 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 	return false
 }
 
-func (m Model) selectedFlowRepairObstruction() (flowstore.FlowRecord, flowRepairObstruction, bool) {
-	if !m.flowSurfaceVisible() {
-		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
-	}
-	record, ok := m.selectedFlow()
-	if !ok || strings.TrimSpace(record.FlowID) == "" {
-		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
-	}
-	obstruction, ok := flowRepairObstructionForRecord(record)
-	return record, obstruction, ok
-}
-
+// selectedFlowRepairReady is the footer's answer, and it is the preview
+// boundary plus the one term that boundary cannot carry. The intent has a blank
+// Flow ID because ui.FlowRepairReady takes no arguments: cachedFlowRecord("")
+// falls back to selectedFlow(), which is the selection semantics this predicate
+// has always had.
+//
+// The headless term stays outside the preview because admission's occupancy set
+// has no headless notion and flowLaunchAdmissionOccupied is shared with kinds
+// that must not inherit one. Dropping it here would re-advertise R during an
+// in-flight headless write, which admission still refuses.
 func (m Model) selectedFlowRepairReady() bool {
-	record, _, ok := m.selectedFlowRepairObstruction()
-	return ok &&
-		!m.hasFlowEmbeddedTerminalForFlow(record.FlowID) &&
-		!m.hasPendingFlowRepairLaunch(record.FlowID) &&
-		// A repair must not arm while the launch lifecycle holds this Flow.
-		!m.flowLaunchAttemptOccupied(record.FlowID) &&
-		// Repair refuses while a headless write is in flight, so the footer
-		// must stop advertising it for as long as one is.
-		!m.flowHeadlessWritePending(record.FlowID)
+	record, _, ok := m.previewRepairLaunch(m.repairFlowLaunchIntent(""))
+	return ok && !m.flowHeadlessWritePending(record.FlowID)
 }
 
+// handleRepairSelectedFlow is submit-only. Every refusal, path resolution, and
+// context build now belongs to the lifecycle.
 func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
-	record, obstruction, ok := m.selectedFlowRepairObstruction()
-	if !ok {
-		return m, nil
-	}
-	// Every unready reason is named explicitly, ordered so the durable
-	// obstacles come before the transient one: a headless write clears on its
-	// own, an open terminal does not.
-	if !m.selectedFlowRepairReady() {
-		if m.hasPendingFlowRepairLaunch(record.FlowID) {
-			return m.setStatus(statusOther, "A repair launch is already pending for this Flow"), nil
-		}
-		if m.flowLaunchAttemptKind(record.FlowID) == flowLaunchKindPhaseResume {
-			return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), nil
-		}
-		if m.hasFlowEmbeddedTerminalForFlow(record.FlowID) || m.flowLaunchAttemptOccupied(record.FlowID) {
-			return m.setStatus(statusOther, "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"), nil
-		}
-		// Repair reads the persisted headless preference asynchronously, so it
-		// must wait for an in-flight toggle exactly as a phase launch does.
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
-	}
-
-	command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
-	switch command {
-	case "":
-		return m.setStatus(statusOther, "Press A to choose codex or claude before repairing a Flow"), nil
-	case agent.CommandCodexApp:
-		return m.setStatus(statusOther, "Flow repair requires an embedded CLI agent; press A to choose codex or claude"), nil
-	case agent.CommandCodex, agent.CommandClaude:
-		// Supported below.
-	default:
-		return m.setStatus(statusOther, fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", command)), nil
-	}
-
-	currentRepoPath, _ := m.currentRepoPath()
-	// Repair's live-agent fence is hasFlowEmbeddedTerminalForFlow, and in tmux
-	// mode that slot does not exist: a phase running in a tmux window records no
-	// session until the provider hook fires, so it reads as recoverable and arms
-	// repair while its agent is mid-run. Without this, R would put an untracked
-	// second agent in the same worktree and instruct it to rewrite the running
-	// phase's persisted state. Probed here rather than in selectedFlowRepairReady
-	// for the same reason as reset and resume: that predicate feeds the footer.
-	if m.tmuxFlowAgentStillRunning(record, currentRepoPath) {
+	intent := m.repairFlowLaunchIntent("")
+	// The one refusal that cannot move into admission. Repair's live-agent fence
+	// is hasFlowEmbeddedTerminalForFlow, and in tmux mode that slot does not
+	// exist: a phase running in a tmux window records no session until the
+	// provider hook fires, so it reads as recoverable and arms repair while its
+	// agent is mid-run. Without this, R would put an untracked second agent in
+	// the same worktree and instruct it to rewrite the running phase's persisted
+	// state. It stays on the keystroke because it runs a tmux subprocess, and
+	// admission's preview is what the footer evaluates every frame.
+	//
+	// previewRepairLaunch, not cachedRepairTarget: an occupied Flow is refused by
+	// admission with the name of what holds it, and probing first would answer a
+	// different question with a worse message.
+	if record, _, ok := m.previewRepairLaunch(intent); ok && m.tmuxFlowAgentStillRunning(record, intent.FallbackRepoPath) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
-
-	repoPath, worktreePath, pathOK := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, currentRepoPath)
-	if !pathOK {
-		return m.setStatus(statusOther, "Cannot find a usable worktree or repository directory for this Flow repair"), nil
-	}
-	planPath := strings.TrimSpace(record.PlanPath)
-	if record.PlanID != "" && planPath == "" {
-		if m.planMarkdownPath == nil {
-			return m.setStatus(statusOther, "Cannot determine linked plan path for this Flow repair"), nil
-		}
-		var err error
-		planPath, err = m.planMarkdownPath(record.PlanID)
-		if err != nil {
-			return m.setStatus(statusOther, err.Error()), nil
-		}
-	}
-
-	ctx := actions.AgentLaunchContext{
-		Command:          command,
-		LaunchID:         newLaunchID(),
-		RepoPath:         repoPath,
-		WorktreePath:     worktreePath,
-		Branch:           record.Branch,
-		Commit:           record.Commit,
-		SessionStateRoot: m.sessionStateRoot,
-		PlanID:           record.PlanID,
-		PlanPath:         planPath,
-		FlowID:           record.FlowID,
-		FlowRepair:       true,
-		Embedded:         true,
-		Headless:         record.Headless,
-		Model:            modelName,
-		ReasoningEffort:  reasoningEffort,
-		InitialPrompt:    flowRepairPrompt(record, obstruction),
-	}
-	m = m.withPendingFlowRepairLaunch(record.FlowID, ctx.LaunchID)
-	reserveRepairLaunch := m.reserveFlowRepairLaunch
-	return m, func() tea.Msg {
-		msg := FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-		current, release, err := reserveRepairLaunch(ctx.FlowID)
-		if err != nil {
-			msg.RepairValidationErr = "Reserve persisted Flow for repair: " + err.Error()
-			return msg
-		}
-		msg.RepairRecord = current
-		msg.RepairRelease = release
-		return msg
-	}
-}
-
-func (m Model) hasPendingFlowRepairLaunch(flowID string) bool {
-	flowID = strings.TrimSpace(flowID)
-	return flowID != "" && strings.TrimSpace(m.pendingFlowRepairLaunchIDs[flowID]) != ""
-}
-
-func (m Model) withPendingFlowRepairLaunch(flowID, launchID string) Model {
-	flowID = strings.TrimSpace(flowID)
-	launchID = strings.TrimSpace(launchID)
-	if flowID == "" || launchID == "" {
-		return m
-	}
-	pending := make(map[string]string, len(m.pendingFlowRepairLaunchIDs)+1)
-	for existingFlowID, existingLaunchID := range m.pendingFlowRepairLaunchIDs {
-		pending[existingFlowID] = existingLaunchID
-	}
-	pending[flowID] = launchID
-	m.pendingFlowRepairLaunchIDs = pending
-	return m
-}
-
-func (m Model) withoutPendingFlowRepairLaunch(flowID string) Model {
-	flowID = strings.TrimSpace(flowID)
-	if flowID == "" {
-		return m
-	}
-	if _, ok := m.pendingFlowRepairLaunchIDs[flowID]; !ok {
-		return m
-	}
-	pending := make(map[string]string, len(m.pendingFlowRepairLaunchIDs)-1)
-	for existingFlowID, launchID := range m.pendingFlowRepairLaunchIDs {
-		if existingFlowID != flowID {
-			pending[existingFlowID] = launchID
-		}
-	}
-	if len(pending) == 0 {
-		pending = nil
-	}
-	m.pendingFlowRepairLaunchIDs = pending
-	return m
-}
-
-func (m Model) flowRecordForRepairLaunch(flowID string) (flowstore.FlowRecord, bool) {
-	flowID = strings.TrimSpace(flowID)
-	if flowID == "" {
-		return flowstore.FlowRecord{}, false
-	}
-	var found flowstore.FlowRecord
-	ok := false
-	consider := func(records []flowstore.FlowRecord) {
-		for _, record := range records {
-			if strings.TrimSpace(record.FlowID) != flowID {
-				continue
-			}
-			if !ok || !record.UpdatedAt.Before(found.UpdatedAt) {
-				found = record
-				ok = true
-			}
-		}
-	}
-	consider(m.autoAdvanceSnapshot)
-	consider(m.activeFlowRecords)
-	consider(m.flows.Items())
-	consider(m.activeFlows.Items())
-	return found, ok
-}
-
-func (m Model) consumePendingFlowRepairLaunch(ctx actions.AgentLaunchContext, authoritative *flowstore.FlowRecord, validationErr string) (Model, bool) {
-	flowID := strings.TrimSpace(ctx.FlowID)
-	launchID := strings.TrimSpace(ctx.LaunchID)
-	if flowID == "" || launchID == "" || m.pendingFlowRepairLaunchIDs[flowID] != launchID {
-		return m.setStatus(statusOther, "Flow repair request is no longer current"), false
-	}
-	m = m.withoutPendingFlowRepairLaunch(flowID)
-	if validationErr != "" {
-		return m.setStatus(statusOther, validationErr), false
-	}
-	var record flowstore.FlowRecord
-	ok := false
-	if authoritative != nil {
-		record = *authoritative
-		ok = strings.TrimSpace(record.FlowID) == flowID
-	} else {
-		record, ok = m.flowRecordForRepairLaunch(flowID)
-	}
-	if !ok {
-		return m.setStatus(statusOther, "Flow repair request is stale; refresh and try again"), false
-	}
-	if _, repairable := flowRepairObstructionForRecord(record); !repairable {
-		return m.setStatus(statusOther, "Flow is no longer repairable"), false
-	}
-	if m.flowLaunchAttemptKind(flowID) == flowLaunchKindPhaseResume {
-		return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), false
-	}
-	if m.hasFlowEmbeddedTerminalForFlow(flowID) {
-		return m.setStatus(statusOther, "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"), false
-	}
-	return m, true
+	next, cmd, _ := m.requestFlowLaunch(intent)
+	return next, cmd
 }
 
 func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flowstore.FlowRecord) actions.AgentLaunchContext {
