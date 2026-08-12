@@ -809,6 +809,17 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 // state. It saves nothing when that state no longer represents this completion
 // attempt; see phaseStillHoldsCommittedCompletion for what "no longer" means and
 // why declining beats clobbering.
+//
+// It also declines when the demotion would contradict durable merge metadata.
+// validateMergeUpdate refuses to record a merged Merge unless the merge phase is
+// completed, so "Merge merged beside a merge phase that is not completed" was
+// unreachable while the sync held the Flow writer. Post-commit it is reachable:
+// the phase is durably completed for the length of the sync, so a concurrent
+// SetMerge is legal, and demoting afterwards would leave merged metadata that
+// DeriveStatus reads as a merged Flow — hiding the needs_attention phase behind
+// a status the TUI drops from its active list. Declining keeps the phase
+// completed, which is the accepted no-marker window and leaves the idempotent
+// retry available.
 func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
@@ -821,6 +832,9 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 		record := stored.record
 		index := phaseIndexByID(record.Phases, committedPhase.PhaseID)
 		if index < 0 || !phaseStillHoldsCommittedCompletion(record.Phases[index], committedPhase) {
+			return record, nil
+		}
+		if record.Merge.Status == MergeMerged && index == mergePhaseIndex(record) {
 			return record, nil
 		}
 		// One fresh clock read for all three stamps. Reusing the committing
@@ -1117,12 +1131,14 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 //     status, though the agent's own completed write is rejected while its phase
 //     sits at pending until readiness re-promotes the row.
 //  3. NO MARKER AT ALL. The second update can fail to acquire the writer under
-//     contention, or its stale-state guard can deliberately decline to write
-//     because another writer re-completed the phase first. Either way the window
-//     never closes: a completed phase, a stale plan, no needs_attention marker,
-//     and only the returned error as a signal. See
-//     phaseStillHoldsCommittedCompletion for why the guard declines on a
-//     competing completion but not on a concurrent session or launch-id write.
+//     contention, or its guard can deliberately decline to write: because
+//     another writer re-completed the phase first, or because a concurrent
+//     SetMerge recorded a durable merge against this merge phase, which the
+//     demotion would contradict. Either way the window never closes: a completed
+//     phase, a stale plan, no needs_attention marker, and only the returned
+//     error as a signal. See phaseStillHoldsCommittedCompletion for why the
+//     guard declines on a competing completion but not on a concurrent session
+//     or launch-id write, and compensatePhaseSyncFailure for the merge clause.
 //
 // All three are accepted for the same reasons. The two stores have never been
 // atomic — the file backend had the opposite skew — the Flow database remains

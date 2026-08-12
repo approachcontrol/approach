@@ -271,9 +271,11 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 The plan write happens **after** the Flow phase change commits, so there is a
 brief window in which the phase reads as completed before a failed sync demotes
 it. The demotion can also fail to land at all — on a crash inside the window, on
-a second write that cannot acquire the writer, or when another writer has
-re-completed the phase in the meantime and the demotion is deliberately declined
-rather than allowed to overwrite them. The Flow then keeps a completed phase
+a second write that cannot acquire the writer, or when the demotion is
+deliberately declined rather than allowed to overwrite a concurrent writer:
+because that writer re-completed the phase in the meantime, or because it
+recorded a merge against a completed Merge phase, which a demotion would leave in
+a state `approach flow merge set` itself refuses to create. The Flow then keeps a completed phase
 beside a stale plan, with no `needs_attention` marker and only the returned error
 as a signal. Writes that do not change the completion — attaching an agent
 session, recording a resume launch — do not trigger that decline; only a

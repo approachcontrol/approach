@@ -933,6 +933,73 @@ func TestPostCommitSyncFailureResetsATerminalSuccessor(t *testing.T) {
 	}
 }
 
+// TestSetPhaseSkipsCompensationWhenTheMergeWasRecordedDuringTheWindow pins the
+// one demotion that would create a record no writer could otherwise reach.
+// validateMergeUpdate refuses to record a merged Merge unless the merge phase is
+// completed, so before the reordering "Merge merged beside a non-completed merge
+// phase" was unreachable. Post-commit the phase IS durably completed while the
+// sync runs, so a concurrent SetMerge succeeds — and demoting the phase
+// afterwards would leave merged metadata that DeriveStatus reads as a merged
+// Flow, hiding the needs_attention phase behind a status the TUI drops from its
+// active list. The compensation declines instead, which keeps the phase
+// completed and the documented idempotent retry available.
+func TestSetPhaseSkipsCompensationWhenTheMergeWasRecordedDuringTheWindow(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, record := newMergeReadySeamFlow(t, syncer)
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		completed, err := store.SetPhase(PhaseUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: "merge",
+			Status:  PhaseCompleted,
+			Outcome: MergeMerged,
+		})
+		results <- syncOutcome{record: completed, err: err}
+	}()
+	block.waitReached(t)
+
+	// Legal only because the phase is already durably completed: this is the
+	// write the old in-transaction ordering made unreachable.
+	if _, err := store.SetMerge(MergeUpdate{
+		FlowID:   record.FlowID,
+		Status:   MergeMerged,
+		Commit:   "cafebabe",
+		MergedAt: time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("SetMerge(during the window) error = %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("SetPhase() error = %v, want the sync failure returned even when compensation is skipped", got.err)
+	}
+	phase := phaseFromStore(t, store, record.FlowID, "merge")
+	if phase.Status != PhaseCompleted {
+		t.Fatalf("merge phase status = %q, want %q kept beside the durable merge", phase.Status, PhaseCompleted)
+	}
+	if strings.Contains(phase.Notes, "Linked plan phase sync failed") {
+		t.Fatalf("merge phase notes = %q, want no marker that contradicts the recorded merge", phase.Notes)
+	}
+	stored, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if stored.Merge.Status != MergeMerged || stored.Merge.Commit != "cafebabe" {
+		t.Fatalf("stored merge = %+v, want the concurrent writer's merge preserved", stored.Merge)
+	}
+	if stored.Status != StatusMerged {
+		t.Fatalf("flow status = %q, want %q derived from the durable merge", stored.Status, StatusMerged)
+	}
+}
+
 // TestCompensatedPhaseRecoversThroughRestartAndCompletion pins the documented
 // recovery for the case where the compensation DID land, which is not the same
 // one as for the no-marker windows. A demoted phase cannot simply be completed
