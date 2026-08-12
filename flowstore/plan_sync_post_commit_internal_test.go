@@ -261,10 +261,111 @@ func TestMarkManualMergeCommitsBeforeTheLinkedPlanSyncRuns(t *testing.T) {
 }
 
 // TestSetPhaseSkipsCompensationWhenTheCommittedPhaseChanged pins the guard on
-// the second update. A resume launch-id append lands on the same phase while the
-// sync is parked: it keeps the phase completed and stamps a new UpdatedAt, so
-// status alone would not catch it. Compensating anyway would revert the append.
+// the second update. A concurrent re-completion lands on the same phase while
+// the sync is parked and rewrites the summary: the phase is still completed, so
+// status alone would not catch it, and demoting it would attribute this
+// caller's sync failure to a completion it did not make. The concurrent call
+// takes SetPhase's own completed-retry path, so it leaves no marker of its own
+// and the assertions below see only what the guard did.
 func TestSetPhaseSkipsCompensationWhenTheCommittedPhaseChanged(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{
+		Now: advancingClock(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), time.Millisecond),
+	})
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		record, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted})
+		results <- syncOutcome{record: record, err: err}
+	}()
+	block.waitReached(t)
+
+	if _, err := store.SetPhase(PhaseUpdate{
+		FlowID:  linked.FlowID,
+		PhaseID: "plan",
+		Status:  PhaseCompleted,
+		Summary: "Re-completed by another writer.",
+	}); err != nil {
+		t.Fatalf("SetPhase(concurrent re-completion) error = %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("SetPhase() error = %v, want the sync failure returned even when compensation is skipped", got.err)
+	}
+	phase := phaseFromStore(t, store, linked.FlowID, "plan")
+	if phase.Status != PhaseCompleted {
+		t.Fatalf("plan phase status = %q, want the concurrent writer's %q preserved", phase.Status, PhaseCompleted)
+	}
+	if strings.Contains(phase.Notes, "Linked plan phase sync failed") {
+		t.Fatalf("plan phase notes = %q, want no compensation note over a concurrent completion", phase.Notes)
+	}
+	if phase.Summary != "Re-completed by another writer." {
+		t.Fatalf("plan phase summary = %q, want the concurrent completion preserved", phase.Summary)
+	}
+}
+
+// TestSetPhaseCompensatesWhenOnlyPhaseMetadataChanged is the other side of the
+// guard, and the reason it cannot key on UpdatedAt alone. AttachSession bumps a
+// completed phase's UpdatedAt without touching the completion, and it is driven
+// by agent-session ingest — which fires at almost exactly the moment the
+// completing write is parked on the plan lock. Rejecting on that would turn a
+// compensable sync failure into a silently stale plan with no marker anywhere.
+func TestSetPhaseCompensatesWhenOnlyPhaseMetadataChanged(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{
+		Now: advancingClock(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), time.Millisecond),
+	})
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		record, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted})
+		results <- syncOutcome{record: record, err: err}
+	}()
+	block.waitReached(t)
+
+	if _, err := store.AttachSession(SessionAttachUpdate{
+		FlowID:  linked.FlowID,
+		PhaseID: "plan",
+		Session: Session{Provider: "claude", SessionID: "sess-1", LaunchID: "launch-1", Status: "running"},
+	}); err != nil {
+		t.Fatalf("AttachSession(during the window) error = %v", err)
+	}
+	before := phaseFromStore(t, store, linked.FlowID, "plan")
+	if !before.UpdatedAt.After(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)) || len(before.Sessions) != 1 {
+		t.Fatalf("phase after the metadata write = %+v, want a bumped UpdatedAt and the attached session", before)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("SetPhase() error = %v, want the sync failure", got.err)
+	}
+	assertPhaseNeedsAttention(t, store, linked.FlowID, "plan")
+	phase := phaseFromStore(t, store, linked.FlowID, "plan")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].SessionID != "sess-1" {
+		t.Fatalf("plan phase sessions = %+v, want the concurrent attach preserved through the compensation", phase.Sessions)
+	}
+}
+
+// TestSetPhaseCompensatesWhenALaunchIDWasAppended is the same guarantee for the
+// other metadata writer that lands on completed rows: a resume launch-id
+// append. The compensation is computed from the freshly read row, so it demotes
+// the phase without discarding the append.
+func TestSetPhaseCompensatesWhenALaunchIDWasAppended(t *testing.T) {
 	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
 	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{
 		Now: advancingClock(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), time.Millisecond),
@@ -293,17 +394,11 @@ func TestSetPhaseSkipsCompensationWhenTheCommittedPhaseChanged(t *testing.T) {
 	}
 
 	block.release()
-	got := <-results
-	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
-		t.Fatalf("SetPhase() error = %v, want the sync failure returned even when compensation is skipped", got.err)
+	if got := <-results; got.err == nil {
+		t.Fatal("SetPhase() error = nil, want the sync failure")
 	}
+	assertPhaseNeedsAttention(t, store, linked.FlowID, "plan")
 	phase := phaseFromStore(t, store, linked.FlowID, "plan")
-	if phase.Status != PhaseCompleted {
-		t.Fatalf("plan phase status = %q, want the concurrent writer's %q preserved", phase.Status, PhaseCompleted)
-	}
-	if strings.Contains(phase.Notes, "Linked plan phase sync failed") {
-		t.Fatalf("plan phase notes = %q, want no compensation note over a concurrent write", phase.Notes)
-	}
 	found := false
 	for _, launchID := range phase.LaunchIDs {
 		if launchID == "resume-launch" {
@@ -312,6 +407,251 @@ func TestSetPhaseSkipsCompensationWhenTheCommittedPhaseChanged(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("plan phase launch ids = %v, want the concurrent resume append preserved", phase.LaunchIDs)
+	}
+}
+
+// TestMarkManualMergeSkipsCompensationWhenTheMergeChanged pins the half of the
+// merge guard that SetPhase has no equivalent for. The merge phase is untouched
+// during the window, so the phase half of the guard still passes; only the
+// merge metadata moves. Without the mergeEqual clause the rollback would fire
+// and overwrite a concurrent writer's merge with MergePending.
+func TestMarkManualMergeSkipsCompensationWhenTheMergeChanged(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, record := newMergeReadySeamFlow(t, syncer)
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		merged, err := store.MarkManualMerge(ManualMergeUpdate{
+			FlowID:   record.FlowID,
+			PRNumber: record.PR.Number,
+			PRURL:    record.PR.URL,
+			Commit:   "deadbeef",
+			MergedAt: time.Date(2026, 5, 6, 9, 0, 0, 0, time.UTC),
+		})
+		results <- syncOutcome{record: merged, err: err}
+	}()
+	block.waitReached(t)
+
+	if _, err := store.SetMerge(MergeUpdate{
+		FlowID:   record.FlowID,
+		Status:   MergeMerged,
+		Commit:   "cafebabe",
+		MergedAt: time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("SetMerge(during the window) error = %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("MarkManualMerge() error = %v, want the sync failure returned even when compensation is skipped", got.err)
+	}
+	// The documented return contract for a guard rejection: still merged, beside
+	// the error, because that is the truth of the durable state.
+	if got.record.FlowID != record.FlowID || got.record.PR.Status != MergeMerged {
+		t.Fatalf("MarkManualMerge() record = %+v, want the still-merged record beside the error", got.record)
+	}
+	stored, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if stored.PR.Status != MergeMerged {
+		t.Fatalf("stored PR status = %q, want no rollback over a concurrent merge write", stored.PR.Status)
+	}
+	if stored.Merge.Commit != "cafebabe" || stored.Merge.Status == MergePending {
+		t.Fatalf("stored merge = %+v, want the concurrent writer's merge preserved", stored.Merge)
+	}
+	phase := phaseFromStore(t, store, record.FlowID, "merge")
+	if phase.Status != PhaseCompleted {
+		t.Fatalf("merge phase status = %q, want %q preserved", phase.Status, PhaseCompleted)
+	}
+	if strings.Contains(phase.Notes, "Linked plan phase sync failed") {
+		t.Fatalf("merge phase notes = %q, want no compensation note over a concurrent write", phase.Notes)
+	}
+}
+
+// TestMarkManualMergeSkipsCompensationWhenThePRStatusChanged pins the remaining
+// clause of the merge guard, which mergeEqual does NOT make redundant: SetPR
+// replaces record.PR wholesale, including Status, without touching record.Merge
+// and without stamping the merge phase's UpdatedAt. So a concurrent SetPR clears
+// both other clauses, and only this one stops the rollback from overwriting the
+// PR status that writer just set.
+func TestMarkManualMergeSkipsCompensationWhenThePRStatusChanged(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, record := newMergeReadySeamFlow(t, syncer)
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		merged, err := store.MarkManualMerge(ManualMergeUpdate{
+			FlowID:   record.FlowID,
+			PRNumber: record.PR.Number,
+			PRURL:    record.PR.URL,
+			Commit:   "deadbeef",
+			MergedAt: time.Date(2026, 5, 6, 9, 0, 0, 0, time.UTC),
+		})
+		results <- syncOutcome{record: merged, err: err}
+	}()
+	block.waitReached(t)
+
+	if _, err := store.SetPR(PRUpdate{
+		FlowID: record.FlowID, Provider: "github", Number: record.PR.Number,
+		URL: record.PR.URL, HeadBranch: "feat/seam", BaseBranch: "main", Status: "closed",
+	}); err != nil {
+		t.Fatalf("SetPR(during the window) error = %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("MarkManualMerge() error = %v, want the sync failure", got.err)
+	}
+	stored, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if stored.PR.Status != "closed" {
+		t.Fatalf("stored PR status = %q, want the concurrent writer's %q preserved", stored.PR.Status, "closed")
+	}
+	if stored.Merge.Commit != "deadbeef" {
+		t.Fatalf("stored merge = %+v, want no rollback over a concurrent PR write", stored.Merge)
+	}
+	phase := phaseFromStore(t, store, record.FlowID, "merge")
+	if phase.Status != PhaseCompleted {
+		t.Fatalf("merge phase status = %q, want %q preserved", phase.Status, PhaseCompleted)
+	}
+	if strings.Contains(phase.Notes, "Linked plan phase sync failed") {
+		t.Fatalf("merge phase notes = %q, want no compensation note over a concurrent write", phase.Notes)
+	}
+}
+
+// TestCommittedPhaseRowSurvivesDuplicateRowCollapse pins why the capture is
+// taken after collapseDuplicatePhaseRows. On a legacy record with duplicate rows
+// for one logical phase, collapse fills an empty survivor Summary from a row it
+// merges away. Capturing the pre-collapse local would leave the guard comparing
+// against a Summary that was never stored, so any later metadata write would
+// make it reject this caller's own completion.
+func TestCommittedPhaseRowSurvivesDuplicateRowCollapse(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	local := FlowPhase{PhaseID: "plan", Status: PhaseCompleted, UpdatedAt: now}
+	record := FlowRecord{Phases: []FlowPhase{
+		local,
+		{PhaseID: "Plan", Status: PhaseCompleted, Summary: "carried by the duplicate row", UpdatedAt: now},
+	}}
+	record.Phases = collapseDuplicatePhaseRows(record.Phases, 0)
+
+	committed := committedPhaseRow(record, local)
+	if committed.Summary != "carried by the duplicate row" {
+		t.Fatalf("committed phase summary = %q, want the collapsed survivor's", committed.Summary)
+	}
+
+	// A metadata write lands afterwards: new stamp, same completion.
+	current := committed
+	current.UpdatedAt = now.Add(time.Millisecond)
+	if !phaseStillHoldsCommittedCompletion(current, committed) {
+		t.Fatal("guard rejected the row it committed after a metadata-only write")
+	}
+	if phaseStillHoldsCommittedCompletion(current, local) {
+		t.Fatal("guard accepted the pre-collapse local, so this test would not catch the regression")
+	}
+}
+
+// failSecondUpdateBackend delegates to the real backend but fails every update
+// after the first. In both entry points the first update is the committing one
+// and the second is the compensation, so this drives the folded-error path
+// without any timing dependence.
+type failSecondUpdateBackend struct {
+	backend
+	updates atomic.Int64
+	err     error
+}
+
+func (b *failSecondUpdateBackend) update(flowID string, mutate func(sess flowSession) (FlowRecord, error)) (FlowRecord, error) {
+	if b.updates.Add(1) > 1 {
+		return FlowRecord{}, b.err
+	}
+	return b.backend.update(flowID, mutate)
+}
+
+// TestSetPhaseFoldsACompensationFailureIntoTheSyncError pins the one behavior
+// change the commit calls out but nothing else covers: when the compensation
+// update itself fails, both errors come back in one value with %w on the SYNC
+// error, so a compensation failure that happens to be a not-found is NOT
+// reported as errors.Is(err, errFlowNotFound).
+func TestSetPhaseFoldsACompensationFailureIntoTheSyncError(t *testing.T) {
+	syncFailure := errors.New("plan write exploded")
+	syncer := &fakePlanSyncer{writeErr: syncFailure}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{})
+	store.backend = &failSecondUpdateBackend{backend: store.backend, err: flowNotFoundError(linked.FlowID)}
+
+	got, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted})
+	if err == nil {
+		t.Fatal("SetPhase() error = nil, want the folded sync and compensation failure")
+	}
+	if !errors.Is(err, syncFailure) {
+		t.Fatalf("SetPhase() error = %v, want the sync failure to stay unwrappable via %%w", err)
+	}
+	if !strings.Contains(err.Error(), "additionally failed to persist needs_attention state") {
+		t.Fatalf("SetPhase() error = %v, want the compensation failure folded in", err)
+	}
+	// The deliberate consequence of keeping %w on the sync error.
+	if errors.Is(err, errFlowNotFound) {
+		t.Fatalf("SetPhase() error = %v, want the folded not-found to be unwrappable only as text", err)
+	}
+	if got.FlowID != "" {
+		t.Fatalf("SetPhase() record = %+v, want the zero record beside the folded error", got)
+	}
+	// The phase change itself committed and stays committed: only the marker is
+	// missing, which is the accepted no-marker window.
+	if status := phaseFromStore(t, store, linked.FlowID, "plan").Status; status != PhaseCompleted {
+		t.Fatalf("plan phase status = %q, want the committed %q with no marker", status, PhaseCompleted)
+	}
+}
+
+// TestMarkManualMergeFoldsACompensationFailureIntoTheSyncError is the merge-side
+// twin. The merge stays durably recorded because the rollback never landed.
+func TestMarkManualMergeFoldsACompensationFailureIntoTheSyncError(t *testing.T) {
+	syncFailure := errors.New("plan write exploded")
+	syncer := &fakePlanSyncer{writeErr: syncFailure}
+	store, record := newMergeReadySeamFlow(t, syncer)
+	store.backend = &failSecondUpdateBackend{backend: store.backend, err: errors.New("writer unavailable")}
+
+	got, err := store.MarkManualMerge(ManualMergeUpdate{
+		FlowID:   record.FlowID,
+		PRNumber: record.PR.Number,
+		PRURL:    record.PR.URL,
+		Commit:   "deadbeef",
+		MergedAt: time.Date(2026, 5, 6, 9, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("MarkManualMerge() error = nil, want the folded sync and compensation failure")
+	}
+	if !errors.Is(err, syncFailure) {
+		t.Fatalf("MarkManualMerge() error = %v, want the sync failure to stay unwrappable via %%w", err)
+	}
+	if !strings.Contains(err.Error(), "additionally failed to persist needs_attention state") {
+		t.Fatalf("MarkManualMerge() error = %v, want the compensation failure folded in", err)
+	}
+	if got.FlowID != "" {
+		t.Fatalf("MarkManualMerge() record = %+v, want the zero record when the compensation itself failed", got)
+	}
+	stored, readErr := store.Read(record.FlowID)
+	if readErr != nil {
+		t.Fatalf("Read() error = %v", readErr)
+	}
+	if stored.PR.Status != MergeMerged || stored.Merge.Commit != "deadbeef" {
+		t.Fatalf("stored record = PR %q / merge %+v, want the merge still recorded with no rollback", stored.PR.Status, stored.Merge)
 	}
 }
 

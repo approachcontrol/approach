@@ -780,10 +780,16 @@ func seamStoreWithHook(t *testing.T, syncer *fakePlanSyncer) (*Store, FlowRecord
 func newMergeReadySeamFlow(t *testing.T, syncer planPhaseSyncer) (*Store, FlowRecord) {
 	t.Helper()
 	root := t.TempDir()
-	store, err := NewStore(StoreOptions{Root: root, LockTimeout: time.Second})
+	// The budget is deliberately generous: the post-commit tests park a sync and
+	// then write concurrently, so on a loaded machine a tight budget makes the
+	// compensation's own writer acquisition time out and turns a guard assertion
+	// into a spurious failure. Close is registered because this helper's store
+	// owns a pooled SQLite handle like any other.
+	store, err := NewStore(StoreOptions{Root: root, LockTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	record, err := store.Create(FlowRecord{
 		Title:        "Merge seam",
 		Instructions: "Drive a Flow to the merge phase.",

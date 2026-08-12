@@ -700,22 +700,30 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 
 // SetPhase validates and persists one phase update on an existing flow.
 //
-// The linked-plan sync runs AFTER the phase change commits, so on a sync failure
-// this returns a ZERO record beside the error even though the needs_attention
-// compensation was persisted by a second update. MarkManualMerge deliberately
-// differs and returns its compensated record; both halves are pinned by tests.
+// The linked-plan sync runs AFTER the phase change commits, so the return
+// contract has four cases:
+//
+//   - sync succeeded: the committed record, nil.
+//   - sync failed on a repeat of an already-completed phase: the committed
+//     record and nil, because the durable state is correct and the plan write is
+//     idempotent.
+//   - sync failed otherwise: a ZERO record beside the sync error, whether the
+//     needs_attention compensation was persisted by the second update or its
+//     guard declined to write. MarkManualMerge deliberately differs and returns
+//     its compensated record; both halves are pinned by tests.
+//   - sync failed and the compensation failed too: a zero record beside one
+//     error carrying both, with %w on the sync error.
+//
 // See syncLinkedPlanPhase for the ordering and its accepted windows.
 func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	// Captured on the closure's success path only, for the post-commit sync and
-	// its guarded compensation. Off that path they are meaningless.
-	var (
-		committedPhase FlowPhase
-		originalStatus string
-	)
+	// Assigned whole on the closure's success path only, for the post-commit
+	// sync and its guarded compensation. Off that path it is the zero value and
+	// nothing below reads it, because err is non-nil there.
+	var committed phaseCommit
 	record, err := s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -769,27 +777,23 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		if err := s.saveSession(sess, record); err != nil {
 			return FlowRecord{}, err
 		}
-		// phase as it stands BEFORE collapseDuplicatePhaseRows, which is what the
-		// sync has always been handed and, because collapse never touches
-		// UpdatedAt, also the right value for the compensation guard.
-		committedPhase = phase
-		originalStatus = priorStatus
+		committed = phaseCommit{phase: phase, stored: committedPhaseRow(record, phase), priorStatus: priorStatus}
 		return record, nil
 	})
 	if err != nil {
 		return FlowRecord{}, err
 	}
-	syncErr := s.syncLinkedPlanPhase(record, committedPhase)
+	syncErr := s.syncLinkedPlanPhase(record, committed.phase)
 	if syncErr == nil {
 		return record, nil
 	}
-	if originalStatus == PhaseCompleted {
+	if committed.priorStatus == PhaseCompleted {
 		// A repeat of an already-completed phase: the durable state is correct
 		// and the plan write is idempotent, so a failure here must not demote it.
 		// This is the retry path the accepted post-commit windows recover through.
 		return record, nil
 	}
-	if _, compErr := s.compensatePhaseSyncFailure(update.FlowID, committedPhase, syncErr); compErr != nil {
+	if _, compErr := s.compensatePhaseSyncFailure(update.FlowID, committed.stored, syncErr); compErr != nil {
 		// One error carrying both. The %w stays on the SYNC error: that is the
 		// primary outcome and the substring callers assert on. A deliberate
 		// consequence is that a Flow deleted concurrently folds its
@@ -835,31 +839,108 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 	})
 }
 
+// committedPhaseRow returns the phase row as it was actually stored, which is
+// what the compensation guard has to compare against on the re-read.
+//
+// It is deliberately taken AFTER collapseDuplicatePhaseRows rather than from the
+// local the closure built. Collapse leaves Status and UpdatedAt alone, but on a
+// legacy record carrying duplicate rows for one logical phase it fills an empty
+// survivor Notes or Summary from the rows it merges away — so the pre-collapse
+// local can differ from the stored row in exactly the fields the guard reads.
+//
+// Lookup is by ID and never by index: refreshPhaseReadiness reorders the slice
+// through OrderedPhases, so an index captured before it points at a different
+// phase afterwards. If the row cannot be found the local is returned, which at
+// worst makes the guard reject and skip a compensation — never demote the wrong
+// phase.
+func committedPhaseRow(record FlowRecord, local FlowPhase) FlowPhase {
+	if index := phaseIndexByID(record.Phases, local.PhaseID); index >= 0 {
+		return record.Phases[index]
+	}
+	return local
+}
+
+// phaseCommit is what SetPhase's committing closure hands to the post-commit
+// sync. It is assigned as a whole on the success path so a half-filled capture
+// is not representable.
+type phaseCommit struct {
+	// phase is the local the closure built, and is what the sync is handed —
+	// the same value it has always been handed.
+	//
+	// Keeping it separate from stored is defensive rather than load-bearing
+	// today: the sync reads only Status and PhaseID, and the two rows can only
+	// disagree on Status if refreshPhaseReadiness resets the just-completed row
+	// to pending, which needs unsatisfied dependency gates that no completable
+	// phase has (transitions.go forbids pending -> completed, so only ready or
+	// running can complete). No test pins the difference because none can
+	// currently reach it. The split stays because the alternative silently
+	// couples what gets synced to readiness, and a later edit to either side
+	// would be the thing that reaches it.
+	phase FlowPhase
+	// stored is that same phase as it was actually committed, and is the only
+	// value the compensation guard may compare against. See committedPhaseRow.
+	stored FlowPhase
+	// priorStatus is the status the phase held BEFORE this update, which is what
+	// distinguishes a first completion from a repeat of one.
+	priorStatus string
+}
+
+// manualMergeCommit is the same capture for MarkManualMerge, which needs the
+// merge metadata and the pre-merge PR status to roll back as well. retry marks
+// the already-merged no-op path, whose sync error is discarded rather than
+// compensated.
+type manualMergeCommit struct {
+	phase            FlowPhase
+	stored           FlowPhase
+	merge            Merge
+	previousPRStatus string
+	retry            bool
+}
+
 // phaseStillHoldsCommittedCompletion reports whether a freshly read phase row is
 // still the completion this caller committed, and is the gate on every
 // post-commit compensation.
 //
-// Status alone is insufficient: a concurrent re-completion and a resume
-// launch-id append both preserve completed, and writing the captured state back
-// wholesale would revert them. The timestamp is what identifies "this is still
-// my write" — phases ride inside the JSON blob and round-trip through RFC3339Nano
-// (trailing zeros trimmed, nanosecond value preserved), s.now() returns a
-// UTC time with no monotonic reading so Equal is a pure wall-clock comparison,
-// and nothing rewrites a completed row's UpdatedAt behind the caller's back.
+// Status alone is insufficient: a concurrent re-completion preserves completed,
+// and demoting it would attribute this caller's sync failure to a completion it
+// did not make. The exact test for "this is still my write" is the timestamp —
+// phases ride inside the JSON blob and round-trip through RFC3339Nano (trailing
+// zeros trimmed, nanosecond value preserved), and s.now() returns a UTC time
+// with no monotonic reading, so Equal is a pure wall-clock comparison.
 //
-// It is a heuristic, not a fence: two writes landing on the same clock tick
-// defeat it, and only a per-phase version column would be exact. That is
-// acceptable because a false accept costs at most the clobber the guard exists
-// to avoid, and no caller writes at that rate.
+// That test alone is too strict, because writes that are not completions also
+// stamp phase.UpdatedAt: AttachSession and MarkPhaseLaunchEnded both bump it on
+// a completed row without touching the completion, and both are driven by agent
+// session lifecycle events that fire at almost exactly the moment the
+// completing write is parked on the plan lock. Rejecting on those is the
+// expensive direction — it produces a completed phase with a stale plan and NO
+// marker anywhere, which is silent. So a later stamp falls through to the
+// completion-bearing fields, and only a change there means someone else owns
+// this completion now.
+//
+// It is a heuristic, not a fence. A bare re-completion that rewrites none of
+// those fields is indistinguishable from a metadata write, so it is accepted and
+// may demote a phase whose plan a concurrent writer already synced. Only a
+// per-phase completion counter would be exact. That residual is the cheap
+// direction: it costs a visible needs_attention marker an operator can clear by
+// repeating the completion, against the silent staleness of the alternative.
 //
 // When it rejects, the caller saves nothing. The operator-visible result is a
 // completed phase with a stale linked plan, NO needs_attention marker anywhere,
 // and only the returned error as a signal; recovery is to repeat the completion.
 // The middle option — appending the sync-failure note without the demotion — is
-// rejected on purpose: a concurrent re-completion may already have synced the
+// rejected on purpose: the concurrent re-completion may already have synced the
 // plan successfully, which would make the note false.
 func phaseStillHoldsCommittedCompletion(current, committed FlowPhase) bool {
-	return current.Status == PhaseCompleted && current.UpdatedAt.Equal(committed.UpdatedAt)
+	if current.Status != PhaseCompleted {
+		return false
+	}
+	if current.UpdatedAt.Equal(committed.UpdatedAt) {
+		return true
+	}
+	return current.Outcome == committed.Outcome &&
+		current.Summary == committed.Summary &&
+		current.Notes == committed.Notes
 }
 
 // RestartPhase atomically restarts a blocked or needs-attention phase as running.
@@ -1024,9 +1105,11 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 //     readiness re-promotes the row.
 //  3. NO MARKER AT ALL. The second update can fail to acquire the writer under
 //     contention, or its stale-state guard can deliberately decline to write
-//     because a concurrent update landed first. Either way the window never
-//     closes: a completed phase, a stale plan, no needs_attention marker, and
-//     only the returned error as a signal.
+//     because another writer re-completed the phase first. Either way the window
+//     never closes: a completed phase, a stale plan, no needs_attention marker,
+//     and only the returned error as a signal. See
+//     phaseStillHoldsCommittedCompletion for why the guard declines on a
+//     competing completion but not on a concurrent session or launch-id write.
 //
 // All three are accepted for the same reasons. The two stores have never been
 // atomic — the file backend had the opposite skew — the Flow database remains
@@ -1160,24 +1243,27 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 // MarkManualMerge completes the merge phase and records verified GitHub merge
 // metadata for a PR that was merged outside approach.
 //
-// The linked-plan sync runs AFTER the merge commits. On a sync failure this
-// returns the compensated record, or the current state when the compensation
-// guard rejects — deliberately unlike SetPhase, which returns a zero record.
-// A guard-rejected record is still merged and still reaches the TUI beside a
-// merge-failure message; that is the truth of the durable state. See
-// syncLinkedPlanPhase for the ordering and its accepted windows.
+// The linked-plan sync runs AFTER the merge commits, giving four cases:
+//
+//   - sync succeeded: the committed record, nil.
+//   - sync failed on an already-merged repeat: the record and nil. The error is
+//     DISCARDED rather than allowed to demote durable merge state.
+//   - sync failed otherwise: the compensated record beside the error, or the
+//     current state when the compensation guard rejects — deliberately unlike
+//     SetPhase, which returns a zero record. A guard-rejected record is still
+//     merged and still reaches the TUI beside a merge-failure message; that is
+//     the truth of the durable state.
+//   - sync failed and the compensation failed too: a zero record beside one
+//     error carrying both, matching SetPhase.
+//
+// See syncLinkedPlanPhase for the ordering and its accepted windows.
 func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	// Captured on the closure's success path only, for the post-commit sync and
-	// its guarded compensation.
-	var (
-		committedPhase   FlowPhase
-		committedMerge   Merge
-		previousPRStatus string
-		noopRetry        bool
-	)
+	// Assigned whole on the closure's success paths only, for the post-commit
+	// sync and its guarded compensation.
+	var committed manualMergeCommit
 	record, err := s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -1207,9 +1293,16 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			mergeEqual(record.Merge, merge) {
 			// Flow semantics of the retry are unchanged: no mutation, no save,
 			// and the record comes back as it was. Only the post-commit re-sync
-			// below is new.
-			noopRetry = true
-			committedPhase = phase
+			// below is new. Every field is filled even though retry short-circuits
+			// before the compensation reads them, so that moving that check can
+			// never roll a merge back against zero values.
+			committed = manualMergeCommit{
+				phase:            phase,
+				stored:           phase,
+				merge:            record.Merge,
+				previousPRStatus: record.PR.Status,
+				retry:            true,
+			}
 			return record, nil
 		}
 
@@ -1218,7 +1311,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		if summary == "" {
 			summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
 		}
-		previousPRStatus = record.PR.Status
+		previousPRStatus := record.PR.Status
 		phase.Status = PhaseCompleted
 		phase.Outcome = MergeMerged
 		phase.Summary = summary
@@ -1233,18 +1326,22 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		if err := s.saveSession(sess, record); err != nil {
 			return FlowRecord{}, err
 		}
-		committedPhase = phase
-		committedMerge = merge
+		committed = manualMergeCommit{
+			phase:            phase,
+			stored:           committedPhaseRow(record, phase),
+			merge:            merge,
+			previousPRStatus: previousPRStatus,
+		}
 		return record, nil
 	})
 	if err != nil {
 		return FlowRecord{}, err
 	}
-	syncErr := s.syncLinkedPlanPhase(record, committedPhase)
+	syncErr := s.syncLinkedPlanPhase(record, committed.phase)
 	if syncErr == nil {
 		return record, nil
 	}
-	if noopRetry {
+	if committed.retry {
 		// The merge was already recorded, so repeating it re-runs the idempotent
 		// plan write and DISCARDS a failure, mirroring SetPhase's completed-retry
 		// semantics. Two accepted costs. The retry now does plan-store I/O where
@@ -1257,7 +1354,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		// at all until an operator runs RestartPhase.
 		return record, nil
 	}
-	compensated, compErr := s.compensateManualMergeSyncFailure(update.FlowID, committedPhase, committedMerge, previousPRStatus, syncErr)
+	compensated, compErr := s.compensateManualMergeSyncFailure(update.FlowID, committed, syncErr)
 	if compErr != nil {
 		// Same combined error as SetPhase, with %w on the sync error.
 		return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", syncErr, compErr)
@@ -1271,13 +1368,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 // merge phase must still be this caller's completion AND the PR and merge
 // metadata must still be the ones it committed. Any mismatch means a concurrent
 // writer owns that state now, so nothing is saved.
-func (s *Store) compensateManualMergeSyncFailure(
-	flowID string,
-	committedPhase FlowPhase,
-	committedMerge Merge,
-	previousPRStatus string,
-	syncErr error,
-) (FlowRecord, error) {
+func (s *Store) compensateManualMergeSyncFailure(flowID string, committed manualMergeCommit, syncErr error) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -1287,16 +1378,16 @@ func (s *Store) compensateManualMergeSyncFailure(
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
 		record := stored.record
-		index := phaseIndexByID(record.Phases, committedPhase.PhaseID)
+		index := phaseIndexByID(record.Phases, committed.stored.PhaseID)
 		if index < 0 ||
-			!phaseStillHoldsCommittedCompletion(record.Phases[index], committedPhase) ||
+			!phaseStillHoldsCommittedCompletion(record.Phases[index], committed.stored) ||
 			record.PR.Status != MergeMerged ||
-			!mergeEqual(record.Merge, committedMerge) {
+			!mergeEqual(record.Merge, committed.merge) {
 			return record, nil
 		}
 		now := s.now()
 		record.Phases[index] = markPhaseSyncNeedsAttention(record.Phases[index], syncErr, now)
-		record.PR.Status = previousPRStatus
+		record.PR.Status = committed.previousPRStatus
 		record.Merge = Merge{Status: MergePending}
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)

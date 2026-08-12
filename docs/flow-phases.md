@@ -270,13 +270,34 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 
 The plan write happens **after** the Flow phase change commits, so there is a
 brief window in which the phase reads as completed before a failed sync demotes
-it, and in rare cases — a crash, or a concurrent write to the same phase — the
-demotion never lands and the Flow keeps a completed phase beside a stale plan.
-The manual-merge rollback has the same exception: when a concurrent write already
-owns that state, the Flow stays `merged` and the error is the only signal. The
-recovery is the same in every case and is always safe to run: repeat the phase
-completion, or re-record the manual merge with the same metadata. Both re-run the
-idempotent plan write, and neither demotes state that is already correct.
+it. The demotion can also fail to land at all — on a crash inside the window, on
+a second write that cannot acquire the writer, or when another writer has
+re-completed the phase in the meantime and the demotion is deliberately declined
+rather than allowed to overwrite them. The Flow then keeps a completed phase
+beside a stale plan, with no `needs_attention` marker and only the returned error
+as a signal. Writes that do not change the completion — attaching an agent
+session, recording a resume launch — do not trigger that decline; only a
+different completion does. The manual-merge rollback has the same exception:
+when a concurrent write already owns that state, the Flow stays `merged` and the
+error is the only signal.
+
+That window is externally visible, not just a crash hazard. While it is open the
+phase reads as legitimately completed and its successor as legitimately ready, so
+auto-advance can launch that successor; the failed sync then demotes the
+predecessor and readiness resets the just-launched successor to `pending` while
+its launch attempt stays recorded against it. The launched agent is not wedged —
+its session ends normally, and readiness re-promotes the row — but the agent's
+own completion write is rejected while its phase sits at `pending`. The same
+state is reachable without any sync failure, by restarting a completed
+predecessor while its successor runs.
+
+The recovery is the same in every case and is always safe to run: repeat the
+phase completion, or re-record the manual merge with the same metadata. Both
+re-run the idempotent plan write, and neither demotes state that is already
+correct. One caveat on the manual-merge retry: because it must not roll back a
+merge that is already durable, it **discards** a second sync failure and returns
+success. Confirm the linked plan's own phase status rather than trusting that
+return value.
 
 ## Per-phase agent settings
 
