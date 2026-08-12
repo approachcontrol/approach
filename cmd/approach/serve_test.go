@@ -281,6 +281,35 @@ func TestRunServeAllowsLoopbackBindWithoutToken(t *testing.T) {
 	}
 }
 
+func TestRunServeWarnsThatANonLoopbackBindIsPlaintext(t *testing.T) {
+	// A token gates access but does not protect the wire: there is no TLS
+	// here, so a bind that leaves the machine puts the token and every Flow
+	// record in front of anyone on the path. The operator has to be told once.
+	run := func(t *testing.T, args ...string) string {
+		t.Helper()
+		stderr := &lockedBuffer{}
+		deps := serveDeps(t, t.TempDir(), nil)
+		deps.stderr = stderr
+		// Bind loopback whatever was asked for: the warning is about the
+		// requested address, and a test must not open a public port.
+		deps.listen = func(network, _ string) (net.Listener, error) { return net.Listen(network, "127.0.0.1:0") }
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := runServeContext(ctx, append([]string{"approach", "serve"}, args...), deps); err != nil {
+			t.Fatalf("runServeContext() error = %v, want nil", err)
+		}
+		return stderr.String()
+	}
+
+	warned := run(t, "--addr", "0.0.0.0:8787", "--token", "secret")
+	if !strings.Contains(warned, "plaintext HTTP") || !strings.Contains(warned, "0.0.0.0:8787") {
+		t.Errorf("stderr = %q, want a plaintext-HTTP warning naming the bind address", warned)
+	}
+	if quiet := run(t, "--addr", "127.0.0.1:0"); strings.Contains(quiet, "plaintext HTTP") {
+		t.Errorf("stderr = %q, want no warning on a loopback bind", quiet)
+	}
+}
+
 func TestRunServeAddrPrecedence(t *testing.T) {
 	var requested []string
 	deps := serveDeps(t, t.TempDir(), map[string]string{"APPROACH_API_ADDR": "127.0.0.1:9101"})

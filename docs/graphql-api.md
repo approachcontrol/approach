@@ -91,6 +91,21 @@ curl -s -H 'Content-Type: application/json' \
   request arriving through a tunnel, which is the recommended remote consumer
   shape below.
 - `GET /healthz` is exempt from auth even when a token is configured.
+- **There is no TLS.** The server speaks plaintext HTTP and has no certificate
+  configuration, so a non-loopback bind puts the token — and every Flow record
+  — on the wire in the clear, where any on-path observer can read the token and
+  replay it. The token is an access control, not a transport control. Startup
+  prints a warning to stderr on any non-loopback bind; the supported remote
+  shape is the tunnel or reverse proxy below, which terminates TLS. Serving
+  TLS directly is tracked as follow-up.
+- **A loopback bind is machine-local, not user-local.** Any process, and any
+  other OS account on the machine, can reach `127.0.0.1:8787`, send an allowed
+  `Host` and `application/json`, and read repo paths, Flow instructions, phase
+  notes, and issue/PR metadata — even though the artifact directory itself is
+  `0700`. The `Host` and content-type rules are browser controls; they are not
+  a local-user boundary. Set a token on a shared or multi-account machine.
+  Requiring one by default (auto-generated, to keep zero-config `curl` working)
+  is tracked as follow-up.
 - **The `application/json` requirement is the CSRF control**, not just content
   negotiation. A browser form or `no-cors` `fetch` can only send the three
   CORS-safelisted content types, so requiring this one forces a preflight —
@@ -268,6 +283,12 @@ a filesystem path or `os` error text.
 One log line per request: method, path, status, duration. Never the
 `Authorization` or `X-Approach-Token` value, and never the query body. Request
 logs go to stderr; only the resolved listen address goes to stdout.
+
+The path is logged **quoted, percent-encoded, and capped at 128 bytes**, not as
+`url.URL.Path`. That field is percent-*decoded*, and 404s are logged before any
+auth or `Host` check runs, so logging it raw would let an unauthenticated
+`GET /x%0aapproach graphql: POST /graphql 200 1ms` forge a whole log line — or
+push terminal escapes into a foreground stderr.
 
 ## Live state and consistency
 

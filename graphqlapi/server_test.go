@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,12 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
 }
 
 func testSources() (RepoSource, FlowSource) {
@@ -469,9 +476,41 @@ func TestServerLogHygiene(t *testing.T) {
 			t.Errorf("log leaked query content %q: %s", fragment, logged)
 		}
 	}
-	pattern := regexp.MustCompile(`POST ` + regexp.QuoteMeta(GraphQLPath) + ` 200 \S+`)
+	pattern := regexp.MustCompile(`POST ` + regexp.QuoteMeta(strconv.Quote(GraphQLPath)) + ` 200 \S+`)
 	if !pattern.MatchString(logged) {
 		t.Errorf("log = %q, want a method/path/status/duration line", logged)
+	}
+}
+
+func TestServerLogsPathWithoutInjectableBytes(t *testing.T) {
+	// url.URL.Path is percent-decoded, and unknown paths are logged before
+	// handleGraphQL runs, so an unauthenticated 404 could otherwise forge a
+	// whole log line or emit terminal escapes into a foreground stderr.
+	logger := &syncBuffer{}
+	handler := newTestServer(t, ServerOptions{Token: "secret", Logger: logger})
+
+	request := httptest.NewRequest(http.MethodGet, "/x%0aapproach%20graphql:%20POST%20/graphql%20200%201ms", nil)
+	request.Host = "127.0.0.1:8787"
+	if recorder := serve(handler, request); recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", recorder.Code)
+	}
+	// One line, and the injected newline and escape survive only in escaped
+	// form.
+	logged := logger.String()
+	if lines := strings.Count(strings.TrimSuffix(logged, "\n"), "\n"); lines != 0 {
+		t.Errorf("log = %q, want exactly one line", logged)
+	}
+	if !strings.Contains(logged, `"/x%0aapproach%20graphql`) {
+		t.Errorf("log = %q, want the path quoted and still percent-encoded", logged)
+	}
+
+	logger.Reset()
+	long := "/" + strings.Repeat("z", 4096)
+	request = httptest.NewRequest(http.MethodGet, long, nil)
+	request.Host = "127.0.0.1:8787"
+	serve(handler, request)
+	if logged := logger.String(); len(logged) > 4096 {
+		t.Errorf("log line is %d bytes; the path is not capped", len(logged))
 	}
 }
 

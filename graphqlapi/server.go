@@ -10,6 +10,8 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,7 +115,27 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := s.route(w, r)
 	// Method, path, status, duration only. Never the Authorization or
 	// X-Approach-Token value, and never the query body.
-	s.logf("%s %s %d %s", r.Method, r.URL.Path, status, time.Since(started))
+	s.logf("%s %s %d %s", r.Method, loggedPath(r.URL), status, time.Since(started))
+}
+
+// maxLoggedPathBytes caps the logged path. The routing table has two entries,
+// so anything long is already a 404 and there is nothing to learn from the
+// rest of it.
+const maxLoggedPathBytes = 128
+
+// loggedPath renders the request path as a quoted, length-capped literal.
+//
+// url.URL.Path is percent-*decoded*, so logging it raw lets any unauthenticated
+// request — 404s are logged before handleGraphQL runs, so this needs no token
+// and no allowed Host — put newlines and terminal escapes into stderr:
+// `/x%0aapproach graphql: POST /graphql 200 1ms` forges a whole log line.
+// EscapedPath leaves those bytes encoded and Quote escapes whatever it did not.
+func loggedPath(u *url.URL) string {
+	path := u.EscapedPath()
+	if len(path) > maxLoggedPathBytes {
+		return strconv.Quote(path[:maxLoggedPathBytes]) + "..."
+	}
+	return strconv.Quote(path)
 }
 
 func (s *server) route(w http.ResponseWriter, r *http.Request) int {

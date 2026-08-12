@@ -99,6 +99,15 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 		return fmt.Errorf("error listening on %s: %w", addr, err)
 	}
 	fmt.Fprintf(deps.stdout, "approach serve listening on http://%s%s\n", listener.Addr().String(), graphqlapi.GraphQLPath)
+	if !loopback {
+		// The token gates access but does not protect the wire: this server
+		// speaks plaintext HTTP and has no TLS configuration, so a bind that
+		// leaves the machine puts the token and every Flow record in front of
+		// anyone on the path. Say so once, where the operator will see it.
+		fmt.Fprintf(deps.stderr, "approach serve: warning: %s is not loopback and this server speaks plaintext HTTP. "+
+			"The API token and every Flow record cross the network in the clear. "+
+			"Front it with TLS — a tunnel or a reverse proxy — rather than exposing this port directly.\n", addr)
+	}
 
 	return serveUntilDone(ctx, newServeHTTPServer(handler), listener)
 }
@@ -192,6 +201,11 @@ Flags:
   --state-root PATH  Override the artifact state root.
   --scan-root PATH   Override the repository scan root (or WORKTREE_ROOT).
   --help, -h         Print this help and exit.
+
+There is no TLS: this server speaks plaintext HTTP. A non-loopback bind puts
+the token and every Flow record on the wire in the clear, so front it with a
+tunnel or reverse proxy rather than exposing the port directly. A loopback bind
+is machine-local, not user-local — set a token on a shared machine.
 
 Examples:
   approach serve
