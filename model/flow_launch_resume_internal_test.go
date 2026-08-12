@@ -871,10 +871,228 @@ func TestFlowLaunchCancelTextNamesTheAttemptKind(t *testing.T) {
 		if cmd == nil {
 			t.Fatalf("%v: a canceled launch should persist its failure", tc.kind)
 		}
-		_ = next
+		// The cancel keeps the attempt only until its failure is persisted, so
+		// the Flow is never unowned while its phase still reads running.
+		if attempt, ok := next.flowLaunchAttempt(record.FlowID); !ok ||
+			attempt.State != flowLaunchStateFailurePersisting {
+			t.Fatalf("%v: attempt = %#v, want it held in failurePersisting", tc.kind, attempt)
+		}
 		_ = cmd()
 		if len(h.phaseUpdates) != 1 || !strings.Contains(h.phaseUpdates[0].Notes, tc.want) {
 			t.Fatalf("%v: phase updates = %#v, want %q", tc.kind, h.phaseUpdates, tc.want)
 		}
+	}
+}
+
+// The case above cancels a nonterminal phase, which is the launch kind's shape.
+// A resume's headline target is a completed phase, and there the same cancel
+// has nothing to persist: the failure must not regress the phase, so the
+// attempt is released outright and the cancel text reaches the user as a status
+// instead of phase notes.
+func TestFlowLaunchCancelReleasesWithoutWritingATerminalPhase(t *testing.T) {
+	record := resumeLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.resumeModel()
+	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+		Scope:      embeddedTerminalScopeFlow,
+		FlowID:     record.FlowID,
+		FlowRepair: true,
+		Terminal:   flowPhaseLaunchTestTerminal{state: "running"},
+	})
+	attempt := flowLaunchAttempt{
+		Token:        "token-1",
+		Kind:         flowLaunchKindPhaseResume,
+		FlowID:       record.FlowID,
+		PhaseID:      record.Phases[0].PhaseID,
+		MutatedPhase: true,
+	}
+	m, _ = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	attempt.State = flowLaunchStatePreparing
+	next, cmd := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+		FlowID:  record.FlowID,
+		PhaseID: record.Phases[0].PhaseID,
+		Context: actions.AgentLaunchContext{
+			FlowID:            record.FlowID,
+			FlowPhaseID:       record.Phases[0].PhaseID,
+			FlowLaunchTracked: true,
+			ResumeSessionID:   "codex-session",
+			FlowPhaseTerminal: true,
+		},
+	})
+	if cmd != nil {
+		t.Fatal("a terminal phase has nothing to persist, so the cancel must not write")
+	}
+	want := "Flow phase resume canceled because a repair terminal is already open for this Flow"
+	if next.status.Text != want {
+		t.Fatalf("status = %q, want %q", next.status.Text, want)
+	}
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("a canceled resume regressed a completed phase: %#v", h.phaseUpdates)
+	}
+	if _, ok := next.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("with no failure to persist the cancel must release the Flow")
+	}
+}
+
+// The snapshot resolver refuses before any read, so these cases never reach the
+// store. They are the refusals TestPhaseResumeReadStageRefusals cannot reach:
+// the read stage re-runs the phase-shaped rules, but provider validation and
+// the worktree gate live at the key press. The other key-press-only rule, the
+// codex → codex-app mapping, is covered by the codex-app tests, which have to
+// assert on the route taken rather than on a refusal.
+func TestPhaseResumeSnapshotRefusals(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot func(*flowstore.FlowRecord)
+		wantErr  string
+	}{
+		{
+			name: "session has no provider",
+			snapshot: func(record *flowstore.FlowRecord) {
+				record.Phases[0].Sessions[0].Provider = "  "
+			},
+			wantErr: flowPhaseResumeNoProviderStatus,
+		},
+		{
+			// The one refusal whose text comes from another package, so a
+			// change in agent.Validate's wording surfaces here.
+			name: "session provider is not an agent this build supports",
+			snapshot: func(record *flowstore.FlowRecord) {
+				record.Phases[0].Sessions[0].Provider = "gemini"
+			},
+			wantErr: `unsupported agent "gemini"; choose codex, codex-app, or claude`,
+		},
+		{
+			name: "snapshot has no worktree to resume from",
+			snapshot: func(record *flowstore.FlowRecord) {
+				record.WorktreePath = ""
+			},
+			wantErr: flowPhaseResumeNoWorktreeStatus,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := resumeLaunchFlowRecord()
+			tc.snapshot(&record)
+			h := newManualLaunchHarness(t, record)
+
+			m := h.resume(h.resumeModel())
+
+			if got := m.status.Text; got != tc.wantErr {
+				t.Fatalf("status = %q, want %q", got, tc.wantErr)
+			}
+			if h.sessionListCalls != 0 {
+				t.Fatalf("a snapshot refusal reached the read stage: %d session list calls", h.sessionListCalls)
+			}
+			if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 || len(h.agentContexts) != 0 {
+				t.Fatalf("a snapshot refusal launched something: updates=%#v embedded=%#v agent=%#v",
+					h.launchUpdates, h.launchContexts, h.agentContexts)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("a snapshot refusal must not hold the Flow")
+			}
+		})
+	}
+}
+
+// codex-app resume navigates to an app thread rather than a working directory,
+// so it is the one command the worktree gate must not refuse. A regression here
+// would be silent: the status line would name a worktree the user never needed.
+func TestCodexAppPhaseResumeIgnoresTheWorktreeGate(t *testing.T) {
+	record := resumeLaunchFlowRecord()
+	record.WorktreePath = ""
+	h := newManualLaunchHarness(t, record)
+	h.agentCommand = agent.CommandCodexApp
+
+	m := h.resume(h.resumeModel())
+
+	if m.status.Text == flowPhaseResumeNoWorktreeStatus {
+		t.Fatalf("status = %q, want codex-app exempt from the worktree gate", m.status.Text)
+	}
+	if len(h.agentContexts) != 1 {
+		t.Fatalf("codex-app resume launches = %#v, want exactly one navigation", h.agentContexts)
+	}
+	if ctx := h.agentContexts[0]; ctx.WorkingDir != "" || ctx.ResumeSessionID != "codex-session" {
+		t.Fatalf("codex-app resume context = %#v, want no working dir and the resumed session", ctx)
+	}
+}
+
+// Drift compares providers normalized, so a record that spells the same
+// provider differently is not drift. Without the normalization on both sides
+// this phase would refuse forever with no way for the user to clear it.
+func TestPhaseResumeDoesNotDriftOnProviderSpelling(t *testing.T) {
+	h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
+	h.persistedFlows = []flowstore.FlowRecord{resumePersistedFlow(func(phase *flowstore.FlowPhase) {
+		phase.Sessions = []flowstore.Session{{
+			Provider: " Codex ", SessionID: "codex-session", LaunchID: "launch-old", Status: "ended",
+		}}
+	})}
+
+	m := h.resume(h.resumeModel())
+
+	if m.status.Text != "" {
+		t.Fatalf("status = %q, want the resume to proceed", m.status.Text)
+	}
+	if len(h.launchUpdates) != 1 || !h.launchUpdates[0].Resume {
+		t.Fatalf("launch updates = %#v, want one resume write", h.launchUpdates)
+	}
+	if len(h.launchContexts) != 1 || h.launchContexts[0].ResumeSessionID != "codex-session" {
+		t.Fatalf("launch contexts = %#v, want the resumed session", h.launchContexts)
+	}
+}
+
+// Both authoritative reads can fail, and each surfaces the store's own error.
+// They are separate cases because they fail at different points: a failed
+// ReadFlow has no record, while a failed session list already has one. Each
+// case pins how far the resume got, because readErr also poisons the harness's
+// ReserveFlowLaunch — without the stage counts, a resume that skipped the read
+// entirely and failed at the reservation would produce the same status.
+func TestPhaseResumeSurfacesReadStageStoreErrors(t *testing.T) {
+	tests := []struct {
+		name             string
+		fail             func(*manualLaunchHarness)
+		want             string
+		wantSessionLists int
+	}{
+		{
+			name:             "flow read failed",
+			fail:             func(h *manualLaunchHarness) { h.readErr = errors.New("read boom") },
+			want:             "read boom",
+			wantSessionLists: 0,
+		},
+		{
+			name:             "session list failed",
+			fail:             func(h *manualLaunchHarness) { h.sessionsErr = errors.New("list boom") },
+			want:             "list boom",
+			wantSessionLists: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := resumeLaunchFlowRecord()
+			h := newManualLaunchHarness(t, record)
+			tc.fail(h)
+
+			m := h.resume(h.resumeModel())
+
+			if got := m.status.Text; got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+			if h.sessionListCalls != tc.wantSessionLists {
+				t.Fatalf("session list calls = %d, want %d", h.sessionListCalls, tc.wantSessionLists)
+			}
+			if h.launchReservations != 0 {
+				t.Fatalf("a read-stage failure took the cross-process reservation %d times", h.launchReservations)
+			}
+			if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 {
+				t.Fatalf("a failed read launched something: updates=%#v embedded=%#v",
+					h.launchUpdates, h.launchContexts)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("a failed read must release the Flow")
+			}
+		})
 	}
 }

@@ -286,7 +286,6 @@ func phaseResumeFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent
 		event.RepoPath = repoPath
 		event.WorktreePath = record.WorktreePath
 		event.PlanPath = record.PlanPath
-		event.Provider = intent.Provider
 		event.ProviderSessionID = intent.ProviderSessionID
 		event.ResumeCommand = intent.ResumeCommand
 		return event
@@ -313,6 +312,13 @@ func phaseResumeRefusal(phase flowstore.FlowPhase, intent flowLaunchIntent) (str
 // phaseResumeFlowLaunchPrepareCmd takes the cross-process reservation, marks
 // the resume, and builds the launch context. It is a Model method because it
 // needs the reservation and the phase-write seam.
+//
+// Both failures here reach the user through failFlowLaunch's nothing-written
+// branch, which is repo-gated: the old plumbing set the status unconditionally,
+// so a user who changes the selected repo while the write is in flight now sees
+// nothing where they once saw "failed to mark flow phase resume". That is the
+// price of one failure path rather than two, and it is the same gate manual and
+// automatic launches have always used.
 func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	readPhase, _ := flowPhaseByID(msg.Record, msg.PhaseID)
 	reserve := m.reserveTrackedFlowLaunch
@@ -344,9 +350,13 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		}
 		// The write's record decides whether this resume preserved a terminal
 		// phase or reopened a running one, and that flag is what stops a failed
-		// resume from regressing a completed phase. The guard matters: seams
-		// routinely return phase-less records, and an unguarded lookup would
-		// silently answer "not terminal" for every one of them.
+		// resume from regressing a completed phase. The kind is taken from the
+		// same phase rather than the key press's, which is wider than the old
+		// plumbing and deliberate: both values feed failure handling, and
+		// splitting their sources would let one describe a phase the other no
+		// longer does. The guard matters: seams routinely return phase-less
+		// records, and an unguarded lookup would silently answer "not terminal"
+		// for every one of them.
 		launchPhase := readPhase
 		if persistedPhase, ok := flowPhaseByID(updated, msg.PhaseID); ok {
 			launchPhase = persistedPhase

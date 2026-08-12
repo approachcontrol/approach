@@ -4,8 +4,9 @@ import "github.com/approachcontrol/approach/actions"
 
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
-// than constants; flowLaunchKindManualPhase and flowLaunchKindAutoPhase are
-// implemented today and requestFlowLaunch refuses the rest.
+// than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase, and
+// flowLaunchKindPhaseResume are implemented today and requestFlowLaunch refuses
+// the rest.
 type flowLaunchKind int
 
 const (
@@ -41,7 +42,9 @@ const (
 // flowLaunchIntent is what a caller submits. It carries only what the caller
 // knows: everything else — agent settings, prompt templates, phase, headless
 // preference — the lifecycle reads from the Model or the authoritative record.
-// ResumeContext is the one exception, and it is documented on the field.
+// Phase resume carries two exceptions, FallbackRepoPath and ResumeContext, both
+// documented on their fields; each exists because a stage that runs without a
+// Model needs a value only the Model has.
 type flowLaunchIntent struct {
 	Kind    flowLaunchKind
 	FlowID  string
@@ -58,8 +61,10 @@ type flowLaunchIntent struct {
 	// exact ID; together they are what the authoritative read re-validates
 	// against the fresh phase. ResumeCommand is the already-resolved agent
 	// command, after the codex → codex-app preference mapping and
-	// agent.Validate; it is deliberately not flowLaunchAgentSettingsSnapshot's
-	// Command, which means the agent *setting* and genuinely diverges.
+	// agent.Validate. It is deliberately not flowLaunchAgentSettingsSnapshot's
+	// Command: that field carries the agent *setting* a new launch would use,
+	// and a resume follows the session's own provider instead, so the two
+	// genuinely diverge.
 	Provider          string
 	ProviderSessionID string
 	ResumeCommand     string

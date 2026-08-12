@@ -78,12 +78,14 @@ type flowLaunchEventMsg struct {
 	RepoPath     string
 	WorktreePath string
 	PlanPath     string
-	// Provider, ProviderSessionID, and ResumeCommand are phase-resume only.
-	// Session identity is resolved once, at the key press, and re-validated by
-	// the read stage; prepare must never re-derive it, because AddPhaseLaunchID
-	// appends a launch ID with no session yet and LatestPhaseSession would then
-	// fall through to a different session than the read authorized.
-	Provider          string
+	// ProviderSessionID and ResumeCommand are phase-resume only. Session
+	// identity is resolved once, at the key press, and re-validated by the read
+	// stage against its own intent; what the read forwards here is what prepare
+	// must use verbatim. Prepare may never re-derive it, because
+	// AddPhaseLaunchID appends a launch ID with no session yet and
+	// LatestPhaseSession would then fall through to a different session than
+	// the read authorized. The provider itself is not carried: it is consumed
+	// entirely by the read stage's drift check and nothing downstream reads it.
 	ProviderSessionID string
 	ResumeCommand     string
 	Err               string

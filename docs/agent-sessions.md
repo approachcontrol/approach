@@ -133,6 +133,8 @@ Flow launch lifecycle: it targets the exact Flow and phase, re-reads the
 persisted record before writing, and records the resume as a fresh launch on
 that phase. The provider session it resumes is the one the read stage
 validated, never re-derived from the record the write returns. Occupancy is
-Flow-scoped and embedded-only for CLI resumes — any embedded terminal on that
-Flow, on any phase and in any state, refuses the resume until it is closed,
-detached, or dismissed — while `codex-app` navigation is exempt.
+Flow-scoped for CLI resumes and matches every other launch kind: an embedded
+terminal on that Flow — on any phase and in any state — refuses the resume out
+loud until it is closed, detached, or dismissed, while another lifecycle attempt
+or a pending repair refuses it silently. `codex-app` navigation is exempt from
+all of it.
