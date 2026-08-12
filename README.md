@@ -162,7 +162,17 @@ Agents persist plans and Flow progress through the `approach plan` and
 at `agent-skills/approach-plan-persist/`, `agent-skills/approach-flow/`, and
 `agent-skills/approach-flow-create/` — install or symlink them into your
 agent's user-level skill directory, such as `~/.codex/skills/` for Codex or
-the equivalent Claude skills directory. Phase transitions, gating, and merge rules are documented in
+the equivalent Claude skills directory. The bundled installer does this for you:
+
+```bash
+./agent-skills/install.sh            # symlink into every agent skills dir found
+./agent-skills/install.sh --dry-run  # preview the changes first
+```
+
+Symlinks keep the skills tracking your checkout; pass `--copy` for detached
+copies, or `--target DIR` to choose the destination explicitly. Re-run it after
+moving the repository to repair links that still point at the old path.
+Phase transitions, gating, and merge rules are documented in
 [docs/flow-phases.md](docs/flow-phases.md).
 
 ## Sessions and Hooks
