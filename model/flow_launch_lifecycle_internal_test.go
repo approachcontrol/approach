@@ -759,9 +759,13 @@ func TestAutoFlowLaunchRefusedSilentlyWhileAnotherSourceHoldsFlow(t *testing.T) 
 func TestAutoFlowLaunchOccupancyRefusedAtAdmission(t *testing.T) {
 	record := autoLaunchFlowRecord()
 	tests := []struct {
-		name    string
-		occupy  func(Model) Model
-		release func(Model) Model
+		name   string
+		occupy func(Model) Model
+		// heldToken names the attempt the occupier installs, when it is one, so
+		// the refusal can be checked against "the existing hold survived"
+		// rather than "nothing holds the Flow".
+		heldToken string
+		release   func(Model) Model
 	}{
 		{
 			name: "pending repair launch",
@@ -773,16 +777,21 @@ func TestAutoFlowLaunchOccupancyRefusedAtAdmission(t *testing.T) {
 			},
 		},
 		{
-			// Registered synchronously on the r key press, before its write
+			// Reserved synchronously on the r key press, before its write
 			// lands, so AutoMode defers rather than racing a resume mid-write.
-			name: "pending phase resume",
+			name: "phase resume attempt",
 			occupy: func(m Model) Model {
-				key, _ := newFlowPhaseResumeKey(record.FlowID, record.Phases[0].PhaseID)
-				return m.withPendingFlowPhaseResume(key, "resume-1")
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:   "resume-1",
+					Kind:    flowLaunchKindPhaseResume,
+					FlowID:  record.FlowID,
+					PhaseID: record.Phases[0].PhaseID,
+				}, flowLaunchStateReading)
+				return next
 			},
+			heldToken: "resume-1",
 			release: func(m Model) Model {
-				key, _ := newFlowPhaseResumeKey(record.FlowID, record.Phases[0].PhaseID)
-				return m.withoutPendingFlowPhaseResume(key)
+				return m.releaseFlowLaunchAttempt(record.FlowID, "resume-1")
 			},
 		},
 		{
@@ -831,8 +840,12 @@ func TestAutoFlowLaunchOccupancyRefusedAtAdmission(t *testing.T) {
 			if m.status.Text != "keep this" {
 				t.Fatalf("status = %q, want a silent refusal", m.status.Text)
 			}
-			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+			attempt, held := m.flowLaunchAttempt(record.FlowID)
+			if tc.heldToken == "" && held {
 				t.Fatal("a refused AutoMode poll must not reserve an attempt")
+			}
+			if tc.heldToken != "" && (!held || attempt.Token != tc.heldToken) {
+				t.Fatalf("attempt = %#v, want the existing hold %q untouched", attempt, tc.heldToken)
 			}
 			if !h.drainArmed(m, record.FlowID) {
 				t.Fatal("a refused AutoMode poll must leave the drain armed")
@@ -1663,11 +1676,12 @@ func TestAutoModePreparationFailureReleasesReservation(t *testing.T) {
 	}
 }
 
-func TestFlowLaunchAdmissionRejectsLegacyOccupancy(t *testing.T) {
+func TestFlowLaunchAdmissionRejectsCompetingOccupancy(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	tests := []struct {
-		name   string
-		occupy func(Model) Model
+		name      string
+		occupy    func(Model) Model
+		heldToken string
 	}{
 		{
 			name: "pending repair launch",
@@ -1676,11 +1690,17 @@ func TestFlowLaunchAdmissionRejectsLegacyOccupancy(t *testing.T) {
 			},
 		},
 		{
-			name: "pending phase resume",
+			name: "phase resume attempt",
 			occupy: func(m Model) Model {
-				key, _ := newFlowPhaseResumeKey(record.FlowID, record.Phases[0].PhaseID)
-				return m.withPendingFlowPhaseResume(key, "resume-1")
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:   "resume-1",
+					Kind:    flowLaunchKindPhaseResume,
+					FlowID:  record.FlowID,
+					PhaseID: record.Phases[0].PhaseID,
+				}, flowLaunchStateReading)
+				return next
 			},
+			heldToken: "resume-1",
 		},
 		{
 			name: "flow embedded terminal",
@@ -1722,8 +1742,12 @@ func TestFlowLaunchAdmissionRejectsLegacyOccupancy(t *testing.T) {
 			if got := next.status.Text; got != noLaunchableFlowPhaseStatus {
 				t.Fatalf("status = %q, want %q", got, noLaunchableFlowPhaseStatus)
 			}
-			if _, ok := h.attempt(next, record.FlowID); ok {
+			attempt, held := h.attempt(next, record.FlowID)
+			if tc.heldToken == "" && held {
 				t.Fatal("occupied Flow must not reserve an attempt")
+			}
+			if tc.heldToken != "" && (!held || attempt.Token != tc.heldToken) {
+				t.Fatalf("attempt = %#v, want the existing hold %q untouched", attempt, tc.heldToken)
 			}
 		})
 	}
@@ -1751,12 +1775,19 @@ func TestLegacySourcesRejectWhileLifecycleHoldsFlow(t *testing.T) {
 	if !held.flowAutoAdvanceOccupied(record) {
 		t.Fatal("AutoMode must treat a launch attempt as occupancy")
 	}
-	resumed, resumeCmd := held.launchTrackedFlowPhaseResumeWithContext(actions.AgentLaunchContext{
-		FlowID:      record.FlowID,
-		FlowPhaseID: record.Phases[0].PhaseID,
+	resumed, resumeCmd, admitted := held.requestFlowLaunch(flowLaunchIntent{
+		Kind:              flowLaunchKindPhaseResume,
+		FlowID:            record.FlowID,
+		PhaseID:           record.Phases[0].PhaseID,
+		Provider:          agent.CommandCodex,
+		ProviderSessionID: "codex-session",
+		ResumeCommand:     agent.CommandCodex,
 	})
-	if resumeCmd != nil || len(resumed.pendingFlowPhaseResumes) != 0 {
+	if resumeCmd != nil || admitted {
 		t.Fatal("phase resume must not start while a launch attempt holds the Flow")
+	}
+	if attempt, ok := resumed.flowLaunchAttempt(record.FlowID); !ok || attempt.Token != "token-1" {
+		t.Fatalf("attempt = %#v, want the manual launch's hold untouched", attempt)
 	}
 }
 

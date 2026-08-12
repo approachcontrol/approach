@@ -173,7 +173,6 @@ type Model struct {
 	flowLaunchAttempts            map[string]flowLaunchAttempt
 	launchSeams                   flowLaunchSeams
 
-	pendingFlowPhaseResumes map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen uint64
 	flowRefreshTickGen      uint64
 	flowRefreshInFlight     uint64
@@ -187,11 +186,6 @@ type Model struct {
 	sessionStateRoot        string
 	bootstrapHookForRepo    func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook        func(actions.BootstrapContext, actions.BootstrapHook) error
-}
-
-type flowPhaseResumeKey struct {
-	FlowID  string
-	PhaseID string
 }
 
 type statusSource int
@@ -1807,10 +1801,6 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
-	case flowPhaseResumePersistedMsg:
-		return m.handleFlowPhaseResumePersisted(msg)
-	case flowPhaseResumePersistFailedMsg:
-		return m.handleFlowPhaseResumePersistFailed(msg)
 	case FlowCreatedMsg:
 		return m.handleFlowCreated(msg)
 	case FlowCreateFailedMsg:

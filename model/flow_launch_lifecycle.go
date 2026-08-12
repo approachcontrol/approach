@@ -271,8 +271,7 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	return m.flowLaunchAttemptOccupied(flowID) ||
 		m.hasFlowEmbeddedTerminalForFlow(flowID) ||
 		m.hasFlowRepairEmbeddedTerminalForFlow(flowID) ||
-		m.hasPendingFlowRepairLaunch(flowID) ||
-		m.hasPendingFlowPhaseResumeForFlow(flowID)
+		m.hasPendingFlowRepairLaunch(flowID)
 }
 
 func (m Model) cachedFlowRecord(flowID string) (flowstore.FlowRecord, bool) {

@@ -505,17 +505,6 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	LaunchRelease       func()
 }
 
-type flowPhaseResumePersistedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Flow          flowstore.FlowRecord
-	LaunchRelease func()
-}
-
-type flowPhaseResumePersistFailedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Err           error
-}
-
 type FlowCreatedMsg struct {
 	RepoPath string
 	FlowID   string
