@@ -12,6 +12,7 @@ CLAUDE.md is a symlink to this file — edit here.
 - Agent session hooks and storage: `docs/agent-sessions.md`
 - Config reference: `docs/config.md`
 - Flow phase semantics: `docs/flow-phases.md`
+- Read-only GraphQL API (`approach serve`): `docs/graphql-api.md`
 - Beads task tracking: `.agents/skills/beads/SKILL.md` (run `bd prime` for live session context)
 - Flow/plan skill recipes: `agent-skills/approach-flow/SKILL.md`, `agent-skills/approach-flow-create/SKILL.md`, `agent-skills/approach-plan-persist/SKILL.md`
 
