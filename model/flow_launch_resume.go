@@ -58,10 +58,14 @@ func (m Model) flowPhaseResumeRequest(record flowstore.FlowRecord, phase flowsto
 	if err := agent.Validate(command); err != nil {
 		return flowLaunchIntent{}, err.Error(), false
 	}
-	sessionID := strings.TrimSpace(session.SessionID)
-	if sessionID == "" {
+	// Carried verbatim, not trimmed: both stores key a session by its raw ID, so
+	// canonicalizing here would name a session neither store has. The blank
+	// check is an absence test. actions applies the launch boundary's own
+	// trimming when it builds the command line.
+	if strings.TrimSpace(session.SessionID) == "" {
 		return flowLaunchIntent{}, flowPhaseResumeMissingSessionIDStatus, false
 	}
+	sessionID := session.SessionID
 	fallbackRepoPath, _ := m.currentRepoPath()
 	repoPath := record.RepoPath
 	if repoPath == "" {
@@ -264,10 +268,7 @@ func phaseResumeFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent
 			event.Err = err.Error()
 			return event
 		}
-		if flowLaunchPhaseSessionOccupiedExcept(phase, records, flowSessionIdentity{
-			Provider:  intent.Provider,
-			SessionID: intent.ProviderSessionID,
-		}) {
+		if flowLaunchPhaseSessionOccupiedExcept(phase, records, intent.resumeSessionIdentity()) {
 			event.Err = flowPhaseResumeLiveSessionStatus
 			return event
 		}
@@ -303,10 +304,10 @@ func phaseResumeRefusal(phase flowstore.FlowPhase, intent flowLaunchIntent) (str
 	if !ok {
 		return status, false
 	}
-	// Providers compare normalized, so a record spelling one "Codex" does not
-	// trip drift; session IDs compare exactly.
-	if agent.Normalize(strings.TrimSpace(session.Provider)) != agent.Normalize(intent.Provider) ||
-		strings.TrimSpace(session.SessionID) != strings.TrimSpace(intent.ProviderSessionID) {
+	// Drift and occupancy ask the same question — is this the session the intent
+	// named — so they share one identity rule rather than restating it: providers
+	// compare normalized, session IDs byte-exact.
+	if !intent.resumeSessionIdentity().matches(session.Provider, session.SessionID) {
 		return flowPhaseResumeDriftStatus, false
 	}
 	return "", true

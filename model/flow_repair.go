@@ -125,8 +125,7 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 		}
 	}
 	for _, session := range phase.Sessions {
-		sessionID := strings.TrimSpace(session.SessionID)
-		if sessionID == "" || skip.matches(session.Provider, sessionID) {
+		if strings.TrimSpace(session.SessionID) == "" || skip.matches(session.Provider, session.SessionID) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {

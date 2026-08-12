@@ -472,6 +472,32 @@ func TestPhaseResumeReadStageRefusals(t *testing.T) {
 			},
 			wantErr: flowPhaseResumeLiveSessionStatus,
 		},
+		{
+			// Both stores key a session by its raw ID — safeSessionDirName
+			// hashes it and sameSession compares it — so an ID differing only by
+			// surrounding whitespace is a second, distinct agent rather than the
+			// session being resumed.
+			name: "competing live session whose id differs only by whitespace",
+			persist: func(h *manualLaunchHarness) {
+				h.sessionRecords = []sessions.SessionRecord{{
+					Provider: sessions.ProviderCodex, SessionID: " codex-session ",
+					LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
+				}}
+			},
+			wantErr: flowPhaseResumeLiveSessionStatus,
+		},
+		{
+			name: "competing live mirrored session whose id differs only by whitespace",
+			persist: func(h *manualLaunchHarness) {
+				h.persistedFlows = []flowstore.FlowRecord{resumePersistedFlow(func(phase *flowstore.FlowPhase) {
+					phase.Sessions = []flowstore.Session{
+						{Provider: "codex", SessionID: " codex-session ", LaunchID: "launch-old", Status: "last_seen"},
+						endedSession("codex-session", "launch-old"),
+					}
+				})}
+			},
+			wantErr: flowPhaseResumeLiveSessionStatus,
+		},
 	}
 
 	for _, tc := range tests {
@@ -539,6 +565,36 @@ func TestPhaseResumeAdmitsItsOwnLiveSession(t *testing.T) {
 				t.Fatalf("embedded launches = %#v, want the target session resumed", h.launchContexts)
 			}
 		})
+	}
+}
+
+// The exemption keys on the store's own identity, so a target whose persisted
+// ID carries whitespace has to exempt itself under that exact ID — otherwise
+// the one phase state resume exists for would refuse forever. Identity is
+// threaded verbatim for the same reason; only the launch boundary in actions
+// canonicalizes it for the command line.
+func TestPhaseResumeAdmitsItsOwnLiveSessionWithAnUntrimmedID(t *testing.T) {
+	const sessionID = " codex-session "
+	record := resumeLaunchFlowRecord()
+	record.Phases[0].Sessions = []flowstore.Session{{
+		Provider: "codex", SessionID: sessionID, LaunchID: "launch-old", Status: "last_seen",
+	}}
+	h := newManualLaunchHarness(t, record)
+	h.sessionRecords = []sessions.SessionRecord{{
+		Provider: sessions.ProviderCodex, SessionID: sessionID,
+		LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
+	}}
+
+	m := h.resume(h.resumeModel())
+
+	if got := m.status.Text; got != "" {
+		t.Fatalf("status = %q, want the target session not to count as occupancy", got)
+	}
+	if len(h.launchUpdates) != 1 || !h.launchUpdates[0].Resume {
+		t.Fatalf("launch updates = %#v, want one resume write", h.launchUpdates)
+	}
+	if len(h.launchContexts) != 1 || h.launchContexts[0].ResumeSessionID != sessionID {
+		t.Fatalf("embedded launches = %#v, want the stored session id carried verbatim", h.launchContexts)
 	}
 }
 

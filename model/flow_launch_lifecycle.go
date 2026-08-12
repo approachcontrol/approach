@@ -864,14 +864,19 @@ type flowSessionIdentity struct {
 }
 
 // matches reuses the read stage's drift comparison: providers compare
-// normalized, so a record spelling one "Codex" still matches, and session IDs
-// compare exactly. A zero identity — every caller but resume — matches nothing.
+// normalized, so a record spelling one "Codex" still matches. Session IDs
+// compare byte-exact, because that is the identity both stores enforce —
+// sessions.safeSessionDirName hashes the raw ID and flowstore.sameSession
+// compares it, and neither writer canonicalizes before applying those rules, so
+// IDs differing only by surrounding whitespace are two distinct agents. Callers
+// still use TrimSpace to ask whether a session has an ID at all; that is an
+// absence test, never a comparison. A zero identity — every caller but resume —
+// matches nothing.
 func (id flowSessionIdentity) matches(provider, sessionID string) bool {
 	if strings.TrimSpace(id.SessionID) == "" {
 		return false
 	}
-	return agent.Normalize(provider) == agent.Normalize(id.Provider) &&
-		strings.TrimSpace(sessionID) == strings.TrimSpace(id.SessionID)
+	return agent.Normalize(provider) == agent.Normalize(id.Provider) && sessionID == id.SessionID
 }
 
 // flowLaunchPhaseSessionOccupiedExcept is the same rule with one session
@@ -893,8 +898,7 @@ func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []s
 		}
 	}
 	for _, record := range records {
-		sessionID := strings.TrimSpace(record.SessionID)
-		if sessionID == "" || skip.matches(string(record.Provider), sessionID) {
+		if strings.TrimSpace(record.SessionID) == "" || skip.matches(string(record.Provider), record.SessionID) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(record.LaunchID)]; !ok {

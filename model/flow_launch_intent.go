@@ -57,9 +57,11 @@ type flowLaunchIntent struct {
 	// yet. Manual launch leaves it empty.
 	FlowTitle string
 	// Provider, ProviderSessionID, and ResumeCommand are phase-resume identity.
-	// Provider is the normalized session provider and ProviderSessionID its
-	// exact ID; together they are what the authoritative read re-validates
-	// against the fresh phase. ResumeCommand is the already-resolved agent
+	// Provider is the normalized session provider and ProviderSessionID the
+	// persisted ID verbatim — both stores key a session by its raw ID, so
+	// canonicalizing it here would name a session neither store has. Together
+	// they are what the authoritative read re-validates against the fresh
+	// phase. ResumeCommand is the already-resolved agent
 	// command, after the codex → codex-app preference mapping and
 	// agent.Validate. It is deliberately not flowLaunchAgentSettingsSnapshot's
 	// Command: that field carries the agent *setting* a new launch would use,
@@ -78,6 +80,14 @@ type flowLaunchIntent struct {
 	// route ignores this field entirely and rebuilds from the record its read
 	// returned.
 	ResumeContext actions.AgentLaunchContext
+}
+
+// resumeSessionIdentity names the session a resume is reattaching to the way
+// both stores key it. The read stage's drift check and its occupancy exemption
+// both go through this, so the two cannot disagree about what "the same
+// session" means.
+func (intent flowLaunchIntent) resumeSessionIdentity() flowSessionIdentity {
+	return flowSessionIdentity{Provider: intent.Provider, SessionID: intent.ProviderSessionID}
 }
 
 func (m Model) flowLaunchOrigin() flowLaunchOrigin {
