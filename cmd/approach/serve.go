@@ -98,15 +98,27 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("error listening on %s: %w", addr, err)
 	}
-	fmt.Fprintf(deps.stdout, "approach serve listening on http://%s%s\n", listener.Addr().String(), graphqlapi.GraphQLPath)
-	if !loopback {
+	// The check above classified a *string*. A hostname resolves through
+	// /etc/hosts and the configured resolver, so "localhost" is a claim about a
+	// name, not about an interface: a resolver that maps it to a LAN address
+	// would hand out an unauthenticated listener there, and the handler's own
+	// allowlist accepts `Host: localhost` from anywhere. Verify what actually
+	// got bound, and close it before serving a single byte if it is not
+	// loopback after all.
+	bound := listener.Addr()
+	if token == "" && !isLoopbackAddr(bound) {
+		listener.Close()
+		return fmt.Errorf("a token is required: bind address %q resolved to the non-loopback listen address %q; set APPROACH_API_TOKEN", addr, bound)
+	}
+	fmt.Fprintf(deps.stdout, "approach serve listening on http://%s%s\n", bound.String(), graphqlapi.GraphQLPath)
+	if !isLoopbackAddr(bound) {
 		// The token gates access but does not protect the wire: this server
 		// speaks plaintext HTTP and has no TLS configuration, so a bind that
 		// leaves the machine puts the token and every Flow record in front of
 		// anyone on the path. Say so once, where the operator will see it.
 		fmt.Fprintf(deps.stderr, "approach serve: warning: %s is not loopback and this server speaks plaintext HTTP. "+
 			"The API token and every Flow record cross the network in the clear. "+
-			"Front it with TLS — a tunnel or a reverse proxy — rather than exposing this port directly.\n", addr)
+			"Front it with TLS — a tunnel or a reverse proxy — rather than exposing this port directly.\n", bound)
 	}
 
 	return serveUntilDone(ctx, newServeHTTPServer(handler), listener)
@@ -146,8 +158,26 @@ func serveUntilDone(ctx context.Context, server *http.Server, listener net.Liste
 	return shutdownErr
 }
 
+// isLoopbackAddr reports whether a listener really bound the loopback
+// interface. It is the check that decides whether a token-free server is
+// allowed to serve, because it looks at the resolved address rather than at
+// the string the operator typed.
+func isLoopbackAddr(addr net.Addr) bool {
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		return tcp.IP != nil && tcp.IP.IsLoopback()
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // isLoopbackBindAddr reports whether addr binds only the loopback interface.
-// A wildcard host (":8787") is not loopback.
+// A wildcard host (":8787") is not loopback. It runs before the listener
+// opens, so a non-loopback *literal* never gets bound unauthenticated even
+// briefly; a hostname is only settled afterwards, by isLoopbackAddr.
 func isLoopbackBindAddr(addr string) (bool, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

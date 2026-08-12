@@ -81,8 +81,13 @@ curl -s -H 'Content-Type: application/json' \
   403s every request that reaches it. Widening past `127.0.0.1` costs nothing
   against rebinding: rebinding resolves a hostname, and a rebound `Host` is a
   name, never an IP literal.
-- On **any non-loopback** bind a token is required, and startup fails *before*
-  the listener opens if it is missing.
+- On **any non-loopback** bind a token is required. For an IP literal or a
+  wildcard host that is decided *before* the listener opens, so an
+  unauthenticated listener on a non-loopback interface never exists even
+  briefly. A **hostname** is only a claim about a name — `/etc/hosts` or the
+  resolver decides what `localhost` means — so the resolved listener address is
+  checked again after `net.Listen` and the listener is closed, unserved, if it
+  turns out not to be loopback.
 - The token is accepted as `Authorization: Bearer <token>` or
   `X-Approach-Token`, compared with `crypto/subtle.ConstantTimeCompare`.
 - **Set the token through `APPROACH_API_TOKEN`, not `--token`.** A flag value

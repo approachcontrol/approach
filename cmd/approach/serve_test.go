@@ -281,18 +281,86 @@ func TestRunServeAllowsLoopbackBindWithoutToken(t *testing.T) {
 	}
 }
 
+// spoofedAddrListener is a real loopback listener that reports someone else's
+// address, so a test can exercise the "what did this actually bind" path
+// without opening a port off loopback.
+type spoofedAddrListener struct {
+	net.Listener
+	addr   net.Addr
+	mu     sync.Mutex
+	closed bool
+}
+
+func (l *spoofedAddrListener) Addr() net.Addr { return l.addr }
+
+func (l *spoofedAddrListener) Close() error {
+	l.mu.Lock()
+	l.closed = true
+	l.mu.Unlock()
+	return l.Listener.Close()
+}
+
+func (l *spoofedAddrListener) wasClosed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
+}
+
+// listenAs returns a listen seam that binds loopback but reports addr.
+func listenAs(t *testing.T, addr net.Addr) (func(string, string) (net.Listener, error), *spoofedAddrListener) {
+	t.Helper()
+	real, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	spoofed := &spoofedAddrListener{Listener: real, addr: addr}
+	t.Cleanup(func() { _ = real.Close() })
+	return func(string, string) (net.Listener, error) { return spoofed, nil }, spoofed
+}
+
+func TestRunServeRefusesATokenFreeBindThatResolvesOffLoopback(t *testing.T) {
+	// isLoopbackBindAddr classifies the string the operator typed, and
+	// "localhost" is a name: /etc/hosts or the resolver decides what it means.
+	// If it maps somewhere off loopback, a token-free server would be listening
+	// on a LAN interface — and the handler's own allowlist accepts
+	// `Host: localhost` from anywhere, so nothing downstream would catch it.
+	listen, spoofed := listenAs(t, &net.TCPAddr{IP: net.IPv4(10, 0, 0, 7), Port: 8787})
+	deps := serveDeps(t, t.TempDir(), nil)
+	deps.listen = listen
+
+	err := runServeContext(context.Background(), []string{"approach", "serve", "--addr", "localhost:8787"}, deps)
+	if err == nil || !strings.Contains(err.Error(), "token is required") {
+		t.Fatalf("runServeContext() error = %v, want a token-required error", err)
+	}
+	if !strings.Contains(err.Error(), "10.0.0.7:8787") {
+		t.Errorf("error = %v, want the resolved listen address named", err)
+	}
+	if !spoofed.wasClosed() {
+		t.Error("the listener was left open; it must be closed before anything is served on it")
+	}
+
+	// The same resolution with a token configured is allowed — it is the
+	// missing token, not the address, that makes it refuse.
+	listenWithToken, _ := listenAs(t, &net.TCPAddr{IP: net.IPv4(10, 0, 0, 7), Port: 8787})
+	deps = serveDeps(t, t.TempDir(), nil)
+	deps.listen = listenWithToken
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runServeContext(ctx, []string{"approach", "serve", "--addr", "localhost:8787", "--token", "secret"}, deps); err != nil {
+		t.Fatalf("runServeContext(with token) error = %v, want nil", err)
+	}
+}
+
 func TestRunServeWarnsThatANonLoopbackBindIsPlaintext(t *testing.T) {
 	// A token gates access but does not protect the wire: there is no TLS
 	// here, so a bind that leaves the machine puts the token and every Flow
 	// record in front of anyone on the path. The operator has to be told once.
-	run := func(t *testing.T, args ...string) string {
+	run := func(t *testing.T, addr net.Addr, args ...string) string {
 		t.Helper()
 		stderr := &lockedBuffer{}
 		deps := serveDeps(t, t.TempDir(), nil)
 		deps.stderr = stderr
-		// Bind loopback whatever was asked for: the warning is about the
-		// requested address, and a test must not open a public port.
-		deps.listen = func(network, _ string) (net.Listener, error) { return net.Listen(network, "127.0.0.1:0") }
+		deps.listen, _ = listenAs(t, addr)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if err := runServeContext(ctx, append([]string{"approach", "serve"}, args...), deps); err != nil {
@@ -301,11 +369,14 @@ func TestRunServeWarnsThatANonLoopbackBindIsPlaintext(t *testing.T) {
 		return stderr.String()
 	}
 
-	warned := run(t, "--addr", "0.0.0.0:8787", "--token", "secret")
-	if !strings.Contains(warned, "plaintext HTTP") || !strings.Contains(warned, "0.0.0.0:8787") {
-		t.Errorf("stderr = %q, want a plaintext-HTTP warning naming the bind address", warned)
+	public := &net.TCPAddr{IP: net.IPv4(192, 168, 1, 5), Port: 8787}
+	warned := run(t, public, "--addr", "0.0.0.0:8787", "--token", "secret")
+	if !strings.Contains(warned, "plaintext HTTP") || !strings.Contains(warned, "192.168.1.5:8787") {
+		t.Errorf("stderr = %q, want a plaintext-HTTP warning naming the bound address", warned)
 	}
-	if quiet := run(t, "--addr", "127.0.0.1:0"); strings.Contains(quiet, "plaintext HTTP") {
+
+	loopback := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8787}
+	if quiet := run(t, loopback, "--addr", "127.0.0.1:0"); strings.Contains(quiet, "plaintext HTTP") {
 		t.Errorf("stderr = %q, want no warning on a loopback bind", quiet)
 	}
 }
