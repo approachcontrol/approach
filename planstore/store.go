@@ -494,9 +494,11 @@ func (s *Store) planDir(planID string) string {
 }
 
 // acquireMutationLock serializes all plan writes, including generated-ID
-// allocation. Flow mutations may acquire a Flow lock and then this plan lock
-// for linked-plan synchronization; plan operations must never acquire Flow
-// locks, preserving that one-way lock order.
+// allocation. No flowstore path nests the two locks any more: linked-plan
+// synchronization runs after the Flow write has committed and holds no Flow
+// lock while it takes this one. The one-way rule still stands as a standing
+// constraint — plan operations must never acquire Flow locks — so that
+// reintroducing nesting on the flowstore side cannot produce a lock cycle.
 func (s *Store) acquireMutationLock() (func(), error) {
 	lockDir := filepath.Join(s.root, "plans", ".locks")
 	if err := os.MkdirAll(lockDir, artifacts.DirPerm); err != nil {

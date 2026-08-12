@@ -95,12 +95,11 @@ func TestInjectedPlanSyncerWriteFailureCompensates(t *testing.T) {
 	if !strings.Contains(err.Error(), "sync linked plan phase: plan write exploded") {
 		t.Fatalf("SetPhase() error = %v, want sync linked plan phase wrapping", err)
 	}
-	// Half of the asymmetry pinned by clause 3 on backend.update: SetPhase
-	// discards the record on a sync failure even though the compensation was
-	// persisted. TestManualMergeSyncFailureReturnsCompensatedRecord pins the
-	// other half. Nothing else in the suite looks at this return value, so
-	// without this assertion the seam could start returning the record here and
-	// stay green.
+	// Half of the asymmetry documented on Store.SetPhase: it discards the record
+	// on a sync failure even though the compensation was persisted.
+	// TestManualMergeSyncFailureReturnsCompensatedRecord pins the other half.
+	// Nothing else in the suite looks at this return value, so without this
+	// assertion the store could start returning the record here and stay green.
 	if got.FlowID != "" {
 		t.Fatalf("SetPhase() record = %+v, want the zero record beside the error", got)
 	}
@@ -134,9 +133,9 @@ func TestInjectedPlanSyncerOpenFailureCompensatesBeforeHook(t *testing.T) {
 }
 
 // TestManualMergeSyncFailureReturnsCompensatedRecord pins the other half of the
-// clause 3 asymmetry: unlike SetPhase, MarkManualMerge hands back the
-// compensated record beside the sync error, with the PR and merge status rolled
-// back to what they were before the merge was recorded.
+// asymmetry documented on the two methods: unlike SetPhase, MarkManualMerge
+// hands back the compensated record beside the sync error, with the PR and merge
+// status rolled back to what they were before the merge was recorded.
 func TestManualMergeSyncFailureReturnsCompensatedRecord(t *testing.T) {
 	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
 	store, record := newMergeReadySeamFlow(t, syncer)

@@ -44,29 +44,19 @@ type backend interface {
 	//      the acquisition if you must, but never a mutate that has begun.
 	//   2. Every sess.save performed by mutate is DURABLE once update returns,
 	//      REGARDLESS of whether mutate returned an error. A non-nil error from
-	//      mutate is a caller-visible outcome, NOT a rollback signal. SetPhase
-	//      and MarkManualMerge rely on this: they persist needs_attention
-	//      compensation and *then* return the sync error. The transaction is
-	//      therefore committed even when mutate returns an error.
+	//      mutate is a caller-visible outcome, NOT a rollback signal. The
+	//      transaction is therefore committed even when mutate returns an error.
+	//      This binds every implementation even though no production caller
+	//      currently exercises it: the linked-plan compensation that used to
+	//      rely on it now runs in a second update of its own. The contract
+	//      subtests are what keep it honest.
 	//   3. mutate's record AND error are returned VERBATIM — never wrapped,
-	//      never replaced, never zeroed. The two callers differ on purpose:
-	//      SetPhase returns a zero record beside its sync error while
-	//      MarkManualMerge returns the compensated record beside the same kind
-	//      of error, and errors.Is against errFlowNotFound / ErrAutoLaunchOutdated
-	//      plus the literal error substrings asserted throughout store_test.go
-	//      all depend on this clause.
+	//      never replaced, never zeroed. errors.Is against errFlowNotFound /
+	//      ErrAutoLaunchOutdated plus the literal error substrings asserted
+	//      throughout store_test.go all depend on this clause.
 	//   4. sess.save may be called zero, one, or many times.
 	//   5. Writer acquisition happens before mutate. Updates are serialized
 	//      database-wide and readers remain available under WAL.
-	//
-	//      BLAST RADIUS: this is database-wide, not per-record. The file backend
-	//      this replaced locked one Flow at a time, so anything slow inside
-	//      mutate delayed only that Flow. Store.SetPhase and MarkManualMerge run
-	//      the linked-plan sync inside mutate, which takes planstore's own file
-	//      lock — lock order is flow-db-writer -> plan-file-lock, and nothing
-	//      takes them the other way round, so it cannot deadlock. It can still
-	//      hold the global Flow writer for as long as that plan lock is
-	//      contended. See flowstore/store.go syncLinkedPlanPhase.
 	//
 	// A commit failure is the sole exception to clauses 2 and 3: durability is
 	// then unknown, so update returns a zero record and a classifying storage

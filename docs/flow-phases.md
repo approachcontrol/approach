@@ -268,6 +268,16 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.
 
+The plan write happens **after** the Flow phase change commits, so there is a
+brief window in which the phase reads as completed before a failed sync demotes
+it, and in rare cases — a crash, or a concurrent write to the same phase — the
+demotion never lands and the Flow keeps a completed phase beside a stale plan.
+The manual-merge rollback has the same exception: when a concurrent write already
+owns that state, the Flow stays `merged` and the error is the only signal. The
+recovery is the same in every case and is always safe to run: repeat the phase
+completion, or re-record the manual merge with the same metadata. Both re-run the
+idempotent plan write, and neither demotes state that is already correct.
+
 ## Per-phase agent settings
 
 Every phase persists three optional fields — `agent`, `model`, and
