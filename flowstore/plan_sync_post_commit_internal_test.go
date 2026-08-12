@@ -1000,6 +1000,39 @@ func TestSetPhaseSkipsCompensationWhenTheMergeWasRecordedDuringTheWindow(t *test
 	}
 }
 
+// TestRecordedMergeKeepsItsPhasePairing covers the pairing the compensation
+// refuses to break, including the blocked half that the merged-path integration
+// tests above do not reach. validateMergeUpdate enforces both, so a compensated
+// record that broke either would be one no ordinary write could produce.
+func TestRecordedMergeKeepsItsPhasePairing(t *testing.T) {
+	recordWith := func(mergeStatus, phaseStatus string) FlowRecord {
+		return FlowRecord{
+			Merge:  Merge{Status: mergeStatus},
+			Phases: []FlowPhase{{PhaseID: "merge", Kind: KindMerge, Status: phaseStatus}},
+		}
+	}
+	for name, testCase := range map[string]struct {
+		record FlowRecord
+		want   bool
+	}{
+		"merged beside completed":  {recordWith(MergeMerged, PhaseCompleted), true},
+		"merged beside pending":    {recordWith(MergeMerged, PhasePending), false},
+		"blocked beside blocked":   {recordWith(MergeBlocked, PhaseBlocked), true},
+		"blocked beside pending":   {recordWith(MergeBlocked, PhasePending), false},
+		"pending merge is unbound": {recordWith(MergePending, PhasePending), true},
+		"merged without a merge phase": {
+			FlowRecord{Merge: Merge{Status: MergeMerged}, Phases: []FlowPhase{{PhaseID: "plan", Status: PhaseCompleted}}},
+			false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := recordedMergeKeepsItsPhasePairing(testCase.record); got != testCase.want {
+				t.Fatalf("recordedMergeKeepsItsPhasePairing() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
 // TestSetPhaseSkipsCompensationWhenAMergeLandedDownstream is the same invariant
 // one hop away. The compensated phase is the merge phase's PREDECESSOR, so the
 // demotion does not touch the merge row directly — readiness does, resetting it

@@ -317,10 +317,11 @@ depends on the state the Flow was left in.
   is the only stale artifact, so repair it directly:
   `approach plan phase set --plan-id "$PLAN_ID" --phase-id merge --status completed`.
 
-One caveat on the manual-merge retry: because it must not roll back a merge that
-is already durable, it **discards** a second sync failure and returns success.
-Confirm the linked plan's own phase status rather than trusting that return
-value.
+One caveat on both retries: because neither may demote state that is already
+durable, each **discards** a second sync failure and returns success. A repeated
+completion of an already-completed phase reports success even when the plan write
+failed again, and so does an already-merged manual merge. Confirm the linked
+plan's own phase status rather than trusting either return value.
 
 ## Per-phase agent settings
 

@@ -706,7 +706,9 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 //   - sync succeeded: the committed record, nil.
 //   - sync failed on a repeat of an already-completed phase: the committed
 //     record and nil, because the durable state is correct and the plan write is
-//     idempotent.
+//     idempotent. The sync error is DISCARDED, so this recovery path reports
+//     success even when it failed again; the signal is the linked plan's own
+//     phase status, exactly as on MarkManualMerge's retry.
 //   - sync failed otherwise: a ZERO record beside the sync error, whether the
 //     needs_attention compensation was persisted by the second update or its
 //     guard declined to write. MarkManualMerge deliberately differs and returns
@@ -826,7 +828,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 // any phase the merge depends on unsatisfies its gate, and the readiness refresh
 // then resets the merge row to pending — same contradiction, one hop away. So
 // the compensation is computed into a copy first and saved only if the pairing
-// still holds.
+// still holds. It covers a concurrently blocked merge for the same reason: that
+// pairing is equally enforced, and StatusBlocked masks needs_attention just as
+// StatusMerged does.
 func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
@@ -852,7 +856,7 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 		compensated.UpdatedAt = now
 		compensated = refreshPhaseReadiness(compensated, now)
 		compensated.Status = DeriveStatus(compensated)
-		if !recordedMergeKeepsItsCompletedPhase(compensated) {
+		if !recordedMergeKeepsItsPhasePairing(compensated) {
 			return record, nil
 		}
 		if err := s.saveSession(sess, compensated); err != nil {
@@ -862,16 +866,24 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 	})
 }
 
-// recordedMergeKeepsItsCompletedPhase reports whether a record's merged Merge
-// metadata still sits beside a completed merge phase. That pairing is what
-// validateMergeUpdate enforces on every ordinary write, so a record that breaks
-// it is one no caller could have produced directly.
-func recordedMergeKeepsItsCompletedPhase(record FlowRecord) bool {
-	if record.Merge.Status != MergeMerged {
+// recordedMergeKeepsItsPhasePairing reports whether a record's merge metadata
+// still sits beside the merge phase status validateMergeUpdate requires for it:
+// completed for a merged Merge, blocked for a blocked one. A record that breaks
+// either pairing is one no caller could have produced directly, and both hide a
+// compensated phase behind a derived status — merged or blocked — that outranks
+// needs_attention.
+func recordedMergeKeepsItsPhasePairing(record FlowRecord) bool {
+	var want string
+	switch record.Merge.Status {
+	case MergeMerged:
+		want = PhaseCompleted
+	case MergeBlocked:
+		want = PhaseBlocked
+	default:
 		return true
 	}
 	index := mergePhaseIndex(record)
-	return index >= 0 && record.Phases[index].Status == PhaseCompleted
+	return index >= 0 && record.Phases[index].Status == want
 }
 
 // committedPhaseRow returns the phase row as it was actually stored, which is
