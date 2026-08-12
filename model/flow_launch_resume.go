@@ -328,6 +328,12 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		// The reserved record is discarded, as it is for every tracked launch:
+		// the read stage's drift check and this write are ordered but not one
+		// transaction, so a peer process can still land a resume in between.
+		// Closing that window belongs to AddPhaseLaunchID, which owns the
+		// expected-session condition for manual and automatic launches too;
+		// re-checking here would only move the race, not remove it.
 		_, release, reserveErr := reserve(msg.FlowID)
 		if reserveErr != nil {
 			event.Err = fmt.Sprintf("failed to mark flow phase resume: %v", reserveErr)
