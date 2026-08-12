@@ -2655,29 +2655,37 @@ func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, 
 }
 
 func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	return m.launchAgentWithContextReservation(ctx, nil)
+}
+
+func (m Model) launchAgentWithContextReservation(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
+		releaseFlowLaunchReservation(release)
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
-	return m.runAgentLaunchWithContext(ctx, launch)
+	return m.runAgentLaunchWithReservation(ctx, launch, release)
 }
 
 func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
 	if msg.RepairRelease != nil {
 		defer msg.RepairRelease()
 	}
+	if msg.LaunchRelease != nil {
+		defer msg.LaunchRelease()
+	}
 	var repairRecord *flowstore.FlowRecord
 	if msg.LaunchContext.FlowRepair && msg.RepairValidationErr == "" && strings.TrimSpace(msg.RepairRecord.FlowID) != "" {
 		repairRecord = &msg.RepairRecord
 	}
-	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr)
+	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr, msg.LaunchRelease != nil)
 }
 
 func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
-	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "")
+	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "", false)
 }
 
-func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string) (Model, tea.Cmd) {
+func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string, launchReserved bool) (Model, tea.Cmd) {
 	ctx.Embedded = true
 	if ctx.FlowRepair {
 		var current bool
@@ -2697,7 +2705,11 @@ func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchCon
 		}
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	open := m.openFlowEmbeddedTerminal
+	if launchReserved {
+		open = m.openFlowEmbeddedTerminalReserved
+	}
+	next, opened, err, prefillCmd := open(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
@@ -2745,6 +2757,10 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	ctx.Headless = false
 	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
 	return m, func() tea.Msg {
+		_, release, reserveErr := m.reserveTrackedFlowLaunch(ctx.FlowID)
+		if reserveErr != nil {
+			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: reserveErr}
+		}
 		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   ctx.FlowID,
 			PhaseID:  ctx.FlowPhaseID,
@@ -2752,13 +2768,15 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 			Resume:   true,
 		})
 		if err != nil {
+			releaseFlowLaunchReservation(release)
 			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: err}
 		}
-		return flowPhaseResumePersistedMsg{LaunchContext: ctx, Flow: updated}
+		return flowPhaseResumePersistedMsg{LaunchContext: ctx, Flow: updated, LaunchRelease: release}
 	}
 }
 
 func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (Model, tea.Cmd) {
+	defer releaseFlowLaunchReservation(msg.LaunchRelease)
 	key, ok := m.matchingPendingFlowPhaseResume(msg.LaunchContext)
 	if !ok {
 		return m, nil
@@ -2776,7 +2794,7 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
@@ -2870,10 +2888,18 @@ func (m Model) withoutPendingFlowPhaseResume(key flowPhaseResumeKey) Model {
 }
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
+	return m.runAgentLaunchWithReservation(ctx, launch, nil)
+}
+
+func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec, heldRelease func()) (Model, tea.Cmd) {
 	if launch.Interactive {
-		release, err := m.reserveFlowSpawn(ctx)
-		if err != nil {
-			return m.startFlowLaunchFailure(ctx, err.Error())
+		release := heldRelease
+		if release == nil {
+			var err error
+			release, err = m.reserveFlowSpawn(ctx)
+			if err != nil {
+				return m.startFlowLaunchFailure(ctx, err.Error())
+			}
 		}
 		// approach hands over the TTY until the launch command exits. Some launch
 		// commands are only terminal/multiplexer clients; launch.Detached records
@@ -2892,9 +2918,13 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 	// Detached launch: the command only opens or switches to an external
 	// terminal/multiplexer session and returns while the agent keeps running.
 	return m, func() tea.Msg {
-		release, err := m.reserveFlowSpawn(ctx)
-		if err != nil {
-			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+		release := heldRelease
+		if release == nil {
+			var err error
+			release, err = m.reserveFlowSpawn(ctx)
+			if err != nil {
+				return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+			}
 		}
 		defer release()
 		if err := launch.Cmd.Run(); err != nil {
@@ -2904,6 +2934,19 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
 		}
 		return AgentResultMsg{LaunchContext: ctx, Detached: true}
+	}
+}
+
+func (m Model) reserveTrackedFlowLaunch(flowID string) (flowstore.FlowRecord, func(), error) {
+	if m.reserveFlowLaunch == nil {
+		return flowstore.FlowRecord{}, func() {}, nil
+	}
+	return m.reserveFlowLaunch(flowID)
+}
+
+func releaseFlowLaunchReservation(release func()) {
+	if release != nil {
+		release()
 	}
 }
 

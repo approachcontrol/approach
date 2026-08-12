@@ -303,6 +303,7 @@ func New(repos []scanner.Repo) Model {
 
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
+	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -503,12 +504,20 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	reserveFlowLaunch := opts.ReserveFlowLaunch
 	if reserveFlowLaunch == nil {
-		reserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return flowstore.FlowRecord{}, nil, err
+		if customPhaseLaunchPersistence {
+			// A caller that replaces launch persistence owns its storage boundary;
+			// opening the default store here would reserve a different backend.
+			reserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+				return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
 			}
-			return store.ReserveAgentLaunch(flowID)
+		} else {
+			reserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+				store, err := newFlowStore()
+				if err != nil {
+					return flowstore.FlowRecord{}, nil, err
+				}
+				return store.ReserveAgentLaunch(flowID)
+			}
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -1788,13 +1797,15 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				Context:  msg.LaunchContext,
 				Route:    flowLaunchRouteExternal,
 				RepoPath: msg.LaunchContext.RepoPath,
+				Release:  msg.LaunchRelease,
 			})
 		}
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
+			releaseFlowLaunchReservation(msg.LaunchRelease)
 			return m, nil
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
-		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchAgentWithContextReservation(msg.LaunchContext, msg.LaunchRelease)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
@@ -1813,10 +1824,12 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				Context:  msg.LaunchContext,
 				Route:    flowLaunchRouteEmbedded,
 				RepoPath: msg.LaunchContext.RepoPath,
+				Release:  msg.LaunchRelease,
 			})
 		}
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
+				releaseFlowLaunchReservation(msg.LaunchRelease)
 				return m, nil
 			}
 			m = m.clearFlowCreateRequest(msg.Request)

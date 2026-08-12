@@ -1118,7 +1118,7 @@ func TestFlowLaunchCloseBetweenReadAndPrepareStartsNoAgent(t *testing.T) {
 	}
 }
 
-func TestFlowLaunchCloseAfterPrepareBeforeEmbeddedInstallStartsNoAgent(t *testing.T) {
+func TestFlowLaunchCloseBeforeEmbeddedPersistenceStartsNoAgent(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	m := h.model()
@@ -1128,14 +1128,10 @@ func TestFlowLaunchCloseAfterPrepareBeforeEmbeddedInstallStartsNoAgent(t *testin
 	readMsg := readCmd()
 	nextModel, prepareCmd := m.Update(readMsg)
 	m = nextModel.(Model)
-	preparedMsg := prepareCmd()
-	if len(h.launchUpdates) != 1 {
-		t.Fatalf("launch reservations = %d, want one successful persistence before close", len(h.launchUpdates))
-	}
-
-	// The close lands after launch-ID persistence but before the Bubble Tea
-	// message that installs the terminal is handled.
+	// The close wins before the command can persist launch bookkeeping. The
+	// reservation rejects the whole persistence-to-spawn operation atomically.
 	h.reserveLaunchErr = errors.New("flow is closed")
+	preparedMsg := prepareCmd()
 	nextModel, handoffCmd := m.Update(preparedMsg)
 	m = nextModel.(Model)
 	if handoffCmd != nil {
@@ -1145,6 +1141,9 @@ func TestFlowLaunchCloseAfterPrepareBeforeEmbeddedInstallStartsNoAgent(t *testin
 	if len(h.launchContexts) != 0 {
 		t.Fatalf("closed Flow started %d embedded agents after persistence, want zero", len(h.launchContexts))
 	}
+	if len(h.launchUpdates) != 0 {
+		t.Fatalf("closed Flow recorded launch updates %#v, want none", h.launchUpdates)
+	}
 	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
 		t.Fatal("rejected final spawn must release the launch attempt")
 	}
@@ -1153,7 +1152,7 @@ func TestFlowLaunchCloseAfterPrepareBeforeEmbeddedInstallStartsNoAgent(t *testin
 	}
 }
 
-func TestFlowLaunchCloseAfterPrepareBeforeExternalHandoffStartsNoAgent(t *testing.T) {
+func TestFlowLaunchCloseBeforeExternalPersistenceStartsNoAgent(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.agentCommand = "codex-app"
@@ -1164,12 +1163,8 @@ func TestFlowLaunchCloseAfterPrepareBeforeExternalHandoffStartsNoAgent(t *testin
 	readMsg := readCmd()
 	nextModel, prepareCmd := m.Update(readMsg)
 	m = nextModel.(Model)
-	preparedMsg := prepareCmd()
-	if len(h.launchUpdates) != 1 {
-		t.Fatalf("launch reservations = %d, want one successful persistence before close", len(h.launchUpdates))
-	}
-
 	h.reserveLaunchErr = errors.New("flow is closed")
+	preparedMsg := prepareCmd()
 	nextModel, handoffCmd := m.Update(preparedMsg)
 	m = nextModel.(Model)
 	if handoffCmd == nil {
@@ -1179,6 +1174,9 @@ func TestFlowLaunchCloseAfterPrepareBeforeExternalHandoffStartsNoAgent(t *testin
 
 	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
 		t.Fatal("rejected external spawn must release the launch attempt")
+	}
+	if len(h.launchUpdates) != 0 || len(h.agentContexts) != 0 {
+		t.Fatalf("closed Flow external launch state = updates %#v contexts %#v, want none", h.launchUpdates, h.agentContexts)
 	}
 	if got := m.status.Text; !strings.Contains(got, "closed") {
 		t.Fatalf("status = %q, want final-spawn closed rejection", got)

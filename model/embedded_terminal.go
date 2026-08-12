@@ -393,7 +393,10 @@ func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, 
 		return m, false, err, nil
 	}
 	defer release()
+	return m.openFlowEmbeddedTerminalReserved(ctx)
+}
 
+func (m Model) openFlowEmbeddedTerminalReserved(ctx actions.AgentLaunchContext) (Model, bool, error, tea.Cmd) {
 	activeNum := m.activeTerminalNum
 	requested := m.terminalDockVisible
 	if !ctx.FlowAutoLaunch && !ctx.Headless {

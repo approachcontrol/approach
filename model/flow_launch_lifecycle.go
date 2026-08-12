@@ -49,6 +49,7 @@ type flowLaunchEventMsg struct {
 	WorktreePath string
 	PlanPath     string
 	Err          string
+	Release      func()
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -304,6 +305,12 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		_, release, reserveErr := m.reserveTrackedFlowLaunch(msg.FlowID)
+		if reserveErr != nil {
+			event.Err = reserveErr.Error()
+			return event
+		}
+		event.Release = release
 		result, err := launcher.Prepare(prepared)
 		if err != nil {
 			event.Err = err.Error()
@@ -328,10 +335,12 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	want, validStage := flowLaunchStageState(msg.Stage)
 	if !validStage || msg.From != want {
+		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
 	attempt, ok := m.matchingFlowLaunchAttempt(msg.FlowID, msg.Token, msg.Kind, want)
 	if !ok {
+		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
 	switch msg.Stage {
@@ -349,9 +358,11 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		return m, m.flowLaunchPrepareCmd(msg, attempt.Settings)
 	case flowLaunchStagePrepared:
 		if msg.Skipped {
+			releaseFlowLaunchReservation(msg.Release)
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token), nil
 		}
 		if msg.Err != "" {
+			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
 		}
 		m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
@@ -380,6 +391,7 @@ func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
 // that lives in its Update case, and only removes the attempt once the slot
 // that replaces it as the Flow's owner exists.
 func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	defer releaseFlowLaunchReservation(msg.Release)
 	ctx := msg.Context
 	ctx.Embedded = true
 	ctx.FlowLaunchTracked = true
@@ -389,7 +401,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow phase launch canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
@@ -422,6 +434,7 @@ func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaun
 	ctx := msg.Context
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
+		releaseFlowLaunchReservation(msg.Release)
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
 	}
 	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {
@@ -432,7 +445,7 @@ func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaun
 		// would strand it: no AgentResultMsg fence matches any other state.
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	}
-	m, launchCmd := m.runAgentLaunchWithContext(ctx, launch)
+	m, launchCmd := m.runAgentLaunchWithReservation(ctx, launch, msg.Release)
 	var fetchCmd tea.Cmd
 	if ctx.FlowID != "" && m.flowSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()

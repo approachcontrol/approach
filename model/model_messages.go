@@ -493,6 +493,7 @@ type flowLaunchFailurePersistedMsg struct {
 type PlanLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Request       uint64
+	LaunchRelease func()
 }
 
 type FlowEmbeddedLaunchRequestedMsg struct {
@@ -501,11 +502,13 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	RepairRecord        flowstore.FlowRecord
 	RepairValidationErr string
 	RepairRelease       func()
+	LaunchRelease       func()
 }
 
 type flowPhaseResumePersistedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Flow          flowstore.FlowRecord
+	LaunchRelease func()
 }
 
 type flowPhaseResumePersistFailedMsg struct {

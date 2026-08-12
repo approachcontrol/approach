@@ -266,8 +266,19 @@ func (m Model) flowPhaseLaunchTarget(req FlowPhaseLaunchRequest) (flowPhaseLaunc
 
 func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 	return func() tea.Msg {
+		_, release, reserveErr := m.reserveTrackedFlowLaunch(target.Record.FlowID)
+		if reserveErr != nil {
+			return ActionFailedMsg{
+				RepoPath:                target.RepoPath,
+				Err:                     reserveErr.Error(),
+				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
+				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+				AutoAdvanceLaunchID:     target.LaunchID,
+			}
+		}
 		result, err := m.flowPhaseLauncher().Prepare(target.FlowPhaseLaunchPreparedRequest)
 		if err != nil {
+			releaseFlowLaunchReservation(release)
 			return ActionFailedMsg{
 				RepoPath:                target.RepoPath,
 				Err:                     err.Error(),
@@ -277,6 +288,7 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 			}
 		}
 		if result.Skipped {
+			releaseFlowLaunchReservation(release)
 			if target.AutoAdvanceRetryFlowID != "" {
 				return ActionFailedMsg{
 					RepoPath:                target.RepoPath,
@@ -287,15 +299,15 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 			}
 			return nil
 		}
-		return m.flowPhaseLaunchMessage(result)
+		return m.flowPhaseLaunchMessage(result, release)
 	}
 }
 
-func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
+func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult, release func()) tea.Msg {
 	if result.Route == FlowPhaseLaunchEmbedded {
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: result.Context}
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: result.Context, LaunchRelease: release}
 	}
-	return PlanLaunchRequestedMsg{LaunchContext: result.Context}
+	return PlanLaunchRequestedMsg{LaunchContext: result.Context, LaunchRelease: release}
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
