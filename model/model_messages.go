@@ -1292,18 +1292,20 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 	if msg.AutoAdvanceLaunchID != "" {
-		if attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
-			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing)
+		if !ok {
+			return m, nil
 		}
-		// An outdated AutoMode command is an intentional no-op. It returns this
-		// message only so the async reservation can be released in Update.
-		if msg.Err == "" {
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		if msg.Err == "" || attempt.AutoRetrySuppressed {
 			return m, nil
 		}
 	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {
+		// Token and stop-edge validation above keep a delayed failure from
+		// undoing newer drain state.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
@@ -1317,8 +1319,12 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 	if strings.TrimSpace(title) == "" {
 		title = msg.AutoAdvanceRetryFlowID
 	}
+	// The prepare-stage sibling of the read-stage failure in
+	// handleAutoFlowLaunchRead, and ranked with it: this path re-armed the drain
+	// above, so the failure repeats on the next poll and must not displace a
+	// transition edge that will not.
 	var statusCmd tea.Cmd
-	m, statusCmd = m.setAutoAdvanceStatus("Flow " + title + ": " + msg.Err)
+	m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + title + ": " + msg.Err)
 	return m, statusCmd
 }
 

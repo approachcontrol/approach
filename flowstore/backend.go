@@ -52,7 +52,7 @@ type backend interface {
 	//      never replaced, never zeroed. The two callers differ on purpose:
 	//      SetPhase returns a zero record beside its sync error while
 	//      MarkManualMerge returns the compensated record beside the same kind
-	//      of error, and errors.Is against errFlowNotFound / errAutoLaunchOutdated
+	//      of error, and errors.Is against errFlowNotFound / ErrAutoLaunchOutdated
 	//      plus the literal error substrings asserted throughout store_test.go
 	//      all depend on this clause.
 	//   4. sess.save may be called zero, one, or many times.

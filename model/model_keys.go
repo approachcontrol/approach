@@ -1991,11 +1991,14 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
-	return m.requestFlowLaunch(flowLaunchIntent{
+	// Manual launch surfaces the refusal through the returned Model's status,
+	// so the admission verdict itself is only AutoMode's concern.
+	next, cmd, _ := m.requestFlowLaunch(flowLaunchIntent{
 		Kind:   flowLaunchKindManualPhase,
 		FlowID: record.FlowID,
 		Origin: m.flowLaunchOrigin(),
 	})
+	return next, cmd
 }
 
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {

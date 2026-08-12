@@ -40,13 +40,14 @@ func (state flowLaunchState) String() string {
 // re-reserves while the slot it is about to dismiss is still installed, which
 // is what keeps the Flow owned across the correction.
 type flowLaunchAttempt struct {
-	Token    string
-	Kind     flowLaunchKind
-	State    flowLaunchState
-	FlowID   string
-	PhaseID  string
-	Origin   flowLaunchOrigin
-	Settings flowLaunchAgentSettingsSnapshot
+	Token               string
+	Kind                flowLaunchKind
+	State               flowLaunchState
+	FlowID              string
+	PhaseID             string
+	Origin              flowLaunchOrigin
+	Settings            flowLaunchAgentSettingsSnapshot
+	AutoRetrySuppressed bool
 	// MutatedPhase records that AddPhaseLaunchID succeeded, so a later failure
 	// has a persisted running phase to correct. Without it a failure between
 	// phase resolution and persistence would clobber a still-ready phase.
@@ -160,6 +161,29 @@ func (m Model) releaseFlowLaunchAttempt(flowID, token string) Model {
 	}
 	m.flowLaunchAttempts = attempts
 	return m
+}
+
+// suppressUnpersistedAutoFlowLaunchRetry lets a newer AutoMode stop edge win
+// without discarding prepare work that may already have persisted a launch ID.
+func (m Model) suppressUnpersistedAutoFlowLaunchRetry(flowID string) Model {
+	attempt, ok := m.flowLaunchAttempt(flowID)
+	if !ok || attempt.Kind != flowLaunchKindAutoPhase || attempt.MutatedPhase {
+		return m
+	}
+	switch attempt.State {
+	case flowLaunchStateReading:
+		// The read command is side-effect free, so its eventual event can be
+		// invalidated by releasing the attempt.
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+	case flowLaunchStatePreparing:
+		// Prepare may be blocked before or after its phase write. Keep ownership
+		// so a successful event can finish the handoff; only suppress its retry
+		// if the command reports a pre-persistence failure.
+		attempt.AutoRetrySuppressed = true
+		return m.withFlowLaunchAttempt(attempt)
+	default:
+		return m
+	}
 }
 
 func (m Model) withFlowLaunchAttempt(attempt flowLaunchAttempt) Model {

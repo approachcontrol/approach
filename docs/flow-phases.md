@@ -191,10 +191,16 @@ but degraded; their stored statuses are preserved except where a later
 phase-affecting mutation can safely re-derive readiness from explicit edges.
 
 AutoMode is drain-based for DAGs. A successful phase completion arms an
-in-memory drain for that Flow; each poll launches the first ready non-merge
-launchable phase only when no phase in that Flow is `running` and no
-flow-scoped embedded terminal is still open or auto-closing. This serializes
-branches so parallel agents do not collide in one worktree. Skipped phases do
+in-memory drain for that Flow; each poll picks the first ready non-merge
+launchable phase from the poll snapshot and launches it only when no phase in
+that Flow is `running`, no flow-scoped embedded terminal is still open or
+auto-closing, no manual resume or repair on that Flow is mid-write, and no
+session recorded against the candidate phase is still live. The candidate is
+then re-validated — not re-selected — against the authoritative record before
+it launches, so an earlier phase becoming ready in that window does not steal
+the launch; the already-chosen candidate proceeds as long as it is still
+launchable on its own merits, which is the same rule the store enforces. This
+serializes branches so parallel agents do not collide in one worktree. Skipped phases do
 not arm the drain, even when skip-with-notes readies successors. Resetting a
 phase back to `ready` also does not arm the drain. Completing an
 `autoreview`-kind phase may launch a custom non-merge successor; in the default

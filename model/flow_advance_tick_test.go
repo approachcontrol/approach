@@ -2,15 +2,77 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
+
+// autoAdvanceTestFlows backs Options.ReadFlow for AutoMode tests. Without it
+// NewWithOptions falls back to the real flow store, so every authoritative read
+// the lifecycle performs would resolve against the developer's live state root.
+// Registration happens wherever a test feeds records into the poll, which is
+// also what lets the authoritative record change between polls.
+//
+// It is package-global because the seam it feeds is installed at construction,
+// before a test has anywhere to hang per-test state. Tests reuse Flow IDs like
+// "flow-1", so newAutoAdvanceTestModel clears it: without that, a record left
+// behind by an earlier test would answer a later test's authoritative read for
+// a Flow it never registered, and the test would pass on borrowed state. Every
+// registration path runs against an already-constructed model, so clearing at
+// construction cannot drop a record a live test still needs. Sharing one map
+// does forbid t.Parallel() in the tests that use it.
+var autoAdvanceTestFlows = map[string]flowstore.FlowRecord{}
+
+func recordAutoAdvanceTestFlows(records []flowstore.FlowRecord) {
+	for _, record := range records {
+		if record.FlowID != "" {
+			autoAdvanceTestFlows[record.FlowID] = cloneFlowRecord(record)
+		}
+	}
+}
+
+func autoAdvanceTestReadFlow(flowID string) (flowstore.FlowRecord, error) {
+	if record, ok := autoAdvanceTestFlows[strings.TrimSpace(flowID)]; ok {
+		return record, nil
+	}
+	return flowstore.FlowRecord{}, fmt.Errorf("flow %s not found", flowID)
+}
+
+func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
+	clear(autoAdvanceTestFlows)
+	if opts.ReadFlow == nil {
+		opts.ReadFlow = autoAdvanceTestReadFlow
+	}
+	return NewWithOptions(repos, opts)
+}
+
+func autoAdvancePrepareForRequest(m Model, previous, current []flowstore.FlowRecord, request uint64) (Model, tea.Cmd, []string) {
+	recordAutoAdvanceTestFlows(current)
+	return m.prepareAutoFlowPhaseLaunchForRequest(previous, current, request)
+}
+
+func autoAdvancePrepare(m Model, previous, current []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
+	recordAutoAdvanceTestFlows(current)
+	return m.prepareAutoFlowPhaseLaunch(previous, current)
+}
+
+func autoAdvanceResult(m Model, msg AutoAdvanceResultMsg) (Model, tea.Cmd) {
+	recordAutoAdvanceTestFlows(msg.Flows)
+	return m.handleAutoAdvanceResult(msg)
+}
+
+func autoAdvanceDrain(m Model, records []flowstore.FlowRecord) (Model, tea.Cmd) {
+	recordAutoAdvanceTestFlows(records)
+	return m.prepareAutoAdvanceDrainLaunches(records)
+}
 
 func autoAdvanceTestFlow(flowID, repoPath string, autoMode bool, statuses map[string]string) flowstore.FlowRecord {
 	phaseDefs := []struct {
@@ -81,27 +143,64 @@ func runAutoAdvanceResultForTest(t *testing.T, m Model, flows []flowstore.FlowRe
 	return next, cmd
 }
 
-func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, cmd tea.Cmd) FlowEmbeddedLaunchRequestedMsg {
+// applyAutoFlowLaunchReads applies every authoritative-read event the poll
+// scheduled and returns what those reads produced, without running it. This is
+// the hop AutoMode's drain state and transient status now land on: admission
+// disarms the drain, and the read event is what re-arms, drops, or announces.
+func applyAutoFlowLaunchReads(m Model, cmd tea.Cmd) (Model, []tea.Cmd) {
+	var produced []tea.Cmd
+	for _, msg := range immediateFlowRefreshMessages(cmd) {
+		event, ok := msg.(flowLaunchEventMsg)
+		if !ok || event.Stage != flowLaunchStageRead {
+			continue
+		}
+		var next tea.Cmd
+		m, next = updateFlowRefreshTest(m, event)
+		if next != nil {
+			produced = append(produced, next)
+		}
+	}
+	return m, produced
+}
+
+func settleAutoFlowLaunchReads(m Model, cmd tea.Cmd) Model {
+	m, _ = applyAutoFlowLaunchReads(m, cmd)
+	return m
+}
+
+// preparedAutoFlowLaunches carries on to the prepared launch contexts. The
+// prepare hop is run but deliberately not applied, so a test observes the
+// context without spawning a terminal.
+func preparedAutoFlowLaunches(m Model, cmd tea.Cmd) (Model, []flowLaunchEventMsg) {
+	m, produced := applyAutoFlowLaunchReads(m, cmd)
+	var prepared []flowLaunchEventMsg
+	for _, next := range produced {
+		for _, msg := range immediateFlowRefreshMessages(next) {
+			if event, ok := msg.(flowLaunchEventMsg); ok && event.Stage == flowLaunchStagePrepared {
+				prepared = append(prepared, event)
+			}
+		}
+	}
+	return m, prepared
+}
+
+func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, m Model, cmd tea.Cmd) (Model, FlowEmbeddedLaunchRequestedMsg) {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("expected auto-advance command")
 	}
-	msg := cmd()
-	if launch, ok := msg.(FlowEmbeddedLaunchRequestedMsg); ok {
-		return launch
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	if len(prepared) == 0 {
+		t.Fatal("auto-advance produced no prepared Flow phase launch")
 	}
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok {
-		t.Fatalf("auto-advance command returned %T, want FlowEmbeddedLaunchRequestedMsg or BatchMsg", msg)
+	launch := prepared[0]
+	if launch.Err != "" || launch.Skipped {
+		t.Fatalf("auto-advance prepare failed: err=%q skipped=%v", launch.Err, launch.Skipped)
 	}
-	for _, subcmd := range batch {
-		raw := subcmd()
-		if launch, ok := raw.(FlowEmbeddedLaunchRequestedMsg); ok {
-			return launch
-		}
+	if launch.Route != flowLaunchRouteEmbedded {
+		t.Fatalf("auto-advance route = %v, want the embedded route", launch.Route)
 	}
-	t.Fatalf("auto-advance batch returned no FlowEmbeddedLaunchRequestedMsg")
-	return FlowEmbeddedLaunchRequestedMsg{}
+	return m, FlowEmbeddedLaunchRequestedMsg{LaunchContext: launch.Context}
 }
 
 func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
@@ -114,7 +213,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 		"branch-b": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -124,7 +223,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "branch-a" {
 		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
 	}
@@ -152,7 +251,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 		"branch-b": flowstore.PhaseReady,
 	})
 	m, cmd = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{branchACompleted})
-	launch = firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch = firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "branch-b" {
 		t.Fatalf("second drain launch = %q, want branch-b", launch.LaunchContext.FlowPhaseID)
 	}
@@ -168,7 +267,7 @@ func TestAutoModeSkipDoesNotArmDrain(t *testing.T) {
 	})
 	skipped.Phases[0].Notes = "Skipped by user"
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -204,7 +303,7 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 	})
 	branchASkipped.Phases[1].Notes = "Skipped by user"
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -216,7 +315,7 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 	})}
 
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "branch-a" {
 		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
 	}
@@ -292,7 +391,7 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	previous := repairAutoDrainTestFlow(flowstore.PhasePending, flowstore.KindImplementation, true)
 	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -323,7 +422,7 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	// This request began before the repair exited. Even though it is still the
 	// current request and succeeds, it cannot observe the repair result.
 	var cmd tea.Cmd
-	m, cmd = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{previous}, Request: 7})
+	m, cmd = autoAdvanceResult(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{previous}, Request: 7})
 	if len(updates) != 0 {
 		t.Fatalf("pre-exit poll launched updates %#v", updates)
 	}
@@ -333,8 +432,8 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 
 	m.autoAdvanceRequestSeq = 8
 	m.autoAdvanceInFlight = 8
-	m, cmd = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 8})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, cmd = autoAdvanceResult(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 8})
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if len(updates) != 1 || updates[0].PhaseID != "successor" || !updates[0].AutoLaunch {
 		t.Fatalf("post-exit updates = %#v, want one automatic successor", updates)
 	}
@@ -348,7 +447,7 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	// Repeating the same successful snapshot cannot queue another successor.
 	m.autoAdvanceRequestSeq = 9
 	m.autoAdvanceInFlight = 9
-	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 9})
+	m, _ = autoAdvanceResult(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 9})
 	if len(updates) != 1 {
 		t.Fatalf("repeated snapshot queued duplicate updates %#v", updates)
 	}
@@ -358,7 +457,7 @@ func TestCleanRepairMarkerSuppressesPreExitCompletionEdgeUntilEligiblePoll(t *te
 	previous := repairCompletionEdgeTestFlow(flowstore.PhaseRunning, flowstore.PhasePending)
 	current := repairCompletionEdgeTestFlow(flowstore.PhaseCompleted, flowstore.PhaseReady)
 	updates := 0
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates++
@@ -370,7 +469,7 @@ func TestCleanRepairMarkerSuppressesPreExitCompletionEdgeUntilEligiblePoll(t *te
 		current.FlowID: cleanRepairAutoDrainMarker(8),
 	}
 
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(
+	m, cmd, _ := autoAdvancePrepareForRequest(m,
 		[]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current}, 7,
 	)
 	if cmd != nil || updates != 0 || len(m.autoAdvanceDrainFlows) != 0 {
@@ -380,10 +479,10 @@ func TestCleanRepairMarkerSuppressesPreExitCompletionEdgeUntilEligiblePoll(t *te
 		t.Fatalf("pre-exit poll changed clean marker to %#v", marker)
 	}
 
-	m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+	m, cmd, _ = autoAdvancePrepareForRequest(m,
 		[]flowstore.FlowRecord{current}, []flowstore.FlowRecord{current}, 8,
 	)
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
 		t.Fatalf("eligible clean handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
 	}
@@ -392,7 +491,7 @@ func TestCleanRepairMarkerSuppressesPreExitCompletionEdgeUntilEligiblePoll(t *te
 func TestRepairAutoDrainMarkerSurvivesStaleAndFailedEligiblePolls(t *testing.T) {
 	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
 	updates := 0
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates++
@@ -403,19 +502,19 @@ func TestRepairAutoDrainMarkerSurvivesStaleAndFailedEligiblePolls(t *testing.T) 
 	m.autoAdvanceRequestSeq = 4
 	m.autoAdvanceInFlight = 4
 
-	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 3})
+	m, _ = autoAdvanceResult(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 3})
 	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != cleanRepairAutoDrainMarker(4) {
 		t.Fatal("stale poll consumed repair marker")
 	}
-	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Err: "temporary failure", Request: 4})
+	m, _ = autoAdvanceResult(m, AutoAdvanceResultMsg{Err: "temporary failure", Request: 4})
 	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != cleanRepairAutoDrainMarker(4) {
 		t.Fatal("failed eligible poll consumed repair marker")
 	}
 
 	m.autoAdvanceRequestSeq = 5
 	m.autoAdvanceInFlight = 5
-	m, cmd := m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 5})
-	_ = firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, cmd := autoAdvanceResult(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 5})
+	m, _ = firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if updates != 1 || len(m.pendingRepairAutoDrainFlowIDs) != 0 {
 		t.Fatalf("successful retry: updates=%d markers=%#v", updates, m.pendingRepairAutoDrainFlowIDs)
 	}
@@ -439,7 +538,7 @@ func TestRepairAutoDrainClearsWithoutLaunchingWhenAutoOffOrOnlyMergeReady(t *tes
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			updates := 0
-			m := NewWithOptions(flowRefreshTestRepos(), Options{
+			m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 				AgentCommand: "codex",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					updates++
@@ -448,7 +547,7 @@ func TestRepairAutoDrainClearsWithoutLaunchingWhenAutoOffOrOnlyMergeReady(t *tes
 			})
 			m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{tt.record.FlowID: cleanRepairAutoDrainMarker(1)}
 			var cmd tea.Cmd
-			m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{tt.record}, 1)
+			m, cmd, _ = autoAdvancePrepareForRequest(m, nil, []flowstore.FlowRecord{tt.record}, 1)
 			if cmd != nil {
 				_ = cmd()
 			}
@@ -524,7 +623,7 @@ func TestNonCleanRepairRemovalSuppressesRepairCompletionEdge(t *testing.T) {
 			}
 			t.Run(tt.name+"/"+name, func(t *testing.T) {
 				updates := 0
-				m := NewWithOptions(flowRefreshTestRepos(), Options{
+				m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 					AgentCommand: "codex",
 					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 						updates++
@@ -543,16 +642,16 @@ func TestNonCleanRepairRemovalSuppressesRepairCompletionEdge(t *testing.T) {
 				var cmd tea.Cmd
 				if removalFirst {
 					m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
-					m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+					m, cmd, _ = autoAdvancePrepareForRequest(m,
 						[]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current}, 1,
 					)
 				} else {
-					m, _, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+					m, _, _ = autoAdvancePrepareForRequest(m,
 						[]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current}, 1,
 					)
 					m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
 					m.autoAdvanceRequestSeq = 2
-					m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+					m, cmd, _ = autoAdvancePrepareForRequest(m,
 						[]flowstore.FlowRecord{current}, []flowstore.FlowRecord{current}, 2,
 					)
 				}
@@ -576,7 +675,7 @@ func TestDetachedRepairSuppressionWaitsForLateMutation(t *testing.T) {
 	before := repairCompletionEdgeTestFlow(flowstore.PhaseBlocked, flowstore.PhasePending)
 	after := repairCompletionEdgeTestFlow(flowstore.PhaseCompleted, flowstore.PhaseReady)
 	updates := 0
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates++
@@ -593,7 +692,7 @@ func TestDetachedRepairSuppressionWaitsForLateMutation(t *testing.T) {
 	m = m.dismissEmbeddedTerminalForReason(1, embeddedTerminalRemovalDetach)
 
 	m.autoAdvanceRequestSeq = 1
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(
+	m, cmd, _ := autoAdvancePrepareForRequest(m,
 		[]flowstore.FlowRecord{before}, []flowstore.FlowRecord{before}, 1,
 	)
 	if cmd != nil {
@@ -604,7 +703,7 @@ func TestDetachedRepairSuppressionWaitsForLateMutation(t *testing.T) {
 	}
 
 	m.autoAdvanceRequestSeq = 2
-	m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+	m, cmd, _ = autoAdvancePrepareForRequest(m,
 		[]flowstore.FlowRecord{before}, []flowstore.FlowRecord{after}, 2,
 	)
 	if cmd != nil {
@@ -621,7 +720,7 @@ func TestDetachedRepairSuppressionWaitsForLateMutation(t *testing.T) {
 func TestSuccessfulRepairRetryOverridesEarlierSuppressingOutcome(t *testing.T) {
 	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
 	updates := 0
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates++
@@ -637,8 +736,8 @@ func TestSuccessfulRepairRetryOverridesEarlierSuppressingOutcome(t *testing.T) {
 		t.Fatalf("successful retry marker = %#v, want clean generation 6", marker)
 	}
 
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{ready}, 6)
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, cmd, _ := autoAdvancePrepareForRequest(m, nil, []flowstore.FlowRecord{ready}, 6)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
 		t.Fatalf("successful retry handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
 	}
@@ -648,7 +747,7 @@ func TestRepairAutoDrainRearmsAfterRunningToReadyStopTransition(t *testing.T) {
 	previous := repairAutoDrainTestFlow(flowstore.PhaseRunning, flowstore.KindImplementation, true)
 	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
 	updates := 0
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates++
@@ -657,8 +756,8 @@ func TestRepairAutoDrainRearmsAfterRunningToReadyStopTransition(t *testing.T) {
 	})
 	m.autoAdvanceDrainFlows = map[string]struct{}{ready.FlowID: {}}
 	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{ready.FlowID: cleanRepairAutoDrainMarker(1)}
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{ready}, 1)
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, cmd, _ := autoAdvancePrepareForRequest(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{ready}, 1)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
 		t.Fatalf("running-to-ready repair handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
 	}
@@ -671,7 +770,7 @@ func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
 		"branch-b": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -679,8 +778,8 @@ func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
 		},
 	})
 	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{record.FlowID: cleanRepairAutoDrainMarker(1)}
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{record}, 1)
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, cmd, _ := autoAdvancePrepareForRequest(m, nil, []flowstore.FlowRecord{record}, 1)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if len(updates) != 1 || updates[0].PhaseID != "branch-a" || launch.LaunchContext.FlowPhaseID != "branch-a" {
 		t.Fatalf("custom DAG repair handoff: updates=%#v launch=%#v", updates, launch.LaunchContext)
 	}
@@ -698,7 +797,7 @@ func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
 		"branch-b": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -708,7 +807,7 @@ func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{branchARunning}
 	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
 
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{branchARunning}, []flowstore.FlowRecord{branchAReset})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{branchARunning}, []flowstore.FlowRecord{branchAReset})
 	if cmd != nil {
 		t.Fatal("reset-to-ready queued successor launch, want drain disarmed")
 	}
@@ -730,7 +829,7 @@ func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
 	current.Phases[5].Status = flowstore.PhaseCompleted
 	current.Phases[6] = flowstore.FlowPhase{PhaseID: "summary", Title: "Summary", Kind: "", Status: flowstore.PhaseReady, Order: 7, DependsOn: []string{"autoreview"}}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -739,8 +838,8 @@ func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
 	})
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 
-	_, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "summary" {
 		t.Fatalf("autoreview successor launch = %q, want summary", launch.LaunchContext.FlowPhaseID)
 	}
@@ -756,7 +855,7 @@ func TestAutoModeDisableDisarmsDrain(t *testing.T) {
 	})
 	current.AutoMode = false
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -781,7 +880,7 @@ func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
 	})
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			t.Fatalf("AddFlowPhaseLaunchID() should not run until the queued command executes: %#v", update)
@@ -790,14 +889,14 @@ func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
 	})
 	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
 
-	m, cmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil, want queued launch command")
 	}
 	if len(m.autoAdvanceDrainFlows) != 0 {
 		t.Fatalf("autoAdvanceDrainFlows = %#v, want scheduling launch to disarm drain", m.autoAdvanceDrainFlows)
 	}
-	_, duplicate := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	_, duplicate := autoAdvanceDrain(m, []flowstore.FlowRecord{current})
 	if duplicate != nil {
 		t.Fatal("second drain pass queued duplicate launch before first command executed")
 	}
@@ -810,7 +909,7 @@ func TestPendingFlowRepairReservationKeepsAutoAdvanceDrainQueued(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	updates := 0
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates++
@@ -820,7 +919,7 @@ func TestPendingFlowRepairReservationKeepsAutoAdvanceDrainQueued(t *testing.T) {
 	m.autoAdvanceDrainFlows = map[string]struct{}{current.FlowID: {}}
 	m.pendingFlowRepairLaunchIDs = map[string]string{current.FlowID: "repair-launch"}
 
-	m, cmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{current})
 	if cmd != nil || updates != 0 {
 		t.Fatalf("pending repair queued auto launch: cmd=%T updates=%d", cmd, updates)
 	}
@@ -865,7 +964,7 @@ func TestModel_AutoAdvanceTickIntervalIsOneSecond(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceTickScheduledFromInitInFlowsMode(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -884,7 +983,7 @@ func TestModel_AutoAdvanceTickScheduledFromInitWithoutRepos(t *testing.T) {
 
 func TestModel_AutoAdvanceTickDoesNotOverlapInFlightFetch(t *testing.T) {
 	var calls int
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			calls++
 			return nil, nil
@@ -913,7 +1012,7 @@ func TestModel_AutoAdvanceTickDoesNotOverlapInFlightFetch(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceStaleResultDoesNotSpawnDuplicateTickChain(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
 		},
@@ -935,7 +1034,7 @@ func TestModel_AutoAdvanceStaleResultDoesNotSpawnDuplicateTickChain(t *testing.T
 
 func TestModel_AutoAdvanceTickRunsOffTheFlowSurface(t *testing.T) {
 	var filters []flowstore.FlowFilter
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
@@ -999,7 +1098,7 @@ func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T)
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1015,7 +1114,7 @@ func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T)
 	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].FlowID != "flow-1" {
 		t.Fatalf("autoAdvanceSnapshot = %#v, want current flow", m.autoAdvanceSnapshot)
 	}
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowID != "flow-1" ||
 		launch.LaunchContext.RepoPath != "/dev/bravo" ||
 		launch.LaunchContext.FlowPhaseID != "implementation" ||
@@ -1042,7 +1141,7 @@ func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *te
 	previous.Phases[1].Status = flowstore.PhaseRunning
 	previous.Phases[2].Status = flowstore.PhasePending
 
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return current, nil
@@ -1054,11 +1153,111 @@ func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *te
 	if cmd == nil {
 		t.Fatal("auto-advance should queue a launch command")
 	}
+	// The announcement now lands with the authoritative read, which is the hop
+	// that knows preflight passed. Preparation is deliberately not run here, so
+	// the status is still being asserted before any launch work happens.
+	m = settleAutoFlowLaunchReads(m, cmd)
 	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: implementation queued" {
 		t.Fatalf("status = %#v, want queued status before async launch command runs", m.status)
 	}
 	if m.status.Text == "Flow Bravo Flow: implementation started" {
 		t.Fatalf("status = %#v, should not claim async launch started before command runs", m.status)
+	}
+}
+
+// Decision 11's ordering delta, and the rank that absorbs it. AutoMode's launch
+// messages used to be built synchronously and shadowed by any transition in the
+// same poll; they now land a hop later, with the authoritative read. Both are
+// 3 s transients from one source, so arrival order alone would have inverted
+// the precedence — hence autoAdvanceRankTransition, which keeps the observable
+// outcome the same as before the launch lifecycle owned this.
+func TestModel_AutoAdvanceAsyncStatusLandsAfterSamePollTransitions(t *testing.T) {
+	launchingPrevious := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	launching := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	attentionPrevious := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+		"implementation": flowstore.PhaseRunning,
+	})
+	attentionPrevious.Title = "Charlie Flow"
+	attention := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+		"implementation": flowstore.PhaseNeedsAttention,
+	})
+	attention.Title = "Charlie Flow"
+
+	// Both AutoMode launch messages land a hop after the transitions computed by
+	// their own poll, and both repeat while the drain stays armed. A transition
+	// is reported once, on the edge, so it outranks them — otherwise a routine
+	// launch on Bravo would erase Charlie's needs_attention, and nothing would
+	// ever raise it again. `withoutLaunch` is the same poll with no launch to
+	// report, which is what shows each message is emitted at all rather than
+	// merely suppressed everywhere.
+	tests := []struct {
+		name          string
+		agentCommand  string
+		withoutLaunch string
+	}{
+		{
+			name:          "queued announcement",
+			agentCommand:  "codex",
+			withoutLaunch: "Flow Bravo Flow: implementation queued",
+		},
+		{
+			name:          "preflight failure",
+			withoutLaunch: "Flow Bravo Flow: Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+		},
+	}
+
+	const transition = "Flow Charlie Flow: needs attention"
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			options := func() Options {
+				return Options{
+					AgentCommand: tc.agentCommand,
+					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+						return launching, nil
+					},
+				}
+			}
+
+			m := newAutoAdvanceTestModel(flowRefreshTestRepos(), options())
+			m.autoAdvanceSnapshot = []flowstore.FlowRecord{launchingPrevious, attentionPrevious}
+
+			m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{launching, attention})
+			if got := m.status.Text; got != transition {
+				t.Fatalf("status right after the poll = %q, want the synchronous transition", got)
+			}
+
+			m = settleAutoFlowLaunchReads(m, cmd)
+			if got := m.status.Text; got != transition {
+				t.Fatalf("status after the read settled = %q, want the transition to survive", got)
+			}
+			if m.status.Source != statusFlowAutoAdvance {
+				t.Fatalf("status source = %v, want the transient AutoMode source", m.status.Source)
+			}
+
+			// The same poll with Charlie quiet: the launch message is emitted,
+			// so the assertion above is precedence and not silence.
+			quiet := newAutoAdvanceTestModel(flowRefreshTestRepos(), options())
+			quiet.autoAdvanceSnapshot = []flowstore.FlowRecord{launchingPrevious, attentionPrevious}
+
+			quiet, quietCmd := runAutoAdvanceResultForTest(t, quiet, []flowstore.FlowRecord{launching, attentionPrevious})
+			if got := quiet.status.Text; got != "" {
+				t.Fatalf("status right after the quiet poll = %q, want nothing yet", got)
+			}
+
+			quiet = settleAutoFlowLaunchReads(quiet, quietCmd)
+			if got := quiet.status.Text; got != tc.withoutLaunch {
+				t.Fatalf("status after the quiet read settled = %q, want %q", got, tc.withoutLaunch)
+			}
+		})
 	}
 }
 
@@ -1073,14 +1272,17 @@ func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
 	})
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{})
 	m.topMode = ui.ModeWorktrees
 	m.contentPane = ui.PaneTop
 	m.activeFlowSurface = false
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 	m.status = statusError{Source: statusOther, Text: "keep this"}
 
-	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	// Settling matters: the preflight failure is asynchronous now, so asserting
+	// straight off the poll would pass without the failure having happened.
+	m = settleAutoFlowLaunchReads(m, cmd)
 	if m.status.Source != statusOther || m.status.Text != "keep this" {
 		t.Fatalf("status = %#v, want existing status preserved after auto preflight failure", m.status)
 	}
@@ -1097,7 +1299,7 @@ func TestModel_AutoAdvancePreflightFailureSetsAutoAdvanceStatus(t *testing.T) {
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
 	})
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{})
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 	m.autoAdvanceInFlight = 1
 
@@ -1105,6 +1307,7 @@ func TestModel_AutoAdvancePreflightFailureSetsAutoAdvanceStatus(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("preflight failure should still reschedule status/tick commands")
 	}
+	m = settleAutoFlowLaunchReads(m, cmd)
 	if m.status.Source != statusFlowAutoAdvance || !strings.Contains(m.status.Text, "choose codex") {
 		t.Fatalf("status = %#v, want auto-advance preflight guidance", m.status)
 	}
@@ -1122,7 +1325,7 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return current, nil
@@ -1135,6 +1338,7 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 	if cmd == nil {
 		t.Fatal("preflight failure should still reschedule the auto-advance tick")
 	}
+	m = settleAutoFlowLaunchReads(m, cmd)
 	if len(updates) != 0 {
 		t.Fatalf("launch updates after preflight failure = %#v, want none", updates)
 	}
@@ -1148,7 +1352,7 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 	m.agentCommand = "codex"
 	m.autoAdvanceInFlight = 2
 	m, cmd = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
 	}
@@ -1158,7 +1362,7 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 }
 
 func TestModel_AutoAdvanceActionFailureSetsStatusOffRepo(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{})
 	m.topMode = ui.ModeWorktrees
 	m.contentPane = ui.PaneTop
 	m.activeFlowSurface = false
@@ -1194,7 +1398,7 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	})
 	failLaunchUpdate := true
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			if failLaunchUpdate {
@@ -1211,19 +1415,19 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	if cmd == nil {
 		t.Fatal("auto-advance should queue launch command before async failure")
 	}
+	// The failure is two hops deep now: read, then prepare, then failFlowLaunch.
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	if len(prepared) != 1 {
+		t.Fatalf("prepared auto launches = %d, want exactly one", len(prepared))
+	}
+	m, failCmd := updateFlowRefreshTest(m, prepared[0])
 	failed := false
-	raw := cmd()
-	if batch, ok := raw.(tea.BatchMsg); ok {
-		for _, subcmd := range batch {
-			if msg, ok := subcmd().(ActionFailedMsg); ok {
-				failed = true
-				m, _ = updateFlowRefreshTest(m, msg)
-				break
-			}
+	for _, msg := range immediateFlowRefreshMessages(failCmd) {
+		if actionFailed, ok := msg.(ActionFailedMsg); ok {
+			failed = true
+			m, _ = updateFlowRefreshTest(m, actionFailed)
+			break
 		}
-	} else if msg, ok := raw.(ActionFailedMsg); ok {
-		failed = true
-		m, _ = updateFlowRefreshTest(m, msg)
 	}
 	if !failed {
 		t.Fatal("queued auto-advance command should report ActionFailedMsg")
@@ -1235,12 +1439,100 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	failLaunchUpdate = false
 	m.autoAdvanceInFlight = 2
 	m, cmd = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after async failure = %#v, want retried implementation auto launch", updates)
+	}
+}
+
+func TestModel_AutoAdvanceDelayedLaunchFailureCannotRearmAfterStop(t *testing.T) {
+	beforeStop := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhasePending,
+	})
+	stopped := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseBlocked,
+	})
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("store unavailable")
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{beforeStop}
+	m.autoAdvanceDrainFlows = map[string]struct{}{beforeStop.FlowID: {}}
+
+	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{beforeStop})
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	if len(prepared) != 1 || prepared[0].Err == "" {
+		t.Fatalf("prepared failures = %#v, want one failed branch-a launch", prepared)
+	}
+	m, failureCmd := updateFlowRefreshTest(m, prepared[0])
+	var delayed ActionFailedMsg
+	for _, msg := range immediateFlowRefreshMessages(failureCmd) {
+		if failure, ok := msg.(ActionFailedMsg); ok {
+			delayed = failure
+			break
+		}
+	}
+	if delayed.AutoAdvanceRetryFlowID == "" {
+		t.Fatal("prepare failure did not carry AutoMode retry metadata")
+	}
+
+	m.autoAdvanceInFlight = 2
+	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{stopped}, Request: 2})
+	m, _ = updateFlowRefreshTest(m, delayed)
+
+	if _, armed := m.autoAdvanceDrainFlows[stopped.FlowID]; armed {
+		t.Fatalf("delayed failure rearmed stopped Flow drain: %#v", m.autoAdvanceDrainFlows)
+	}
+	if _, retry := autoAdvanceDrain(m, []flowstore.FlowRecord{stopped}); retry != nil {
+		t.Fatal("delayed failure queued branch-a after branch-b stopped")
+	}
+}
+
+func TestModel_AutoAdvanceStopCannotDiscardPersistedPrepare(t *testing.T) {
+	beforeStop := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhasePending,
+	})
+	persisted := cloneFlowRecord(beforeStop)
+	persisted.Phases[1].Status = flowstore.PhaseRunning
+	persisted.Phases[1].LaunchIDs = []string{"launch-persisted"}
+	stopped := cloneFlowRecord(persisted)
+	stopped.Phases[2].Status = flowstore.PhaseBlocked
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			persisted.Phases[1].LaunchIDs = []string{update.LaunchID}
+			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{beforeStop}
+	m.autoAdvanceDrainFlows = map[string]struct{}{beforeStop.FlowID: {}}
+
+	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{beforeStop})
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	if len(prepared) != 1 || prepared[0].Err != "" {
+		t.Fatalf("prepared launches = %#v, want one successful branch-a launch", prepared)
+	}
+
+	m.autoAdvanceInFlight = 2
+	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{stopped}, Request: 2})
+	m, _ = updateFlowRefreshTest(m, prepared[0])
+
+	if !m.hasFlowEmbeddedTerminalForFlow(stopped.FlowID) {
+		t.Fatal("stop edge discarded a prepare that had already persisted its launch ID")
 	}
 }
 
@@ -1251,7 +1543,7 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return current, nil
@@ -1261,7 +1553,8 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
 	m.autoAdvanceInFlight = 1
 
-	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	m, deferredCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	m = settleAutoFlowLaunchReads(m, deferredCmd)
 	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
 		t.Fatalf("autoAdvanceDrainFlows = %#v, want retry preserved after preflight failure", m.autoAdvanceDrainFlows)
 	}
@@ -1272,7 +1565,7 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 	m.agentCommand = "codex"
 	m.autoAdvanceInFlight = 2
 	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("deferred auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
 	}
@@ -1288,7 +1581,7 @@ func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1317,7 +1610,7 @@ func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testin
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1339,7 +1632,7 @@ func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testin
 
 	m.autoAdvanceInFlight = 1
 	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
 	}
@@ -1364,7 +1657,7 @@ func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testi
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1387,7 +1680,7 @@ func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testi
 		Flows:   []flowstore.FlowRecord{existing, newCompleted},
 		Request: 1,
 	})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowID != "flow-2" || launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("auto-advance launch context = %#v, want flow-2 implementation", launch.LaunchContext)
 	}
@@ -1413,7 +1706,7 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *test
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1436,7 +1729,7 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *test
 		Flows:   []flowstore.FlowRecord{rerunCompleted},
 		Request: 1,
 	})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("auto-advance launch context = %#v, want implementation after rerun", launch.LaunchContext)
 	}
@@ -1481,7 +1774,7 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testin
 		Order:         10,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1504,7 +1797,7 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testin
 		Flows:   []flowstore.FlowRecord{childCompleted},
 		Request: 1,
 	})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "review-loop" {
 		t.Fatalf("auto-advance launch context = %#v, want review-loop after child completion", launch.LaunchContext)
 	}
@@ -1521,7 +1814,7 @@ func TestModel_AutoAdvanceRequiresCompletionEdgeAndAutoMode(t *testing.T) {
 	})
 	current := previous
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1559,7 +1852,7 @@ func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *te
 	})
 	current.Phases[1].LaunchIDs = []string{"source-launch"}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1589,7 +1882,7 @@ func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *te
 	m.embeddedTerminals = nil
 	m.flows = m.flows.SetItems(nil)
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
-	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("deferred launch context = %#v", launch.LaunchContext)
 	}
@@ -1602,7 +1895,7 @@ func TestModel_AutoAdvanceFetchErrorKeepsLoopAliveWithoutConsumingSnapshotOrStat
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan-review": flowstore.PhaseRunning,
 	})
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("boom")
 		},
@@ -1633,7 +1926,7 @@ func TestModel_AutoAdvanceStatusEventsExpireAndDoNotStompOtherStatus(t *testing.
 	needsAttention := previous
 	needsAttention.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
 	needsAttention.Phases[2].Status = flowstore.PhaseNeedsAttention
-	m := New(flowRefreshTestRepos())
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{})
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 
 	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{needsAttention})
