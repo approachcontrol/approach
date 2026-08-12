@@ -350,6 +350,10 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.startFetchVisibleRepos()
 	case "n":
 		return m.handleNewRepo()
+	case "T":
+		if m.tmuxLaunchBackend() {
+			return m.handleAttachRepoTmuxSession()
+		}
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
@@ -530,6 +534,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handlePull()
 	case "t":
 		return m.handleOpenTerminal()
+	case "T":
+		if m.tmuxLaunchBackend() {
+			return m.handleAttachRepoTmuxSession()
+		}
 	case "c":
 		if m.flowSurfaceVisible() {
 			return m.handleCopyFlowID()
@@ -770,6 +778,10 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleResetSelectedFlowPhase()
 	case "d":
 		return m.handleDelete()
+	case "T":
+		if m.tmuxLaunchBackend() {
+			return m.handleAttachRepoTmuxSession()
+		}
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
@@ -934,7 +946,11 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if !ok {
 				return next, nil
 			}
-			return next.launchAgentWithContextReservation(ctx, release)
+			// Unlike r, this resume opens an external terminal on the default
+			// backend rather than the embedded dock, so it routes the same way
+			// the other external-terminal launches do: to a repo tmux window in
+			// tmux mode, and unchanged otherwise.
+			return next.launchAgentForBackend(ctx, release)
 		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
@@ -2265,6 +2281,12 @@ func (m Model) handleFlowPhaseResetConfirmed(msg flowPhaseResetConfirmedMsg) (Mo
 	if !ok || !m.flowPhaseResettable(record, phase) {
 		return m.setStatus(statusOther, "Flow phase is not awaiting session recovery"), nil
 	}
+	// A reset makes the phase launchable again, so in tmux mode this is where the
+	// live-window probe belongs: flowPhaseResettable feeds the footer hint and
+	// must stay allocation-cheap, while this runs once, on a confirmation.
+	if m.tmuxPhaseAgentStillRunning(record, phase, msg.RepoPath) {
+		return m.setStatus(statusOther, tmuxPhaseLiveWindowRefusal), nil
+	}
 	return m, m.resetFlowPhaseCmd(msg.RepoPath, msg.FlowID, msg.PhaseID)
 }
 
@@ -2304,9 +2326,31 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
+		return next.resumeSessionForBackend(ctx, record, release)
 	}
 	return next.launchAgentWithContextReservation(ctx, release)
+}
+
+// resumeSessionForBackend routes a CLI-agent resume to the repo's tmux session
+// in tmux mode and to the embedded terminal otherwise. The tmux branch takes
+// over the resume reservation exactly as resumeSessionInEmbeddedTerminal's
+// external fallback does.
+func (m Model) resumeSessionForBackend(ctx actions.AgentLaunchContext, record sessions.SessionRecord, release func()) (Model, tea.Cmd) {
+	route, fellBack := m.tmuxLaunchRoute(ctx)
+	if route {
+		return m.launchAgentInRepoTmuxSession(ctx, release)
+	}
+	if !fellBack {
+		return m.resumeSessionInEmbeddedTerminal(ctx, record, release)
+	}
+	// Not tmuxFallbackNote: resumeSessionInEmbeddedTerminal falls through to an
+	// external launch when the agent has no embedded slot, so this path cannot
+	// promise the embedded terminal. The note is set now for the embedded case
+	// and also handed down as the external case's launched status, because that
+	// launch's own AgentResultMsg would otherwise overwrite it a moment later.
+	m = m.setStatus(statusOther, tmuxUnavailableNote)
+	externalStatus := withFallbackNote(agentLaunchedStatus(ctx.Command), tmuxUnavailableNote)
+	return m.resumeSessionInEmbeddedTerminalWithStatus(ctx, record, release, externalStatus)
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
@@ -2335,6 +2379,15 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.setStatus(statusOther, refusal), nil
+	}
+	// Nothing above stops a repeat resume of a terminal phase, and in tmux mode
+	// the embedded slot that would have is absent. Resuming twice would run the
+	// same provider session in two windows, so the probe goes here, on the
+	// keystroke that admits the resume. It sits below the resolver because a
+	// codex-app resume can never take the tmux route and the probe is a
+	// subprocess.
+	if intent.ResumeCommand != agent.CommandCodexApp && m.tmuxPhaseAgentStillRunning(record, phase, record.WorktreePath) {
+		return m.setStatus(statusOther, tmuxPhaseLiveWindowRefusal), nil
 	}
 	intent.Origin = m.flowLaunchOrigin()
 	next, cmd, _ := m.requestFlowLaunch(intent)
@@ -2419,6 +2472,15 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 	}
 	if workingDir == "" && command != agent.CommandCodexApp {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
+		return actions.AgentLaunchContext{}, nil, false, m
+	}
+	// In tmux mode there is no embedded slot to make a still-running agent
+	// visible, so nothing else stops a resume from starting a second process on
+	// a session whose first one is alive in a window. Probed here, above the
+	// reservation, because this is the one admission point all three
+	// record-based resumes share and there is nothing to release yet.
+	if m.tmuxSessionAgentStillRunning(record, command) {
+		m = m.setStatus(statusOther, tmuxSessionLiveWindowRefusal)
 		return actions.AgentLaunchContext{}, nil, false, m
 	}
 	// The launch context below is deliberately Flow-agnostic, so the launch
@@ -2620,7 +2682,7 @@ func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowP
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
 	ctx := m.agentLaunchContext(path)
-	return m.launchAgentWithContext(ctx)
+	return m.launchAgentForBackend(ctx, nil)
 }
 
 func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, tea.Cmd) {
@@ -2628,20 +2690,20 @@ func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, 
 	if branch != nil {
 		ctx.Branch = *branch
 	}
-	return m.launchAgentWithContext(ctx)
-}
-
-func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
-	return m.launchAgentWithContextReservation(ctx, nil)
+	return m.launchAgentForBackend(ctx, nil)
 }
 
 func (m Model) launchAgentWithContextReservation(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
+	return m.launchAgentWithContextStatus(ctx, release, "")
+}
+
+func (m Model) launchAgentWithContextStatus(ctx actions.AgentLaunchContext, release func(), launchedStatus string) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
 		releaseFlowLaunchReservation(release)
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
-	return m.runAgentLaunchWithReservation(ctx, launch, release)
+	return m.runAgentLaunchWithStatus(ctx, launch, release, launchedStatus)
 }
 
 func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
@@ -2724,7 +2786,23 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 }
 
 func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec, heldRelease func()) (Model, tea.Cmd) {
+	return m.runAgentLaunchWithStatus(ctx, launch, heldRelease, "")
+}
+
+// runAgentLaunchWithStatus is runAgentLaunchWithReservation with a transport
+// specific success message.
+//
+// Where the status is set differs by transport. A detached launch's own
+// AgentResultMsg lands after this returns and would replace an eagerly set
+// status with the generic text, so it travels on the result. An interactive
+// launch's result lands only when the user's agent session ends, which can be
+// hours later and would read as a fresh launch announcement, so it is set here
+// instead — before the TTY handover.
+func (m Model) runAgentLaunchWithStatus(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec, heldRelease func(), launchedStatus string) (Model, tea.Cmd) {
 	if launch.Interactive {
+		if strings.TrimSpace(launchedStatus) != "" {
+			m = m.setStatus(statusOther, launchedStatus)
+		}
 		release := heldRelease
 		if release == nil {
 			var err error
@@ -2742,8 +2820,10 @@ func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, lau
 				if launch.Cleanup != nil {
 					launch.Cleanup()
 				}
-				return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: launch.Detached}
+				return AgentResultMsg{LaunchContext: ctx, Err: launchErrorMessage(err, launch), Detached: launch.Detached}
 			}
+			// No LaunchedStatus: it was set above, and repeating it when the
+			// session ends would announce the launch a second time.
 			return AgentResultMsg{LaunchContext: ctx, Detached: launch.Detached}
 		})
 	}
@@ -2763,10 +2843,25 @@ func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, lau
 			if launch.Cleanup != nil {
 				launch.Cleanup()
 			}
-			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+			return AgentResultMsg{LaunchContext: ctx, Err: launchErrorMessage(err, launch), Detached: true}
 		}
-		return AgentResultMsg{LaunchContext: ctx, Detached: true}
+		return AgentResultMsg{LaunchContext: ctx, Detached: true, LaunchedStatus: launchedStatus}
 	}
+}
+
+// launchErrorMessage prefers a transport's captured diagnostic over the bare
+// exit status a wrapper script's failure otherwise reduces to. A Flow launch
+// persists this string into the phase's needs_attention note, so it is the only
+// durable record of why the spawn failed.
+func launchErrorMessage(err error, launch actions.TerminalLaunchSpec) string {
+	if launch.ErrorDetail == nil {
+		return err.Error()
+	}
+	detail := strings.TrimSpace(launch.ErrorDetail())
+	if detail == "" {
+		return err.Error()
+	}
+	return err.Error() + ": " + detail
 }
 
 func (m Model) reserveTrackedFlowLaunch(flowID string) (flowstore.FlowRecord, func(), error) {

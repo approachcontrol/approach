@@ -386,6 +386,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			return actions.AgentLaunchWithOptions(ctx, launchOpts)
 		},
+		LaunchBackend: cfg.Launch.Backend,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			endedAt := time.Now().UTC()
 			if err := sessionStore.MarkLaunchEnded(ctx.LaunchID, endedAt); err != nil {

@@ -1128,17 +1128,26 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if ctx.Command == agent.CommandCodexApp {
 		return next.launchAgentWithContextReservation(ctx, release)
 	}
-	return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
+	return next.resumeSessionForBackend(ctx, record, release)
 }
 
 // resumeSessionInEmbeddedTerminal owns the resume reservation from here on. The
 // terminal start is the spawn it covers, so it is released once that returns,
 // or handed to the external launcher when it does the spawning instead.
 func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord, release func()) (Model, tea.Cmd) {
+	return m.resumeSessionInEmbeddedTerminalWithStatus(ctx, record, release, "")
+}
+
+// resumeSessionInEmbeddedTerminalWithStatus is resumeSessionInEmbeddedTerminal
+// with a message for the one branch that leaves the embedded terminal. Only the
+// external fallthrough uses externalLaunchedStatus, because only that branch
+// emits an AgentResultMsg that would otherwise overwrite the caller's status
+// with the generic launch text; empty keeps that generic text.
+func (m Model) resumeSessionInEmbeddedTerminalWithStatus(ctx actions.AgentLaunchContext, record sessions.SessionRecord, release func(), externalLaunchedStatus string) (Model, tea.Cmd) {
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err := m.openEmbeddedTerminal(ctx, record)
 	if err != nil && embeddedterm.IsUnsupported(err) {
-		return next.launchAgentWithContextReservation(ctx, release)
+		return next.launchAgentWithContextStatus(ctx, release, externalLaunchedStatus)
 	}
 	releaseFlowLaunchReservation(release)
 	if opened {

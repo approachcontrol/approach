@@ -27,6 +27,7 @@ exist:
 | Plan editor command | `[editor].command` | `EDITOR` | unset |
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Agent launch backend | none | `[launch].backend` | `embedded` |
 | Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
 | Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
@@ -62,7 +63,7 @@ command = "wezterm start"
 name = "github"
 
 [launch]
-prefer_multiplexer = true
+backend = "embedded"
 
 [agent]
 command = "codex"
@@ -225,11 +226,41 @@ Parsed for future provider-specific features.
 
 ### `[launch]`
 
-Parsed for future launch behavior.
+Selects where CLI agent sessions (`codex`, `claude`) run.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `prefer_multiplexer` | boolean | Future launch preference for tmux/Zellij behavior. |
+| `backend` | string | `embedded` (default) or `tmux`. `tmux` opts into tmux mode: most interactive CLI agent launches run as windows in a per-repo tmux session on your default tmux server instead of in the embedded terminal. Any other value is a startup error. |
+| `prefer_multiplexer` | boolean | Superseded by `backend`. Still parsed so existing config files keep loading; it has no effect. |
+
+#### tmux mode
+
+With `backend = "tmux"`:
+
+- Each repo gets one tmux session named `approach-<repo-dir>-<hash>` on your
+  default tmux server, created on the first launch and reused after that. Each
+  launch is a new window in it, named after the phase or agent. Dots in the
+  directory name become dashes, because tmux reads a dot in a target name as a
+  pane separator.
+- Sessions live on the default server, so `tmux ls` and `tmux attach` from your
+  own terminal see them, and they survive Approach quitting. Quitting Approach
+  never terminates them.
+- The window closes when the agent exits; the session ends with its last
+  window and is recreated by the next launch.
+- If `tmux` is not on `PATH`, launches that would have taken the tmux route fall
+  back to their default-backend behavior and say so in the status line. The
+  availability check itself never refuses a launch, but a tmux launch that fails
+  to spawn is reported as a launch failure rather than falling back.
+- Headless launches (Flow-level `headless`, including every AutoMode launch,
+  which is always headless) stay in the embedded terminal even in tmux mode:
+  `claude --print` buffers all output until it exits, so a self-closing tmux
+  window would show nothing. They take the route silently — the fallback note is
+  only for launches that wanted tmux and could not have it.
+- Flow repair, the plan launch Flow creation performs, and `codex-app` launches
+  are unchanged.
+
+`docs/tui-guide.md` lists exactly which launches move, what stays put, the
+attach key, and the limitations tmux mode's ownership model carries.
 
 ### `[agent]`
 

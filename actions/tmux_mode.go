@@ -1,0 +1,375 @@
+package actions
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/approachcontrol/approach/agent"
+)
+
+// repoTmuxSessionPrefix keeps tmux-mode sessions disjoint from the per-worktree
+// WorktreeSessionName sessions that default-backend external launches create on
+// the same default server.
+const repoTmuxSessionPrefix = "approach-"
+
+// repoTmuxWindowIDLen bounds how much of the launch ID the window name carries.
+// The launch ID's trailing random hex is what makes windows unique inside a
+// session; the leading timestamp adds nothing but width.
+const repoTmuxWindowIDLen = 8
+
+// ErrRepoTmuxUnavailable reports that tmux mode cannot run this launch because
+// tmux is not installed. Callers probe availability before routing here, so
+// reaching this is a launch failure, not a fallback: no caller inspects it.
+var ErrRepoTmuxUnavailable = errors.New("tmux is not available for tmux launch mode")
+
+// RepoTmuxAgentSpec is a CLI agent launch that runs as a window in the repo's
+// tmux session on the user's default tmux server.
+type RepoTmuxAgentSpec struct {
+	SessionName string
+	WindowName  string
+	// AttachCommand is the command to show the user so they can reach the
+	// session from their own terminal.
+	AttachCommand string
+	Launch        TerminalLaunchSpec
+}
+
+// TmuxAvailable reports whether tmux mode can run launches right now.
+func TmuxAvailable() bool {
+	return commandExists("tmux", exec.LookPath)
+}
+
+// RepoAgentSessionName returns the tmux session name that holds every agent
+// window for a repo. It is keyed on the repo, not the worktree, so all of a
+// repo's Flows share one session.
+//
+// Dots and colons are replaced because tmux reads them as target separators:
+// `-t "=approach-foo.github.io-1a2b3c4d"` parses as session `approach-foo`,
+// pane `github` and fails with "can't find pane", which would silently break
+// has-session, attach, and the attach command shown to the user. The trailing
+// path hash WorktreeSessionName appends keeps the substitution collision-free.
+func RepoAgentSessionName(repoPath string) string {
+	name := strings.Map(func(r rune) rune {
+		if r == '.' || r == ':' {
+			return '-'
+		}
+		return r
+	}, WorktreeSessionName(repoPath))
+	return repoTmuxSessionPrefix + name
+}
+
+// RepoTmuxAttachCommand is the attach command shown to the user in status text.
+func RepoTmuxAttachCommand(sessionName string) string {
+	return "tmux attach -t " + shellQuote(sessionName)
+}
+
+// RepoTmuxAttachExistingShellCommand attaches to an existing session and fails
+// when it is absent. It deliberately avoids `new-session -A`, which would
+// create the session the caller is trying to report as missing.
+func RepoTmuxAttachExistingShellCommand(sessionName string) string {
+	return "tmux attach-session -t " + shellQuote(tmuxExactTarget(sessionName))
+}
+
+// StripMultiplexerEnv clears TMUX and ZELLIJ from a command's environment.
+// Attaching is the one tmux-mode action whose command approach does not build
+// itself — it goes through the shared external-terminal seam — and a terminal
+// that inherits TMUX spawns a tmux client that refuses to nest, which is exactly
+// the case for a user running approach inside tmux.
+func StripMultiplexerEnv(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	env := cmd.Env
+	if env == nil {
+		env = os.Environ()
+	}
+	cmd.Env = envWithoutKeys(env, "TMUX", "ZELLIJ")
+}
+
+// repoTmuxProbeTimeout bounds the probes that run synchronously inside the TUI's
+// update loop. A probe does block that loop for as long as it runs; the timeout
+// caps how long a wedged tmux server can hold it rather than eliminating the
+// stall, which is why callers are restricted to one-shot keystroke handlers. A
+// probe that times out simply reports "no evidence".
+const repoTmuxProbeTimeout = 2 * time.Second
+
+// repoTmuxLiveWindowFormat pairs each window's name with whether its pane is
+// dead. `remain-on-exit on` keeps a finished window listed with its name intact,
+// so matching on the name alone would report a long-gone agent as live.
+const repoTmuxLiveWindowFormat = "#{window_name} #{pane_dead}"
+
+// tmuxProbeCommand builds a read-only tmux query. TMUX/ZELLIJ are stripped so a
+// TUI running inside a multiplexer still asks the default server rather than its
+// enclosing one.
+func tmuxProbeCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	cmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	return cmd
+}
+
+// repoTmuxHasSessionArgs pins the exact-match target the session probe runs.
+func repoTmuxHasSessionArgs(repoPath string) []string {
+	return []string{"has-session", "-t", tmuxExactTarget(RepoAgentSessionName(repoPath))}
+}
+
+// RepoTmuxSessionExists reports whether a repo's agent session is alive.
+func RepoTmuxSessionExists(repoPath string) bool {
+	if !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	return tmuxProbeCommand(ctx, repoTmuxHasSessionArgs(repoPath)...).Run() == nil
+}
+
+// repoTmuxListWindowsArgs lists a repo's agent session windows with the liveness
+// field the launch probe needs.
+func repoTmuxListWindowsArgs(repoPath string) []string {
+	return []string{"list-windows", "-t", tmuxExactWindowTarget(RepoAgentSessionName(repoPath)), "-F", repoTmuxLiveWindowFormat}
+}
+
+// RepoTmuxLaunchWindowLive reports whether any of these launches still has a
+// running window in the repo's agent session. It is the one liveness signal a
+// tmux launch has: window names carry the launch ID's trailing hex, so a live
+// window can be matched back to the launch that created it.
+//
+// It is variadic because one `list-windows` answers for every launch at once.
+// Callers that own a whole phase or Flow should pass every launch ID it has
+// rather than only the newest: an earlier launch's window can outlive a later
+// one that already exited, and asking about the newest alone would miss it.
+//
+// False means "no evidence of a live window" — tmux missing, session gone, probe
+// failed or timed out, the window's pane already dead, or launch IDs with
+// nothing to match on. Callers must treat it as permission to proceed, never as
+// proof the agent is gone, and must only call it on a user-initiated action: it
+// runs a tmux subprocess.
+func RepoTmuxLaunchWindowLive(repoPath string, launchIDs ...string) bool {
+	suffixes := repoTmuxLaunchSuffixes(launchIDs)
+	if len(suffixes) == 0 || !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, repoTmuxListWindowsArgs(repoPath)...).Output()
+	if err != nil {
+		return false
+	}
+	return launchWindowRunningInListing(string(out), suffixes)
+}
+
+// launchWindowRunningInListing scans repoTmuxLiveWindowFormat output for a live
+// window belonging to any of these launches. It is split out because the
+// dead-pane filter is the part worth testing without a tmux server.
+func launchWindowRunningInListing(listing string, suffixes []string) bool {
+	if len(suffixes) == 0 {
+		return false
+	}
+	for _, line := range strings.Split(listing, "\n") {
+		name, dead, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok || !matchesAnySuffix(name, suffixes) {
+			continue
+		}
+		// A retained dead window is not a running agent. Anything other than a
+		// clear "0" is treated as dead, so an unparsable field cannot invent one.
+		if strings.TrimSpace(dead) == "0" {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesAnySuffix(name string, suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// repoTmuxLaunchScript creates the repo session on demand and runs the agent in
+// a new window of it. Neither ordering is atomic against a near-simultaneous
+// launch into the same repo, so both races retry as the other command: losing
+// the session to a concurrent launch retries as new-window, and a session that
+// dies between the probe and new-window retries as new-session. Retried
+// attempts suppress their stderr so only the last one can write; either way the
+// caller sees the script's exit status, not its message.
+//
+// Every creation is detached (`-d`): without it new-window makes its window the
+// session's current one, so a user attached to the repo session — the workflow T
+// exists for — would be yanked off whatever agent they were watching every time
+// the TUI launched another. A launch must not move anyone's client.
+const repoTmuxLaunchScript = `
+session=$1
+window=$2
+dir=$3
+cmd=$4
+if tmux has-session -t "=$session" 2>/dev/null; then
+	if tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
+		exit 0
+	fi
+fi
+if tmux new-session -d -s "$session" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
+	exit 0
+fi
+exec tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd"
+`
+
+// RepoTmuxAgentLaunch builds a CLI agent launch that runs in the repo's tmux
+// session. The agent itself runs from the same self-deleting script every other
+// transport uses, so cwd, APPROACH_* exports, and provider hook wiring are
+// identical to an embedded or external launch.
+func RepoTmuxAgentLaunch(ctx AgentLaunchContext) (RepoTmuxAgentSpec, error) {
+	return repoTmuxAgentLaunch(ctx, exec.LookPath)
+}
+
+func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmuxAgentSpec, error) {
+	if !commandExists("tmux", lookPath) {
+		return RepoTmuxAgentSpec{}, ErrRepoTmuxUnavailable
+	}
+	command := agent.Normalize(ctx.Command)
+	if command != agent.CommandCodex && command != agent.CommandClaude {
+		return RepoTmuxAgentSpec{}, errors.New("tmux launch mode supports only CLI agents")
+	}
+	// The window is not an embedded slot: there is no dock to prefill, so the
+	// initial prompt has to reach the agent as argv, and no stream-json
+	// rendering applies. Both follow from Embedded being false.
+	ctx.Embedded = false
+	cmd, _, err := agentCommandSpec(ctx)
+	if err != nil {
+		return RepoTmuxAgentSpec{}, err
+	}
+	argv, err := resolvedCommandArgv(cmd)
+	if err != nil {
+		return RepoTmuxAgentSpec{}, err
+	}
+	sessionSource := ctx.RepoPath
+	if sessionSource == "" {
+		sessionSource = ctx.WorktreePath
+	}
+	if sessionSource == "" {
+		sessionSource = cmd.Dir
+	}
+	sessionName := RepoAgentSessionName(sessionSource)
+	windowName := repoTmuxWindowName(ctx)
+	agentEnv := envWithoutKeys(cmd.Env, "TMUX", "ZELLIJ")
+	// sessionName is passed for parity with the other transports' scripts; only
+	// terminalLaunchWithOptions reads it back, and this path never calls that.
+	termCommand, err := newTerminalCommand(cmd.Dir, agentEnv, argv, sessionName)
+	if err != nil {
+		return RepoTmuxAgentSpec{}, err
+	}
+	tmuxCmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", sessionName, windowName, cmd.Dir, termCommand.shellCommand())
+	tmuxCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	// Without this the script's last attempt — the only one that does not
+	// suppress stderr — writes to /dev/null and every tmux failure reduces to
+	// "exit status 1". A Flow launch persists that string into the phase's
+	// needs_attention note, so the durable record of the failure would carry no
+	// diagnostic at all.
+	stderr := &boundedBuffer{limit: repoTmuxStderrLimit}
+	tmuxCmd.Stderr = stderr
+	// Capturing stderr makes os/exec interpose a pipe, so Wait now also waits for
+	// every process holding the write end to close it. tmux's server daemonizes
+	// and drops inherited fds, but one that did not would hang Wait inside the
+	// goroutine holding this Flow's cross-process launch reservation. WaitDelay
+	// only applies once the command itself has exited, so it costs the spawn
+	// nothing and bounds exactly that case.
+	tmuxCmd.WaitDelay = repoTmuxStderrDrainDelay
+	return RepoTmuxAgentSpec{
+		SessionName:   sessionName,
+		WindowName:    windowName,
+		AttachCommand: RepoTmuxAttachCommand(sessionName),
+		Launch: TerminalLaunchSpec{
+			Cmd: tmuxCmd,
+			// The tmux command returns as soon as the window exists; the agent
+			// keeps running there and provider hooks own its completion.
+			Detached:    true,
+			Cleanup:     termCommand.cleanup,
+			ErrorDetail: stderr.String,
+		},
+	}, nil
+}
+
+// repoTmuxStderrLimit bounds what a failed tmux invocation can push into a
+// status line and a Flow's persisted needs_attention note.
+const repoTmuxStderrLimit = 1024
+
+// repoTmuxStderrDrainDelay bounds how long Wait may block on the captured stderr
+// pipe after the launch command itself has exited.
+const repoTmuxStderrDrainDelay = 2 * time.Second
+
+// boundedBuffer collects at most limit bytes and discards the rest. It is only
+// written by the child process and only read after Wait returns, so it needs no
+// synchronization of its own.
+type boundedBuffer struct {
+	limit int
+	buf   []byte
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if room := b.limit - len(b.buf); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		b.buf = append(b.buf, p[:room]...)
+	}
+	// Report a full write regardless: a truncated diagnostic must not make the
+	// child see a short write on stderr.
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string {
+	return strings.TrimSpace(string(b.buf))
+}
+
+// repoTmuxWindowName labels the window by what it is running, suffixed with
+// enough of the launch ID to stay unique inside the shared repo session.
+func repoTmuxWindowName(ctx AgentLaunchContext) string {
+	name := sanitizeSessionSuffix(ctx.FlowPhaseKind)
+	if name == "" {
+		name = sanitizeSessionSuffix(agent.Normalize(ctx.Command))
+	}
+	if name == "" {
+		name = "agent"
+	}
+	if suffix := repoTmuxLaunchSuffix(ctx.LaunchID); suffix != "" {
+		name += "-" + suffix
+	}
+	return name
+}
+
+func repoTmuxLaunchSuffix(launchID string) string {
+	suffix := sanitizeSessionSuffix(launchID)
+	if len(suffix) > repoTmuxWindowIDLen {
+		suffix = suffix[len(suffix)-repoTmuxWindowIDLen:]
+	}
+	return strings.Trim(suffix, ".-")
+}
+
+// repoTmuxLaunchSuffixes drops the launch IDs that sanitize to nothing, so an
+// empty one can never widen a probe into matching every window.
+func repoTmuxLaunchSuffixes(launchIDs []string) []string {
+	suffixes := make([]string, 0, len(launchIDs))
+	for _, launchID := range launchIDs {
+		if suffix := repoTmuxLaunchSuffix(launchID); suffix != "" {
+			suffixes = append(suffixes, suffix)
+		}
+	}
+	return suffixes
+}
+
+// tmuxExactTarget pins a target to one exact session name so tmux's prefix
+// matching cannot resolve it to a different session.
+func tmuxExactTarget(sessionName string) string {
+	return "=" + sessionName
+}
+
+// tmuxExactWindowTarget is tmuxExactTarget for the commands that take a
+// target-window. The trailing colon keeps tmux from resolving a bare name
+// against a window in whichever session the server considers current.
+func tmuxExactWindowTarget(sessionName string) string {
+	return tmuxExactTarget(sessionName) + ":"
+}

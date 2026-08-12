@@ -61,6 +61,10 @@ type flowLaunchEventMsg struct {
 	Context actions.AgentLaunchContext
 	Route   flowLaunchRoute
 	Skipped bool
+	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
+	// was missing. It is attached to a successful embedded install's status; a
+	// failed install's own message wins instead.
+	FallbackNote string
 	// Outcome is read-stage-only and autoPhase-only; every dispatch on it is
 	// gated on Stage for that reason.
 	Outcome flowLaunchOutcome
@@ -558,9 +562,14 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			return event
 		}
 		event.Context = result.Context
-		event.Route = flowLaunchRouteExternal
-		if result.Route == FlowPhaseLaunchEmbedded {
+		event.FallbackNote = result.FallbackNote
+		switch result.Route {
+		case FlowPhaseLaunchEmbedded:
 			event.Route = flowLaunchRouteEmbedded
+		case FlowPhaseLaunchTmux:
+			event.Route = flowLaunchRouteTmux
+		default:
+			event.Route = flowLaunchRouteExternal
 		}
 		return event
 	}
@@ -607,8 +616,11 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		}
 		m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
 		attempt.MutatedPhase = true
-		if msg.Route == flowLaunchRouteEmbedded {
+		switch msg.Route {
+		case flowLaunchRouteEmbedded:
 			return m.installFlowLaunchEmbedded(attempt, msg)
+		case flowLaunchRouteTmux:
+			return m.handoffFlowLaunchTmux(attempt, msg)
 		}
 		return m.handoffFlowLaunchExternal(attempt, msg)
 	}
@@ -714,7 +726,48 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		m, fetchCmd = m.startFlowSurfaceFetch()
 	}
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+	// Only a successful install reports the fallback. A failed one has already
+	// returned above with its own message, which is the more useful one.
+	if strings.TrimSpace(msg.FallbackNote) != "" {
+		m = m.setStatus(statusOther, msg.FallbackNote)
+	}
 	return m, batchNonNil(prefillCmd, tickCmd, fetchCmd)
+}
+
+// handoffFlowLaunchTmux is handoffFlowLaunchExternal for the tmux route: the
+// window it opens is not an embedded slot, so the attempt is released at
+// handoff, the result is detached, and provider hooks own completion.
+//
+// Releasing here means the window stops counting as Flow occupancy, which an
+// embedded slot would have provided until its process exited. What still covers
+// the agent's actual work is the persisted phase status: a `running` phase
+// occupies the Flow for both manual and automatic launches, so the gap opens
+// only after the agent has declared its own phase complete and its CLI happens
+// to stay at a prompt. Closing that too would mean polling tmux from the
+// auto-advance drain — a subprocess on a timer, which is exactly what the probe
+// rule forbids — or tracking window liveness in the background, which is the
+// ownership this route exists to give up. See docs/tui-guide.md.
+func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	ctx := msg.Context
+	spec, err := m.buildRepoTmuxAgentLaunch(ctx)
+	if err != nil {
+		releaseFlowLaunchReservation(msg.Release)
+		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
+	}
+	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {
+		m = next
+	} else {
+		// Same reasoning as the external handoff: the window is already being
+		// created, so there is nothing to undo, but no AgentResultMsg fence
+		// matches any other state and the attempt would be stranded.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+	}
+	m, launchCmd := m.runAgentLaunchWithStatus(ctx, spec.Launch, msg.Release, tmuxLaunchStatus(spec))
+	var fetchCmd tea.Cmd
+	if ctx.FlowID != "" && m.flowSurfaceVisible() {
+		m, fetchCmd = m.startFlowSurfaceFetch()
+	}
+	return m, batchNonNil(fetchCmd, launchCmd)
 }
 
 // handoffFlowLaunchExternal calls launchAgent directly rather than through

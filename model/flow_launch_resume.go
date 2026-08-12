@@ -328,6 +328,13 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 	reserve := m.reserveTrackedFlowLaunch
 	addPhaseLaunchID := m.launchSeams.AddPhaseLaunchID
 	sessionStateRoot := settings.SessionStateRoot
+	// A resume does not go through FlowPhaseLauncher.Prepare, so the tmux
+	// decision is made here instead. It is taken on the Model, before the
+	// closure runs, for the same reason the launcher snapshots it at admission:
+	// the route this launch takes must be the one it was admitted with. A resume
+	// is interactive by construction and never a repair, so the command is the
+	// whole input.
+	tmuxRoute, tmuxFellBack := m.tmuxLaunchRoute(actions.AgentLaunchContext{Command: msg.ResumeCommand})
 	return func() tea.Msg {
 		event := msg
 		event.Stage = flowLaunchStagePrepared
@@ -396,6 +403,14 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 			FlowLaunchTracked: true,
 		}
 		event.Route = flowLaunchRouteEmbedded
+		if tmuxRoute {
+			// A tmux window has no dock to prefill and renders its own output,
+			// so clearing Embedded is what sends the resume to argv instead.
+			event.Context.Embedded = false
+			event.Route = flowLaunchRouteTmux
+		} else if tmuxFellBack {
+			event.FallbackNote = tmuxFallbackNote
+		}
 		return event
 	}
 }

@@ -18,6 +18,9 @@ type FlowPhaseLaunchRoute int
 const (
 	FlowPhaseLaunchExternal FlowPhaseLaunchRoute = iota
 	FlowPhaseLaunchEmbedded
+	// FlowPhaseLaunchTmux runs the agent as a window in the repo's tmux
+	// session. It is external-style: nothing in the TUI owns the process.
+	FlowPhaseLaunchTmux
 )
 
 type FlowPhaseLaunchRequest struct {
@@ -39,6 +42,10 @@ type FlowPhaseLaunchResult struct {
 	Context actions.AgentLaunchContext
 	Route   FlowPhaseLaunchRoute
 	Skipped bool
+	// FallbackNote is set only when the tmux route was eligible and the
+	// availability probe failed. Choosing the embedded backend, and the
+	// headless design exclusion, are not fallbacks and set nothing.
+	FallbackNote string
 }
 
 type FlowPhaseLaunchValidationError struct {
@@ -60,11 +67,17 @@ type FlowPhaseLauncher struct {
 	Model                string
 	ReasoningEffort      string
 	PromptTemplates      FlowPromptTemplates
+	// Backend is config's [launch].backend. Empty means embedded.
+	Backend string
+	// TmuxAvailable probes for tmux. Nil means "probe the real PATH".
+	TmuxAvailable func() bool
 }
 
 func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return FlowPhaseLauncher{
+		Backend:              m.launchBackend,
+		TmuxAvailable:        m.tmuxAvailable,
 		CurrentRepoPath:      m.currentRepoPath,
 		PlanMarkdownPath:     m.planMarkdownPath,
 		ReadPlan:             m.readPlan,
@@ -167,6 +180,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		InitialPrompt:    flowPhasePrompt(req.Record, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
 	}
 	route := FlowPhaseLaunchExternal
+	fallbackNote := ""
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
 		route = FlowPhaseLaunchEmbedded
@@ -178,8 +192,24 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		if !req.AutoLaunch && !updated.UpdatedAt.IsZero() {
 			ctx.Headless = updated.Headless
 		}
+		// Headless is resolved above, so the tmux decision is made against the
+		// value that actually launches rather than the requested one.
+		if tmuxRoute, fellBack := l.tmuxLaunchRoute(ctx); tmuxRoute {
+			route = FlowPhaseLaunchTmux
+			// A tmux window has no dock to prefill and renders its own output,
+			// so it is external-style: the TUI owns no part of the process.
+			ctx.Embedded = false
+		} else if fellBack {
+			fallbackNote = tmuxFallbackNote
+		}
 	}
-	return FlowPhaseLaunchResult{Context: ctx, Route: route}, nil
+	return FlowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: fallbackNote}, nil
+}
+
+// tmuxLaunchRoute applies the shared routing rule to the launcher's own copy of
+// the backend and probe, which a lifecycle attempt snapshots at admission.
+func (l FlowPhaseLauncher) tmuxLaunchRoute(ctx actions.AgentLaunchContext) (route bool, fellBack bool) {
+	return tmuxLaunchRouteFor(l.Backend, l.TmuxAvailable, ctx)
 }
 
 func (l FlowPhaseLauncher) readPlan(planID string) (string, error) {

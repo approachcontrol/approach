@@ -684,6 +684,12 @@ type TerminalLaunchSpec struct {
 	// multiplexer session; provider hooks own completed-session metadata.
 	Detached bool
 	Cleanup  func()
+	// ErrorDetail returns a transport-captured diagnostic for a failed run, or
+	// "" when there is none. A transport that spawns through a wrapper script
+	// sets it so the failure reads as more than the script's exit status; nil
+	// leaves the process error as the whole message. Only read after the
+	// command has exited.
+	ErrorDetail func() string
 }
 
 // ErrEmbeddedTmuxUnavailable tells callers they can use the direct embedded PTY
