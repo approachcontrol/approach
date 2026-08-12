@@ -832,7 +832,7 @@ func TestSessionResumeExpandsCollapsedDockAndFocusesTerminalInInputMode(t *testi
 			return term, nil
 		},
 	}
-	next, _ := m.resumeSessionInEmbeddedTerminal(actions.AgentLaunchContext{}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"})
+	next, _ := m.resumeSessionInEmbeddedTerminal(actions.AgentLaunchContext{}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"}, nil)
 	if !next.terminalDockVisible || next.activePane == ui.PaneRepos || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
 		t.Fatalf("session resume state = visible %v pane %d focus %d prefix %v, want expanded terminal input", next.terminalDockVisible, next.activePane, next.terminalFocus, next.terminalPrefixActive)
 	}

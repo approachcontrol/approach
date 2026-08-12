@@ -25,12 +25,23 @@ const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
 
-var errFlowNotFound = errors.New("flow not found")
+// ErrFlowNotFound is the sentinel every missing-record error wraps. It is
+// exported alongside IsNotFound so callers and their test doubles can build the
+// same error the store returns.
+var ErrFlowNotFound = errors.New("flow not found")
+
+var errFlowNotFound = ErrFlowNotFound
 
 // ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
 // wraps. It is exported so callers outside this package can build the rejection
 // their AutoMode handling has to survive.
 var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
+
+// ErrFlowClosed is the sentinel every closed-Flow mutation refusal wraps. A
+// reservation reports a closed Flow and an unreadable one through the same
+// error return, and only the first may block a caller: callers that must stay
+// permissive when a Flow is missing test for this rather than for any error.
+var ErrFlowClosed = errors.New("flow is closed")
 
 const (
 	StatusPending        = "pending"
@@ -358,7 +369,13 @@ func validateClosure(closure Closure) error {
 }
 
 func closedFlowMutationError(record FlowRecord, action string) error {
-	return fmt.Errorf("cannot %s flow %q because it is closed", action, record.FlowID)
+	return fmt.Errorf("cannot %s flow %q because it is closed: %w", action, record.FlowID, ErrFlowClosed)
+}
+
+// IsFlowClosed reports whether err is a refusal to mutate or launch a closed
+// Flow, as opposed to a missing record or a failed read.
+func IsFlowClosed(err error) bool {
+	return errors.Is(err, ErrFlowClosed)
 }
 
 // AutoModeUpdate changes whether the TUI may automatically launch ready phases

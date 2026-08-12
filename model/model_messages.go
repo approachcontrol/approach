@@ -1591,6 +1591,12 @@ func (m Model) handleFlowClosed(msg FlowClosedMsg) Model {
 	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
+	// An unscoped poll disarms a drain on a closed Flow only after occupancy
+	// clears, so a close taken while a terminal is running would otherwise
+	// leave the drain armed and let a reopen launch the successor. Disarming
+	// here makes the close, not poll timing, decide.
+	m = m.disarmAutoAdvanceDrain(msg.FlowID)
+	m = m.withoutRepairAutoDrainMarker(msg.FlowID)
 	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
 }
 

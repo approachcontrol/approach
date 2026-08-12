@@ -930,11 +930,11 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
-			ctx, ok, next := m.sessionResumeLaunchContext(record)
+			ctx, release, ok, next := m.sessionResumeLaunchContext(record)
 			if !ok {
 				return next, nil
 			}
-			return next.launchAgentWithContext(ctx)
+			return next.launchAgentWithContextReservation(ctx, release)
 		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
@@ -2299,14 +2299,14 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		return next.resumeSessionInEmbeddedTerminal(ctx, record)
+		return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
 	}
-	return next.launchAgentWithContext(ctx)
+	return next.launchAgentWithContextReservation(ctx, release)
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
@@ -2393,11 +2393,41 @@ func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContex
 	}
 }
 
-func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, bool, Model) {
+// reserveSessionResume holds the cross-process launch/close reservation for the
+// Flow that owns this session, so a peer process cannot commit a close between
+// the closed-state answer and the spawn. The caller releases once the spawn has
+// happened or failed.
+//
+// A missing Flow is the one error that still permits the resume: a session
+// outlives its Flow, so a deleted record must not strand it. Every other
+// failure — a held lock, an unreadable store — means the reservation was never
+// obtained, and resuming anyway would spawn across a concurrent close.
+func (m Model) reserveSessionResume(record sessions.SessionRecord) (func(), string, bool) {
+	flowID := strings.TrimSpace(record.FlowID)
+	if flowID == "" || m.reserveFlowLaunch == nil {
+		return func() {}, "", true
+	}
+	_, release, err := m.reserveFlowLaunch(flowID)
+	switch {
+	case err == nil:
+		return release, "", true
+	case flowstore.IsNotFound(err):
+		return func() {}, "", true
+	case flowstore.IsFlowClosed(err):
+		return func() {}, "Flow is closed; reopen it to resume this session", false
+	default:
+		return func() {}, err.Error(), false
+	}
+}
+
+// sessionResumeLaunchContext returns the launch context for resuming a session
+// from the Sessions pane, plus the launch/close reservation the caller must
+// release after spawning.
+func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, func(), bool, Model) {
 	sessionID := strings.TrimSpace(record.SessionID)
 	if sessionID == "" {
 		m = m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed")
-		return actions.AgentLaunchContext{}, false, m
+		return actions.AgentLaunchContext{}, nil, false, m
 	}
 	command := string(record.Provider)
 	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
@@ -2409,7 +2439,16 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 	}
 	if workingDir == "" && command != agent.CommandCodexApp {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
-		return actions.AgentLaunchContext{}, false, m
+		return actions.AgentLaunchContext{}, nil, false, m
+	}
+	// The launch context below is deliberately Flow-agnostic, so the launch
+	// paths it feeds cannot apply the closed-Flow guard the Flow-phase pane
+	// applies. Resuming still spawns an agent for the Flow that owns the
+	// session, so the refusal has to happen here instead.
+	release, refusal, allowed := m.reserveSessionResume(record)
+	if !allowed {
+		m = m.setStatus(statusOther, refusal)
+		return actions.AgentLaunchContext{}, nil, false, m
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
@@ -2424,7 +2463,7 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
 	}
-	return ctx, true, m
+	return ctx, release, true, m
 }
 
 func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, phase flowstore.FlowPhase, session flowstore.Session) (actions.AgentLaunchContext, bool, Model) {

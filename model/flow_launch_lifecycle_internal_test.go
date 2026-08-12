@@ -45,7 +45,9 @@ type manualLaunchHarness struct {
 	sessionRecords []sessions.SessionRecord
 	sessionsErr    error
 
-	sessionListCalls int
+	sessionListCalls   int
+	launchReservations int
+	launchReleases     int
 
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
@@ -65,7 +67,9 @@ func (h *manualLaunchHarness) persistedFlow(flowID string) (flowstore.FlowRecord
 	if flowID == h.record.FlowID {
 		return h.record, nil
 	}
-	return flowstore.FlowRecord{}, errors.New("flow not found")
+	// Wrapped like the store's own miss so callers that distinguish a missing
+	// Flow from a failed read see the same thing here.
+	return flowstore.FlowRecord{}, fmt.Errorf("flow %q not found: %w", flowID, flowstore.ErrFlowNotFound)
 }
 
 func newManualLaunchHarness(t *testing.T, record flowstore.FlowRecord) *manualLaunchHarness {
@@ -101,7 +105,14 @@ func (h *manualLaunchHarness) options() Options {
 				return flowstore.FlowRecord{}, nil, h.reserveLaunchErr
 			}
 			record, err := h.persistedFlow(strings.TrimSpace(flowID))
-			return record, func() {}, err
+			if err == nil && flowstore.FlowClosed(record) {
+				// The real reservation refuses a closed Flow, and callers tell
+				// that refusal apart from a missing record by the sentinel.
+				return flowstore.FlowRecord{}, nil, fmt.Errorf(
+					"cannot launch an agent for flow %q because it is closed: %w", record.FlowID, flowstore.ErrFlowClosed)
+			}
+			h.launchReservations++
+			return record, func() { h.launchReleases++ }, nil
 		},
 		ReadPlan: func(planID string) (string, error) {
 			if h.planBodyErr != nil {

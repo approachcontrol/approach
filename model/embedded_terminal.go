@@ -1121,22 +1121,26 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 		return m.setStatus(statusOther, "Selected session is unavailable"), nil
 	}
 	record := msg.Record
-	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil
 	}
 	if ctx.Command == agent.CommandCodexApp {
-		return next.launchAgentWithContext(ctx)
+		return next.launchAgentWithContextReservation(ctx, release)
 	}
-	return next.resumeSessionInEmbeddedTerminal(ctx, record)
+	return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
 }
 
-func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
+// resumeSessionInEmbeddedTerminal owns the resume reservation from here on. The
+// terminal start is the spawn it covers, so it is released once that returns,
+// or handed to the external launcher when it does the spawning instead.
+func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord, release func()) (Model, tea.Cmd) {
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err := m.openEmbeddedTerminal(ctx, record)
 	if err != nil && embeddedterm.IsUnsupported(err) {
-		return next.launchAgentWithContext(ctx)
+		return next.launchAgentWithContextReservation(ctx, release)
 	}
+	releaseFlowLaunchReservation(release)
 	if opened {
 		next = next.focusEmbeddedTerminalInput()
 	}

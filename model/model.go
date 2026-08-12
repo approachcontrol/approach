@@ -633,6 +633,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			SetStartMetadata:     setFlowStartMetadata,
 			SetPhase:             setFlowPhase,
 			AddPhaseLaunchID:     addFlowPhaseLaunchID,
+			ReserveLaunch:        reserveFlowLaunch,
 			BootstrapHookForRepo: bootstrapHookForRepo,
 			RunBootstrapHook:     runBootstrapHook,
 			ResolveCommit:        actions.ResolveWorktreeCommit,
