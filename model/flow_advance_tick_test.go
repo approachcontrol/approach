@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
@@ -1444,6 +1445,94 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after async failure = %#v, want retried implementation auto launch", updates)
+	}
+}
+
+func TestModel_AutoAdvanceDelayedLaunchFailureCannotRearmAfterStop(t *testing.T) {
+	beforeStop := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhasePending,
+	})
+	stopped := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseBlocked,
+	})
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("store unavailable")
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{beforeStop}
+	m.autoAdvanceDrainFlows = map[string]struct{}{beforeStop.FlowID: {}}
+
+	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{beforeStop})
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	if len(prepared) != 1 || prepared[0].Err == "" {
+		t.Fatalf("prepared failures = %#v, want one failed branch-a launch", prepared)
+	}
+	m, failureCmd := updateFlowRefreshTest(m, prepared[0])
+	var delayed ActionFailedMsg
+	for _, msg := range immediateFlowRefreshMessages(failureCmd) {
+		if failure, ok := msg.(ActionFailedMsg); ok {
+			delayed = failure
+			break
+		}
+	}
+	if delayed.AutoAdvanceRetryFlowID == "" {
+		t.Fatal("prepare failure did not carry AutoMode retry metadata")
+	}
+
+	m.autoAdvanceInFlight = 2
+	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{stopped}, Request: 2})
+	m, _ = updateFlowRefreshTest(m, delayed)
+
+	if _, armed := m.autoAdvanceDrainFlows[stopped.FlowID]; armed {
+		t.Fatalf("delayed failure rearmed stopped Flow drain: %#v", m.autoAdvanceDrainFlows)
+	}
+	if _, retry := autoAdvanceDrain(m, []flowstore.FlowRecord{stopped}); retry != nil {
+		t.Fatal("delayed failure queued branch-a after branch-b stopped")
+	}
+}
+
+func TestModel_AutoAdvanceStopCannotDiscardPersistedPrepare(t *testing.T) {
+	beforeStop := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhasePending,
+	})
+	persisted := cloneFlowRecord(beforeStop)
+	persisted.Phases[1].Status = flowstore.PhaseRunning
+	persisted.Phases[1].LaunchIDs = []string{"launch-persisted"}
+	stopped := cloneFlowRecord(persisted)
+	stopped.Phases[2].Status = flowstore.PhaseBlocked
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			persisted.Phases[1].LaunchIDs = []string{update.LaunchID}
+			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{beforeStop}
+	m.autoAdvanceDrainFlows = map[string]struct{}{beforeStop.FlowID: {}}
+
+	m, cmd := autoAdvanceDrain(m, []flowstore.FlowRecord{beforeStop})
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	if len(prepared) != 1 || prepared[0].Err != "" {
+		t.Fatalf("prepared launches = %#v, want one successful branch-a launch", prepared)
+	}
+
+	m.autoAdvanceInFlight = 2
+	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{stopped}, Request: 2})
+	m, _ = updateFlowRefreshTest(m, prepared[0])
+
+	if !m.hasFlowEmbeddedTerminalForFlow(stopped.FlowID) {
+		t.Fatal("stop edge discarded a prepare that had already persisted its launch ID")
 	}
 }
 

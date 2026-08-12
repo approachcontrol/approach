@@ -277,7 +277,9 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 			continue
 		}
 		if len(newlyStoppedAutoAdvanceFlowPhases(previous, record)) > 0 {
-			m = m.disarmAutoAdvanceDrain(record.FlowID)
+			// The stop edge suppresses an older retry without discarding prepare
+			// work that may already have persisted its launch ID.
+			m = m.suppressUnpersistedAutoFlowLaunchRetry(record.FlowID).disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
 		if len(newlyCompletedFlowPhases(previous, record)) > 0 {

@@ -707,15 +707,15 @@ func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunch
 		// Nothing was written, so the phase must stay as it is. ActionFailedMsg
 		// keeps main's repo gate and Flow surface refresh; a bare status drops
 		// both.
-		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 		failure := ActionFailedMsg{RepoPath: repoPath, Err: errText}
 		if attempt.Kind == flowLaunchKindAutoPhase {
-			// Retry metadata is stamped from the attempt, inside the fence:
-			// failFlowLaunch only runs after matchingFlowLaunchAttempt accepted
-			// the event, so a delayed failure from a superseded attempt can no
-			// longer re-arm a drain a newer attempt owns.
+			// Keep the attempt until ActionFailedMsg is consumed. A newer stop
+			// edge can cancel it first, making that delayed message a fenced no-op.
 			failure.AutoAdvanceRetryFlowID = attempt.FlowID
 			failure.AutoAdvanceRetryPhaseID = attempt.PhaseID
+			failure.AutoAdvanceLaunchID = attempt.Token
+		} else {
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 		}
 		return m, func() tea.Msg {
 			return failure

@@ -610,6 +610,7 @@ type ActionFailedMsg struct {
 	Err                     string
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
+	AutoAdvanceLaunchID     string
 }
 
 // --- Message handlers ---
@@ -1290,19 +1291,21 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	if msg.AutoAdvanceLaunchID != "" {
+		attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing)
+		if !ok {
+			return m, nil
+		}
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		if msg.Err == "" || attempt.AutoRetrySuppressed {
+			return m, nil
+		}
+	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {
-		// Fenced at production, not at consumption. The sole producer of this
-		// metadata is failFlowLaunch, which runs behind
-		// matchingFlowLaunchAttempt, so a superseded attempt never emits one.
-		// That is weaker than a consumption-time fence — an attempt admitted
-		// between emission and delivery would have its freshly disarmed drain
-		// re-armed by the older message — and it holds only because this
-		// message is dispatched immediately while the poll that could admit a
-		// successor runs a second later. Re-arming a drain is idempotent and
-		// costs at most one extra poll, so the residual race is a deferral
-		// rather than a double launch.
+		// Token and stop-edge validation above keep a delayed failure from
+		// undoing newer drain state.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
