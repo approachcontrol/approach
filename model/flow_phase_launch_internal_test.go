@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
 )
@@ -16,7 +14,7 @@ type flowPhaseLaunchTestTerminal struct {
 }
 
 func (t flowPhaseLaunchTestTerminal) VisibleLines(width, height int) []string { return nil }
-func (t flowPhaseLaunchTestTerminal) Write([]byte) (int, error)               { return 0, nil }
+func (t flowPhaseLaunchTestTerminal) Write(p []byte) (int, error)             { return len(p), nil }
 func (t flowPhaseLaunchTestTerminal) Resize(width, height int) error          { return nil }
 func (t flowPhaseLaunchTestTerminal) Terminate() error                        { return nil }
 func (t flowPhaseLaunchTestTerminal) Wait(context.Context) error              { return nil }
@@ -35,9 +33,12 @@ func TestFlowPhaseLaunchCoordinatorSelectsFirstLaunchablePhase(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 
-	gotRecord, gotPhase, ok := m.selectedFlowNextLaunchablePhase()
+	gotRecord, gotPhase, ok := m.previewFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+	})
 	if !ok {
-		t.Fatal("selectedFlowNextLaunchablePhase() found no launchable phase")
+		t.Fatal("previewFlowLaunch() found no launchable phase")
 	}
 	if gotRecord.FlowID != "flow-1" || gotPhase.PhaseID != "review-loop" {
 		t.Fatalf("selected launch target = flow %q phase %q, want flow-1 review-loop", gotRecord.FlowID, gotPhase.PhaseID)
@@ -94,7 +95,7 @@ func TestFlowPhaseLaunchPreflightRequiresPlanForReviewKindCustomID(t *testing.T)
 	}
 }
 
-func TestSelectedFlowNextLaunchablePhaseSkipsDuplicateReadyRow(t *testing.T) {
+func TestPreviewFlowLaunchSkipsDuplicateReadyRow(t *testing.T) {
 	record := flowstore.FlowRecord{
 		FlowID:   "flow-1",
 		RepoPath: "/dev/alpha",
@@ -107,12 +108,15 @@ func TestSelectedFlowNextLaunchablePhaseSkipsDuplicateReadyRow(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 
-	_, phase, ok := m.selectedFlowNextLaunchablePhase()
+	_, phase, ok := m.previewFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+	})
 	if !ok {
-		t.Fatal("selectedFlowNextLaunchablePhase() found no launchable phase")
+		t.Fatal("previewFlowLaunch() found no launchable phase")
 	}
 	if phase.PhaseID != "step-2" {
-		t.Fatalf("selectedFlowNextLaunchablePhase() = %q, want step-2", phase.PhaseID)
+		t.Fatalf("previewFlowLaunch() = %q, want step-2", phase.PhaseID)
 	}
 }
 
@@ -133,29 +137,6 @@ func TestNextAutoLaunchPhaseSkipsReadyPhaseWithUnsatisfiedDependency(t *testing.
 	}
 	if phase.PhaseID != "independent" {
 		t.Fatalf("nextAutoLaunchPhase() = %q, want independent", phase.PhaseID)
-	}
-}
-
-func TestFlowPhaseLaunchTargetManualPreflightFailureSetsStatus(t *testing.T) {
-	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
-	record := flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/flow-manual",
-		Phases: []flowstore.FlowPhase{
-			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
-		},
-	}
-
-	_, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
-		Record: record,
-		Phase:  record.Phases[0],
-	})
-	if ok {
-		t.Fatal("flowPhaseLaunchTarget() succeeded without an agent command")
-	}
-	if m.status.Source != statusOther || !strings.Contains(m.status.Text, "Press A to choose") {
-		t.Fatalf("status = %#v, want manual preflight failure status", m.status)
 	}
 }
 
@@ -209,7 +190,7 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(nil, Options{
+	m := newAutoAdvanceTestModel(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -220,15 +201,11 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		},
 	})
 
-	_, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want auto-launch command")
 	}
-	msg := cmd()
-	launch, ok := msg.(FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("auto-launch command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
+	_, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" ||
 		len(updates) != 1 ||
 		!updates[0].AutoLaunch ||
@@ -254,14 +231,14 @@ func TestFlowPhaseLaunchCoordinatorDrainIgnoresObsoleteSuppression(t *testing.T)
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(nil, Options{
+	m := newAutoAdvanceTestModel(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return current, nil
 		},
 	})
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want drain launch command")
 	}
@@ -287,7 +264,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(nil, Options{
+	m := newAutoAdvanceTestModel(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -305,7 +282,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
 	}}
 
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T while source terminal was running", cmd)
 	}
@@ -317,17 +294,11 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	}
 
 	m.embeddedTerminals = nil
-	m, cmd = m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceDrain(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil after source terminal closed")
 	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok && len(batch) == 1 {
-		msg = batch[0]()
-	}
-	if _, ok := msg.(FlowEmbeddedLaunchRequestedMsg); !ok {
-		t.Fatalf("deferred auto-launch command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
+	firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates after source terminal closed = %#v, want auto implementation launch", updates)
 	}

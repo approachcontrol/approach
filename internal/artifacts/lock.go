@@ -17,6 +17,30 @@ func AcquireFileLock(path, label string, timeout time.Duration) (func(), error) 
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", label, err)
 	}
+	return acquireOpenedFileLock(file, label, timeout)
+}
+
+// AcquireFileLockNoFollow opens a lock file without following its final path
+// component and requires a regular file before acquiring the advisory lock.
+func AcquireFileLockNoFollow(path, label string, timeout time.Duration) (func(), error) {
+	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, uint32(FilePerm))
+	if err != nil {
+		return nil, fmt.Errorf("open %s without following symlinks: %w", label, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, fmt.Errorf("%s must be a regular file", label)
+	}
+	return acquireOpenedFileLock(file, label, timeout)
+}
+
+func acquireOpenedFileLock(file *os.File, label string, timeout time.Duration) (func(), error) {
 	closeFile := func() { _ = file.Close() }
 	if err := file.Chmod(FilePerm); err != nil {
 		closeFile()

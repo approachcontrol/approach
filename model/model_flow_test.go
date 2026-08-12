@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -8,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -106,6 +106,13 @@ func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
 	}
 }
 
+func flowStartRequestHeadless(req model.FlowStartRequest) bool {
+	if req.Headless == nil {
+		return true
+	}
+	return *req.Headless
+}
+
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
 	if m.ActivePane() == ui.PaneRepos {
@@ -123,6 +130,7 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 		Title:    "Flow with phases",
 		Status:   flowstore.StatusInProgress,
 		Branch:   "flow/with-phases",
+		Headless: true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -174,7 +182,7 @@ func TestModel_CtrlAShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.
 	merged.Status = flowstore.StatusMerged
 
 	var gotFilter flowstore.FlowFilter
-	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			gotFilter = filter
 			return []flowstore.FlowRecord{alpha, bravo, merged}, nil
@@ -230,7 +238,7 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 	bravo.Title = "Bravo Flow"
 
 	var filters []flowstore.FlowFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
 			return []flowstore.FlowRecord{alpha, bravo}, nil
@@ -288,7 +296,7 @@ func TestModel_ActiveFlowsLeftPaneFilterCleansRepoPath(t *testing.T) {
 }
 
 func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("state unavailable")
 		},
@@ -323,7 +331,7 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	bravo.Title = "Bravo Flow"
 
 	var filters []flowstore.FlowFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
 			return []flowstore.FlowRecord{alpha, bravo}, nil
@@ -375,7 +383,7 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 	merged.Status = flowstore.StatusMerged
 
 	var launched flowstore.PhaseLaunchUpdate
-	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launched = update
@@ -402,13 +410,12 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 		t.Fatalf("active-flow surface should select among non-merged rows only:\n%s", view)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
 	}
-	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
-	if len(launches) != 1 || launches[0].LaunchContext.FlowID != "active-two" {
-		t.Fatalf("launches = %#v, want active-two", launches)
+	if _, ok := runImmediateTestCommand(cmd); !ok {
+		t.Fatal("active Flow launch should prepare its phase")
 	}
 	if launched.FlowID != "active-two" || launched.PhaseID != "implementation" {
 		t.Fatalf("launch update = %#v, want active-two implementation", launched)
@@ -433,7 +440,7 @@ func TestModel_ActiveFlowsRefreshDoesNotPrepareAutoLaunch(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -500,7 +507,7 @@ func TestModel_ActiveFlowsHorizontalNavigationIsInert(t *testing.T) {
 
 func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 	flow := flowWithPhaseDetails()
-	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
 			t.Fatal("StartFlowPlan should not be called from active flows")
@@ -569,7 +576,7 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 	flowTwo := flowWithPhaseDetails()
 	flowTwo.FlowID = "flow-2"
 	flowTwo.Title = "Second active flow"
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowOne, flowTwo}, nil
@@ -591,7 +598,7 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g on active Flow should prepare an embedded launch")
 	}
@@ -676,7 +683,7 @@ func TestModel_CollapsedFlowPaneWithoutTerminalIgnoresTab(t *testing.T) {
 
 func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -894,7 +901,7 @@ func TestModel_ActiveFlowRefreshPreservesNormalFlowSelection(t *testing.T) {
 func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -945,7 +952,8 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	var started actions.AgentLaunchContext
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	flow.Headless = false
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updated := flow
@@ -965,18 +973,11 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, cmd = update(m, launchMsg)
-	m = settleModelCommands(t, m, cmd, 2)
+	m = settleModelCommands(t, m, cmd, 3)
 	if started.FlowID != "flow-1" || started.FlowPhaseID != "implementation" || started.Headless {
 		t.Fatalf("unexpected active Flow launch context: %#v", started)
 	}
@@ -990,7 +991,8 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	flow.Headless = false
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updated := flow
@@ -1009,17 +1011,11 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
 	}
-	launchMsg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned non-launch message")
-	}
-	m, cmd = update(m, launchMsg)
-	m = settleModelCommands(t, m, cmd, 2)
+	m = settleModelCommands(t, m, cmd, 3)
 	writeCount := len(fakeTerm.writes)
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF3})
@@ -1038,7 +1034,8 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	var flowTerm *fakeEmbeddedTerminal
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	flow.Headless = false
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updated := flow
@@ -1066,18 +1063,11 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	if !strings.Contains(view, "flow/with-phases") || strings.Contains(view, "codex-session-1") {
 		t.Fatalf("active flows should visually override sessions mode:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command over Sessions")
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, cmd = update(m, launchMsg)
-	m = settleModelCommands(t, m, cmd, 2)
+	m = settleModelCommands(t, m, cmd, 3)
 	if flowTerm == nil {
 		t.Fatal("expected active Flow launch to start a flow embedded terminal")
 	}
@@ -1157,28 +1147,37 @@ func autoFlowWithPhases(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/auto",
 		AutoMode:     true,
+		Headless:     true,
 		Phases:       phases,
 	}
 }
 
+// autoAdvanceLaunchCommand drives one advance-poll drain and registers the
+// snapshot it feeds in as the authoritative read. AutoMode reads the exact Flow
+// it is about to launch, and these records never reach a pane, so without this
+// the read would fall through to the developer's live flow store.
+func autoAdvanceLaunchCommand(m model.Model, flows []flowstore.FlowRecord) (model.Model, tea.Cmd) {
+	recordTestFlowRecords(flows)
+	return model.AutoAdvanceLaunchCommandForTest(m, flows)
+}
+
 func autoLaunchFromFlowRefresh(t *testing.T, previous, current flowstore.FlowRecord) (model.FlowEmbeddedLaunchRequestedMsg, []flowstore.PhaseLaunchUpdate) {
 	t.Helper()
-	cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
+	m, cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
 	if cmd == nil {
 		t.Fatal("Flow refresh should return auto-launch command")
 	}
-	msg := cmd()
-	launch, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("auto-launch command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("auto-launch produced %d embedded launches, want 1", len(launches))
 	}
-	return launch, *updates
+	return launches[0], *updates
 }
 
-func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.FlowRecord) (tea.Cmd, *[]flowstore.PhaseLaunchUpdate) {
+func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.FlowRecord) (model.Model, tea.Cmd, *[]flowstore.PhaseLaunchUpdate) {
 	t.Helper()
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1196,27 +1195,23 @@ func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
-	return cmd, &updates
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
+	return m, cmd, &updates
 }
 
-func flowEmbeddedLaunchesFromCommand(t *testing.T, cmd tea.Cmd) []model.FlowEmbeddedLaunchRequestedMsg {
+// flowEmbeddedLaunchesFromCommand drives the AutoMode launch lifecycle to its
+// prepared launch contexts. It needs the Model because the authoritative read
+// event has to go back through Update before any prepare command exists.
+func flowEmbeddedLaunchesFromCommand(t *testing.T, m model.Model, cmd tea.Cmd) []model.FlowEmbeddedLaunchRequestedMsg {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("expected command")
 	}
-	msg := cmd()
-	msgs := []tea.Msg{msg}
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		msgs = msgs[:0]
-		for _, subcmd := range batch {
-			msgs = append(msgs, subcmd())
-		}
-	}
+	_, prepared := model.AutoFlowLaunchesForTest(m, cmd)
 	launches := make([]model.FlowEmbeddedLaunchRequestedMsg, 0)
-	for _, msg := range msgs {
-		if launch, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg); ok {
-			launches = append(launches, launch)
+	for _, launch := range prepared {
+		if launch.Embedded {
+			launches = append(launches, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: launch.Context})
 		}
 	}
 	return launches
@@ -1234,7 +1229,7 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	var launchUpdate flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:          "claude",
 		ClaudeModel:           "claude-sonnet-5",
 		ClaudeReasoningEffort: "max",
@@ -1251,15 +1246,15 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto-advance should return auto-launch command")
 	}
-	msg := cmd()
-	launch, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("auto-launch command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("auto-advance produced %d embedded launches, want 1", len(launches))
 	}
+	launch := launches[0]
 	if !launchUpdate.AutoLaunch || launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID == "" {
 		t.Fatalf("auto launch update = %#v", launchUpdate)
 	}
@@ -1272,6 +1267,25 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		!launch.LaunchContext.Headless ||
 		!launch.LaunchContext.FlowLaunchTracked {
 		t.Fatalf("auto launch context = %#v", launch.LaunchContext)
+	}
+}
+
+func TestModel_FlowAutoLaunchIsAlwaysHeadlessRegardlessOfStoredManualPreference(t *testing.T) {
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored_%v", stored), func(t *testing.T) {
+			previous := autoFlowWithPhaseStatuses(map[string]string{
+				"plan": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,
+			})
+			current := autoFlowWithPhaseStatuses(map[string]string{
+				"plan": flowstore.PhaseCompleted, "implementation": flowstore.PhaseReady,
+			})
+			previous.Headless = stored
+			current.Headless = stored
+			launch, _ := autoLaunchFromFlowRefresh(t, previous, current)
+			if !launch.LaunchContext.Headless || !launch.LaunchContext.FlowAutoLaunch {
+				t.Fatalf("auto launch context = %#v, want always-headless auto launch", launch.LaunchContext)
+			}
+		})
 	}
 }
 
@@ -1289,7 +1303,7 @@ func TestModel_FlowAutoLaunchWithCodexAppUsesExternalRouteWithoutEffort(t *testi
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
 	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:         "codex-app",
 		CodexReasoningEffort: "high",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -1313,15 +1327,15 @@ func TestModel_FlowAutoLaunchWithCodexAppUsesExternalRouteWithoutEffort(t *testi
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	m, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto-advance should return auto-launch command")
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("auto-launch command returned %T, want PlanLaunchRequestedMsg", msg)
+	m, prepared := model.AutoFlowLaunchesForTest(m, cmd)
+	if len(prepared) != 1 || prepared[0].Embedded {
+		t.Fatalf("auto-advance prepared = %#v, want one external launch", prepared)
 	}
+	launchMsg := model.PlanLaunchRequestedMsg{LaunchContext: prepared[0].Context}
 	if !launchUpdate.AutoLaunch || launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID == "" {
 		t.Fatalf("auto launch update = %#v", launchUpdate)
 	}
@@ -1335,7 +1349,7 @@ func TestModel_FlowAutoLaunchWithCodexAppUsesExternalRouteWithoutEffort(t *testi
 		t.Fatalf("codex-app auto launch context = %#v", launchMsg.LaunchContext)
 	}
 
-	_, cmd = update(m, launchMsg)
+	_, cmd = update(m, prepared[0].Prepared)
 	if cmd == nil {
 		t.Fatal("expected external codex-app agent result command")
 	}
@@ -1374,6 +1388,35 @@ func expandSelectedFlowWithEnter(t *testing.T, m model.Model) model.Model {
 	}
 	if got := m.SelectedFlowPhaseID(); got != "" {
 		t.Fatalf("enter on Flow row selected phase %q, want Flow row selected", got)
+	}
+	return m
+}
+
+// flowRecordsForTerminals builds one Flow per embedded terminal a test needs.
+// The launch lifecycle refuses a second launch into a Flow whose terminal is
+// still installed, so simultaneous terminals need distinct Flows.
+func flowRecordsForTerminals(count int) []flowstore.FlowRecord {
+	records := make([]flowstore.FlowRecord, 0, count)
+	for i := range count {
+		record := flowWithPhaseDetails()
+		record.FlowID = fmt.Sprintf("flow-%d", i+1)
+		record.Title = fmt.Sprintf("Flow %d", i+1)
+		records = append(records, record)
+	}
+	return records
+}
+
+// selectFlowRow moves the Flow cursor to a row index.
+func selectFlowRow(t *testing.T, m model.Model, index int) model.Model {
+	t.Helper()
+	for i := 0; i < 50 && m.FlowSelected() > index; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	}
+	for i := 0; i < 50 && m.FlowSelected() < index; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := m.FlowSelected(); got != index {
+		t.Fatalf("selected Flow row = %d, want %d", got, index)
 	}
 	return m
 }
@@ -1438,48 +1481,57 @@ func applyFlowResultFollowup(t *testing.T, m model.Model, cmd tea.Cmd) model.Mod
 func prepareSelectedFlowPhaseLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
-	m, cmd := update(m, flowLaunchKey())
-	return m, cmd
+	return flowLaunchFromKey(t, m)
+}
+
+// advanceFlowLaunchRead runs the lifecycle's authoritative read hop and returns
+// the command that prepares the launch, so callers keep working against a
+// single command that installs the terminal when its message is applied.
+func advanceFlowLaunchRead(t *testing.T, m model.Model, cmd tea.Cmd) (model.Model, tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return m, nil
+	}
+	msg, ok := runImmediateTestCommand(cmd)
+	if !ok {
+		// A refused launch returns no asynchronous work, only the status timer.
+		return m, cmd
+	}
+	return update(m, msg)
 }
 
 func prepareSelectedFlowPhaseHeadlessOffLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-	}
-	m, cmd = update(m, flowLaunchKey())
-	return m, cmd
+	return flowLaunchFromKey(t, m)
 }
 
+// runPreparedFlowEmbeddedLaunch drives everything g returns: the lifecycle's
+// authoritative read, its prepare hop, and the embedded install that follows.
 func runPreparedFlowEmbeddedLaunch(t *testing.T, m model.Model, cmd tea.Cmd) model.Model {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("Flow phase launch should return a command")
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, cmd = update(m, launchMsg)
-	if cmd == nil {
-		t.Fatal("expected embedded Flow launch command")
-	}
-	_ = runLeadingBatchCmd(t, cmd)
-	return m
+	return settleModelCommands(t, m, cmd, 4)
 }
 
 func prepareSelectedFlowPhaseEmbeddedLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
-	m, cmd := update(m, flowLaunchKey())
-	return m, cmd
+	return flowLaunchFromKey(t, m)
 }
 
 func flowLaunchKey() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}
+}
+
+// flowLaunchFromKey presses g and runs the launch lifecycle's authoritative
+// read hop, returning the command whose message completes the launch.
+func flowLaunchFromKey(t *testing.T, m model.Model) (model.Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := update(m, flowLaunchKey())
+	return advanceFlowLaunchRead(t, m, cmd)
 }
 
 func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
@@ -1487,7 +1539,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	updated := flow
 	updated.AutoMode = true
 	var calls []flowstore.AutoModeUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowAutoMode: func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
 			calls = append(calls, update)
 			return updated, nil
@@ -1514,13 +1566,315 @@ func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	}
 }
 
+func TestModel_HKeyPersistsSelectedFlowFromPhaseRowWithoutAffectingAnotherFlow(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	first := flowWithPhaseDetails()
+	first.UpdatedAt = now
+	second := flowWithPhaseDetails()
+	second.FlowID = "flow-2"
+	second.Title = "Second Flow"
+	second.UpdatedAt = now
+	updated := first
+	updated.Headless = false
+	updated.UpdatedAt = now.Add(time.Minute)
+	var calls []flowstore.HeadlessUpdate
+	m := newTestModel(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, update)
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{first, second})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd == nil {
+		t.Fatal("h on selected phase returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if len(calls) != 1 || calls[0] != (flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false}) {
+		t.Fatalf("headless calls = %#v", calls)
+	}
+	flows := m.Flows()
+	if len(flows) != 2 || flows[0].Headless || !flows[1].Headless {
+		t.Fatalf("Flows() = %#v, want only first Flow disabled", flows)
+	}
+	if m.ExpandedFlowID() != first.FlowID || m.SelectedFlowPhaseID() != "implementation" {
+		t.Fatalf("expanded/phase = %q/%q, want %s/implementation", m.ExpandedFlowID(), m.SelectedFlowPhaseID(), first.FlowID)
+	}
+}
+
+func TestModel_HKeyPersistenceFailureAndNoSelectionLeaveVisibleStateUnchanged(t *testing.T) {
+	t.Run("persistence failure", func(t *testing.T) {
+		flow := flowWithPhaseDetails()
+		m := newTestModel(testRepos(), model.Options{
+			SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{}, errors.New("state root locked")
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		if cmd == nil {
+			t.Fatal("h returned nil persistence command")
+		}
+		m, _ = update(m, cmd())
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("Flows() = %#v, want unchanged headless preference", got)
+		}
+		if got := m.TransientError(); !strings.Contains(got, "failed to set Flow headless mode") || !strings.Contains(got, "state root locked") {
+			t.Fatalf("status = %q, want clear persistence error", got)
+		}
+	})
+
+	t.Run("no selection", func(t *testing.T) {
+		called := false
+		m := newTestModel(testRepos(), model.Options{
+			SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+				called = true
+				return flowstore.FlowRecord{}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, nil)
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		if cmd != nil || called {
+			t.Fatalf("h without selection returned %T, adapter called=%v", cmd, called)
+		}
+		if strings.Contains(m.View(), "headless on") || strings.Contains(m.View(), "headless off") {
+			t.Fatalf("headless control should be hidden without a selected Flow:\n%s", m.View())
+		}
+	})
+}
+
+func TestModel_HKeyTogglesSelectedActiveFlowPhaseAndPreservesExpansion(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	updated := flow
+	updated.Headless = false
+	updated.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+	m := newTestModel(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			if update.FlowID != flow.FlowID || update.Enabled {
+				t.Fatalf("SetFlowHeadless(%#v), want disable %s", update, flow.FlowID)
+			}
+			return updated, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 20 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd == nil {
+		t.Fatal("h on selected active phase returned nil command")
+	}
+	msg, ok := cmd().(model.FlowHeadlessSetMsg)
+	if !ok || !msg.AllRepositories {
+		t.Fatalf("active h command returned %#v, want all-repositories result", msg)
+	}
+	m, _ = update(m, msg)
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("active Flows = %#v, want disabled headless", got)
+	}
+	if model.SelectedActiveFlowPhaseIDForTest(m) != "implementation" {
+		t.Fatalf("selected active phase = %q, want implementation", model.SelectedActiveFlowPhaseIDForTest(m))
+	}
+}
+
+func TestModel_FlowHeadlessResultValidatesScopeIdentityAndCacheFreshness(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	normal := flowWithPhaseDetails()
+	normal.UpdatedAt = t0.Add(2 * time.Minute)
+	active := normal
+	active.UpdatedAt = t0
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{normal})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{active})
+
+	between := normal
+	between.Headless = false
+	between.UpdatedAt = t0.Add(time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: normal.FlowID, Flow: between, AllRepositories: true,
+	})
+	if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+		t.Fatalf("newer normal cache was downgraded: %#v", got)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("older active cache did not accept between result: %#v", got)
+	}
+
+	newer := between
+	newer.FlowID = "different-flow"
+	newer.UpdatedAt = t0.Add(3 * time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: normal.FlowID, Flow: newer, AllRepositories: true,
+	})
+	if got := m.Flows(); !got[0].Headless {
+		t.Fatalf("mismatched message/record IDs changed normal cache: %#v", got)
+	}
+
+	offRepo := normal
+	offRepo.Headless = false
+	offRepo.UpdatedAt = t0.Add(4 * time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{RepoPath: "/dev/bravo", FlowID: normal.FlowID, Flow: offRepo})
+	if got := m.Flows(); !got[0].Headless {
+		t.Fatalf("off-repo normal result changed current cache: %#v", got)
+	}
+
+	bravo := flowWithPhaseDetails()
+	bravo.FlowID = "bravo-flow"
+	bravo.RepoPath = "/dev/bravo"
+	bravo.UpdatedAt = t0
+	m = flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{normal})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{bravo})
+	bravoUpdated := bravo
+	bravoUpdated.Headless = false
+	bravoUpdated.UpdatedAt = t0.Add(time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/bravo", FlowID: bravo.FlowID, Flow: bravoUpdated, AllRepositories: true,
+	})
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].FlowID != bravo.FlowID || got[0].Headless {
+		t.Fatalf("valid cross-repo active result was not accepted: %#v", got)
+	}
+
+	older := bravoUpdated
+	older.Headless = true
+	older.UpdatedAt = t0
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/bravo", FlowID: bravo.FlowID, Flow: older, AllRepositories: true,
+	})
+	if got := model.ActiveFlowsForTest(m); got[0].Headless {
+		t.Fatalf("out-of-order older result downgraded active cache: %#v", got)
+	}
+}
+
+func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	older := flowWithPhaseDetails()
+	older.UpdatedAt = t0
+	newer := older
+	newer.Headless = false
+	newer.UpdatedAt = t0.Add(time.Minute)
+
+	t.Run("repository Flow list", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Flow list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Active Flows list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("repository Flow list after Active Flows toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), nil)
+		m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older repository Flow list replaced newer Active Flows result: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list after repository Flow toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m = enterActiveFlowsWithRecords(t, m, nil)
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Active Flows list replaced newer repository Flow result: %#v", got)
+		}
+	})
+
+	t.Run("auto-mode result", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		autoModeResult := older
+		autoModeResult.AutoMode = true
+		m, _ = update(m, model.FlowAutoModeSetMsg{
+			RepoPath: "/dev/alpha", FlowID: older.FlowID, Flow: autoModeResult, Enabled: true,
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older auto-mode result replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("authoritative deletion", func(t *testing.T) {
+		second := older
+		second.FlowID = "flow-2"
+		second.Title = "Second Flow"
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{newer, second})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{second}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].FlowID != second.FlowID || m.FlowSelected() != 0 {
+			t.Fatalf("authoritative deletion did not remove cached Flow and select fallback: flows=%#v selected=%d", got, m.FlowSelected())
+		}
+	})
+}
+
+func TestModel_FlowHeadlessResultRejectsMissingReturnedRepoPath(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	malformed := flow
+	malformed.RepoPath = ""
+	malformed.Headless = false
+	malformed.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+
+	t.Run("repository Flows", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false,
+		})
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed repository Flow cache: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false, AllRepositories: true,
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed Active Flows cache: %#v", got)
+		}
+	})
+}
+
 func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	flow.AutoMode = true
 	updated := flow
 	updated.AutoMode = false
 	var calls []flowstore.AutoModeUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowAutoMode: func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
 			calls = append(calls, update)
 			return updated, nil
@@ -1550,7 +1904,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testi
 
 func TestModel_AKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowAutoMode: func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, errors.New("state root locked")
 		},
@@ -1578,7 +1932,7 @@ func TestModel_AKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 
 func TestModel_AKeyFlowAutoModeNoopsWithoutSelectedFlow(t *testing.T) {
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowAutoMode: func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
 			called = true
 			return flowstore.FlowRecord{}, nil
@@ -1600,7 +1954,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromActiveFlowRow(t *testing.T) {
 	updated := flow
 	updated.AutoMode = true
 	var calls []flowstore.AutoModeUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowAutoMode: func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
 			calls = append(calls, update)
 			return updated, nil
@@ -1630,7 +1984,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromActiveFlowPhaseRowAndPreservesSelectio
 	updated := flow
 	updated.AutoMode = false
 	var calls []flowstore.AutoModeUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowAutoMode: func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
 			calls = append(calls, update)
 			return updated, nil
@@ -1676,7 +2030,7 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 
 	var lookupCalls int
 	var markCalls []flowstore.ManualMergeUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(number int, url string) (actions.PullRequestMerge, error) {
 			lookupCalls++
 			if number != 116 || url != "https://github.com/approachcontrol/approach/pull/116" {
@@ -1730,7 +2084,7 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 func TestModel_ShiftMOpensModelPickerOnSelectedFlowRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			called = true
@@ -1756,7 +2110,7 @@ func TestModel_ShiftMOpensModelPickerOnSelectedFlowRow(t *testing.T) {
 
 func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "merge")
 
@@ -1775,7 +2129,7 @@ func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
 func TestModel_MKeyManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			called = true
 			return actions.PullRequestMerge{}, nil
@@ -1799,7 +2153,7 @@ func TestModel_MKeyManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 func TestModel_MKeyManualMergeNoopsOnActiveFlowPhaseRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			called = true
 			return actions.PullRequestMerge{}, nil
@@ -1830,7 +2184,7 @@ func TestModel_MKeyManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	flow.Phases[len(flow.Phases)-1].Status = flowstore.PhaseRunning
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			called = true
 			return actions.PullRequestMerge{}, nil
@@ -1858,7 +2212,7 @@ func TestModel_MKeyManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
 	recovered.Phases[len(recovered.Phases)-1].Status = flowstore.PhaseNeedsAttention
 	recovered.Phases[len(recovered.Phases)-1].Notes = "sync linked plan phase: missing plan"
 	recovered.Merge = flowstore.Merge{Status: flowstore.MergePending}
-	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
 		},
@@ -1896,7 +2250,7 @@ func TestModel_MKeyManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
 	merged.Status = flowstore.StatusMerged
 	merged.PR.Status = flowstore.MergeMerged
 	merged.Merge = flowstore.Merge{Status: flowstore.MergeMerged, Commit: "0123456789abcdef", MergedAt: &mergedAt}
-	m := enterActiveFlowsWithRecords(t, model.NewWithOptions(testRepos(), model.Options{
+	m := enterActiveFlowsWithRecords(t, newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
 		},
@@ -1920,7 +2274,7 @@ func TestModel_MKeyManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
 func TestModel_ShiftMManualMergeNoopsOnActiveFlowRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			called = true
 			return actions.PullRequestMerge{}, nil
@@ -1942,7 +2296,7 @@ func TestModel_ShiftMManualMergeNoopsOnActiveFlowRow(t *testing.T) {
 
 func TestModel_ShiftMOpensModelPickerOnSelectedActiveFlowPhaseRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "merge"; i++ {
@@ -2000,7 +2354,7 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 		{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"},
 	}
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalled = true
 			return flowstore.FlowRecord{}, nil
@@ -2029,7 +2383,7 @@ func TestModel_SelectedLiveSessionFlowPhaseHidesResetShortcut(t *testing.T) {
 	flow := flowWithEndedRunningImplementation()
 	flow.Phases[2].Sessions[0].Status = "running"
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalled = true
 			return flowstore.FlowRecord{}, nil
@@ -2056,7 +2410,7 @@ func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
 	reset := flowWithPhaseDetails()
 	var resetCalls []flowstore.PhaseResetUpdate
 	listCalls := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalls = append(resetCalls, update)
 			return reset, nil
@@ -2114,7 +2468,7 @@ func TestModel_XKeyOnEndedSessionFlowPhaseConfirmsAndResets(t *testing.T) {
 	ended := flowWithEndedRunningImplementation()
 	reset := flowWithPhaseDetails()
 	var resetCalls []flowstore.PhaseResetUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalls = append(resetCalls, update)
 			return reset, nil
@@ -2161,7 +2515,7 @@ func TestModel_ResetFlowPhaseRefreshKeepsSelectionAfterPhaseIDNormalization(t *t
 	reset.Phases[2].Status = flowstore.PhaseReady
 	reset.Phases[2].LaunchIDs = nil
 	var resetCalls []flowstore.PhaseResetUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalls = append(resetCalls, update)
 			return reset, nil
@@ -2201,7 +2555,7 @@ func TestModel_ResetFlowPhaseRefreshKeepsSelectionAfterPhaseIDNormalization(t *t
 
 func TestModel_XKeyOnResettableFlowPhaseCancelDoesNotPersist(t *testing.T) {
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalled = true
 			return flowstore.FlowRecord{}, nil
@@ -2224,7 +2578,7 @@ func TestModel_XKeyOnResettableFlowPhaseCancelDoesNotPersist(t *testing.T) {
 }
 
 func TestModel_XKeyOnResettableFlowPhaseReportsResetFailure(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, errors.New("state root locked")
 		},
@@ -2255,7 +2609,7 @@ func TestModel_XKeyOnResettableFlowPhaseReportsResetFailure(t *testing.T) {
 
 func TestModel_XKeyIgnoredWhenSelectedFlowPhaseIsNotAwaitingSession(t *testing.T) {
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalled = true
 			return flowstore.FlowRecord{}, nil
@@ -2279,7 +2633,7 @@ func TestModel_XKeyIgnoredWhenSelectedFlowPhaseIsNotAwaitingSession(t *testing.T
 func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -2316,7 +2670,7 @@ func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T
 func TestModel_EndedSessionResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -2357,7 +2711,7 @@ func TestModel_ResetShortcutHiddenAfterLegacyPhaseIDLaunchNormalizes(t *testing.
 	awaiting := flowWithAwaitingImplementation()
 	var started actions.AgentLaunchContext
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			if update.PhaseID != "Implementation" {
@@ -2377,7 +2731,7 @@ func TestModel_ResetShortcutHiddenAfterLegacyPhaseIDLaunchNormalizes(t *testing.
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{legacy})
 	m = selectFlowPhaseByID(t, m, "Implementation")
 
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -2409,7 +2763,7 @@ func TestModel_ResetShortcutHiddenAfterLegacyPhaseIDLaunchNormalizes(t *testing.
 func TestModel_XKeyKeepsFlowTerminalFocusCloseBehavior(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	resetCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -2447,7 +2801,7 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	want := []flowstore.FlowRecord{
 		{FlowID: "flow-1", Title: "Add Flow mode", RepoPath: "/dev/alpha", Branch: "flow/add-flow-mode", Status: flowstore.StatusPending},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			gotFilter = filter
 			return want, nil
@@ -2483,7 +2837,7 @@ func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing
 	want := []flowstore.FlowRecord{
 		{FlowID: "flow-current", Title: "Current Flow", RepoPath: "/dev/alpha", Status: flowstore.StatusPending},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			gotFilter = filter
 			return want, nil
@@ -2558,7 +2912,11 @@ func TestModel_FlowAutoModeLaunchesImplementationAfterPlanReviewCompletes(t *tes
 	}
 }
 
-func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
+// A tracked resume is registered synchronously on the key press, before its
+// persistence lands, so AutoMode now defers rather than racing a write that is
+// still in flight. The deferral lasts exactly as long as the resume owns the
+// Flow: the drain stays armed, and the next free poll launches.
+func TestModel_PendingTrackedResumeDefersFlowAutoAdvanceUntilItClears(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
@@ -2575,18 +2933,22 @@ func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
 		Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
 	}}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			persisted := current
+			persisted.Phases = slices.Clone(current.Phases)
 			for i := range persisted.Phases {
 				if persisted.Phases[i].PhaseID == update.PhaseID {
 					persisted.Phases[i].Status = flowstore.PhaseRunning
-					persisted.Phases[i].LaunchIDs = append(persisted.Phases[i].LaunchIDs, update.LaunchID)
+					persisted.Phases[i].LaunchIDs = append(slices.Clone(persisted.Phases[i].LaunchIDs), update.LaunchID)
 				}
 			}
 			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{state: "running"}, nil
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
@@ -2597,166 +2959,170 @@ func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
 		t.Fatal("manual tracked resume should return a persistence command")
 	}
 
-	_, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
-	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
+	deferred, autoCmd := autoAdvanceLaunchCommand(pending, []flowstore.FlowRecord{current})
+	if autoCmd != nil {
+		t.Fatalf("auto poll raced a resume that is still mid-write: %T", autoCmd)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("deferred auto poll persisted %#v, want nothing", updates)
+	}
+	if got := deferred.TransientError(); got != "" {
+		t.Fatalf("deferred auto poll set status %q, want a silent refusal", got)
+	}
+
+	// Once the resume has persisted and its terminal is gone, nothing owns the
+	// Flow and the still-armed drain launches on the next poll.
+	settled := settleModelCommands(t, deferred, manualCmd, 4)
+	settled = model.ClearFlowEmbeddedTerminalsForTest(settled)
+	updates = nil
+	settled, autoCmd = autoAdvanceLaunchCommand(settled, []flowstore.FlowRecord{current})
+	launches := flowEmbeddedLaunchesFromCommand(t, settled, autoCmd)
 	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
-		t.Fatalf("auto launch while manual resume pending = %#v, want headless implementation", launches)
+		t.Fatalf("auto launch after the resume cleared = %#v, want headless implementation", launches)
 	}
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
-		t.Fatalf("persistence updates = %#v, want only auto successor", updates)
-	}
-	if model.HasRunningFlowEmbeddedTerminalForPhaseForTest(pending, current.FlowID, "plan-review") {
-		t.Fatal("pending persistence registered a source terminal")
+		t.Fatalf("persistence updates = %#v, want only the auto successor", updates)
 	}
 }
 
-func TestModel_TrackedResumeAndAutoAdvanceRaceStartsEachTerminalOnce(t *testing.T) {
-	mutationOrders := []string{"manual-then-auto", "auto-then-manual"}
-	resultOrders := []string{"manual-then-auto", "auto-then-manual"}
-	for _, mutationOrder := range mutationOrders {
-		for _, resultOrder := range resultOrders {
-			t.Run(mutationOrder+"/"+resultOrder, func(t *testing.T) {
-				root := t.TempDir()
-				store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-				if err != nil {
-					t.Fatalf("NewStore() error = %v", err)
-				}
-				current, err := store.Create(flowstore.FlowRecord{
-					FlowID:       "flow-race",
-					Title:        "Manual resume and auto launch race",
-					Instructions: "exercise both persistence and continuation orderings",
-					RepoPath:     "/dev/alpha",
-					WorktreePath: filepath.Join(root, "worktree"),
-					Branch:       "flow/race",
-					Phases: []flowstore.FlowPhase{
-						{
-							PhaseID:   "plan-review",
-							Title:     "Plan Review",
-							Kind:      flowstore.KindPlanReview,
-							DependsOn: []string{},
-							Status:    flowstore.PhaseCompleted,
-							Outcome:   flowstore.OutcomeApproved,
-							Order:     1,
-							LaunchIDs: []string{"launch-source"},
-							Sessions: []flowstore.Session{{
-								Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
-							}},
-						},
-						{
-							PhaseID:   "implementation",
-							Title:     "Implementation",
-							Kind:      flowstore.KindImplementation,
-							DependsOn: []string{"plan-review"},
-							Status:    flowstore.PhaseReady,
-							Order:     2,
-						},
-					},
-				})
-				if err != nil {
-					t.Fatalf("Create() error = %v", err)
-				}
-				previous := current
-				previous.Phases = slices.Clone(current.Phases)
-				previous.Phases[0].Status = flowstore.PhaseRunning
-				previous.Phases[1].Status = flowstore.PhasePending
+// The two sources can no longer overlap: a tracked resume owns the Flow from
+// the key press until its terminal is gone, and AutoMode defers for exactly
+// that long. The invariant the ordering permutations used to protect — each
+// terminal starts exactly once, against one real store — is what is kept here.
+func TestModel_TrackedResumeAndAutoAdvanceStartEachTerminalOnce(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	current, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "flow-race",
+		Title:        "Manual resume and auto launch race",
+		Instructions: "exercise both persistence and continuation orderings",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: filepath.Join(root, "worktree"),
+		Branch:       "flow/race",
+		Phases: []flowstore.FlowPhase{
+			{
+				PhaseID:   "plan-review",
+				Title:     "Plan Review",
+				Kind:      flowstore.KindPlanReview,
+				DependsOn: []string{},
+				Status:    flowstore.PhaseCompleted,
+				Outcome:   flowstore.OutcomeApproved,
+				Order:     1,
+				LaunchIDs: []string{"launch-source"},
+				Sessions: []flowstore.Session{{
+					Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
+				}},
+			},
+			{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Kind:      flowstore.KindImplementation,
+				DependsOn: []string{"plan-review"},
+				Status:    flowstore.PhaseReady,
+				Order:     2,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	previous := current
+	previous.Phases = slices.Clone(current.Phases)
+	previous.Phases[0].Status = flowstore.PhaseRunning
+	previous.Phases[1].Status = flowstore.PhasePending
 
-				var terminalStarts []actions.AgentLaunchContext
-				m := model.NewWithOptions(testRepos(), model.Options{
-					AgentCommand:         "codex",
-					SessionStateRoot:     root,
-					AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
-					StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
-						terminalStarts = append(terminalStarts, ctx)
-						return &fakeEmbeddedTerminal{state: "running"}, nil
-					},
-				})
-				m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
-				m = selectFlowPhaseByID(t, m, "plan-review")
-				m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-				pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-				if manualCmd == nil {
-					t.Fatal("manual resume should return a persistence command")
-				}
-				scheduled, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
-				if autoCmd == nil {
-					t.Fatal("pending manual persistence should not suppress auto scheduling")
-				}
+	var terminalStarts []actions.AgentLaunchContext
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand:         "codex",
+		SessionStateRoot:     root,
+		ReadFlow:             store.Read,
+		AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			terminalStarts = append(terminalStarts, ctx)
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
+	m = selectFlowPhaseByID(t, m, "plan-review")
+	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
+	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if manualCmd == nil {
+		t.Fatal("manual resume should return a persistence command")
+	}
 
-				var manualResult tea.Msg
-				var autoResult model.FlowEmbeddedLaunchRequestedMsg
-				runManualMutation := func() { manualResult = manualCmd() }
-				runAutoMutation := func() {
-					launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
-					if len(launches) != 1 {
-						t.Fatalf("auto mutation returned launches %#v, want 1", launches)
-					}
-					autoResult = launches[0]
-				}
-				if mutationOrder == "manual-then-auto" {
-					runManualMutation()
-					runAutoMutation()
-				} else {
-					runAutoMutation()
-					runManualMutation()
-				}
+	// The completion edge arms the drain, and the in-flight resume refuses this
+	// poll silently rather than racing the write.
+	scheduled, autoCmd := autoAdvanceLaunchCommand(pending, []flowstore.FlowRecord{current})
+	if autoCmd != nil {
+		t.Fatalf("auto poll ran while the resume was mid-write: %T", autoCmd)
+	}
 
-				deliverManualResult := func() { scheduled, _ = update(scheduled, manualResult) }
-				deliverAutoResult := func() { scheduled, _ = update(scheduled, autoResult) }
-				if resultOrder == "manual-then-auto" {
-					deliverManualResult()
-					deliverAutoResult()
-				} else {
-					deliverAutoResult()
-					deliverManualResult()
-				}
+	manualResult := manualCmd()
+	scheduled, manualFollowUp := update(scheduled, manualResult)
+	scheduled = settleModelCommands(t, scheduled, manualFollowUp, 4)
+	if len(terminalStarts) != 1 || terminalStarts[0].FlowPhaseID != "plan-review" {
+		t.Fatalf("terminal starts after the resume = %#v, want one plan-review resume", terminalStarts)
+	}
 
-				if len(terminalStarts) != 2 {
-					t.Fatalf("terminal starts = %#v, want exactly 2", terminalStarts)
-				}
-				var manualLaunch, autoLaunch actions.AgentLaunchContext
-				for _, started := range terminalStarts {
-					switch started.FlowPhaseID {
-					case "plan-review":
-						manualLaunch = started
-					case "implementation":
-						autoLaunch = started
-					}
-				}
-				if manualLaunch.LaunchID == "" || manualLaunch.ResumeSessionID != "codex-source" || manualLaunch.Headless {
-					t.Fatalf("manual terminal = %#v", manualLaunch)
-				}
-				if autoLaunch.LaunchID == "" || !autoLaunch.Headless || autoLaunch.ResumeSessionID != "" || autoLaunch.LaunchID == manualLaunch.LaunchID {
-					t.Fatalf("auto terminal = %#v, manual = %#v", autoLaunch, manualLaunch)
-				}
-				persisted, err := store.Read(current.FlowID)
-				if err != nil {
-					t.Fatalf("Read() error = %v", err)
-				}
-				phaseByID := func(phaseID string) flowstore.FlowPhase {
-					for _, phase := range persisted.Phases {
-						if phase.PhaseID == phaseID {
-							return phase
-						}
-					}
-					t.Fatalf("persisted Flow missing phase %q: %#v", phaseID, persisted.Phases)
-					return flowstore.FlowPhase{}
-				}
-				source := phaseByID("plan-review")
-				successor := phaseByID("implementation")
-				if len(source.LaunchIDs) != 2 || source.LaunchIDs[1] != manualLaunch.LaunchID {
-					t.Fatalf("source launch ids = %#v, want one resume", source.LaunchIDs)
-				}
-				if successor.Status != flowstore.PhaseRunning || len(successor.LaunchIDs) != 1 || successor.LaunchIDs[0] != autoLaunch.LaunchID {
-					t.Fatalf("successor = %#v, want one running auto launch", successor)
-				}
+	scheduled = model.ClearFlowEmbeddedTerminalsForTest(scheduled)
+	scheduled, autoCmd = autoAdvanceLaunchCommand(scheduled, []flowstore.FlowRecord{current})
+	if autoCmd == nil {
+		t.Fatal("the still-armed drain should launch once the resume releases the Flow")
+	}
+	scheduled, prepared := model.AutoFlowLaunchesForTest(scheduled, autoCmd)
+	if len(prepared) != 1 {
+		t.Fatalf("prepared auto launches = %#v, want exactly one", prepared)
+	}
+	scheduled, autoFollowUp := update(scheduled, prepared[0].Prepared)
+	scheduled = settleModelCommands(t, scheduled, autoFollowUp, 4)
 
-				statusBeforeReplay := scheduled.TransientError()
-				scheduled, replayCmd := update(scheduled, manualResult)
-				if replayCmd != nil || len(terminalStarts) != 2 || scheduled.TransientError() != statusBeforeReplay {
-					t.Fatalf("manual result replay changed state: cmd=%T terminals=%#v status=%q", replayCmd, terminalStarts, scheduled.TransientError())
-				}
-			})
+	if len(terminalStarts) != 2 {
+		t.Fatalf("terminal starts = %#v, want exactly 2", terminalStarts)
+	}
+	var manualLaunch, autoLaunch actions.AgentLaunchContext
+	for _, started := range terminalStarts {
+		switch started.FlowPhaseID {
+		case "plan-review":
+			manualLaunch = started
+		case "implementation":
+			autoLaunch = started
 		}
+	}
+	if manualLaunch.LaunchID == "" || manualLaunch.ResumeSessionID != "codex-source" || manualLaunch.Headless {
+		t.Fatalf("manual terminal = %#v", manualLaunch)
+	}
+	if autoLaunch.LaunchID == "" || !autoLaunch.Headless || autoLaunch.ResumeSessionID != "" || autoLaunch.LaunchID == manualLaunch.LaunchID {
+		t.Fatalf("auto terminal = %#v, manual = %#v", autoLaunch, manualLaunch)
+	}
+	persisted, err := store.Read(current.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phaseByID := func(phaseID string) flowstore.FlowPhase {
+		for _, phase := range persisted.Phases {
+			if phase.PhaseID == phaseID {
+				return phase
+			}
+		}
+		t.Fatalf("persisted Flow missing phase %q: %#v", phaseID, persisted.Phases)
+		return flowstore.FlowPhase{}
+	}
+	source := phaseByID("plan-review")
+	successor := phaseByID("implementation")
+	if len(source.LaunchIDs) != 2 || source.LaunchIDs[1] != manualLaunch.LaunchID {
+		t.Fatalf("source launch ids = %#v, want one resume", source.LaunchIDs)
+	}
+	if successor.Status != flowstore.PhaseRunning || len(successor.LaunchIDs) != 1 || successor.LaunchIDs[0] != autoLaunch.LaunchID {
+		t.Fatalf("successor = %#v, want one running auto launch", successor)
+	}
+
+	statusBeforeReplay := scheduled.TransientError()
+	scheduled, replayCmd := update(scheduled, manualResult)
+	if replayCmd != nil || len(terminalStarts) != 2 || scheduled.TransientError() != statusBeforeReplay {
+		t.Fatalf("manual result replay changed state: cmd=%T terminals=%#v status=%q", replayCmd, terminalStarts, scheduled.TransientError())
 	}
 }
 
@@ -2777,7 +3143,7 @@ func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testi
 		Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
 	}}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -2809,13 +3175,13 @@ func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testi
 		t.Fatalf("updates after manual resume = %#v", updates)
 	}
 
-	deferred, autoCmd := model.AutoAdvanceLaunchCommandForTest(resumed, []flowstore.FlowRecord{current})
+	deferred, autoCmd := autoAdvanceLaunchCommand(resumed, []flowstore.FlowRecord{current})
 	if autoCmd != nil || len(updates) != 1 {
 		t.Fatalf("auto poll while resumed terminal runs: cmd=%T updates=%#v", autoCmd, updates)
 	}
 	deferred = model.ClearFlowEmbeddedTerminalsForTest(deferred)
-	_, autoCmd = model.AutoAdvanceLaunchCommandForTest(deferred, []flowstore.FlowRecord{current})
-	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
+	deferred, autoCmd = autoAdvanceLaunchCommand(deferred, []flowstore.FlowRecord{current})
+	launches := flowEmbeddedLaunchesFromCommand(t, deferred, autoCmd)
 	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
 		t.Fatalf("auto launch after resumed terminal exits = %#v", launches)
 	}
@@ -2840,7 +3206,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 	current.Phases[1].Outcome = flowstore.OutcomeApproved
 	var updates []flowstore.PhaseLaunchUpdate
 	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -2879,7 +3245,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 		ListRequest: m.ListRequest(ui.ModeFlows),
 	})
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("completed phase with running terminal returned auto-launch command %T, want nil", cmd)
 	}
@@ -2888,7 +3254,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 	}
 
 	sourceTerm.state = "exited"
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("advance before exited terminal auto-closes returned command %T, want nil", cmd)
 	}
@@ -2907,11 +3273,11 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 		t.Fatalf("source terminal should be dismissed after exited tick:\n%s", m.View())
 	}
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("advance poll after source terminal exit should prepare the deferred auto launch")
 	}
-	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
 	if len(launches) != 1 {
 		t.Fatalf("deferred launch command returned %d embedded launches, want 1", len(launches))
 	}
@@ -2942,7 +3308,7 @@ func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved
 	current.Phases[1].Outcome = flowstore.OutcomeApproved
 	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -2990,11 +3356,11 @@ func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved
 		t.Fatalf("exit-triggered display refresh launch updates = %#v, want none", updates)
 	}
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("advance poll should prepare auto launch after observing completion")
 	}
-	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
 	if len(launches) != 1 {
 		t.Fatalf("advance poll returned %d embedded launches, want 1", len(launches))
 	}
@@ -3023,7 +3389,7 @@ func TestModel_ActiveFlowAutoCloseRefreshUsesGlobalFetch(t *testing.T) {
 	activeFlow.Title = "Bravo Flow"
 	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
 	var filters []flowstore.FlowFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
@@ -3075,7 +3441,7 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
 	listCalls := 0
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			listCalls++
@@ -3119,7 +3485,7 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 	})
 
 	sourceTerm.state = "exited"
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("completion observed before exited terminal auto-closes returned command %T, want nil", cmd)
 	}
@@ -3131,11 +3497,11 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 	if cmd == nil {
 		t.Fatal("auto-closing exited source terminal should schedule refresh")
 	}
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("advance poll after source terminal auto-close should prepare deferred launch")
 	}
-	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
 	if len(launches) != 1 {
 		t.Fatalf("deferred launch command returned %d embedded launches, want 1", len(launches))
 	}
@@ -3163,7 +3529,7 @@ func TestModel_FlowAutoModeSuppressesWhenCompletionObservedWithNonAutoClosingSou
 			current.Phases[1].Outcome = flowstore.OutcomeApproved
 			sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
 			var updates []flowstore.PhaseLaunchUpdate
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					updates = append(updates, update)
@@ -3236,7 +3602,7 @@ func TestModel_FlowAutoModeDeferredLaunchNoopsAfterAutoModeDisabled(t *testing.T
 		}
 	}
 	sourceTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			t.Fatalf("AddFlowPhaseLaunchID() should not run after auto mode is disabled: %#v", update)
@@ -3315,7 +3681,7 @@ func TestModel_FlowAutoModeDeferredLaunchWaitsOnFailedSourceTerminal(t *testing.
 	})
 	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"failed output"}, state: "running"}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3394,7 +3760,7 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 	completed.Phases[1].LaunchIDs = []string{"launch-old", "launch-new"}
 	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"old failed output"}, state: "running"}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3436,15 +3802,15 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 		t.Fatalf("closing old failed source terminal returned command %T, want nil", cmd)
 	}
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{rerun})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{rerun})
 	if cmd != nil {
 		t.Fatalf("new launch running advance returned command %T, want nil", cmd)
 	}
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
 	if cmd == nil {
 		t.Fatal("completion for newer launch ID should auto-launch next phase")
 	}
-	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
 	if len(launches) != 1 {
 		t.Fatalf("new launch completion returned %d embedded launches, want 1", len(launches))
 	}
@@ -3472,7 +3838,7 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 	completed.Phases[1].LaunchIDs = []string{"launch-old", "launch-new"}
 	staleTerm := &fakeEmbeddedTerminal{lines: []string{"old failed output"}, state: "running"}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3510,11 +3876,11 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 	})
 	staleTerm.state = "failed"
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{rerun})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{rerun})
 	if cmd != nil {
 		t.Fatalf("new launch running advance returned command %T, want nil", cmd)
 	}
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
 	if cmd != nil {
 		t.Fatalf("completion with stale flow terminal returned command %T, want nil", cmd)
 	}
@@ -3522,11 +3888,11 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 		t.Fatalf("stale failed terminal should remain visible while it blocks the drain:\n%s", m.View())
 	}
 	m = model.ClearFlowEmbeddedTerminalsForTest(m)
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
 	if cmd == nil {
 		t.Fatal("completion should drain after stale terminal is dismissed")
 	}
-	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
 	if len(launches) != 1 {
 		t.Fatalf("new launch completion returned %d embedded launches, want 1", len(launches))
 	}
@@ -3645,7 +4011,7 @@ func TestModel_FlowAutoModeLaunchesEveryEligibleFlowFromOneRefresh(t *testing.T)
 		currentTwo.FlowID: currentTwo,
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3663,22 +4029,16 @@ func TestModel_FlowAutoModeLaunchesEveryEligibleFlowFromOneRefresh(t *testing.T)
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previousOne, previousTwo})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{currentOne, currentTwo})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{currentOne, currentTwo})
 	if cmd == nil {
 		t.Fatal("two eligible auto-mode flows should return a batched launch command")
 	}
-	msg := cmd()
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok || len(batch) != 2 {
-		t.Fatalf("auto launch command returned %T len=%d, want BatchMsg with two commands", msg, len(batch))
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
+	if len(launches) != 2 {
+		t.Fatalf("auto launches = %d, want one per eligible Flow", len(launches))
 	}
 	var launchedFlowIDs []string
-	for _, subcmd := range batch {
-		raw := subcmd()
-		launch, ok := raw.(model.FlowEmbeddedLaunchRequestedMsg)
-		if !ok {
-			t.Fatalf("batched auto launch returned %T, want FlowEmbeddedLaunchRequestedMsg", raw)
-		}
+	for _, launch := range launches {
 		launchedFlowIDs = append(launchedFlowIDs, launch.LaunchContext.FlowID)
 		if launch.LaunchContext.FlowPhaseID != "implementation" {
 			t.Fatalf("launched phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
@@ -3722,12 +4082,12 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 			previous.Phases[i].Status = flowstore.PhasePending
 		}
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto mode completion should prepare a launch command before auto mode is disabled")
 	}
@@ -3736,7 +4096,7 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 	}
 
 	if msg := cmd(); msg != nil {
-		t.Fatalf("stale auto launch command returned %T, want nil", msg)
+		m, _ = update(m, msg)
 	}
 	read, err := store.Read(current.FlowID)
 	if err != nil {
@@ -3767,7 +4127,7 @@ func TestModel_FlowAutoModeDoesNotLaunchMergeAfterAutoreviewCompletes(t *testing
 		"merge":          flowstore.PhaseReady,
 	})
 
-	cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
+	_, cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
 	if cmd != nil {
 		t.Fatalf("autoreview completion returned auto-launch command %T, want nil", cmd)
 	}
@@ -3796,7 +4156,7 @@ func TestModel_FlowAutoModeDoesNotLaunchForNonCompletedTransitions(t *testing.T)
 				current.Phases[1].Notes = "Skipped by operator."
 			}
 
-			cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
+			_, cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
 			if cmd != nil {
 				t.Fatalf("%s transition returned auto-launch command %T, want nil", status, cmd)
 			}
@@ -3819,7 +4179,7 @@ func TestModel_FlowAutoModeIgnoresStaleFlowResults(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3856,7 +4216,7 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterLeavingFlowsMode(t *testing.T) {
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3898,7 +4258,7 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testi
 		"implementation": flowstore.PhaseReady,
 	})
 	var updates []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -3966,7 +4326,7 @@ func TestModel_EnterOnSelectedFlowPhaseCollapsesWithoutLaunching(t *testing.T) {
 	addLaunchRan := false
 	launchAgentRan := false
 	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			addLaunchRan = true
@@ -4001,7 +4361,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 	var started actions.AgentLaunchContext
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	launchAgentRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:          "claude",
 		ClaudeModel:           "claude-sonnet-5",
 		ClaudeReasoningEffort: "max",
@@ -4029,6 +4389,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 		Branch:       "flow/selected",
 		Commit:       "abc123",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
@@ -4036,7 +4397,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 	}})
 	m = selectFlowPhaseByID(t, m, "review-loop")
 
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare a headless launch")
 	}
@@ -4071,7 +4432,7 @@ func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.
 		{state: "running"},
 	}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			if starts >= len(terms) {
 				t.Fatalf("unexpected embedded terminal start %d", starts+1)
@@ -4122,7 +4483,7 @@ func TestModel_AutoHeadlessFlowLaunchPreservesTerminalFocus(t *testing.T) {
 		{state: "running"},
 	}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			if starts >= len(terms) {
 				t.Fatalf("unexpected embedded terminal start %d", starts+1)
@@ -4173,7 +4534,7 @@ func TestModel_GWithFocusedFlowTerminalWritesInputWithoutLaunchingPhase(t *testi
 	addLaunchRan := false
 	launchAgentRan := false
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			addLaunchRan = true
@@ -4206,7 +4567,7 @@ func TestModel_GWithFocusedFlowTerminalWritesInputWithoutLaunchingPhase(t *testi
 		FlowPhaseID: "implementation",
 	}})
 
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd != nil {
 		t.Fatalf("terminal-focused g returned command %T, want nil", cmd)
 	}
@@ -4224,7 +4585,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 			var launchUpdate flowstore.PhaseLaunchUpdate
 			var started actions.AgentLaunchContext
 			fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand:     command,
 				SessionStateRoot: "/state/approach/sessions/v1",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -4255,12 +4616,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 				},
 			}})
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-			}
-
-			m, cmd = update(m, flowLaunchKey())
+			m, cmd := flowLaunchFromKey(t, m)
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded interactive launch")
 			}
@@ -4309,7 +4665,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 
 func TestModel_GOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Implementation: "Alpha\x1b[201~\nBeta\x1b[200~\x1b[31m\a\tOmega\rDone",
@@ -4334,11 +4690,7 @@ func TestModel_GOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t
 		},
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-	}
-	m, cmd = update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded interactive launch")
 	}
@@ -4357,7 +4709,7 @@ func TestModel_GOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t
 func TestModel_GOnSelectedNonLaunchableFlowPhaseLaunchesFirstReadySibling(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
@@ -4393,7 +4745,7 @@ func TestModel_GOnSelectedNonLaunchableFlowPhaseLaunchesFirstReadySibling(t *tes
 	}
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd = update(m, flowLaunchKey())
+	m, cmd = flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should launch the first launchable sibling")
 	}
@@ -4407,7 +4759,7 @@ func TestModel_GWithNoLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	addLaunchRan := false
 	launchAgentRan := false
 	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			addLaunchRan = true
@@ -4434,7 +4786,7 @@ func TestModel_GWithNoLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected status expiry command without a launchable phase")
 	}
@@ -4457,6 +4809,7 @@ func repairableFlowForShortcut() flowstore.FlowRecord {
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		AutoMode:     true,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{{
 			PhaseID: "implementation",
 			Title:   "Implementation",
@@ -4474,7 +4827,7 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 			var started actions.AgentLaunchContext
 			launchUpdates := 0
 			record := repairableFlowForShortcut()
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand:          "claude",
 				ClaudeModel:           "claude-sonnet-5",
 				ClaudeReasoningEffort: "max",
@@ -4542,6 +4895,49 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 	}
 }
 
+func TestModel_RepairLaunchRefreshUsesAuthoritativeFlowHeadlessPreference(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		cached        bool
+		authoritative bool
+	}{
+		{name: "cached on authoritative off", cached: true, authoritative: false},
+		{name: "cached off authoritative on", cached: false, authoritative: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cached := repairableFlowForShortcut()
+			cached.Headless = tt.cached
+			authoritative := cached
+			authoritative.Headless = tt.authoritative
+			authoritative.UpdatedAt = time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)
+			var started actions.AgentLaunchContext
+			m := newTestModel(testRepos(), model.Options{
+				AgentCommand: "codex",
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{authoritative}, nil
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+					started = ctx
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{cached})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if cmd == nil {
+				t.Fatal("R returned nil repair validation command")
+			}
+			msg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+			if !ok {
+				t.Fatalf("repair validation returned %T", msg)
+			}
+			m, _ = update(m, msg)
+			if started.Headless != tt.authoritative {
+				t.Fatalf("started repair headless = %v, want authoritative %v", started.Headless, tt.authoritative)
+			}
+		})
+	}
+}
+
 func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T) {
 	repoPath := t.TempDir()
 	record := repairableFlowForShortcut()
@@ -4552,7 +4948,7 @@ func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T)
 	persisted.WorktreePath = filepath.Join(repoPath, "deleted-before-validation")
 	var started actions.AgentLaunchContext
 	var validationFilter flowstore.FlowFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			validationFilter = filter
@@ -4591,7 +4987,7 @@ func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			record := repairableFlowForShortcut()
 			launchUpdates := 0
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 					return []flowstore.FlowRecord{record}, nil
@@ -4617,12 +5013,12 @@ func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
 			repaired.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
 			repaired.Phases[0].Status = flowstore.PhaseReady
 			m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{repaired}})
-			m, _ = update(m, flowLaunchKey())
+			m, _ = flowLaunchFromKey(t, m)
 			if launchUpdates != 0 {
 				t.Fatalf("manual launch persisted %d phase updates during repair", launchUpdates)
 			}
 			if got := m.TransientError(); got != "No launchable Flow phase" {
-				t.Fatalf("manual launch status = %q, want repair occupancy to suppress launchability", got)
+				t.Fatalf("manual launch status = %q, want compatibility refusal", got)
 			}
 		})
 	}
@@ -4632,7 +5028,7 @@ func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testin
 	t.Run("duplicate", func(t *testing.T) {
 		starts := 0
 		record := repairableFlowForShortcut()
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			AgentCommand: "codex",
 			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 				starts++
@@ -4665,7 +5061,7 @@ func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testin
 		record := repairableFlowForShortcut()
 		persisted := record
 		persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			AgentCommand: "codex",
 			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 				starts++
@@ -4691,7 +5087,7 @@ func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testin
 
 	t.Run("fresh read failure clears reservation", func(t *testing.T) {
 		record := repairableFlowForShortcut()
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			AgentCommand: "codex",
 			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 				return nil, errors.New("read failed")
@@ -4723,7 +5119,7 @@ func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
 				LaunchID:  "launch-1",
 				Status:    "last_seen",
 			}}
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 					starts++
@@ -4754,7 +5150,7 @@ func TestModel_RRejectsNonEmbeddedProvidersBeforeLaunch(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			starts := 0
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: tt.command,
 				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 					starts++
@@ -4778,7 +5174,7 @@ func TestModel_RIsNoopForHealthyFlowAndExplainsOccupiedRepairSlot(t *testing.T) 
 		starts := 0
 		record := repairableFlowForShortcut()
 		record.Phases[0].Status = flowstore.PhaseReady
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			AgentCommand: "codex",
 			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 				starts++
@@ -4794,7 +5190,7 @@ func TestModel_RIsNoopForHealthyFlowAndExplainsOccupiedRepairSlot(t *testing.T) 
 
 	t.Run("occupied", func(t *testing.T) {
 		starts := 0
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			AgentCommand: "codex",
 			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 				starts++
@@ -4823,7 +5219,7 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	addLaunchRan := false
 	launchAgentRan := false
 	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			addLaunchRan = true
@@ -4843,6 +5239,7 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-selected",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 		},
@@ -4874,7 +5271,7 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 			addLaunchRan := false
 			launchAgentRan := false
 			startEmbeddedRan := false
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex-app",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					addLaunchRan = true
@@ -4894,7 +5291,7 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 				t.Fatalf("starting mode = %d, want %d", m.Mode(), tc.mode)
 			}
 
-			m, cmd := update(m, flowLaunchKey())
+			m, cmd := flowLaunchFromKey(t, m)
 			if cmd != nil {
 				t.Fatalf("g outside flows mode returned command %T, want nil", cmd)
 			}
@@ -4909,12 +5306,23 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 }
 
 func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+	record := flowWithPhaseDetails()
+	record.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	var updates []flowstore.HeadlessUpdate
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			record.Headless = update.Enabled
+			record.UpdatedAt = record.UpdatedAt.Add(time.Minute)
+			return record, nil
+		},
+	}), []flowstore.FlowRecord{record})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("flows-mode h returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("flows-mode h returned nil command")
 	}
+	m, _ = update(m, cmd())
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("flows-mode h changed mode to %d, want flows", m.Mode())
 	}
@@ -4923,14 +5331,18 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 	}
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("second flows-mode h returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("second flows-mode h returned nil command")
 	}
+	m, _ = update(m, cmd())
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("second flows-mode h changed mode to %d, want flows", m.Mode())
 	}
 	if view := m.View(); !strings.Contains(view, "headless on") {
 		t.Fatalf("second flows-mode h should show headless on:\n%s", view)
+	}
+	if len(updates) != 2 || updates[0].FlowID != record.FlowID || updates[0].Enabled || !updates[1].Enabled {
+		t.Fatalf("headless updates = %#v", updates)
 	}
 }
 
@@ -4940,7 +5352,7 @@ func TestModel_LegacyFlowShortcutsDoNotToggleOrLaunch(t *testing.T) {
 			addLaunchRan := false
 			launchAgentRan := false
 			startEmbeddedRan := false
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					addLaunchRan = true
@@ -4995,7 +5407,7 @@ func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
 
 func TestModel_YKeyCopiesSelectedFlowWorktreePath(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -5034,7 +5446,7 @@ func TestModel_YKeyCopiesSelectedFlowWorktreePath(t *testing.T) {
 
 func TestModel_YKeyDoesNothingWhenSelectedFlowWorktreePathIsBlank(t *testing.T) {
 	copied := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(string) error {
 			copied = true
 			return nil
@@ -5069,7 +5481,7 @@ func TestModel_YKeyDoesNothingWhenSelectedFlowWorktreePathIsBlank(t *testing.T) 
 
 func TestModel_CKeyCopiesSelectedFlowID(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -5093,7 +5505,7 @@ func TestModel_CKeyCopiesSelectedFlowID(t *testing.T) {
 
 func TestModel_CKeyCopiesParentFlowIDFromSelectedPhaseRow(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -5115,7 +5527,7 @@ func TestModel_CKeyCopiesParentFlowIDFromSelectedPhaseRow(t *testing.T) {
 
 func TestModel_CKeyCopiesSelectedActiveFlowID(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -5139,7 +5551,7 @@ func TestModel_CKeyCopiesSelectedActiveFlowID(t *testing.T) {
 
 func TestModel_CKeyCopiesParentActiveFlowIDFromSelectedPhaseRow(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -5163,7 +5575,7 @@ func TestModel_CKeyCopiesParentActiveFlowIDFromSelectedPhaseRow(t *testing.T) {
 
 func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
 	copied := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(string) error {
 			copied = true
 			return nil
@@ -5204,7 +5616,7 @@ func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
 
 func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
 	var opened []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenCode: func(path string) error {
 			opened = append(opened, path)
 			return nil
@@ -5233,7 +5645,7 @@ func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
 func TestModel_PKeyOpensSelectedFlowPullRequest(t *testing.T) {
 	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	var opened []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenURL: func(url string) error {
 			opened = append(opened, url)
 			return nil
@@ -5267,7 +5679,7 @@ func TestModel_PKeyOpensSelectedFlowPullRequest(t *testing.T) {
 func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
 	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	var opened []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenURL: func(url string) error {
 			opened = append(opened, url)
 			return nil
@@ -5294,7 +5706,7 @@ func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
 func TestModel_IKeyOpensSelectedFlowIssue(t *testing.T) {
 	const issueURL = "https://github.com/approachcontrol/approach/issues/123"
 	var opened []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenURL: func(url string) error {
 			opened = append(opened, url)
 			return nil
@@ -5324,7 +5736,7 @@ func TestModel_IKeyOpensSelectedFlowIssue(t *testing.T) {
 func TestModel_IKeyOpensSelectedActiveFlowIssue(t *testing.T) {
 	const issueURL = "https://github.com/approachcontrol/approach/issues/123"
 	var opened []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenURL: func(url string) error {
 			opened = append(opened, url)
 			return nil
@@ -5363,19 +5775,19 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 		{
 			name: "no selected Flow",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				return flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), nil)
+				return flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), nil)
 			},
 		},
 		{
 			name: "incomplete issue metadata",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				return flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
+				return flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
 			},
 		},
 		{
 			name: "selected phase row",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
+				m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
 				return selectFlowPhaseByID(t, m, "implementation")
 			},
 		},
@@ -5384,7 +5796,7 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
 				fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 				terminalInputTerm = fakeTerm
-				m := model.NewWithOptions(testRepos(), model.Options{
+				m := newTestModel(testRepos(), model.Options{
 					AgentCommand: "codex",
 					OpenURL:      openURL,
 					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -5396,7 +5808,7 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 				})
 				m = flowsInRightPane(t, m, []flowstore.FlowRecord{valid})
 				m = selectFlowPhaseByID(t, m, "implementation")
-				m, cmd := update(m, flowLaunchKey())
+				m, cmd := flowLaunchFromKey(t, m)
 				if cmd == nil {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
@@ -5466,7 +5878,7 @@ func TestModel_FlowFilterMatchesIssueMetadata(t *testing.T) {
 
 func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
 	const prURL = "https://github.com/approachcontrol/approach/pull/123"
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenURL: func(string) error {
 			return errors.New("browser unavailable")
 		},
@@ -5493,7 +5905,7 @@ func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
 func TestModel_UppercasePDoesNotOpenSelectedFlowPullRequest(t *testing.T) {
 	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	var opened []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		OpenURL: func(url string) error {
 			opened = append(opened, url)
 			return nil
@@ -5525,19 +5937,19 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 		{
 			name: "no selected Flow",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				return flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), nil)
+				return flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), nil)
 			},
 		},
 		{
 			name: "incomplete PR metadata",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				return flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
+				return flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
 			},
 		},
 		{
 			name: "selected phase row",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
+				m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
 				return selectFlowPhaseByID(t, m, "implementation")
 			},
 			check: func(t *testing.T, m model.Model) {
@@ -5549,7 +5961,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 		{
 			name: "active search",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
+				m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
 				return model.SetSearchActiveForTest(m, true)
 			},
 			check: func(t *testing.T, m model.Model) {
@@ -5561,7 +5973,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 		{
 			name: "open modal",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
+				m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 				if m.Overlay() == ui.OverlayNone {
 					t.Fatal("expected new Flow modal to open")
@@ -5578,7 +5990,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 			name: "Flow terminal focus forwards p",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
 				fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-				m := model.NewWithOptions(testRepos(), model.Options{
+				m := newTestModel(testRepos(), model.Options{
 					AgentCommand: "codex",
 					OpenURL:      openURL,
 					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -5590,7 +6002,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 				})
 				m = flowsInRightPane(t, m, []flowstore.FlowRecord{valid})
 				m = selectFlowPhaseByID(t, m, "implementation")
-				m, cmd := update(m, flowLaunchKey())
+				m, cmd := flowLaunchFromKey(t, m)
 				if cmd == nil {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
@@ -5604,7 +6016,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
 				fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 				terminalInputTerm = fakeTerm
-				m := model.NewWithOptions(testRepos(), model.Options{
+				m := newTestModel(testRepos(), model.Options{
 					AgentCommand: "codex",
 					OpenURL:      openURL,
 					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -5616,7 +6028,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 				})
 				m = flowsInRightPane(t, m, []flowstore.FlowRecord{valid})
 				m = selectFlowPhaseByID(t, m, "implementation")
-				m, cmd := update(m, flowLaunchKey())
+				m, cmd := flowLaunchFromKey(t, m)
 				if cmd == nil {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
@@ -5638,7 +6050,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 			name: "Flow terminal command prefix",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
 				fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-				m := model.NewWithOptions(testRepos(), model.Options{
+				m := newTestModel(testRepos(), model.Options{
 					AgentCommand: "codex",
 					OpenURL:      openURL,
 					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -5650,7 +6062,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 				})
 				m = flowsInRightPane(t, m, []flowstore.FlowRecord{valid})
 				m = selectFlowPhaseByID(t, m, "implementation")
-				m, cmd := update(m, flowLaunchKey())
+				m, cmd := flowLaunchFromKey(t, m)
 				if cmd == nil {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
@@ -5663,7 +6075,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 		{
 			name: "active Flow incomplete PR",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
-				return enterActiveFlowsWithRecords(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
+				return enterActiveFlowsWithRecords(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
 			},
 		},
 	}
@@ -5698,6 +6110,7 @@ func flowWithPullRequestTarget(flowID, prURL string) flowstore.FlowRecord {
 		Title:        "Flow with PR",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/add-pr-shortcut",
+		Headless:     true,
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     123,
@@ -5720,6 +6133,7 @@ func flowWithIssueTarget(flowID, issueURL string) flowstore.FlowRecord {
 		Title:        "Flow with issue",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/add-issue-shortcut",
+		Headless:     true,
 		Issue: flowstore.Issue{
 			Provider: "github",
 			Number:   123,
@@ -5901,7 +6315,7 @@ func TestModel_SelectedFlowPhaseStaysVisibleAfterResize(t *testing.T) {
 
 func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 	var filters []flowstore.FlowFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
 			return []flowstore.FlowRecord{{FlowID: filepath.Base(filter.RepoPath), RepoPath: filter.RepoPath, Title: "T", Status: flowstore.StatusPending}}, nil
@@ -5939,7 +6353,7 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 }
 
 func TestModel_StaleFlowResultIgnored(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
@@ -5954,7 +6368,7 @@ func TestModel_StaleFlowResultIgnored(t *testing.T) {
 }
 
 func TestModel_FlowListErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("flows unavailable")
 		},
@@ -5973,7 +6387,7 @@ func TestModel_FlowListErrorShowsStatus(t *testing.T) {
 
 func TestModel_FlowDeleteRequiresDestructiveMode(t *testing.T) {
 	deleted := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		DeleteFlow: func(string) error {
 			deleted = true
 			return nil
@@ -6006,7 +6420,7 @@ func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) 
 		Title:    "Delete visible Flow",
 		Status:   flowstore.StatusPending,
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{
@@ -6042,7 +6456,7 @@ func TestModel_ActiveFlowActionFailureShowsCrossRepoErrorAndRefreshesGlobally(t 
 		Status:   flowstore.StatusPending,
 	}
 	var filters []flowstore.FlowFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
 			return []flowstore.FlowRecord{bravoFlow}, nil
@@ -6064,7 +6478,7 @@ func TestModel_ActiveFlowActionFailureShowsCrossRepoErrorAndRefreshesGlobally(t 
 }
 
 func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = flowsInRightPane(t, m, nil)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{
@@ -6090,7 +6504,7 @@ func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testin
 
 func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
 	deleted := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		DeleteFlow: func(string) error {
 			deleted = true
 			return nil
@@ -6127,7 +6541,7 @@ func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
 func TestModel_FlowDeleteConfirmDeletesCapturedFlowAndRefreshes(t *testing.T) {
 	deleted := []string{}
 	listCalls := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		DeleteFlow: func(flowID string) error {
 			deleted = append(deleted, flowID)
 			return nil
@@ -6193,7 +6607,7 @@ func TestModel_FlowDeleteConfirmDeletesCapturedFlowAndRefreshes(t *testing.T) {
 
 func TestModel_FlowDeleteIgnoresSelectedPhaseRows(t *testing.T) {
 	deleted := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		DeleteFlow: func(string) error {
 			deleted = true
 			return nil
@@ -6223,7 +6637,7 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewStore() error = %v", err)
 		}
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			DeleteFlow: func(string) error {
 				return store.Delete("missing-flow")
 			},
@@ -6268,7 +6682,7 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 	})
 
 	t.Run("other errors do not refresh as completed work", func(t *testing.T) {
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 				t.Fatal("ListFlows should not run for non-not-found delete failure")
 				return nil, nil
@@ -6300,7 +6714,7 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 	})
 
 	t.Run("stale repo result is ignored", func(t *testing.T) {
-		m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{}), []flowstore.FlowRecord{{
+		m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{}), []flowstore.FlowRecord{{
 			FlowID:   "flow-1",
 			RepoPath: "/dev/alpha",
 			Title:    "Delete me",
@@ -6321,7 +6735,7 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
 	deleted := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -6374,7 +6788,7 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 }
 
 func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
@@ -6401,7 +6815,7 @@ func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 
 func TestModel_FlowSearchIncludesMergeMetadata(t *testing.T) {
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
@@ -6425,7 +6839,7 @@ func TestModel_FlowSearchIncludesMergeMetadata(t *testing.T) {
 
 func TestModel_OKeyOnFlowOpensLinkedPlanText(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -6490,7 +6904,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		CodexModel:           "gpt-5.5",
 		CodexReasoningEffort: "high",
@@ -6577,7 +6991,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	}
 }
 
-func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *testing.T) {
+func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForSQLiteWriterInUpdate(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 	if err != nil {
@@ -6608,7 +7022,7 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 
 	enteredPersistence := make(chan flowstore.PhaseLaunchUpdate, 1)
 	terminalStarts := make(chan actions.AgentLaunchContext, 2)
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SessionStateRoot: root,
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			enteredPersistence <- update
@@ -6622,19 +7036,22 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 	m = selectFlowPhaseByID(t, m, "review-loop")
 
-	lockPath := filepath.Join(root, "flows", ".locks", record.FlowID+".lock")
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	contender, err := sql.Open("sqlite", "file:"+filepath.Join(root, "approach.db")+"?_txlock=immediate")
 	if err != nil {
-		t.Fatalf("open flow lock: %v", err)
+		t.Fatalf("open contending SQLite handle: %v", err)
 	}
 	lockHeld := true
+	heldTx, err := contender.Begin()
+	if err != nil {
+		t.Fatalf("begin contending SQLite writer: %v", err)
+	}
 	var updateDone <-chan struct{}
 	var persistenceDone <-chan tea.Msg
 	t.Cleanup(func() {
 		if lockHeld {
-			_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+			_ = heldTx.Rollback()
 		}
-		_ = lockFile.Close()
+		_ = contender.Close()
 		if updateDone != nil {
 			select {
 			case <-updateDone:
@@ -6648,10 +7065,6 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 			}
 		}
 	})
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatalf("flock flow lock: %v", err)
-	}
-
 	type updateResult struct {
 		model model.Model
 		cmd   tea.Cmd
@@ -6717,8 +7130,8 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 		t.Fatal("terminal started while resume persistence waited for the lock")
 	}
 
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
-		t.Fatalf("unlock flow lock: %v", err)
+	if err := heldTx.Rollback(); err != nil {
+		t.Fatalf("release contending SQLite writer: %v", err)
 	}
 	lockHeld = false
 	var persisted tea.Msg
@@ -6762,7 +7175,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 	}
 	var launchUpdates []flowstore.PhaseLaunchUpdate
 	var terminalStarts []actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdates = append(launchUpdates, update)
 			persisted := record
@@ -6832,7 +7245,7 @@ func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testi
 		}},
 	}
 	newModel := func() model.Model {
-		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 		return selectFlowPhaseByID(t, m, "implementation")
 	}
@@ -6877,7 +7290,7 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	}
 	addCalls := 0
 	var terminalStarts []actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			addCalls++
 			if addCalls == 2 {
@@ -6975,7 +7388,7 @@ func TestModel_TrackedFlowPhaseResumesForIndependentTargetsCompleteOutOfOrder(t 
 	flows := map[string]flowstore.FlowRecord{flowA.FlowID: flowA, flowB.FlowID: flowB}
 	var launchUpdates []flowstore.PhaseLaunchUpdate
 	var terminalStarts []actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdates = append(launchUpdates, update)
 			persisted := flows[update.FlowID]
@@ -7037,7 +7450,7 @@ func TestModel_TrackedFlowPhaseResumesForIndependentTargetsCompleteOutOfOrder(t 
 func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *testing.T) {
 	persisted := false
 	started := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			persisted = true
 			return flowstore.FlowRecord{}, errors.New("state root locked")
@@ -7096,7 +7509,7 @@ func TestModel_SkippedFlowPhaseWithEndedSessionAdvertisesResume(t *testing.T) {
 
 func TestModel_RKeyOnSelectedFlowPhaseUsesCodexAppPreferenceForCodexSession(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = ctx
@@ -7137,7 +7550,7 @@ func TestModel_RKeyOnSelectedFlowPhaseUsesCodexAppPreferenceForCodexSession(t *t
 func TestModel_CodexAppFlowResumeBypassesPendingTrackedCLIResume(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	persistCalls := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			persistCalls++
@@ -7190,7 +7603,7 @@ func TestModel_CodexAppFlowResumeBypassesPendingTrackedCLIResume(t *testing.T) {
 
 func TestModel_FlowPhaseWithUnsupportedProviderDoesNotAdvertiseResume(t *testing.T) {
 	launchRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launchRan = true
 			return actions.TerminalLaunchSpec{}, nil
@@ -7231,7 +7644,7 @@ func TestModel_FlowPhaseWithUnsupportedProviderDoesNotAdvertiseResume(t *testing
 
 func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *testing.T) {
 	launchRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launchRan = true
 			return actions.TerminalLaunchSpec{}, nil
@@ -7271,7 +7684,7 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *
 
 func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderLiveSession(t *testing.T) {
 	launchRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launchRan = true
 			return actions.TerminalLaunchSpec{}, nil
@@ -7318,7 +7731,7 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderLiveSession
 
 func TestModel_RKeyOnRunningEndedSessionFlowPhaseDoesNotResume(t *testing.T) {
 	launchRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launchRan = true
 			return actions.TerminalLaunchSpec{}, nil
@@ -7350,7 +7763,7 @@ func TestModel_RKeyOnRunningEndedLatestSessionDoesNotResumeWhenOlderSessionIsLiv
 	flow.Phases[2].Sessions = append([]flowstore.Session{
 		{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
 	}, flow.Phases[2].Sessions...)
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launchRan = true
 			return actions.TerminalLaunchSpec{}, nil
@@ -7380,7 +7793,7 @@ func TestModel_RKeyOnRunningEndedLatestSessionDoesNotResumeWhenOlderSessionIsLiv
 
 func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testing.T) {
 	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
@@ -7429,7 +7842,7 @@ func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testin
 func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
@@ -7486,7 +7899,7 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T
 
 func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
 				PhaseID: update.PhaseID,
@@ -7539,7 +7952,7 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *te
 
 func TestModel_RKeyOnFlowPhaseResumeFailureFlagsPhaseReopenedByStore(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			// The persisted phase changed to non-terminal since the list was
 			// fetched, so the store reopened it as running.
@@ -7594,7 +8007,7 @@ func TestModel_RKeyOnFlowPhaseResumeFailureFlagsPhaseReopenedByStore(t *testing.
 
 func TestModel_RKeyOnFlowPhaseResumeFailureUsesNormalizedPersistedPhaseID(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
 				PhaseID: "review-loop",
@@ -7647,7 +8060,7 @@ func TestModel_RKeyOnFlowPhaseResumeFailureUsesNormalizedPersistedPhaseID(t *tes
 
 func TestModel_RKeyOnFlowPhaseResumeFailurePrefersExactPersistedDuplicate(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{
 				{PhaseID: "review-loop", Status: flowstore.PhaseCompleted},
@@ -7700,7 +8113,7 @@ func TestModel_RKeyOnFlowPhaseResumeFailurePrefersExactPersistedDuplicate(t *tes
 
 func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			// An agent completed the phase since the list was fetched, so the
 			// store preserved its terminal status.
@@ -7750,7 +8163,7 @@ func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing
 func TestModel_RKeyOnFlowPhaseResumeStartFailureKeepsSkippedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{}, nil
 		},
@@ -7810,7 +8223,7 @@ func TestModel_RKeyOnFlowPhaseResumeStartFailureKeepsSkippedPhase(t *testing.T) 
 func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
@@ -7902,7 +8315,7 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 
 func TestModel_FlowPlanReviewPromptTemplateOverridesBuiltInPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			PlanReview: "Custom {phase_id} for {flow_id}: {plan_path} on {branch}; keep {unknown}",
@@ -7954,7 +8367,7 @@ func TestModel_FlowPlanReviewPromptTemplateOverridesBuiltInPrompt(t *testing.T) 
 func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
@@ -8048,7 +8461,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	var startWidth, startHeight int
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	launchAgentRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		CodexReasoningEffort: "high",
 		SessionStateRoot:     "/state/approach/sessions/v1",
@@ -8082,6 +8495,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		Commit:       "fed321",
 		Title:        "Implement saved plan",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
@@ -8092,7 +8506,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	}})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded implementation launch")
 	}
@@ -8164,7 +8578,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8214,7 +8628,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session output"}, state: "running"}
 	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8273,7 +8687,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session done"}, state: "exited"}
 	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow done"}, state: "running"}
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8341,7 +8755,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 		{lines: []string{"flow third output"}, state: "running"},
 	}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8355,12 +8769,13 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 			return term, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = flowsInRightPane(t, m, flowRecordsForTerminals(len(terms)))
 
 	var firstTick tea.Cmd
 	for i := 0; i < len(terms); i++ {
+		m = selectFlowRow(t, m, i)
 		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		m, cmd = flowLaunchFromKey(t, m)
 		if cmd == nil {
 			t.Fatal("g should prepare an embedded launch")
 		}
@@ -8415,7 +8830,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(
 		{lines: []string{"flow second output"}, state: "running"},
 	}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8429,12 +8844,13 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(
 			return term, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = flowsInRightPane(t, m, flowRecordsForTerminals(len(terms)))
 
 	var tickBatch tea.Cmd
-	for range terms {
+	for i := range terms {
+		m = selectFlowRow(t, m, i)
 		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		m, cmd = flowLaunchFromKey(t, m)
 		if cmd == nil {
 			t.Fatal("g should prepare an embedded launch")
 		}
@@ -8488,7 +8904,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 	}
 	starts := 0
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flow, nil
@@ -8505,11 +8921,12 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 			return []flowstore.FlowRecord{flow}, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = flowsInRightPane(t, m, flowRecordsForTerminals(len(terms)))
 	var tickBatch tea.Cmd
-	for range terms {
+	for i := range terms {
+		m = selectFlowRow(t, m, i)
 		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		m, cmd = flowLaunchFromKey(t, m)
 		if cmd == nil {
 			t.Fatal("g should prepare an embedded launch")
 		}
@@ -8557,7 +8974,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"failure output"}, state: "running"}
 	flow := flowWithPhaseDetails()
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8598,7 +9015,7 @@ func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) 
 }
 
 func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8620,7 +9037,7 @@ func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
 	}})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -8652,7 +9069,7 @@ func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
 		{state: "terminated", wantMarker: false},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8674,7 +9091,7 @@ func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
 			}})
 
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, flowLaunchKey())
+			m, cmd := flowLaunchFromKey(t, m)
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded launch")
 			}
@@ -8692,7 +9109,7 @@ func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
 
 func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8708,13 +9125,14 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 		Branch:       "flow/dismiss",
 		Title:        "Dismiss terminal flow",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
 	}})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -8738,7 +9156,7 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 }
 
 func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8773,7 +9191,7 @@ func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T
 	})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -8796,7 +9214,7 @@ func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T
 
 func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8816,7 +9234,7 @@ func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t
 		},
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -8877,7 +9295,7 @@ func flowTerminalPTYHeightForViewport(height int) int {
 
 func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 	var started [2]int
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -8902,7 +9320,7 @@ func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -8921,7 +9339,7 @@ func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 func TestModel_GOnFlowPhaseWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex-app",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -8948,16 +9366,13 @@ func TestModel_GOnFlowPhaseWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	}})
 
 	m = selectFlowPhaseByID(t, m, "plan")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an external codex-app launch")
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("codex-app i command returned %T, want PlanLaunchRequestedMsg", msg)
-	}
-	_, cmd = update(m, launchMsg)
+	// The external route hands off through the lifecycle itself rather than
+	// PlanLaunchRequestedMsg.
+	m, cmd = update(m, cmd())
 	if cmd == nil {
 		t.Fatal("expected external codex-app agent result command")
 	}
@@ -8975,7 +9390,7 @@ func TestModel_GOnFlowPhaseWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 
 func TestModel_GFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNeedsAttention(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9000,7 +9415,7 @@ func TestModel_GFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNeedsAttention(t 
 	}})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9020,7 +9435,7 @@ func TestModel_GFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNeedsAttention(t 
 
 func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9057,7 +9472,7 @@ func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T)
 		t.Fatalf("selected active Flow phase = %q, want design-review", got)
 	}
 
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9113,7 +9528,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var phaseUpdate flowstore.PhaseUpdate
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9138,11 +9553,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 			}})
 
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-			}
-			m, cmd = update(m, flowLaunchKey())
+			m, cmd := flowLaunchFromKey(t, m)
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded launch")
 			}
@@ -9177,7 +9588,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 
 func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9193,6 +9604,7 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 			WorktreePath: "/dev/alpha-worktrees/flow-one",
 			Title:        "Flow one",
 			Status:       flowstore.StatusInProgress,
+			Headless:     true,
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 			},
@@ -9207,7 +9619,7 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 	})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9325,7 +9737,7 @@ func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9336,7 +9748,7 @@ func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, flowLaunchKey())
+			m, cmd := flowLaunchFromKey(t, m)
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded launch")
 			}
@@ -9361,7 +9773,7 @@ func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 
 func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9376,7 +9788,7 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 	})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9402,7 +9814,7 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 
 func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9414,7 +9826,7 @@ func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9436,7 +9848,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	autoModeCalled := false
 	manualMergeLookupCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9459,12 +9871,13 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 		WorktreePath: "/dev/alpha-worktrees/flow-one",
 		Title:        "Flow one",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9534,7 +9947,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 
 func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9550,6 +9963,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 			WorktreePath: "/dev/alpha-worktrees/flow-one",
 			Title:        "Flow one",
 			Status:       flowstore.StatusInProgress,
+			Headless:     true,
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 			},
@@ -9564,7 +9978,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9601,7 +10015,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 
 func TestModel_FlowTerminalInputModeTabIsForwardedToTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -9629,7 +10043,7 @@ func TestModel_FlowTerminalInputModeTabIsForwardedToTerminal(t *testing.T) {
 
 func TestModel_FlowTerminalInputModeForwardsCtrlGToAgent(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9641,7 +10055,7 @@ func TestModel_FlowTerminalInputModeForwardsCtrlGToAgent(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9672,7 +10086,7 @@ func TestModel_FlowTerminalInputModeForwardsCtrlGToAgent(t *testing.T) {
 
 func TestModel_FlowTerminalCommandModeSendsLiteralCommandKey(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9684,7 +10098,7 @@ func TestModel_FlowTerminalCommandModeSendsLiteralCommandKey(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9699,7 +10113,7 @@ func TestModel_FlowTerminalCommandModeSendsLiteralCommandKey(t *testing.T) {
 
 func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9714,7 +10128,7 @@ func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 	})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -9751,7 +10165,7 @@ func TestModel_FlowTerminalFocusCyclesLeftRightWithoutWritingPTY(t *testing.T) {
 		{lines: []string{"flow third output"}, state: "running"},
 	}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			if starts >= len(terms) {
 				t.Fatalf("unexpected embedded terminal start %d", starts+1)
@@ -9806,7 +10220,7 @@ func TestModel_FlowTerminalFocusCyclesLeftRightWithoutWritingPTY(t *testing.T) {
 
 func TestModel_FlowTerminalLeftRightNoOpWithOneTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"only flow output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -9843,7 +10257,7 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 		{lines: []string{"flow third output"}, state: "running"},
 	}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9857,20 +10271,21 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 			return term, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = flowsInRightPane(t, m, flowRecordsForTerminals(len(terms)))
 
-	launch := func() {
+	launch := func(row int) {
 		t.Helper()
+		m = selectFlowRow(t, m, row)
 		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		m, cmd = flowLaunchFromKey(t, m)
 		if cmd == nil {
 			t.Fatal("g should prepare an embedded launch")
 		}
 		m, _ = update(m, cmd())
 	}
-	launch()
-	launch()
-	launch()
+	launch(0)
+	launch(1)
+	launch(2)
 	if starts != 3 {
 		t.Fatalf("embedded terminal starts = %d, want 3", starts)
 	}
@@ -9901,7 +10316,7 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T) {
 	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session output"}, state: "exited"}
 	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -9951,7 +10366,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testing.T) {
 	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session output"}, state: "running"}
 	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -10009,7 +10424,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 
 func TestModel_FlowListQuitWithRunningEmbeddedTerminalConfirmsAndTerminates(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -10021,7 +10436,7 @@ func TestModel_FlowListQuitWithRunningEmbeddedTerminalConfirmsAndTerminates(t *t
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -10049,7 +10464,7 @@ func TestModel_FlowListQuitWithRunningEmbeddedTerminalConfirmsAndTerminates(t *t
 
 func TestModel_LeftPaneQuitWithRunningEmbeddedTerminalConfirms(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -10061,7 +10476,7 @@ func TestModel_LeftPaneQuitWithRunningEmbeddedTerminalConfirms(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -10080,7 +10495,7 @@ func TestModel_LeftPaneQuitWithRunningEmbeddedTerminalConfirms(t *testing.T) {
 func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -10094,12 +10509,14 @@ func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *test
 			return &fakeEmbeddedTerminal{state: "running"}, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m = selectFlowPhaseByID(t, m, "implementation")
+	// Each terminal owns its Flow for as long as it is installed, so filling
+	// the cap takes one Flow per terminal.
+	m = flowsInRightPane(t, m, flowRecordsForTerminals(10))
 
 	for i := 0; i < 9; i++ {
+		m = selectFlowRow(t, m, i)
 		var cmd tea.Cmd
-		m, cmd = update(m, flowLaunchKey())
+		m, cmd = flowLaunchFromKey(t, m)
 		if cmd == nil {
 			t.Fatalf("launch %d should prepare an embedded launch", i+1)
 		}
@@ -10112,7 +10529,8 @@ func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *test
 		t.Fatalf("phase updates before cap = %#v, want none", phaseUpdates)
 	}
 
-	m, cmd := update(m, flowLaunchKey())
+	m = selectFlowRow(t, m, 9)
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g at cap should still prepare a launch attempt")
 	}
@@ -10124,7 +10542,7 @@ func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *test
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one needs_attention update", phaseUpdates)
 	}
-	if got := phaseUpdates[0]; got.FlowID != "flow-1" ||
+	if got := phaseUpdates[0]; got.FlowID != "flow-10" ||
 		got.PhaseID != "implementation" ||
 		got.Status != flowstore.PhaseNeedsAttention ||
 		!strings.Contains(got.Notes, "Maximum embedded terminals") {
@@ -10137,7 +10555,7 @@ func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *test
 
 func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -10147,10 +10565,11 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 			return &fakeEmbeddedTerminal{state: "running"}, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = flowsInRightPane(t, m, flowRecordsForTerminals(4))
 	for i := 0; i < 4; i++ {
+		m = selectFlowRow(t, m, i)
 		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		m, cmd = flowLaunchFromKey(t, m)
 		if cmd == nil {
 			t.Fatalf("flow launch %d should prepare an embedded launch", i+1)
 		}
@@ -10199,7 +10618,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 }
 
 func TestModel_FlowSplitListScrollKeepsSelectionVisible(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -10218,7 +10637,7 @@ func TestModel_FlowSplitListScrollKeepsSelectionVisible(t *testing.T) {
 	m = flowsInRightPane(t, m, flows)
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
@@ -10238,7 +10657,7 @@ func TestModel_FlowSplitListScrollKeepsSelectionVisible(t *testing.T) {
 
 func TestModel_GLaunchesFlowPhaseImplementationWithoutLinkedPlanContext(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Implementation without a linked plan should not read plan %q", planID)
@@ -10300,7 +10719,7 @@ func TestModel_GLaunchesFlowPhaseImplementationWithoutLinkedPlanContext(t *testi
 
 func TestModel_FlowPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Implementation: "Custom {phase_id} for {flow_id}: {plan_path} @ {worktree_path} on {branch} from {commit}; keep {unknown}",
@@ -10350,7 +10769,7 @@ func TestModel_FlowPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 }
 
 func TestModel_SelectedReadyFlowPhaseAdvertisesLaunchPhaseAction(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
 		FlowID:       "flow-1",
 		RepoPath:     "/dev/alpha",
@@ -10378,7 +10797,7 @@ func TestModel_SelectedReadyFlowPhaseAdvertisesLaunchPhaseAction(t *testing.T) {
 }
 
 func TestModel_GWithoutReadyFlowPhaseShowsNoLaunchableStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
 		FlowID:       "flow-1",
 		RepoPath:     "/dev/alpha",
@@ -10397,7 +10816,7 @@ func TestModel_GWithoutReadyFlowPhaseShowsNoLaunchableStatus(t *testing.T) {
 		t.Fatalf("gated selected phase should not expose launch action:\n%s", view)
 	}
 
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected status expiry command for not-ready flow launch")
 	}
@@ -10409,7 +10828,7 @@ func TestModel_GWithoutReadyFlowPhaseShowsNoLaunchableStatus(t *testing.T) {
 func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
@@ -10502,7 +10921,7 @@ func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 
 func TestModel_FlowReviewLoopPromptTemplateOverridesBuiltInPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			ReviewLoop: "Custom {phase_id} for {flow_id}: {worktree_path} on {branch} from {commit}; plan {plan_path}; keep {unknown}",
@@ -10558,7 +10977,7 @@ func TestModel_FlowReviewLoopPromptTemplateOverridesBuiltInPrompt(t *testing.T) 
 func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
@@ -10638,7 +11057,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 
 func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("PR Creation launch should pass metadata without pre-reading %q", planID)
@@ -10705,7 +11124,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testi
 
 func TestModel_GLaunchesFlowPhaseAutoreviewWithPRContext(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Autoreview launch should pass PR metadata without pre-reading %q", planID)
@@ -10783,7 +11202,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithPRContext(t *testing.T) {
 
 func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Autoreview recovery launch should pass PR metadata without pre-reading %q", planID)
@@ -10859,7 +11278,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 
 func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWithoutPRTarget(t *testing.T) {
 	var launchAttempted bool
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			t.Fatalf("AddFlowPhaseLaunchID() should not run without PR metadata: %#v", update)
@@ -10887,7 +11306,7 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWithoutPRTarget(t *testing.T) 
 	}})
 
 	m = selectFlowPhaseByID(t, m, "autoreview")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blocked autoreview without PR metadata")
 	}
@@ -10900,7 +11319,7 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWithoutPRTarget(t *testing.T) 
 }
 
 func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWhenPredecessorsAreUnsatisfied(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			t.Fatalf("AddFlowPhaseLaunchID() should not run while predecessors are unsatisfied: %#v", update)
@@ -10936,7 +11355,7 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWhenPredecessorsAreUnsatisfied
 	}})
 
 	m = selectFlowPhaseByID(t, m, "autoreview")
-	m, cmd := update(m, flowLaunchKey())
+	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blocked autoreview with unsatisfied predecessors")
 	}
@@ -10947,7 +11366,7 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWhenPredecessorsAreUnsatisfied
 
 func TestModel_GLaunchesFlowPhaseMergeWithStructuredReportingPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("merge launch should not read plan body for %q", planID)
@@ -11020,7 +11439,7 @@ func TestModel_GLaunchesFlowPhaseMergeWithStructuredReportingPrompt(t *testing.T
 
 func TestModel_GUsesFlowPhaseOrderingForReadyLaunch(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
 			return "# Saved plan\n", nil
@@ -11063,7 +11482,7 @@ func TestModel_GUsesFlowPhaseOrderingForReadyLaunch(t *testing.T) {
 
 func TestModel_OffViewCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -11095,7 +11514,7 @@ func TestModel_OffViewCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T) {
 
 func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: filter.RepoPath, Title: "T", Status: flowstore.StatusBlocked}}, nil
 		},
@@ -11125,7 +11544,7 @@ func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 }
 
 func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
@@ -11188,7 +11607,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			var started actions.AgentLaunchContext
 			var startWidth, startHeight int
 			var calls []string
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand:          command,
 				CodexReasoningEffort:  "xhigh",
 				ClaudeReasoningEffort: "max",
@@ -11215,6 +11634,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						PlanPhaseStatus:  flowstore.PhaseRunning,
 						FlowID:           "flow-1",
 						FlowPhaseID:      "plan",
+						Headless:         flowStartRequestHeadless(req),
 						ReasoningEffort:  req.ReasoningEffort,
 						InitialPrompt:    "Use the approach-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with approach plan save, link it back with approach flow plan set.",
 					}}, nil
@@ -11263,6 +11683,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			}
 			if startRequest.AgentCommand != command ||
 				startRequest.SessionStateRoot != "/state/approach/sessions/v1" ||
+				startRequest.Headless == nil || !*startRequest.Headless ||
 				startRequest.PlanPhaseID != "" ||
 				startRequest.PlanPhaseTitle != "" ||
 				startRequest.PlanPhaseStatus != "" ||
@@ -11311,7 +11732,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 func TestModel_NewFlowPlanNowLetsStarterChooseCustomRootPhase(t *testing.T) {
 	var startRequest model.FlowStartRequest
 	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			startRequest = req
@@ -11365,7 +11786,7 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	embeddedCalls := 0
 	externalCalls := 0
 	listed := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			createRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{
@@ -11402,7 +11823,7 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", true, false)
+	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", false, false)
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -11425,7 +11846,8 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 		createRequest.Instructions != "Plan later" ||
 		createRequest.BaseRef != "main" ||
 		createRequest.AgentCommand != "" ||
-		createRequest.PlanPhaseStatus != "" {
+		createRequest.PlanPhaseStatus != "" ||
+		createRequest.Headless == nil || *createRequest.Headless {
 		t.Fatalf("create request = %#v", createRequest)
 	}
 	if embeddedCalls != 0 || externalCalls != 0 {
@@ -11442,7 +11864,7 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t *testing.T) {
 	var startRequest model.FlowStartRequest
 	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:          "codex",
 		ClaudeReasoningEffort: "max",
 		SessionStateRoot:      "/state/approach/sessions/v1",
@@ -11457,6 +11879,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           "flow-1",
 				FlowPhaseID:      "plan",
+				Headless:         flowStartRequestHeadless(req),
 				ReasoningEffort:  req.ReasoningEffort,
 			}}, nil
 		},
@@ -11503,7 +11926,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
 			var started actions.AgentLaunchContext
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand:     command,
 				SessionStateRoot: "/state/approach/sessions/v1",
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
@@ -11516,6 +11939,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 						SessionStateRoot: req.SessionStateRoot,
 						FlowID:           "flow-1",
 						FlowPhaseID:      "plan",
+						Headless:         flowStartRequestHeadless(req),
 					}}, nil
 				},
 				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -11551,10 +11975,6 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("expected embedded launch repaint/fetch command")
 			}
-			if model.FlowHeadlessForTest(m) {
-				t.Fatal("checked create-form headless option should not mutate flows-mode headless toggle")
-			}
-
 			if started.Command != command ||
 				started.FlowID != "flow-1" ||
 				started.FlowPhaseID != "plan" ||
@@ -11570,7 +11990,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
@@ -11583,6 +12003,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           "flow-1",
 				FlowPhaseID:      "plan",
+				Headless:         flowStartRequestHeadless(req),
 				InitialPrompt:    "Create and persist the plan.",
 			}}, nil
 		},
@@ -11619,10 +12040,6 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
 	}
-	if !model.FlowHeadlessForTest(m) {
-		t.Fatal("unchecked create-form headless option should not mutate flows-mode headless toggle")
-	}
-
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	wantPrefill := "\x1b[200~Create and persist the plan.\x1b[201~"
 	if len(fakeTerm.writes) != 2 || fakeTerm.writes[0] != wantPrefill || fakeTerm.writes[1] != "z" {
@@ -11635,7 +12052,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 		t.Run(fmt.Sprintf("headless_%v", headless), func(t *testing.T) {
 			var launched actions.AgentLaunchContext
 			startEmbeddedRan := false
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand:     "codex-app",
 				SessionStateRoot: "/state/approach/sessions/v1",
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
@@ -11732,7 +12149,7 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 			startCalls := 0
 			embeddedCalls := 0
 			externalCalls := 0
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
 					startCalls++
@@ -11771,7 +12188,7 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	externalLaunches := 0
 	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			if req.RepoPath != "/dev/alpha" {
@@ -11824,7 +12241,7 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 
 func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 	var calls []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			calls = append(calls, "start-flow")
@@ -11868,7 +12285,7 @@ func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 }
 
 func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{
@@ -11906,7 +12323,7 @@ func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
 func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	embeddedStarts := 0
 	externalLaunches := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
@@ -11980,7 +12397,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 
 func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 	listCalls := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			if req.RepoPath != "/dev/alpha" {
 				t.Fatalf("CreateFlow repo = %q, want /dev/alpha", req.RepoPath)
@@ -12027,7 +12444,7 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 }
 
 func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
@@ -12055,7 +12472,7 @@ func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
 
 func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
 	var createRequest model.FlowStartRequest
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			createRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
@@ -12086,7 +12503,7 @@ func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
 }
 
 func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{}, errors.New("Bootstrap hook failed: missing env file")
@@ -12114,7 +12531,7 @@ func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
 }
 
 func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			if req.RepoPath != "/dev/alpha" {
@@ -12159,7 +12576,7 @@ func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
 }
 
 func TestModel_NewFlowWorktreeFailureReportsStartFailure(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{}, errors.New("branch exists")
@@ -12184,7 +12601,7 @@ func TestModel_NewFlowWorktreeFailureReportsStartFailure(t *testing.T) {
 }
 
 func TestModel_NewFlowWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{}, errors.New("branch exists; mark flow blocked: disk full")
@@ -12208,7 +12625,7 @@ func TestModel_NewFlowWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing
 
 func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
@@ -12265,7 +12682,7 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 
 func TestModel_NewFlowCodexAppLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
@@ -12323,7 +12740,7 @@ func TestModel_NewFlowCodexAppLaunchFailureMarksPlanNeedsAttention(t *testing.T)
 func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
@@ -12406,7 +12823,7 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 	var listed bool
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			listed = true
 			if filter.RepoPath != "/dev/alpha" {
@@ -12446,7 +12863,7 @@ func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 }
 
 func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: filter.RepoPath, Title: "T"}}, nil
 		},
@@ -12522,4 +12939,40 @@ func fillNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef s
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
 	}
 	return m
+}
+
+func TestModel_NewFlowParkedCreateCapturesAgentSettings(t *testing.T) {
+	var createRequest model.FlowStartRequest
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:          "claude",
+		ClaudeModel:           "claude-opus-5",
+		ClaudeReasoningEffort: "high",
+		CodexModel:            "gpt-5.5",
+		CodexReasoningEffort:  "medium",
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			createRequest = req
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
+		},
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("Plan Now off should not start an agent")
+			return model.FlowStartResult{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeFlows)
+
+	_, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked With Agent", "Plan later", "main", false, false)
+	if cmd == nil {
+		t.Fatal("expected parked Flow creation command")
+	}
+	cmd()
+	if createRequest.AgentCommand != "claude" {
+		t.Fatalf("AgentCommand = %q, want claude", createRequest.AgentCommand)
+	}
+	if createRequest.Model != "claude-opus-5" {
+		t.Fatalf("Model = %q, want claude-opus-5", createRequest.Model)
+	}
+	if createRequest.ReasoningEffort != "high" {
+		t.Fatalf("ReasoningEffort = %q, want high", createRequest.ReasoningEffort)
+	}
 }

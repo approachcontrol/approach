@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,42 +109,20 @@ func TestServeReflectsLiveStoreMutations(t *testing.T) {
 }
 
 // TestServePassesPresetsToStore proves cfg.Flow.Presets reaches the store.
-// Presets are consulted on the read path to restore missing depends_on edges,
-// so a store built without them reports different dependsOn — and therefore
-// different derived status and currentPhase — than the CLI does.
+// Presets are consulted during migrate-on-open to restore depends_on edges
+// missing from legacy records, so a store built without them reports
+// different dependsOn — and therefore different derived status and
+// currentPhase — than one built with them.
 func TestServePassesPresetsToStore(t *testing.T) {
-	root := t.TempDir()
-	repoPath := t.TempDir()
-	preset := flowstore.Preset{
-		Name: "twostep",
-		Phases: []flowstore.PhaseSpec{
-			{ID: "build", Title: "Build", Kind: flowstore.KindImplementation, DependsOn: []string{}},
-			{ID: "verify", Title: "Verify", Kind: flowstore.KindReviewLoop, DependsOn: []string{"build"}},
-		},
-	}
-	cfg := config.Config{
-		Sessions: config.SessionsConfig{Root: root},
-		Flow:     config.FlowConfig{Presets: []flowstore.Preset{preset}},
-	}
+	preset := twoStepPresetForServeTest()
+	flowID := "20260607T120000Z-serve-preset-recovery"
 
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: cfg.Flow.Presets})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	created, err := store.CreateWithOptions(flowstore.FlowRecord{
-		Title:        "Preset parity",
-		Instructions: "Restore my edges",
-		RepoPath:     repoPath,
-		PresetName:   preset.Name,
-	}, flowstore.CreateOptions{Preset: &preset})
-	if err != nil {
-		t.Fatalf("CreateWithOptions() error = %v", err)
-	}
-	stripPersistedDependsOn(t, root, created.FlowID)
-
-	// A store without presets cannot restore the stripped edges. If this ever
-	// stops differing, the parity assertion below proves nothing.
-	bare, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	// A store without presets cannot restore the missing edges. If this ever
+	// stops differing, the assertion below proves nothing. Migration is
+	// one-time per root, so the control needs a root of its own.
+	bareRoot := t.TempDir()
+	writeLegacyTwoStepFlow(t, bareRoot, flowID)
+	bare, err := flowstore.NewStore(flowstore.StoreOptions{Root: bareRoot})
 	if err != nil {
 		t.Fatalf("NewStore(bare) error = %v", err)
 	}
@@ -153,24 +130,23 @@ func TestServePassesPresetsToStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List(bare) error = %v", err)
 	}
-	if got := dependsOnFor(t, bareRecords, created.FlowID, "verify"); len(got) != 0 {
+	if got := dependsOnFor(t, bareRecords, flowID, "verify"); len(got) != 0 {
 		t.Fatalf("preset-less store dependsOn = %v, want empty; the fixture no longer isolates presets", got)
 	}
 
-	cliRecords, err := store.List(flowstore.FlowFilter{})
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
+	root := t.TempDir()
+	writeLegacyTwoStepFlow(t, root, flowID)
+	cfg := config.Config{
+		Sessions: config.SessionsConfig{Root: root},
+		Flow:     config.FlowConfig{Presets: []flowstore.Preset{preset}},
 	}
-	wantDependsOn := dependsOnFor(t, cliRecords, created.FlowID, "verify")
-	if len(wantDependsOn) != 1 || wantDependsOn[0] != "build" {
-		t.Fatalf("CLI read path dependsOn = %v, want [build]", wantDependsOn)
-	}
+	wantDependsOn := []string{"build"}
 
 	deps := serveDeps(t, root, nil)
 	deps.loadConfig = func() (config.Config, error) { return cfg, nil }
 	harness := startServe(t, []string{"approach", "serve", "--addr", "127.0.0.1:0"}, deps)
 
-	status, payload := harness.query(t, `{ flow(id: "`+created.FlowID+`") { phases { id dependsOn status } currentPhase { id } } }`)
+	status, payload := harness.query(t, `{ flow(id: "`+flowID+`") { phases { id dependsOn status } currentPhase { id } } }`)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%v)", status, payload)
 	}
@@ -208,31 +184,41 @@ func dependsOnFor(t *testing.T, records []flowstore.FlowRecord, flowID, phaseID 
 	return nil
 }
 
-// stripPersistedDependsOn removes every depends_on key from a persisted
-// record, simulating a record written before edges were stored.
-func stripPersistedDependsOn(t *testing.T, root, flowID string) {
+func twoStepPresetForServeTest() flowstore.Preset {
+	return flowstore.Preset{
+		Name: "twostep",
+		Phases: []flowstore.PhaseSpec{
+			{ID: "build", Title: "Build", Kind: flowstore.KindImplementation, DependsOn: []string{}},
+			{ID: "verify", Title: "Verify", Kind: flowstore.KindReviewLoop, DependsOn: []string{"build"}},
+		},
+	}
+}
+
+// writeLegacyTwoStepFlow lays down a legacy on-disk record whose phases carry
+// no depends_on, simulating a record written before edges were stored. Only
+// migrate-on-open can recover those edges, and only from a matching preset.
+func writeLegacyTwoStepFlow(t *testing.T, root, flowID string) {
 	t.Helper()
-	path := filepath.Join(root, "flows", flowID, "meta.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
+	flowDir := filepath.Join(root, "flows", flowID)
+	if err := os.MkdirAll(flowDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	var record map[string]any
-	if err := json.Unmarshal(data, &record); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	phases, ok := record["phases"].([]any)
-	if !ok {
-		t.Fatalf("record has no phases array: %#v", record)
-	}
-	for _, entry := range phases {
-		delete(entry.(map[string]any), "depends_on")
-	}
-	updated, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(path, updated, 0o600); err != nil {
+	meta := `{
+  "schema_version": 1,
+  "flow_id": "` + flowID + `",
+  "title": "Preset parity",
+  "instructions": "Restore my edges",
+  "status": "in_progress",
+  "repo_path": "` + filepath.Join(root, "repo") + `",
+  "preset_name": "twostep",
+  "phases": [
+    {"phase_id": "build", "title": "Build", "kind": "implementation", "status": "pending", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "verify", "title": "Verify", "kind": "review_loop", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}`
+	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 }

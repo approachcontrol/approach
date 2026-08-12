@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
@@ -74,11 +75,27 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	if err != nil {
 		return SessionRecord{}, err
 	}
-	store.launchStale = flowLaunchStaleResolver(record, opts)
+	launchStale, releaseLaunchStale := flowLaunchStaleResolver(record, opts)
+	store.launchStale = launchStale
+	// The release is idempotent, so it runs inline below AND deferred: a panic in
+	// upsert would otherwise leak the Flow store's pooled handle, which is the
+	// exact hygiene this resolver rework was for. Clearing launchStale is
+	// future-proofing — upsert runs once today, and a resolver whose store is
+	// closed would degrade silently, not loudly.
+	releaseResolver := func() {
+		releaseLaunchStale()
+		store.launchStale = nil
+	}
+	defer releaseResolver()
 	record, err = store.upsert(record)
 	if err != nil {
 		return SessionRecord{}, err
 	}
+	// Released before attachment, not at return: attachFlowSession opens a second
+	// flowstore.Store, and the hook path holds only one pooled SQLite handle at a
+	// time (docs/architecture.md). Two live pools on one database would double
+	// descriptor use and let independent pools contend for the same writer.
+	releaseResolver()
 	// Upsert releases the per-session lock before Flow attachment. Keeping that
 	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts)
@@ -214,6 +231,7 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 	if err != nil {
 		return
 	}
+	defer func() { _ = store.Close() }()
 	_, _ = store.AttachSession(flowstore.SessionAttachUpdate{
 		FlowID:  record.FlowID,
 		PhaseID: record.FlowPhaseID,
@@ -229,14 +247,28 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 	})
 }
 
-func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) launchStaleFunc {
+// flowLaunchStaleResolver returns the resolver and a release func the caller
+// must run once the resolver is done. The Flow store holds a pooled SQLite
+// handle now, so an unclosed one leaks descriptors for the life of the hook.
+func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) (launchStaleFunc, func()) {
+	noRelease := func() {}
 	if record.FlowID == "" || record.FlowPhaseID == "" {
-		return nil
+		return nil, noRelease
 	}
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: flowStateRoot(opts), Presets: opts.FlowPresets})
 	if err != nil {
-		return nil
+		return nil, noRelease
 	}
+	// The caller also clears launchStale after releasing. That is future-proofing,
+	// not a live bug: the sessions.Store is local to IngestHook and upsert runs
+	// exactly once. It matters only if a second upsert is ever added, because a
+	// resolver whose captured store is closed would degrade SILENTLY — the
+	// closure swallows the Read error and reports "not stale".
+	// sync.Once, not a plain close: the caller releases inline as soon as the
+	// resolver is done and again from its defer, and closing a pooled handle
+	// twice would report an error the caller has no way to act on.
+	var closeOnce sync.Once
+	release := func() { closeOnce.Do(func() { _ = store.Close() }) }
 	// This resolver runs while the session lock is held. Keep it read-only:
 	// taking a Flow lock here would create a session-lock -> Flow-lock edge.
 	return func(existing, incoming SessionRecord) (bool, bool) {
@@ -267,7 +299,7 @@ func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) launchSta
 			}
 		}
 		return false, false
-	}
+	}, release
 }
 
 func flowStateRoot(opts IngestOptions) string {

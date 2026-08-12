@@ -153,7 +153,9 @@ launchable phases blocked and the error is shown in the status line.
 Approach launches Codex and Claude Code in your worktrees, captures their
 sessions, and tracks longer tasks as Flows: persisted phase graphs
 (plan → review → implementation → PR → merge) that can auto-advance and run
-agents headlessly in embedded terminals.
+agents in embedded terminals. Each Flow persists its own default-on
+headless/interactive preference for manual phase and repair launches; automatic
+phase launches remain always headless.
 
 Agents persist plans and Flow progress through the `approach plan` and
 `approach flow` CLIs. The canonical agent instructions are the bundled skills
@@ -198,6 +200,12 @@ accepted but ignored: startup is always repos-focused with Beads/Ready above
 Flows. The full reference — models and reasoning effort, Flow
 presets, prompt templates, bootstrap hooks, sessions storage, terminal
 settings, and environment variables — is in [docs/config.md](docs/config.md).
+
+Flows are stored in `<artifact-root>/approach.db` using SQLite WAL mode. On the
+first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
+records, leaving that directory unchanged in place and reporting what it did
+both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
+and agent sessions remain file-backed.
 
 ## Development
 

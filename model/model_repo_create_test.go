@@ -20,7 +20,7 @@ func repoCreateKey(input string) tea.KeyMsg {
 }
 
 func TestModel_LeftPaneNOpensRepoCreationForm(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{RepoCreateRoot: "/dev"})
+	m := newTestModel(testRepos(), model.Options{RepoCreateRoot: "/dev"})
 
 	m, cmd := update(m, repoCreateKey("n"))
 	if cmd != nil {
@@ -50,7 +50,7 @@ func TestModel_LeftPaneNReportsUnavailableWithoutRepoCreateRoot(t *testing.T) {
 }
 
 func TestModel_RightPaneNStillOpensWorktreeInput(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{RepoCreateRoot: "/dev"})
+	m := newTestModel(testRepos(), model.Options{RepoCreateRoot: "/dev"})
 	m = inRightPane(m)
 
 	m, _ = update(m, repoCreateKey("n"))
@@ -61,7 +61,7 @@ func TestModel_RightPaneNStillOpensWorktreeInput(t *testing.T) {
 
 func TestModel_RepoCreateSubmitUsesDefaults(t *testing.T) {
 	var got actions.RepoCreateOptions
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			got = opts
@@ -86,7 +86,7 @@ func TestModel_RepoCreateSubmitUsesDefaults(t *testing.T) {
 
 func TestModel_RepoCreateSubmitSupportsUncheckedGitHubAndPrivateVisibility(t *testing.T) {
 	var got actions.RepoCreateOptions
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			got = opts
@@ -114,7 +114,7 @@ func TestModel_RepoCreateSubmitSupportsUncheckedGitHubAndPrivateVisibility(t *te
 }
 
 func TestModel_RepoCreateValidationStaysInForm(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{RepoCreateRoot: "/dev"})
+	m := newTestModel(testRepos(), model.Options{RepoCreateRoot: "/dev"})
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -130,7 +130,7 @@ func TestModel_RepoCreateValidationStaysInForm(t *testing.T) {
 }
 
 func TestModel_RepoCreatedRefreshesAndSelectsNewRepo(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			return actions.RepoCreateResult{DestinationPath: "/dev/project", LocalCreated: true, GitHubCreated: true}, nil
@@ -167,7 +167,7 @@ func TestModel_RepoCreatedRefreshKeepsSelectedNewRepoVisible(t *testing.T) {
 		refreshed = append(refreshed, scanner.Repo{Path: "/dev/" + name, DisplayName: name})
 	}
 
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			return actions.RepoCreateResult{DestinationPath: "/dev/repo-24", LocalCreated: true}, nil
@@ -206,7 +206,7 @@ func TestModel_RepoCreatedRefreshSelectsRelativeScanRepoFromAbsoluteDestination(
 		{Path: filepath.Join("repos", "project"), DisplayName: "project"},
 	}
 
-	m := model.NewWithOptions(initial, model.Options{
+	m := newTestModel(initial, model.Options{
 		RepoCreateRoot: root,
 		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			return actions.RepoCreateResult{DestinationPath: filepath.Join(root, "project"), LocalCreated: true}, nil
@@ -232,7 +232,7 @@ func TestModel_RepoCreatedRefreshSelectsRelativeScanRepoFromAbsoluteDestination(
 }
 
 func TestModel_RepoCreateFailureReopensFormWithPreviousValues(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			return actions.RepoCreateResult{}, errors.New("permission denied")
@@ -255,7 +255,7 @@ func TestModel_RepoCreateFailureReopensFormWithPreviousValues(t *testing.T) {
 
 func TestModel_RepoCreatePartialFailureRetriesGitHubOnly(t *testing.T) {
 	var calls []actions.RepoCreateOptions
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			calls = append(calls, opts)
@@ -301,7 +301,7 @@ func TestModel_RepoCreatePartialFailureRetriesGitHubOnly(t *testing.T) {
 }
 
 func TestModel_RepoCreatePartialFailureRefreshesLocalRepo(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			return actions.RepoCreateResult{
@@ -345,7 +345,7 @@ func TestModel_RepoCreatePartialFailureRefreshesLocalRepo(t *testing.T) {
 
 func TestModel_RepoCreateRetryRequiresGitHubEnabled(t *testing.T) {
 	var calls []actions.RepoCreateOptions
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			calls = append(calls, opts)
@@ -380,7 +380,7 @@ func TestModel_RepoCreateRetryRequiresGitHubEnabled(t *testing.T) {
 
 func TestModel_RepoCreateRetryKeepsStateWhenNameChanges(t *testing.T) {
 	var calls []actions.RepoCreateOptions
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		RepoCreateRoot: "/dev",
 		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
 			calls = append(calls, opts)
@@ -431,7 +431,7 @@ func TestModel_RepoCreateRetryKeepsStateWhenNameChanges(t *testing.T) {
 }
 
 func TestModel_StaleRepoCreateResultsAreIgnored(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{RepoCreateRoot: "/dev"})
+	m := newTestModel(testRepos(), model.Options{RepoCreateRoot: "/dev"})
 
 	m, cmd := update(m, model.RepoCreatedMsg{Request: 99, Result: actions.RepoCreateResult{DestinationPath: "/dev/project"}})
 	if cmd != nil {

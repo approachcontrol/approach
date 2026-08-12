@@ -173,6 +173,11 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		ctx.FlowLaunchTracked = true
 		ctx.Embedded = true
 		ctx.Headless = req.Headless
+		// Persisted reservations carry UpdatedAt. A zero-time partial result from
+		// an injected launcher seam cannot authoritatively replace preferences.
+		if !req.AutoLaunch && !updated.UpdatedAt.IsZero() {
+			ctx.Headless = updated.Headless
+		}
 	}
 	return FlowPhaseLaunchResult{Context: ctx, Route: route}, nil
 }
@@ -229,96 +234,19 @@ func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.
 	return flowstore.FlowPhase{}, false
 }
 
+// nextAutoLaunchPhase is what flowLaunchCandidatePhase computes for an AutoMode
+// intent with no named candidate. It survives as its own name because repair's
+// marker consumption still calls it and routing repair through the lifecycle is
+// a later bead; do not collapse the two until it is, or repair inherits the
+// lifecycle's candidate rules by accident.
 func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
 	phase, _, ok := flowstore.FirstLaunchablePhase(record)
 	return phase, ok
 }
 
-func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
-	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" {
-		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-	}
-	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) {
-		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-	}
-	ordered := flowstore.OrderedPhases(record.Phases)
-	orderedRecord := record
-	orderedRecord.Phases = ordered
-	for i, phase := range ordered {
-		if flowPhaseCanLaunchAtIndex(orderedRecord, i) {
-			return record, phase, true
-		}
-	}
-	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-}
-
-type flowPhaseLaunchTarget struct {
-	FlowPhaseLaunchPreparedRequest
-	AutoAdvanceRetryFlowID  string
-	AutoAdvanceRetryPhaseID string
-}
-
 type repairAutoDrainMarker struct {
 	MinimumRequest uint64
 	CleanExit      bool
-}
-
-func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
-	record, phase, ok := m.selectedFlowNextLaunchablePhase()
-	if !ok {
-		m = m.setStatus(statusOther, "No launchable Flow phase")
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	target, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
-		Record:   record,
-		Phase:    phase,
-		Headless: m.flowHeadless,
-	})
-	return target, ok, m
-}
-
-func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
-	return m, m.prepareFlowPhaseLaunch(target)
-}
-
-func (m Model) flowPhaseLaunchTarget(req FlowPhaseLaunchRequest) (flowPhaseLaunchTarget, bool, Model, tea.Cmd) {
-	prepared, err := m.flowPhaseLauncher().Preflight(req)
-	if err != nil {
-		if !req.AutoLaunch {
-			m = m.setStatus(statusOther, err.Error())
-			return flowPhaseLaunchTarget{}, false, m, nil
-		}
-		var statusCmd tea.Cmd
-		m, statusCmd = m.setAutoAdvanceStatus("Flow " + flowTitleForStatus(req.Record) + ": " + err.Error())
-		return flowPhaseLaunchTarget{}, false, m, statusCmd
-	}
-	return flowPhaseLaunchTarget{FlowPhaseLaunchPreparedRequest: prepared}, true, m, nil
-}
-
-func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
-	return func() tea.Msg {
-		result, err := m.flowPhaseLauncher().Prepare(target.FlowPhaseLaunchPreparedRequest)
-		if err != nil {
-			return ActionFailedMsg{
-				RepoPath:                target.RepoPath,
-				Err:                     err.Error(),
-				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
-				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
-			}
-		}
-		if result.Skipped {
-			return nil
-		}
-		return m.flowPhaseLaunchMessage(result)
-	}
-}
-
-func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
-	if result.Route == FlowPhaseLaunchEmbedded {
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: result.Context}
-	}
-	return PlanLaunchRequestedMsg{LaunchContext: result.Context}
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
@@ -349,7 +277,9 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 			continue
 		}
 		if len(newlyStoppedAutoAdvanceFlowPhases(previous, record)) > 0 {
-			m = m.disarmAutoAdvanceDrain(record.FlowID)
+			// The stop edge suppresses an older retry without discarding prepare
+			// work that may already have persisted its launch ID.
+			m = m.suppressUnpersistedAutoFlowLaunchRetry(record.FlowID).disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
 		if len(newlyCompletedFlowPhases(previous, record)) > 0 {
@@ -540,41 +470,50 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 			m = m.disarmAutoAdvanceDrain(flowID)
 			continue
 		}
+		// A cheap snapshot filter, not policy: the lifecycle re-checks
+		// occupancy against the fresh record. Keeping it here means the two
+		// occupancy sets are applied as a union.
 		if m.flowAutoAdvanceOccupied(record) {
 			continue
 		}
-		phase, ok := nextAutoLaunchPhase(record)
+		// Selection stays with the drain because "no candidate disarms" is
+		// drain bookkeeping the lifecycle has no way to express, but it goes
+		// through the lifecycle's own resolver rather than a second rule.
+		phase, ok := flowLaunchCandidatePhase(flowLaunchKindAutoPhase, record, "")
 		if !ok {
 			m = m.disarmAutoAdvanceDrain(flowID)
 			continue
 		}
-		target, targetOK, next, statusCmd := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
-			Record:     record,
-			Phase:      phase,
-			AutoLaunch: true,
-			Headless:   true,
+		// The snapshot half of the lifecycle's session check, and the reason a
+		// stalled phase does not cost a session-store walk every second: the
+		// lifecycle's own check re-arms the drain, so without this the next
+		// poll would re-admit and call ListFlowSessions again at 1 Hz for as
+		// long as the session stays live. The mirrored sessions the poll
+		// already carries answer the common case for free. Deferral is silent
+		// and leaves the drain armed, exactly as the lifecycle's retry does.
+		if phaseHasMatchingLiveSession(phase) {
+			continue
+		}
+		next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
+			Kind:      flowLaunchKindAutoPhase,
+			FlowID:    record.FlowID,
+			PhaseID:   phase.PhaseID,
+			FlowTitle: flowTitleForStatus(record),
+			Origin:    flowLaunchOriginAutoMode,
 		})
 		m = next
-		if !targetOK {
-			cmds = append(cmds, statusCmd)
+		if !admitted {
+			// Silent by design; the drain stays armed for the next poll.
 			continue
 		}
 		m = m.disarmAutoAdvanceDrain(record.FlowID)
-		target.AutoAdvanceRetryFlowID = record.FlowID
-		target.AutoAdvanceRetryPhaseID = phase.PhaseID
-		m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
-			FlowTitle: record.Title,
-			PhaseID:   phase.PhaseID,
-		})
-		if cmd := m.prepareFlowPhaseLaunch(target); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		cmds = append(cmds, cmd)
 	}
 	return m, batchNonNil(cmds...)
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
-	if m.hasPendingFlowRepairLaunch(record.FlowID) {
+	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.flowLaunchAttemptOccupied(record.FlowID) {
 		return true
 	}
 	for _, phase := range record.Phases {

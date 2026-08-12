@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -60,6 +61,8 @@ type Model struct {
 	plans                     pane.Pane[planstore.PlanRecord]
 	flows                     pane.Pane[flowstore.FlowRecord]
 	activeFlowRecords         []flowstore.FlowRecord
+	latestFlowMutations       []cachedFlowMutation
+	pendingFlowHeadlessWrites []pendingFlowHeadlessWrite
 	activeFlows               pane.Pane[flowstore.FlowRecord]
 	beads                     [beadSubviewCount]beadSubviewState
 	expandedPlanID            string
@@ -68,7 +71,6 @@ type Model struct {
 	selectedPlanPhaseID       string
 	selectedFlowPhaseID       string
 	selectedActiveFlowPhaseID string
-	flowHeadless              bool
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -133,6 +135,7 @@ type Model struct {
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
 	markFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
@@ -163,22 +166,23 @@ type Model struct {
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	pendingFlowRepairLaunchIDs    map[string]string
+	flowLaunchAttempts            map[string]flowLaunchAttempt
+	launchSeams                   flowLaunchSeams
 
-	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
-	embeddedTerminalTickGen   uint64
-	flowRefreshTickGen        uint64
-	flowRefreshInFlight       uint64
-	flowRefreshInFlightMode   ui.Mode
-	autoAdvanceRequestSeq     uint64
-	autoAdvanceInFlight       uint64
-	autoAdvanceSnapshot       []flowstore.FlowRecord
-	autoAdvanceLaunchedPhases []autoAdvanceLaunchedPhase
-	terminalPrefixActive      bool
-	terminalConfirmID         embeddedTerminalID
-	finalizeAgentSession      func(actions.AgentLaunchContext) error
-	sessionStateRoot          string
-	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
+	pendingFlowPhaseResumes map[flowPhaseResumeKey]string
+	embeddedTerminalTickGen uint64
+	flowRefreshTickGen      uint64
+	flowRefreshInFlight     uint64
+	flowRefreshInFlightMode ui.Mode
+	autoAdvanceRequestSeq   uint64
+	autoAdvanceInFlight     uint64
+	autoAdvanceSnapshot     []flowstore.FlowRecord
+	terminalPrefixActive    bool
+	terminalConfirmID       embeddedTerminalID
+	finalizeAgentSession    func(actions.AgentLaunchContext) error
+	sessionStateRoot        string
+	bootstrapHookForRepo    func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook        func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type flowPhaseResumeKey struct {
@@ -204,6 +208,9 @@ type statusError struct {
 	FetchKind FetchKind
 	Mode      ui.Mode
 	FadeStep  int
+	// AutoRank orders the messages that share statusFlowAutoAdvance. It is
+	// meaningless for every other source.
+	AutoRank autoAdvanceStatusRank
 }
 
 type visibleRepoFetchState struct {
@@ -245,8 +252,10 @@ type Options struct {
 	CountClosedBeads         func(repoPath string) (int, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
+	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	SetFlowHeadless          func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	LookupPRMerge            func(int, string) (actions.PullRequestMerge, error)
 	MarkFlowManualMerge      func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
@@ -270,8 +279,15 @@ type Options struct {
 	StartEmbeddedTerminal    EmbeddedTerminalStarter
 	FinalizeAgentSession     func(actions.AgentLaunchContext) error
 	SessionStateRoot         string
-	BootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
-	RunBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
+	// FlowStore is the process's already-open Flow store. When set, the fallback
+	// mutators below reuse it instead of opening a second one against the same
+	// approach.db: two pools would bootstrap twice and then contend for SQLite's
+	// single writer through nothing but busy_timeout, so a write from one could
+	// fail with "database is locked" while the other holds the writer. Tests and
+	// callers that leave it nil still get the lazily-built cached store.
+	FlowStore            *flowstore.Store
+	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
+	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 // New creates a Model from discovered repos.
@@ -281,11 +297,47 @@ func New(repos []scanner.Repo) Model {
 
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
+	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
+	// fallback mutators below must share one rather than build a store per
+	// operation the way they did when the backend was plain files — that pattern
+	// was free against files and leaks descriptors against SQLite.
+	//
+	// Only success is cached. These closures run on tea.Cmd goroutines, so the
+	// mutex makes the lazy construction race-free; caching the error too would
+	// be wrong, because the most likely failure is a bootstrap lock held by
+	// another approach process mid-cutover, and that clears on its own. A
+	// permanent cache would leave the TUI unable to write any Flow until restart.
+	//
+	// OWNERSHIP: a store built here is owned by the Model and lives until the
+	// process exits — nothing closes it, because a value-type Bubble Tea model has
+	// no lifecycle hook to close it from. That is bounded at one pool per Model
+	// that actually performs a fallback write, and the TUI never builds one:
+	// cmd/approach opens the process store and injects it as Options.FlowStore, so
+	// this branch is reached only by tests and embedders, which build few Models
+	// and exit. Anything that constructs Models repeatedly in a long-lived process
+	// must inject Options.FlowStore and close it itself.
+	var (
+		flowStoreMu sync.Mutex
+		flowStore   *flowstore.Store
+	)
 	newFlowStore := func() (*flowstore.Store, error) {
-		return flowstore.NewStore(flowstore.StoreOptions{
+		if opts.FlowStore != nil {
+			return opts.FlowStore, nil
+		}
+		flowStoreMu.Lock()
+		defer flowStoreMu.Unlock()
+		if flowStore != nil {
+			return flowStore, nil
+		}
+		store, err := flowstore.NewStore(flowstore.StoreOptions{
 			Root:    opts.SessionStateRoot,
 			Presets: opts.FlowPresets,
 		})
+		if err != nil {
+			return nil, err
+		}
+		flowStore = store
+		return flowStore, nil
 	}
 	saveAgent := opts.SaveAgentCommand
 	if saveAgent == nil {
@@ -359,6 +411,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if countClosedBeads == nil {
 		countClosedBeads = beadsquery.CountClosed
 	}
+	readFlow := opts.ReadFlow
+	if readFlow == nil {
+		readFlow = func(flowID string) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.Read(flowID)
+		}
+	}
 	setFlowPhase := opts.SetFlowPhase
 	if setFlowPhase == nil {
 		setFlowPhase = func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
@@ -377,6 +439,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.SetAutoMode(update)
+		}
+	}
+	setFlowHeadless := opts.SetFlowHeadless
+	if setFlowHeadless == nil {
+		setFlowHeadless = func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetHeadless(update)
 		}
 	}
 	lookupPRMerge := opts.LookupPRMerge
@@ -483,12 +555,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
 	if createFlowForRepo == nil || startFlowPlan == nil {
-		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		createFlow := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
 			if err != nil {
 				return flowstore.FlowRecord{}, err
 			}
-			return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
+			createOpts.Preset = opts.FlowPreset
+			return store.CreateWithOptions(record, createOpts)
 		}
 		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
@@ -534,7 +607,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		flows:                 newFlowPane(),
 		activeFlows:           newFlowPane(),
 		beads:                 newBeadSubviews(),
-		flowHeadless:          true,
 		terminalDockVisible:   true,
 		flowRefreshTickGen:    1,
 		topMode:               topMode,
@@ -563,12 +635,21 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
-		showBead:                 showBead,
-		countClosedBeads:         countClosedBeads,
-		createFlow:               createFlowForRepo,
-		startFlowPlan:            startFlowPlan,
-		setFlowPhase:             setFlowPhase,
+		showBead:         showBead,
+		countClosedBeads: countClosedBeads,
+		createFlow:       createFlowForRepo,
+		startFlowPlan:    startFlowPlan,
+		setFlowPhase:     setFlowPhase,
+		launchSeams: newFlowLaunchSeams(
+			readFlow,
+			listSessions,
+			addFlowPhaseLaunchID,
+			setFlowPhase,
+			planMarkdownPath,
+			readPlan,
+		),
 		setFlowAutoMode:          setFlowAutoMode,
+		setFlowHeadless:          setFlowHeadless,
 		lookupPRMerge:            lookupPRMerge,
 		markFlowManualMerge:      markFlowManualMerge,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
@@ -794,27 +875,21 @@ func (m Model) ModelFor(command string) string {
 	}
 }
 
-func (m Model) launchModelFor(command string) string {
-	switch agent.Normalize(command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m.ModelFor(command)
-	default:
-		return ""
-	}
-}
-
-func (m Model) launchReasoningEffortFor(command string) string {
-	switch agent.Normalize(command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m.ReasoningEffortFor(command)
-	default:
-		return ""
-	}
+// launchAgentSettings resolves the stored per-provider selections down to the
+// single model and reasoning effort that apply to command.
+func (m Model) launchAgentSettings(command string) agent.Settings {
+	return agent.Resolve(agent.Preferences{
+		Command:      command,
+		CodexModel:   m.codexModel,
+		ClaudeModel:  m.claudeModel,
+		CodexEffort:  m.codexReasoningEffort,
+		ClaudeEffort: m.claudeReasoningEffort,
+	})
 }
 
 func (m Model) flowLaunchAgentSettings() (string, string, string) {
-	command := agent.Normalize(m.agentCommand)
-	return command, m.launchModelFor(command), m.launchReasoningEffortFor(command)
+	settings := m.launchAgentSettings(m.agentCommand)
+	return settings.Command, settings.Model, settings.ReasoningEffort
 }
 
 func (m Model) flowModelLabel() string {
@@ -1036,7 +1111,7 @@ func (m Model) View() string {
 		ExpandedFlowID:               m.currentExpandedFlowID(),
 		SelectedPlanPhaseID:          m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:          m.currentSelectedFlowPhaseID(),
-		FlowHeadless:                 m.flowHeadless,
+		FlowHeadless:                 m.selectedFlowHeadless(),
 		FlowAutoModeSelected:         flowAutoModeSelected,
 		FlowIssueTargetSelected:      flowIssueTargetSelected,
 		FlowPRTargetSelected:         flowPRTargetSelected,
@@ -1422,8 +1497,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		if msg.Err != nil {
-			m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
-			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
+			return m.handleFlowLaunchPrefillFailure(msg)
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)
 		return m.updateFlowTerminalFocusAfterLaunch(msg.LaunchContext), nil
@@ -1548,6 +1622,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:
 		return m.handleFlowAutoModeSetFailed(msg), nil
+	case FlowHeadlessSetMsg:
+		return m.handleFlowHeadlessSet(msg)
+	case FlowHeadlessSetFailedMsg:
+		return m.handleFlowHeadlessSetFailed(msg), nil
 	case FlowManualMergeSetMsg:
 		return m.handleFlowManualMergeSet(msg), nil
 	case FlowManualMergeSetFailedMsg:
@@ -1680,6 +1758,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAgentResultAfterFinalization(msg, nil)
 	case agentSessionFinalizedMsg:
 		return m.handleAgentResultAfterFinalization(msg.Result, msg.Err)
+	case flowLaunchEventMsg:
+		return m.handleFlowLaunchEvent(msg)
 	case flowLaunchFailurePersistedMsg:
 		return m.handleFlowLaunchFailurePersisted(msg)
 	case DeleteFailedMsg:
@@ -1709,6 +1789,16 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		} else {
 			resultErr = fmt.Sprintf("finalize session: %v", finalizeErr)
 		}
+	}
+	ctx := msg.LaunchContext
+	// Only a lifecycle handoff releases here; every other source funnels
+	// through this handler with no attempt and must reach main's behaviour
+	// below unchanged.
+	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
+		if resultErr != "" {
+			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
+		}
+		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	}
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
@@ -1792,6 +1882,11 @@ func (m Model) selectedFlowID() string {
 		return ""
 	}
 	return record.FlowID
+}
+
+func (m Model) selectedFlowHeadless() bool {
+	record, ok := m.selectedFlow()
+	return ok && record.Headless
 }
 
 func (m Model) selectedFlowPR() (flowstore.PullRequest, bool) {
@@ -1903,8 +1998,23 @@ func flowPhaseHasStaleRunningLatestLaunch(phase flowstore.FlowPhase) bool {
 		(flowstore.PhaseAwaitingSession(phase) || flowstore.PhaseLatestLaunchEnded(phase))
 }
 
+// selectedFlowHasLaunchablePhase drives footer availability through the same
+// preview admission uses, so what the footer advertises and what g accepts can
+// never disagree.
 func (m Model) selectedFlowHasLaunchablePhase() bool {
-	_, _, ok := m.selectedFlowNextLaunchablePhase()
+	record, ok := m.selectedFlow()
+	if !ok {
+		return false
+	}
+	// An in-flight headless write makes admission refuse, so the footer has to
+	// stop advertising for as long as it is outstanding.
+	if m.flowHeadlessWritePending(record.FlowID) {
+		return false
+	}
+	_, _, ok = m.previewFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+	})
 	return ok
 }
 

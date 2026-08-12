@@ -22,9 +22,13 @@ type Preset struct {
 	Phases []PhaseSpec `toml:"phases"`
 }
 
-// CreateOptions configures Flow creation without changing the persisted schema.
+// CreateOptions configures Flow creation defaults and phase seeding.
 type CreateOptions struct {
-	Preset *Preset
+	Preset   *Preset
+	Headless *bool
+	// PhaseAgent is stamped onto every seeded phase, and onto declared phases
+	// that carry no settings of their own.
+	PhaseAgent PhaseAgentSettings
 }
 
 // DefaultPreset returns the built-in phase graph used when callers do not
@@ -108,18 +112,21 @@ func validatePreset(preset Preset) error {
 	return validatePhaseGraph(phases)
 }
 
-func seedPhases(specs []PhaseSpec, createdAt, updatedAt time.Time) []FlowPhase {
+func seedPhases(specs []PhaseSpec, phaseAgent PhaseAgentSettings, createdAt, updatedAt time.Time) []FlowPhase {
 	phases := make([]FlowPhase, 0, len(specs))
 	for i, spec := range specs {
 		phases = append(phases, FlowPhase{
-			PhaseID:   artifacts.NormalizePhaseID(spec.ID),
-			Title:     strings.TrimSpace(spec.Title),
-			Kind:      strings.ToLower(strings.TrimSpace(spec.Kind)),
-			DependsOn: append([]string{}, spec.DependsOn...),
-			Status:    PhasePending,
-			Order:     i + 1,
-			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
+			PhaseID:         artifacts.NormalizePhaseID(spec.ID),
+			Title:           strings.TrimSpace(spec.Title),
+			Kind:            strings.ToLower(strings.TrimSpace(spec.Kind)),
+			Agent:           phaseAgent.Agent,
+			Model:           phaseAgent.Model,
+			ReasoningEffort: phaseAgent.ReasoningEffort,
+			DependsOn:       append([]string{}, spec.DependsOn...),
+			Status:          PhasePending,
+			Order:           i + 1,
+			CreatedAt:       createdAt,
+			UpdatedAt:       updatedAt,
 		})
 	}
 	return normalizeDependsOnValues(phases)

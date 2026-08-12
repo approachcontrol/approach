@@ -84,7 +84,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
 | `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane; grouped entries use their remembered subview. Active Flows is not in either cycle. |
-| `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
+| `h` | Switch to the history subview inside the Git view; toggle the selected Flow's persisted headless/interactive preference in Flows or Active Flows |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
@@ -446,7 +446,9 @@ checkboxes. New Flows use the built-in default phase graph unless
 `[flow].preset` selects a configured custom graph. Plan Now is checked by
 default and immediately launches the first ready root phase after creating the
 Flow; uncheck it to create a parked Flow whose ready root phase can be
-launched later from the Flow row.
+launched later from the Flow row. The Headless checkbox is persisted on the
+new Flow in either case, so a parked Flow uses the same choice when launched
+later. Ready-Bead and command-line creation retain the default-on setting.
 
 On a Flow row or an expanded phase row:
 
@@ -456,12 +458,22 @@ On a Flow row or an expanded phase row:
 - `g` launches the first launchable phase in the selected Flow's canonical
   phase order. This uses the selected Flow, so a highlighted pending phase row
   can still launch an earlier ready sibling; nothing is persisted when no
-  phase is launchable.
+  phase is launchable. The key press only submits a launch intent: the launch
+  lifecycle reserves the Flow, re-reads the persisted record, and decides from
+  it, so a launch the list advertised can still be refused once the fresh
+  record disagrees. A launch is rejected — not merely unadvertised — while an
+  embedded terminal, a pending repair, a pending phase resume, or another
+  launch already holds that Flow, and while a live session is attached to the
+  phase being launched. Dismiss or detach the Flow's terminal before launching
+  its next phase. Both `g` bindings (flows view and Active Flows) behave
+  identically.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal
-  slot is occupied, and the Flow is not completed, merged, abandoned, or at a
-  ready/manual Merge boundary.
+  slot is occupied, no headless write for that Flow is in flight, and the Flow
+  is not completed, merged, abandoned, or at a ready/manual Merge boundary.
+  Like `g`, a refusal names the obstacle, preferring a durable one (a pending
+  repair, a pending resume, an open terminal) over the transient write.
 - `i` opens the linked GitHub issue and `p` opens the linked PR in the
   browser, when that metadata exists.
 - `c` copies the selected Flow ID; `y` copies the selected Flow worktree path.
@@ -472,6 +484,12 @@ On a Flow row or an expanded phase row:
 - `a` toggles per-Flow auto mode, which is on by default for new Flows and
   persisted on that Flow record. Flows created before this field existed
   remain manual until toggled on.
+- `h` toggles the selected Flow's persisted manual-launch preference. It works
+  from the Flow row or an expanded phase row and is hidden when no Flow is
+  selected; changing one Flow does not affect another. Launches read the
+  preference from the store, so while the write is in flight that Flow's `g`
+  is withdrawn from the footer and refuses with a retry hint rather than
+  launching in the previous mode.
 - `m` on an eligible Flow row marks a GitHub PR that was merged manually:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
@@ -502,8 +520,10 @@ before allocating the terminal.
 Repair is an embedded CLI operation and accepts only `codex` or `claude`.
 `codex-app`, an unset agent, or another configured command produces guidance
 instead of opening an external app or changing Flow state. The launch reuses
-the selected provider's current model and reasoning effort plus the manual
-`h` headless setting. Interactive repairs prefill their recovery prompt and
+the selected provider's current model and reasoning effort plus that Flow's
+persisted `h` headless setting. The fresh pre-launch record read is
+authoritative, so a recently changed preference overrides a stale list row.
+Interactive repairs prefill their recovery prompt and
 focus terminal input; headless repairs submit it and keep list focus.
 
 A repair session carries the Flow ID, linked-plan/worktree metadata, and the
@@ -518,14 +538,43 @@ never by editing artifact JSON, and never to launch the next phase itself.
 
 When auto mode is on, Approach runs an always-on, all-repos advance poll that
 detects live completed-phase transitions and drains the Flow by launching the
-first ready non-merge phase in display order. Auto-launched CLI phases are
+first ready non-merge phase in display order. That choice is then re-checked
+against freshly read Flow state, but not re-made: the phase the poll picked
+launches as long as it is still launchable, even if an earlier phase became
+ready in the meantime. Auto-launched CLI phases are
 always headless and do not change the current view or focus. Approach launches
 at most one phase per Flow at a time: if any phase is running or any
 Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
+It also waits while a manual phase resume or a repair on that Flow is still
+being written, and while a session recorded against the phase it would launch
+has not ended. Each of those defers the launch silently and it resumes on a
+later poll.
+
+That last one has no recovery path today. A session is treated as live until it
+is recorded as ended, and only an orderly exit records that, so an agent whose
+session is never finalized — Approach killed, the machine lost — leaves the
+phase looking permanently busy. Auto mode then waits forever, and the other
+routes out are all closed: launching the phase manually with `g` is refused with
+`No launchable Flow phase` even though the phase is ready, repair reports no
+obstruction because the phase is still launchable, and reset applies only to
+`running` phases. Recovering means editing the Flow record's session metadata by
+hand.
+
 A 3 s status message announces auto-launches, `needs_attention`, and
-merge-ready transitions unless another status message is active. Skipped,
-blocked, needs-attention, failed-launch, or missing-PR-metadata states do not
-auto-launch. Automation stops before Merge: if Autoreview completes and Merge
+merge-ready transitions. Any status from elsewhere in the app blocks all of
+them. Among themselves they are ranked rather than ordered by arrival, because
+auto-launch and launch-failure messages are emitted after the Flow is re-read
+rather than when the poll decides and would otherwise displace a transition
+raised by the same poll, possibly on a different Flow. A `needs_attention` or
+merge-ready message therefore outranks both and is not replaced while it is on
+screen; two launch messages replace each other, so the most recent one shows.
+One consequence is deliberate: a launch that happens within 3 s of a transition
+is never announced, because the announcement is not retried. The launch still
+runs and the phase still shows as running. A launch *failure* is retried, so it
+appears once the transition clears.
+
+Skipped, blocked, needs-attention, failed-launch, or missing-PR-metadata states
+do not auto-launch. Automation stops before Merge: if Autoreview completes and Merge
 becomes ready, Approach keeps auto mode on and requires the manual Merge launch.
 A repair terminal that exits cleanly and is then auto-closed or dismissed arms
 a one-shot, generation-fenced auto drain. The first successful all-Flows poll
@@ -542,17 +591,21 @@ outcome and receives its normal one-shot handoff.
 
 ### Headless mode, model, and effort
 
-Flow headless mode is on by default: selected CLI `codex` and `claude` phase
-launches run in the shared runtime-only embedded terminal dock. Press
-`h` to choose the CLI command mode: headless runs `codex exec` or
+Each Flow persists its own headless preference, which defaults on. Selected CLI
+`codex` and `claude` phase launches run in the shared runtime-only embedded
+terminal dock. Press `h` on a Flow or one of its expanded phase rows to choose
+that Flow's manual CLI command mode: headless runs `codex exec` or
 `claude --print`, while headless off runs interactive `codex` or `claude` in
 the same dock. Headless-off launches prefill the phase prompt without
 submitting it, then focus the terminal in input mode so
 you can review or edit it before pressing enter. Headless launches keep focus
-on the Flow list. Creating a new Flow has its own default-on Headless checkbox
-for the initial Plan launch; that checkbox is ignored when Plan Now is off and
-does not change the selected-phase `h` setting. The `h` toggle applies only to
-manual phase launches; auto-mode CLI launches are always headless.
+on the Flow list. The New Flow form's default-on Headless checkbox seeds the
+persisted preference whether Plan Now is on or off; an immediate Plan launch
+and a later launch of a parked Flow both use that stored value. Records created
+before the field existed read as headless-on without being rewritten solely by
+a read. Manual phase and repair launches use the target Flow's value. Auto-mode
+CLI launches are always headless, independent of it; session resume behavior is
+unchanged.
 
 Press `M` to choose the selected CLI agent's model and `E` to choose its
 reasoning effort; the shortcut pane shows the current values. Codex CLI

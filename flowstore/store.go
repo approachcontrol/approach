@@ -1,16 +1,14 @@
 // Package flowstore persists task-centric Flow records beside the agent-session store.
 //
 // Agents persist Flow changes through the `approach flow` CLI
-// (cmd/approach/flow.go), never by editing meta.json by hand — hand edits
-// bypass the store's locking, validation, and phase-ID normalization.
+// (cmd/approach/flow.go), never by editing approach.db — direct edits bypass
+// the store's transactions, validation, and phase-ID normalization.
 package flowstore
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -18,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/planstore"
 )
@@ -26,10 +25,12 @@ const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
 
-var (
-	errFlowNotFound       = errors.New("flow not found")
-	errAutoLaunchOutdated = errors.New("auto launch outdated")
-)
+var errFlowNotFound = errors.New("flow not found")
+
+// ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
+// wraps. It is exported so callers outside this package can build the rejection
+// their AutoMode handling has to survive.
+var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
 
 const (
 	StatusPending        = "pending"
@@ -80,19 +81,34 @@ const (
 	GraphRecoveryMissingEdgesUnresolved = "missing_edges_unresolved"
 )
 
-// Store reads and writes flow records under an artifact root.
+// Store reads and writes Flow rows in the artifact root's approach.db.
 type Store struct {
+	backend  backend
+	planSync planPhaseSyncer
+	// root outlives the storage seam because the plan side is only half behind
+	// it: SetPhase syncs through planSync (which captures root itself), but
+	// SetPlanLink still resolves plan paths and constructs a planstore.Store
+	// inline. Finishing that extraction is follow-up work, not part of the
+	// storage seam.
+	//
+	// This is the CONFIGURED root, deliberately not the symlink-resolved one the
+	// SQLite bootstrap canonicalizes for the database, lease, and reserved child
+	// paths. Plan paths are user-facing strings: SetPlanLink derives one from
+	// this root and requires an exact match against any --plan-path the caller
+	// supplies, and it persists that string in the record. Resolving here would
+	// reject the paths launchers build from the configured root, and rewrite
+	// every stored plan_path, on any root with a symlink component — which the
+	// file backend accepted and this cutover keeps accepting.
 	root                      string
 	now                       func() time.Time
-	lockTimeout               time.Duration
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
-	presets                   map[string]Preset
 }
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
-	Root        string
-	Now         func() time.Time
+	Root string
+	Now  func() time.Time
+	// LockTimeout bounds bootstrap lease and SQLite writer acquisition waits.
 	LockTimeout time.Duration
 	Presets     []Preset
 }
@@ -105,25 +121,130 @@ func IsNotFound(err error) bool {
 // IsAutoLaunchOutdated reports whether err means an automatic launch request
 // lost its race with newer Flow state and should be ignored.
 func IsAutoLaunchOutdated(err error) bool {
-	return errors.Is(err, errAutoLaunchOutdated)
+	return errors.Is(err, ErrAutoLaunchOutdated)
 }
 
 // FlowPhase is one phase in the persisted Flow pipeline.
 type FlowPhase struct {
-	PhaseID       string    `json:"phase_id"`
-	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
-	Title         string    `json:"title"`
-	Kind          string    `json:"kind"`
-	DependsOn     []string  `json:"depends_on"`
-	Status        string    `json:"status"`
-	Order         int       `json:"order"`
-	Outcome       string    `json:"outcome,omitempty"`
-	Notes         string    `json:"notes,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	LaunchIDs     []string  `json:"launch_ids,omitempty"`
-	Sessions      []Session `json:"sessions,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	PhaseID       string `json:"phase_id"`
+	ParentPhaseID string `json:"parent_phase_id,omitempty"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	// Agent, Model, and ReasoningEffort are captured when the Flow is created
+	// and are not consumed at launch yet; see PhaseAgentSettings.
+	Agent           string    `json:"agent,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	DependsOn       []string  `json:"depends_on"`
+	Status          string    `json:"status"`
+	Order           int       `json:"order"`
+	Outcome         string    `json:"outcome,omitempty"`
+	Notes           string    `json:"notes,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
+	LaunchIDs       []string  `json:"launch_ids,omitempty"`
+	Sessions        []Session `json:"sessions,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// PhaseAgentSettings is the agent selection captured for a Flow phase.
+//
+// Each field is read independently: an empty field means nothing was captured
+// and the value must be resolved from the global setting in effect at launch,
+// while "default" means the provider default was captured explicitly. Writing
+// them is not independent — see Validate.
+type PhaseAgentSettings struct {
+	Agent           string
+	Model           string
+	ReasoningEffort string
+}
+
+// PhaseAgentSettingsFrom converts a resolved launch selection into the
+// persistence shape. It is the only conversion between the two triples, so
+// callers holding an agent.Settings should route through it rather than
+// assigning the three fields by hand.
+func PhaseAgentSettingsFrom(settings agent.Settings) PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           settings.Command,
+		Model:           settings.Model,
+		ReasoningEffort: settings.ReasoningEffort,
+	}
+}
+
+// IsZero reports whether no setting was captured. Emptiness is evaluated after
+// normalization, so whitespace-only fields count as empty.
+func (s PhaseAgentSettings) IsZero() bool {
+	return s.Normalize().isEmpty()
+}
+
+// isEmpty is the plain emptiness check on an already-normalized triple.
+func (s PhaseAgentSettings) isEmpty() bool {
+	return s.Agent == "" && s.Model == "" && s.ReasoningEffort == ""
+}
+
+// Normalize lowercases and trims every field.
+func (s PhaseAgentSettings) Normalize() PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           agent.Normalize(s.Agent),
+		Model:           agent.NormalizeModel(s.Model),
+		ReasoningEffort: agent.NormalizeReasoningEffort(s.ReasoningEffort),
+	}
+}
+
+// Validate checks the normalized triple as a unit: an unset selection is
+// allowed, but a model or reasoning effort without an agent is not, because a
+// model cannot be interpreted without knowing its agent.
+func (s PhaseAgentSettings) Validate() error {
+	s = s.Normalize()
+	if s.isEmpty() {
+		return nil
+	}
+	if err := agent.Validate(s.Agent); err != nil {
+		return err
+	}
+	if err := agent.ValidateModel(s.Agent, s.Model); err != nil {
+		return err
+	}
+	return agent.ValidateReasoningEffort(s.Agent, s.ReasoningEffort)
+}
+
+// AgentSettings returns the agent selection captured for this phase.
+func (p FlowPhase) AgentSettings() PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           p.Agent,
+		Model:           p.Model,
+		ReasoningEffort: p.ReasoningEffort,
+	}
+}
+
+func (p FlowPhase) withAgentSettings(settings PhaseAgentSettings) FlowPhase {
+	p.Agent = settings.Agent
+	p.Model = settings.Model
+	p.ReasoningEffort = settings.ReasoningEffort
+	return p
+}
+
+// applyDeclaredPhaseAgentSettings treats each declared phase's settings as
+// all-or-nothing: a phase that declares none of the three takes the create
+// defaults, and a phase that declares any of them keeps its own triple, which
+// is then validated as a unit. Nothing is merged per field, so a phase that
+// declares a model without an agent fails rather than silently inheriting one.
+//
+// Phases are stamped in place, so a rejected phase leaves the ones before it
+// already stamped. Callers must discard the slice on error rather than reuse
+// it; CreateWithOptions does, by returning no record at all.
+func applyDeclaredPhaseAgentSettings(phases []FlowPhase, defaults PhaseAgentSettings) ([]FlowPhase, error) {
+	for i, phase := range phases {
+		settings := phase.AgentSettings().Normalize()
+		if settings.isEmpty() {
+			settings = defaults
+		}
+		if err := settings.Validate(); err != nil {
+			return nil, fmt.Errorf("phase %q agent settings: %w", phase.PhaseID, err)
+		}
+		phases[i] = phase.withAgentSettings(settings)
+	}
+	return phases, nil
 }
 
 // Session references a provider session without duplicating transcript contents.
@@ -205,35 +326,45 @@ type AutoModeUpdate struct {
 	Enabled bool
 }
 
+// HeadlessUpdate changes the manual launch preference for one Flow.
+type HeadlessUpdate struct {
+	FlowID  string
+	Enabled bool
+}
+
 // FlowRecord is the persisted task workflow record.
 type FlowRecord struct {
-	SchemaVersion int                `json:"schema_version"`
-	FlowID        string             `json:"flow_id"`
-	Title         string             `json:"title"`
-	Instructions  string             `json:"instructions"`
-	Status        string             `json:"status"`
-	RepoPath      string             `json:"repo_path"`
-	WorktreePath  string             `json:"worktree_path,omitempty"`
-	Branch        string             `json:"branch,omitempty"`
-	BaseRef       string             `json:"base_ref,omitempty"`
-	Commit        string             `json:"commit,omitempty"`
-	PresetName    string             `json:"preset_name,omitempty"`
-	PlanID        string             `json:"plan_id,omitempty"`
-	PlanPath      string             `json:"plan_path,omitempty"`
-	Issue         Issue              `json:"issue,omitempty"`
-	PR            PullRequest        `json:"pr,omitempty"`
-	Merge         Merge              `json:"merge,omitempty"`
-	AutoMode      bool               `json:"auto_mode,omitempty"`
+	SchemaVersion int         `json:"schema_version"`
+	FlowID        string      `json:"flow_id"`
+	Title         string      `json:"title"`
+	Instructions  string      `json:"instructions"`
+	Status        string      `json:"status"`
+	RepoPath      string      `json:"repo_path"`
+	WorktreePath  string      `json:"worktree_path,omitempty"`
+	Branch        string      `json:"branch,omitempty"`
+	BaseRef       string      `json:"base_ref,omitempty"`
+	Commit        string      `json:"commit,omitempty"`
+	PresetName    string      `json:"preset_name,omitempty"`
+	PlanID        string      `json:"plan_id,omitempty"`
+	PlanPath      string      `json:"plan_path,omitempty"`
+	Issue         Issue       `json:"issue,omitempty"`
+	PR            PullRequest `json:"pr,omitempty"`
+	Merge         Merge       `json:"merge,omitempty"`
+	AutoMode      bool        `json:"auto_mode,omitempty"`
+	// Headless is the per-Flow manual-launch preference. Like AutoMode, it is
+	// forced on at creation and can only be changed afterwards through
+	// SetHeadless or CreateOptions.Headless — a value set on a record passed to
+	// Create is ignored. It is written without omitempty so an explicit false
+	// stays distinguishable from a legacy record that predates the field.
+	Headless      bool               `json:"headless"`
 	Phases        []FlowPhase        `json:"phases"`
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
 	GraphRecovery GraphRecoveryState `json:"-"`
-
-	preserveMissingDependsOn map[string]bool
 }
 
-// GraphRecoveryState reports non-persisted recovery performed while reading a
-// Flow record whose persisted graph metadata was missing or degraded.
+// GraphRecoveryState reports an unresolved graph discovered during one-time
+// legacy migration. The SQLite storage codec persists the unresolved marker.
 type GraphRecoveryState struct {
 	Status string
 }
@@ -335,22 +466,42 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := artifacts.EnsureCollection(root, "flows"); err != nil {
-		return nil, fmt.Errorf("create flow store: %w", err)
+	// Ordering is load-bearing: a backend bootstrap failure must still surface
+	// before a bad preset does. Only the lockTimeout default is hoisted, because
+	// the backend needs it at construction.
+	lockTimeout := opts.LockTimeout
+	if lockTimeout <= 0 {
+		lockTimeout = defaultLockTimeout
+	}
+	store, err := newSQLiteStoreBackend(root, lockTimeout, opts.Presets)
+	if err != nil {
+		return nil, err
 	}
 	now := opts.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	lockTimeout := opts.LockTimeout
-	if lockTimeout <= 0 {
-		lockTimeout = defaultLockTimeout
-	}
-	presets, err := presetRegistry(opts.Presets)
-	if err != nil {
-		return nil, err
-	}
-	return &Store{root: root, now: now, lockTimeout: lockTimeout, presets: presets}, nil
+	return &Store{
+		backend:  store,
+		planSync: planstoreSyncer{root: root},
+		root:     root,
+		now:      now,
+	}, nil
+}
+
+// Close releases the Store's database handles. A Store holds a pooled
+// connection for its whole life, so callers that build one per operation must
+// Close it or leak descriptors; long-lived callers may Close at shutdown or not
+// at all. Using the Store after Close returns an error rather than panicking.
+// It is safe to call more than once.
+//
+// Callers that discard the error are not being sloppy: every record a caller
+// wrote is already durable when its mutation returned, so a Close failure can
+// only mean the final WAL checkpoint did not run. Turning that into a non-zero
+// exit would report a successful mutation as a failure, which is the worse
+// outcome for a CLI whose caller is usually an agent.
+func (s *Store) Close() error {
+	return s.backend.close()
 }
 
 // DefaultRoot returns the default artifact root, matching sessions and plans.
@@ -384,8 +535,17 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	if !filepath.IsAbs(record.RepoPath) {
 		return FlowRecord{}, fmt.Errorf("flow repo path must be absolute: %s", record.RepoPath)
 	}
+	// Validate the captured agent settings before any record is written, so a
+	// rejected selection can never leave a partial Flow behind.
+	phaseAgent := opts.PhaseAgent.Normalize()
+	if err := phaseAgent.Validate(); err != nil {
+		return FlowRecord{}, fmt.Errorf("flow phase agent settings: %w", err)
+	}
 	if record.FlowID == "" {
-		id, err := s.generateID(record.Title)
+		// Create reads the clock twice: once to allocate the timestamped ID and
+		// again below for the record's own timestamps. Both reads are counted by
+		// the existing tests, so neither may be collapsed into the other.
+		id, err := s.backend.allocateID(record.Title, s.now())
 		if err != nil {
 			return FlowRecord{}, err
 		}
@@ -393,57 +553,69 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	} else if err := validateFlowID(record.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	release, err := s.acquireFlowLock(record.FlowID)
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	defer release()
-	if _, err := os.Stat(s.flowDir(record.FlowID)); err == nil {
-		return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
-	} else if !os.IsNotExist(err) {
-		return FlowRecord{}, fmt.Errorf("check flow id collision: %w", err)
-	}
+	return s.backend.update(record.FlowID, func(sess flowSession) (FlowRecord, error) {
+		if exists, err := sess.exists(); err != nil {
+			return FlowRecord{}, fmt.Errorf("check flow id collision: %w", err)
+		} else if exists {
+			return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
+		}
 
-	now := s.now()
-	record.SchemaVersion = schemaVersion
-	record.CreatedAt = defaultTime(record.CreatedAt, now)
-	record.UpdatedAt = defaultTime(record.UpdatedAt, now)
-	record.AutoMode = true
-	if opts.Preset != nil && len(record.Phases) > 0 {
-		return FlowRecord{}, fmt.Errorf("preset cannot be used with declared phases")
-	}
-	if len(record.Phases) == 0 {
-		preset := DefaultPreset()
-		if opts.Preset != nil {
-			preset = *opts.Preset
-			record.PresetName = strings.ToLower(strings.TrimSpace(preset.Name))
+		// draft is a shallow copy: draft.Phases still aliases the caller's
+		// array, and backfillLinearDependsOnForCreate rewrites depends_on
+		// through it. That makes this closure single-use — a second pass would
+		// see the first pass's edges and take the authoritative-graph branch
+		// instead. Clause 1 on backend.update is what makes that safe.
+		draft := record
+		now := s.now()
+		draft.SchemaVersion = schemaVersion
+		draft.CreatedAt = defaultTime(draft.CreatedAt, now)
+		draft.UpdatedAt = defaultTime(draft.UpdatedAt, now)
+		draft.AutoMode = true
+		draft.Headless = true
+		if opts.Headless != nil {
+			draft.Headless = *opts.Headless
 		}
-		if err := validatePreset(preset); err != nil {
-			return FlowRecord{}, err
+		if opts.Preset != nil && len(draft.Phases) > 0 {
+			return FlowRecord{}, fmt.Errorf("preset cannot be used with declared phases")
 		}
-		record.Phases = seedPhases(preset.Phases, record.CreatedAt, record.UpdatedAt)
-		record = refreshPhaseReadiness(record, now)
-	} else {
-		if err := validateDeclaredPhaseDependencies(record.Phases); err != nil {
-			return FlowRecord{}, err
-		}
-		authoritativeEdges := graphHasAuthoritativeEdges(record.Phases)
-		record.Phases = backfillLinearDependsOnForCreate(record.Phases)
-		if err := validateUniqueMergePhaseKind(record.Phases); err != nil {
-			return FlowRecord{}, err
-		}
-		if authoritativeEdges {
-			if err := validatePhaseGraph(record.Phases); err != nil {
+		if len(draft.Phases) == 0 {
+			preset := DefaultPreset()
+			if opts.Preset != nil {
+				preset = *opts.Preset
+				draft.PresetName = strings.ToLower(strings.TrimSpace(preset.Name))
+			}
+			if err := validatePreset(preset); err != nil {
 				return FlowRecord{}, err
 			}
+			draft.Phases = seedPhases(preset.Phases, phaseAgent, draft.CreatedAt, draft.UpdatedAt)
+			draft = refreshPhaseReadiness(draft, now)
+		} else {
+			if err := validateDeclaredPhaseDependencies(draft.Phases); err != nil {
+				return FlowRecord{}, err
+			}
+			phases, err := applyDeclaredPhaseAgentSettings(draft.Phases, phaseAgent)
+			if err != nil {
+				return FlowRecord{}, err
+			}
+			draft.Phases = phases
+			authoritativeEdges := graphHasAuthoritativeEdges(draft.Phases)
+			draft.Phases = backfillLinearDependsOnForCreate(draft.Phases)
+			if err := validateUniqueMergePhaseKind(draft.Phases); err != nil {
+				return FlowRecord{}, err
+			}
+			if authoritativeEdges {
+				if err := validatePhaseGraph(draft.Phases); err != nil {
+					return FlowRecord{}, err
+				}
+			}
 		}
-	}
-	record = normalizeRecord(record, false)
-	record.Status = DeriveStatus(record)
-	if err := s.write(record); err != nil {
-		return FlowRecord{}, err
-	}
-	return record, nil
+		draft = normalizeRecord(draft, false)
+		draft.Status = DeriveStatus(draft)
+		if err := s.saveSession(sess, draft); err != nil {
+			return FlowRecord{}, err
+		}
+		return draft, nil
+	})
 }
 
 // Read returns one flow record by ID.
@@ -451,7 +623,10 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, err
 	}
-	record, ok := s.readRecord(flowID)
+	record, ok, err := s.readRecord(flowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(flowID)
 	}
@@ -464,73 +639,79 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	release, err := s.acquireFlowLock(update.FlowID)
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	defer release()
-	record, ok := s.readRecord(update.FlowID)
-	if !ok {
-		return FlowRecord{}, flowNotFoundError(update.FlowID)
-	}
-	if err := validatePhaseGraphResolved(record); err != nil {
-		return FlowRecord{}, err
-	}
-	// When a legacy record still holds duplicate rows for this logical phase,
-	// the first row wins: it is validated, updated, and kept, while the others
-	// are merged into it by collapseDuplicatePhaseRows below.
-	phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
-	if phaseIndex < 0 {
-		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
-	}
+	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		if !ok {
+			return FlowRecord{}, flowNotFoundError(update.FlowID)
+		}
+		record := stored.record
+		if err := validatePhaseGraphResolved(record); err != nil {
+			return FlowRecord{}, err
+		}
+		// When a legacy record still holds duplicate rows for this logical phase,
+		// the first row wins: it is validated, updated, and kept, while the others
+		// are merged into it by collapseDuplicatePhaseRows below.
+		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
 
-	now := s.now()
-	phase := record.Phases[phaseIndex]
-	originalStatus := phase.Status
-	if err := validatePhaseUpdate(phase, update); err != nil {
-		return FlowRecord{}, err
-	}
-	phase.Status = update.Status
-	if clearsPhaseOutcome(update.Status) {
-		phase.Outcome = ""
-	}
-	if outcome := strings.TrimSpace(update.Outcome); outcome != "" {
-		phase.Outcome = outcome
-	}
-	if update.Notes != "" {
-		phase.Notes = update.Notes
-	}
-	if update.Summary != "" {
-		phase.Summary = update.Summary
-	}
-	phase.PhaseID = update.PhaseID
-	phase.UpdatedAt = now
-	record.Phases[phaseIndex] = phase
-	record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
-	record = resetMergePendingForActiveMergePhase(record, phase)
-	record.UpdatedAt = now
-	record = refreshPhaseReadiness(record, now)
-	record.Status = DeriveStatus(record)
-	if err := s.write(record); err != nil {
-		return FlowRecord{}, err
-	}
-	if err := s.syncLinkedPlanPhase(record, phase); err != nil {
-		if originalStatus == PhaseCompleted {
-			return record, nil
+		now := s.now()
+		phase := record.Phases[phaseIndex]
+		originalStatus := phase.Status
+		if err := validatePhaseUpdate(phase, update); err != nil {
+			return FlowRecord{}, err
 		}
-		failedPhase := markPhaseSyncNeedsAttention(phase, err, now)
-		if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
-			record.Phases[failedIndex] = failedPhase
+		phase.Status = update.Status
+		if clearsPhaseOutcome(update.Status) {
+			phase.Outcome = ""
 		}
+		if outcome := strings.TrimSpace(update.Outcome); outcome != "" {
+			phase.Outcome = outcome
+		}
+		if update.Notes != "" {
+			phase.Notes = update.Notes
+		}
+		if update.Summary != "" {
+			phase.Summary = update.Summary
+		}
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		record = resetMergePendingForActiveMergePhase(record, phase)
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
-		if writeErr := s.write(record); writeErr != nil {
-			return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+		if err := s.saveSession(sess, record); err != nil {
+			return FlowRecord{}, err
 		}
-		return FlowRecord{}, err
-	}
-	return record, nil
+		if err := s.syncLinkedPlanPhase(record, phase); err != nil {
+			if originalStatus == PhaseCompleted {
+				return record, nil
+			}
+			// The compensating write below must survive this error: see the
+			// durability clause on backend.update.
+			failedPhase := markPhaseSyncNeedsAttention(phase, err, now)
+			if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
+				record.Phases[failedIndex] = failedPhase
+			}
+			record.UpdatedAt = now
+			record = refreshPhaseReadiness(record, now)
+			record.Status = DeriveStatus(record)
+			if writeErr := s.saveSession(sess, record); writeErr != nil {
+				return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+			}
+			// Deliberately a ZERO record beside the error, unlike
+			// MarkManualMerge, which returns the compensated record. Both are
+			// pinned by tests; see clause 3 on backend.update.
+			return FlowRecord{}, err
+		}
+		return record, nil
+	})
 }
 
 // RestartPhase atomically restarts a blocked or needs-attention phase as running.
@@ -619,6 +800,9 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			record = refreshPhaseReadiness(record, now)
 			return record, nil
 		}
+		// New children inherit the implementation parent's captured settings;
+		// existing children keep whatever they already carry, since
+		// AddChildPhase is re-run idempotently.
 		child := FlowPhase{
 			PhaseID:       update.PhaseID,
 			ParentPhaseID: update.ParentPhaseID,
@@ -628,7 +812,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			Order:         update.Order,
 			CreatedAt:     now,
 			UpdatedAt:     now,
-		}
+		}.withAgentSettings(record.Phases[parentIndex].AgentSettings())
 		record.Phases = append(record.Phases, child)
 		record.Phases = orderImplementationChildren(record.Phases, update.ParentPhaseID)
 		record.UpdatedAt = now
@@ -660,19 +844,39 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 	return phase
 }
 
+// syncLinkedPlanPhase mirrors a completed Flow phase into its linked plan.
+//
+// It runs INSIDE the backend writer section, which under SQLite is the
+// database-wide write lock rather than the file backend's per-Flow lock. That
+// is deliberate: clause 2 of the backend.update contract makes the
+// needs_attention compensation durable in the same transaction as the phase
+// change, so a sync failure can never leave a completed phase without its
+// marker. The cost is that a contended plan-store file lock stalls every Flow
+// write, not just this one. Lock order is flow-db-writer -> plan-file-lock and
+// is never taken in reverse, so this cannot deadlock — it can only wait.
+//
+// The second cost is ordering: the plan file is durable the moment this returns,
+// while the Flow row is not durable until the commit that follows. A crash or a
+// failed commit in that window leaves the plan phase completed and the Flow
+// phase not. The file backend had the opposite skew (Flow durable first, plan
+// second) — there was never cross-store atomicity — and this direction is the
+// safer of the two: the authoritative store commits last, and re-running the
+// phase completion re-marks the plan phase, which is idempotent. Closing the
+// window for real needs an outbox or a second compensating transaction; that is
+// tracked with the blast-radius work in approach-80e.5, not solved here.
 func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
 	planID := strings.TrimSpace(record.PlanID)
 	if planID == "" || phase.Status != PhaseCompleted {
 		return nil
 	}
-	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: s.root})
+	writer, err := s.planSync.open()
 	if err != nil {
 		return fmt.Errorf("sync linked plan phase: %w", err)
 	}
 	if s.beforeLinkedPlanPhaseSync != nil {
 		s.beforeLinkedPlanPhaseSync(planID, phase.PhaseID)
 	}
-	if err := planStore.SetPhaseStatus(planID, phase.PhaseID, "completed"); err != nil {
+	if err := writer.markPhaseCompleted(planID, phase.PhaseID); err != nil {
 		return fmt.Errorf("sync linked plan phase: %w", err)
 	}
 	return nil
@@ -784,69 +988,75 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	release, err := s.acquireFlowLock(update.FlowID)
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	defer release()
-	record, ok := s.readRecord(update.FlowID)
-	if !ok {
-		return FlowRecord{}, flowNotFoundError(update.FlowID)
-	}
-	if err := validatePhaseGraphResolved(record); err != nil {
-		return FlowRecord{}, err
-	}
-	phaseIndex := mergePhaseIndex(record)
-	if phaseIndex < 0 {
-		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
-	}
-	phase := record.Phases[phaseIndex]
-	merge, err := validateManualMergeUpdate(record, phase, update)
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	if record.PR.Status == MergeMerged &&
-		phase.Status == PhaseCompleted &&
-		mergeEqual(record.Merge, merge) {
-		return record, nil
-	}
-
-	now := s.now()
-	summary := strings.TrimSpace(update.Summary)
-	if summary == "" {
-		summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
-	}
-	previousPRStatus := record.PR.Status
-	phase.Status = PhaseCompleted
-	phase.Outcome = MergeMerged
-	phase.Summary = summary
-	phase.UpdatedAt = now
-	record.Phases[phaseIndex] = phase
-	record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
-	record.PR.Status = MergeMerged
-	record.Merge = merge
-	record.UpdatedAt = now
-	record = refreshPhaseReadiness(record, now)
-	record.Status = DeriveStatus(record)
-	if err := s.write(record); err != nil {
-		return FlowRecord{}, err
-	}
-	if err := s.syncLinkedPlanPhase(record, phase); err != nil {
-		failedPhase := markPhaseSyncNeedsAttention(phase, err, now)
-		if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
-			record.Phases[failedIndex] = failedPhase
+	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
 		}
-		record.PR.Status = previousPRStatus
-		record.Merge = Merge{Status: MergePending}
+		if !ok {
+			return FlowRecord{}, flowNotFoundError(update.FlowID)
+		}
+		record := stored.record
+		if err := validatePhaseGraphResolved(record); err != nil {
+			return FlowRecord{}, err
+		}
+		phaseIndex := mergePhaseIndex(record)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		merge, err := validateManualMergeUpdate(record, phase, update)
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		if record.PR.Status == MergeMerged &&
+			phase.Status == PhaseCompleted &&
+			mergeEqual(record.Merge, merge) {
+			return record, nil
+		}
+
+		now := s.now()
+		summary := strings.TrimSpace(update.Summary)
+		if summary == "" {
+			summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
+		}
+		previousPRStatus := record.PR.Status
+		phase.Status = PhaseCompleted
+		phase.Outcome = MergeMerged
+		phase.Summary = summary
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		record.PR.Status = MergeMerged
+		record.Merge = merge
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
-		if writeErr := s.write(record); writeErr != nil {
-			return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+		if err := s.saveSession(sess, record); err != nil {
+			return FlowRecord{}, err
 		}
-		return record, err
-	}
-	return record, nil
+		if err := s.syncLinkedPlanPhase(record, phase); err != nil {
+			// The compensating write below must survive this error: see the
+			// durability clause on backend.update.
+			failedPhase := markPhaseSyncNeedsAttention(phase, err, now)
+			if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
+				record.Phases[failedIndex] = failedPhase
+			}
+			record.PR.Status = previousPRStatus
+			record.Merge = Merge{Status: MergePending}
+			record.UpdatedAt = now
+			record = refreshPhaseReadiness(record, now)
+			record.Status = DeriveStatus(record)
+			if writeErr := s.saveSession(sess, record); writeErr != nil {
+				return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+			}
+			// Deliberately the COMPENSATED record beside the error, unlike
+			// SetPhase, which returns a zero record. Both are pinned by tests;
+			// see clause 3 on backend.update.
+			return record, err
+		}
+		return record, nil
+	})
 }
 
 // SetAutoMode enables or disables TUI-owned automatic phase launching for one Flow.
@@ -859,6 +1069,21 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 		record.AutoMode = update.Enabled
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// SetHeadless enables or disables headless manual launches for one Flow.
+func (s *Store) SetHeadless(update HeadlessUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.Headless == update.Enabled {
+			return record, nil
+		}
+		record.Headless = update.Enabled
 		record.UpdatedAt = now
 		return record, nil
 	})
@@ -998,7 +1223,7 @@ func validateFlowLaunchOccupancy(record FlowRecord, targetIndex int, autoLaunch 
 		}
 		message := fmt.Sprintf("flow %q already has running phase %q", record.FlowID, phase.PhaseID)
 		if autoLaunch {
-			return fmt.Errorf("%s: %w", message, errAutoLaunchOutdated)
+			return fmt.Errorf("%s: %w", message, ErrAutoLaunchOutdated)
 		}
 		return fmt.Errorf("%s", message)
 	}
@@ -1033,13 +1258,13 @@ func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
 	}
 	switch {
 	case !record.AutoMode:
-		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, ErrAutoLaunchOutdated)
 	case artifacts.NormalizePhaseID(phase.PhaseID) == "" || SemanticKind(phase) == KindMerge:
-		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	case phase.Status != PhaseReady:
-		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, ErrAutoLaunchOutdated)
 	case !phaseLaunchEligibleAtIndex(record, phaseIndex):
-		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	default:
 		return nil
 	}
@@ -1260,26 +1485,12 @@ func launchPrecedes(launchIDs []string, candidate, current string) bool {
 	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
-// Delete removes only the persisted Flow record directory.
+// Delete removes only the requested Flow row.
 func (s *Store) Delete(flowID string) error {
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
-	release, err := s.acquireFlowLock(flowID)
-	if err != nil {
-		return err
-	}
-	defer release()
-	dir := s.flowDir(flowID)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return flowNotFoundError(flowID)
-	} else if err != nil {
-		return fmt.Errorf("stat flow %q: %w", flowID, err)
-	}
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("delete flow %q: %w", flowID, err)
-	}
-	return nil
+	return s.backend.delete(flowID)
 }
 
 func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
@@ -1291,41 +1502,80 @@ func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, ti
 }
 
 func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	release, err := s.acquireFlowLock(flowID)
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	defer release()
-	record, ok := s.readRecordWithReadiness(flowID, selfHealOnRead)
-	if !ok {
-		return FlowRecord{}, flowNotFoundError(flowID)
-	}
-	if selfHealOnRead {
-		if err := validatePhaseGraphResolved(record); err != nil {
+	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok, err := sess.get()
+		if err != nil {
 			return FlowRecord{}, err
 		}
-	}
-	record, err = mutate(record, s.now())
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	record = normalizeRecordBase(record)
-	record.Status = DeriveStatus(record)
-	if err := s.write(record); err != nil {
-		return FlowRecord{}, err
-	}
-	return record, nil
+		if !ok {
+			return FlowRecord{}, flowNotFoundError(flowID)
+		}
+		record := stored.record
+		if selfHealOnRead {
+			if err := validatePhaseGraphResolved(record); err != nil {
+				return FlowRecord{}, err
+			}
+		}
+		record, err = mutate(record, s.now())
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		record = normalizeRecordBase(record)
+		record.Status = DeriveStatus(record)
+		if err := s.saveSession(sess, record); err != nil {
+			return FlowRecord{}, err
+		}
+		return record, nil
+	})
 }
 
-func validatePhaseGraphResolved(record FlowRecord) error {
+// fencingPresetName returns the normalized preset name when a record's phase
+// graph could not be rebuilt from it, which fences phase mutation on that
+// record, and "" when the record is not fenced.
+func fencingPresetName(record FlowRecord) string {
 	if record.GraphRecovery.Status != GraphRecoveryMissingEdgesUnresolved {
-		return nil
+		return ""
 	}
 	preset := normalizePresetName(record.PresetName)
 	if preset == "" || preset == "default" {
+		return ""
+	}
+	return preset
+}
+
+func mutationFencedByPreset(record FlowRecord) bool {
+	return fencingPresetName(record) != ""
+}
+
+func validatePhaseGraphResolved(record FlowRecord) error {
+	preset := fencingPresetName(record)
+	if preset == "" {
 		return nil
 	}
-	return fmt.Errorf("flow %q has unresolved missing dependencies; restore preset %q or explicit depends_on before mutating phases", record.FlowID, preset)
+	// Two things this deliberately does NOT say.
+	//
+	// "Restore the preset and retry" is false: under the file store edge recovery
+	// re-ran on every read and restoring the preset really did heal the record,
+	// but records are canonical at write time now, so recovery ran once during
+	// migration and never runs again.
+	//
+	// "Remove approach.db and re-run the migration" is worse than false — it
+	// works, and it destroys data. flows/ is a snapshot frozen at migration time,
+	// not a live mirror; nothing has written to it since. Re-running the cutover
+	// discards every Flow created or changed since that day. It is only safe in
+	// the minutes after the migration, which is the one place it is offered (see
+	// reportCutover), and it must never be offered here, where by definition the
+	// database has been in use.
+	// The manual repair names BOTH edits on purpose. This check keys off the
+	// graph_recovery marker, not off the edges, so setting depends_on alone
+	// leaves the record fenced exactly as before — a half-stated recipe reads as
+	// a complete one and sends the operator away convinced the product is broken.
+	return fmt.Errorf("flow %q has unresolved missing dependencies from preset %q;"+
+		" its phase graph could not be rebuilt during the one-time legacy migration and cannot be"+
+		" rebuilt now, because preset edge recovery does not run again — recreate this Flow, or repair"+
+		" it directly in the flow database by setting depends_on on its phases AND removing the"+
+		" %q marker from its stored record (see docs/config.md)",
+		record.FlowID, preset, GraphRecoveryMissingEdgesUnresolved)
 }
 
 func appendUnique(values []string, value string) []string {
@@ -1337,47 +1587,16 @@ func appendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
-func (s *Store) acquireFlowLock(flowID string) (func(), error) {
-	if err := validateFlowID(flowID); err != nil {
-		return nil, err
-	}
-	lockDir := filepath.Join(s.root, "flows", ".locks")
-	if err := os.MkdirAll(lockDir, artifacts.DirPerm); err != nil {
-		return nil, fmt.Errorf("create flow lock directory: %w", err)
-	}
-	if err := os.Chmod(lockDir, artifacts.DirPerm); err != nil {
-		return nil, fmt.Errorf("secure flow lock directory: %w", err)
-	}
-	lockPath := filepath.Join(lockDir, flowID+".lock")
-	return artifacts.AcquireFileLock(lockPath, fmt.Sprintf("flow lock %q", flowID), s.lockTimeout)
-}
-
 // List returns records matching filter, sorted by UpdatedAt descending.
 func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
-	root := filepath.Join(s.root, "flows")
-	entries, err := os.ReadDir(root)
+	stored, err := s.backend.list(filter)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("list flows: %w", err)
+		return nil, err
 	}
 	var records []FlowRecord
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		record, ok := s.readRecord(entry.Name())
-		if !ok {
-			continue
-		}
-		if matchesFilter(record, filter) {
-			records = append(records, record)
-		}
+	for _, flow := range stored {
+		records = append(records, flow.record)
 	}
-	sort.SliceStable(records, func(i, j int) bool {
-		return records[i].UpdatedAt.After(records[j].UpdatedAt)
-	})
 	return records, nil
 }
 
@@ -1942,156 +2161,42 @@ func DeriveStatus(record FlowRecord) string {
 }
 
 func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
-	return seedPhases(DefaultPreset().Phases, createdAt, updatedAt)
+	return seedPhases(DefaultPreset().Phases, PhaseAgentSettings{}, createdAt, updatedAt)
 }
 
-func (s *Store) generateID(title string) (string, error) {
-	return artifacts.AllocateTimestampedID(artifacts.IDOptions{
-		Root:         s.root,
-		Collection:   "flows",
-		Title:        title,
-		FallbackSlug: "flow",
-		Kind:         "flow",
-		Now:          s.now(),
-	})
-}
-
-func (s *Store) write(record FlowRecord) error {
+// saveSession validates and normalizes one record, then persists it through the
+// critical section the caller already holds. Normalization is deliberately in
+// place: callers observe the normalized DependsOn slices on the record they
+// passed in, and on every record the public API returns.
+func (s *Store) saveSession(sess flowSession, record FlowRecord) error {
 	if err := validateFlowID(record.FlowID); err != nil {
 		return err
 	}
 	record.Phases = normalizeDependsOnValues(record.Phases)
-	dir, err := artifacts.EnsureRecordDir(s.root, "flows", record.FlowID)
+	return sess.save(record)
+}
+
+func (s *Store) readRecord(flowID string) (FlowRecord, bool, error) {
+	stored, ok, err := s.backend.get(flowID)
 	if err != nil {
-		return fmt.Errorf("secure flow directory: %w", err)
+		return FlowRecord{}, false, err
 	}
-	data, err := marshalFlowRecord(record)
-	if err != nil {
-		return fmt.Errorf("encode flow metadata: %w", err)
+	if !ok {
+		return FlowRecord{}, false, nil
 	}
-	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
-		return fmt.Errorf("write flow metadata: %w", err)
-	}
-	return nil
+	return stored.record, true, nil
 }
 
-func marshalFlowRecord(record FlowRecord) ([]byte, error) {
-	if len(record.preserveMissingDependsOn) == 0 {
-		return json.MarshalIndent(record, "", "  ")
-	}
-	phases := make([]flowPhaseForWrite, 0, len(record.Phases))
-	for _, phase := range record.Phases {
-		phases = append(phases, flowPhaseForWriteFrom(phase, record.preserveMissingDependsOn[artifacts.NormalizePhaseID(phase.PhaseID)]))
-	}
-	return json.MarshalIndent(flowRecordForWrite{
-		SchemaVersion: record.SchemaVersion,
-		FlowID:        record.FlowID,
-		Title:         record.Title,
-		Instructions:  record.Instructions,
-		Status:        record.Status,
-		RepoPath:      record.RepoPath,
-		WorktreePath:  record.WorktreePath,
-		Branch:        record.Branch,
-		BaseRef:       record.BaseRef,
-		Commit:        record.Commit,
-		PresetName:    record.PresetName,
-		PlanID:        record.PlanID,
-		PlanPath:      record.PlanPath,
-		Issue:         record.Issue,
-		PR:            record.PR,
-		Merge:         record.Merge,
-		AutoMode:      record.AutoMode,
-		Phases:        phases,
-		CreatedAt:     record.CreatedAt,
-		UpdatedAt:     record.UpdatedAt,
-	}, "", "  ")
-}
-
-type flowRecordForWrite struct {
-	SchemaVersion int                 `json:"schema_version"`
-	FlowID        string              `json:"flow_id"`
-	Title         string              `json:"title"`
-	Instructions  string              `json:"instructions"`
-	Status        string              `json:"status"`
-	RepoPath      string              `json:"repo_path"`
-	WorktreePath  string              `json:"worktree_path,omitempty"`
-	Branch        string              `json:"branch,omitempty"`
-	BaseRef       string              `json:"base_ref,omitempty"`
-	Commit        string              `json:"commit,omitempty"`
-	PresetName    string              `json:"preset_name,omitempty"`
-	PlanID        string              `json:"plan_id,omitempty"`
-	PlanPath      string              `json:"plan_path,omitempty"`
-	Issue         Issue               `json:"issue,omitempty"`
-	PR            PullRequest         `json:"pr,omitempty"`
-	Merge         Merge               `json:"merge,omitempty"`
-	AutoMode      bool                `json:"auto_mode,omitempty"`
-	Phases        []flowPhaseForWrite `json:"phases"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
-}
-
-type flowPhaseForWrite struct {
-	PhaseID       string    `json:"phase_id"`
-	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
-	Title         string    `json:"title"`
-	Kind          string    `json:"kind"`
-	DependsOn     *[]string `json:"depends_on,omitempty"`
-	Status        string    `json:"status"`
-	Order         int       `json:"order"`
-	Outcome       string    `json:"outcome,omitempty"`
-	Notes         string    `json:"notes,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	LaunchIDs     []string  `json:"launch_ids,omitempty"`
-	Sessions      []Session `json:"sessions,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-}
-
-func flowPhaseForWriteFrom(phase FlowPhase, omitDependsOn bool) flowPhaseForWrite {
-	var dependsOn *[]string
-	if !omitDependsOn {
-		dependsOn = &phase.DependsOn
-	}
-	return flowPhaseForWrite{
-		PhaseID:       phase.PhaseID,
-		ParentPhaseID: phase.ParentPhaseID,
-		Title:         phase.Title,
-		Kind:          phase.Kind,
-		DependsOn:     dependsOn,
-		Status:        phase.Status,
-		Order:         phase.Order,
-		Outcome:       phase.Outcome,
-		Notes:         phase.Notes,
-		Summary:       phase.Summary,
-		LaunchIDs:     phase.LaunchIDs,
-		Sessions:      phase.Sessions,
-		CreatedAt:     phase.CreatedAt,
-		UpdatedAt:     phase.UpdatedAt,
-	}
-}
-
-func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
-	return s.readRecordWithReadiness(flowID, true)
-}
-
-func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (FlowRecord, bool) {
-	if err := validateFlowID(flowID); err != nil {
-		return FlowRecord{}, false
-	}
-	data, err := os.ReadFile(filepath.Join(s.flowDir(flowID), "meta.json"))
-	if err != nil {
-		return FlowRecord{}, false
-	}
-	presence := rawDependsOnPresence(data)
-	var record FlowRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return FlowRecord{}, false
-	}
-	if record.FlowID != flowID || record.SchemaVersion != schemaVersion {
-		return FlowRecord{}, false
+// canonicalizeLegacyFlow performs the one-time healing applied while importing
+// historical meta.json records. Runtime SQLite reads only validate and decode.
+func canonicalizeLegacyFlow(stored legacyStoredFlow, presets map[string]Preset) FlowRecord {
+	record := stored.record
+	presence := stored.dependsOnPresence
+	if !stored.headlessPresent {
+		record.Headless = true
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
-	record = s.restoreMissingDependsOn(record, presence)
+	record = restoreLegacyMissingDependsOn(record, presence, presets)
 	unresolvedGraph := false
 	if record.GraphRecovery.Status == GraphRecoveryPresetEdgesRestored {
 		selfHeal = true
@@ -2099,29 +2204,22 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 		selfHeal = false
 		unresolvedGraph = true
 	}
-	if selfHealOnRead {
-		if unresolvedGraph {
-			record = normalizeRecordBase(record)
-			record = normalizeReviewOutcomes(record)
-		} else {
-			record = normalizeRecord(record, selfHeal)
-		}
-	} else {
+	if unresolvedGraph {
 		record = normalizeRecordBase(record)
-		if unresolvedGraph {
-			record.preserveMissingDependsOn = missingTopLevelDependsOnByID(record.Phases, presence)
-		}
+		record = normalizeReviewOutcomes(record)
+	} else {
+		record = normalizeRecord(record, selfHeal)
 	}
 	record.Status = DeriveStatus(record)
-	return record, true
+	return record
 }
 
-func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDependsOnState) FlowRecord {
+func restoreLegacyMissingDependsOn(record FlowRecord, presence []rawDependsOnState, presets map[string]Preset) FlowRecord {
 	if rawDependsOnPresentForEveryTopLevel(record.Phases, presence) {
 		record.Phases = normalizeDependsOnValues(record.Phases)
 		return record
 	}
-	if preset, ok := s.presetForRecovery(record); ok && presetMatchesRecord(preset, record) {
+	if preset, ok := presetForLegacyRecovery(record, presets); ok && presetMatchesRecord(preset, record) {
 		record.Phases = applyPresetDependsOn(record.Phases, preset)
 		record.GraphRecovery.Status = GraphRecoveryPresetEdgesRestored
 		return record
@@ -2135,12 +2233,12 @@ func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDepends
 	return record
 }
 
-func (s *Store) presetForRecovery(record FlowRecord) (Preset, bool) {
+func presetForLegacyRecovery(record FlowRecord, presets map[string]Preset) (Preset, bool) {
 	name := normalizePresetName(record.PresetName)
-	if name == "" || name == "default" || s.presets == nil {
+	if name == "" || name == "default" || presets == nil {
 		return Preset{}, false
 	}
-	preset, ok := s.presets[name]
+	preset, ok := presets[name]
 	return preset, ok
 }
 
@@ -2185,23 +2283,6 @@ func applyPresetDependsOn(phases []FlowPhase, preset Preset) []FlowPhase {
 	return normalizeDependsOnValues(phases)
 }
 
-func rawDependsOnPresence(data []byte) []rawDependsOnState {
-	var raw struct {
-		Phases []map[string]json.RawMessage `json:"phases"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-	presence := make([]rawDependsOnState, len(raw.Phases))
-	for i, phase := range raw.Phases {
-		_, ok := phase["depends_on"]
-		presence[i] = rawDependsOnState{
-			Present: ok,
-		}
-	}
-	return presence
-}
-
 func rawDependsOnPresentForTopLevel(phases []FlowPhase, presence []rawDependsOnState) bool {
 	for i, phase := range phases {
 		if phase.ParentPhaseID == "" && i < len(presence) && presence[i].Present {
@@ -2225,30 +2306,6 @@ func rawDependsOnPresentForEveryTopLevel(phases []FlowPhase, presence []rawDepen
 	return seenTopLevel
 }
 
-func missingTopLevelDependsOnByID(phases []FlowPhase, presence []rawDependsOnState) map[string]bool {
-	missing := make(map[string]bool)
-	for i, phase := range phases {
-		if phase.ParentPhaseID != "" {
-			continue
-		}
-		if i < len(presence) && presence[i].Present {
-			continue
-		}
-		id := artifacts.NormalizePhaseID(phase.PhaseID)
-		if id != "" {
-			missing[id] = true
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return missing
-}
-
-func (s *Store) flowDir(flowID string) string {
-	return artifacts.RecordDir(s.root, "flows", flowID)
-}
-
 func flowNotFoundError(flowID string) error {
 	return fmt.Errorf("flow %q not found: %w", flowID, errFlowNotFound)
 }
@@ -2265,13 +2322,6 @@ func validatePhaseID(phaseID string) error {
 		return fmt.Errorf("invalid phase id %q", phaseID)
 	}
 	return nil
-}
-
-func matchesFilter(record FlowRecord, filter FlowFilter) bool {
-	if filter.RepoPath != "" && filepath.Clean(record.RepoPath) != filepath.Clean(filter.RepoPath) {
-		return false
-	}
-	return true
 }
 
 func defaultTime(value, fallback time.Time) time.Time {
@@ -2298,7 +2348,18 @@ func normalizeRecordBase(record FlowRecord) FlowRecord {
 		record.Merge.Status = MergePending
 	}
 	record.Phases = backfillPhaseKinds(record.Phases)
+	record.Phases = normalizePhaseAgentSettings(record.Phases)
 	return record
+}
+
+// normalizePhaseAgentSettings trims and lowercases stored phase settings on
+// read. It deliberately does not validate them: an odd record still has to be
+// readable, and validation belongs to the create boundary.
+func normalizePhaseAgentSettings(phases []FlowPhase) []FlowPhase {
+	for i := range phases {
+		phases[i] = phases[i].withAgentSettings(phases[i].AgentSettings().Normalize())
+	}
+	return phases
 }
 
 func normalizeReviewOutcomes(record FlowRecord) FlowRecord {
@@ -2333,8 +2394,9 @@ func hasPlanReviewKind(record FlowRecord) bool {
 // collapseDuplicatePhaseRows keeps the row at keepIndex and drops every other
 // row whose normalized phase id matches it, repairing records that duplicated
 // one logical phase before phase ids were normalized. Launch and session
-// history from dropped rows is merged into the survivor; dropped notes and
-// summaries are kept only when the survivor's own fields are empty.
+// history from dropped rows is merged into the survivor; dropped notes,
+// summaries, and agent settings are kept only when the survivor's own fields
+// are empty.
 func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 	survivor := phases[keepIndex]
 	want := artifacts.NormalizePhaseID(survivor.PhaseID)
@@ -2361,6 +2423,12 @@ func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 		}
 		if survivor.Summary == "" {
 			survivor.Summary = phase.Summary
+		}
+		// Agent settings fall back as a whole triple, never per field, so a
+		// survivor never ends up with a model from one row and an agent from
+		// another.
+		if survivor.AgentSettings().IsZero() {
+			survivor = survivor.withAgentSettings(phase.AgentSettings())
 		}
 	}
 	kept[survivorPos] = survivor

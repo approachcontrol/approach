@@ -167,14 +167,23 @@ destroying recorded work on a malformed hand-authored record. Index-aware launch
 eligibility prevents stale duplicate rows from being selected for manual or
 AutoMode launches.
 
-Records created from named custom presets persist `preset_name`. If a record is
-later read with missing `depends_on` keys, Approach uses the named preset as a
-recovery hint when the preset is available and its phase IDs still match. The
-non-persisted `GraphRecovery.Status` values are:
+Records created from named custom presets persist `preset_name`. Edge recovery
+uses it as a hint when a legacy record's `depends_on` keys are missing — but
+that recovery runs **only during the one-time migration into `approach.db`**,
+not on every read as it did under the file store. Records are canonical at write
+time now, so what the migration decided is what the record carries from then on.
 
-- `preset_edges_restored`: missing edges were restored from the named preset.
-- `missing_edges_unresolved`: Approach refused to invent a graph. Re-select or
-  recreate the preset, or repair the record manually.
+One recovery marker is persisted: `missing_edges_unresolved`, meaning Approach
+refused to invent a graph because the named preset was unavailable or its phase
+IDs no longer matched. It fences phase mutation on that record, and it does not
+clear when the preset is restored later. The migration notice names every Flow
+in this state at the one moment it is cheap to fix — see `docs/config.md`. After
+that, the remedies are to recreate the Flow or to repair it directly in the
+database, which requires setting `depends_on` on the phases **and** deleting the
+`graph_recovery` marker: the fence keys off the marker, not off the edges, so
+editing `depends_on` alone leaves the Flow blocked. Re-running the cutover is
+**not** a safe remedy once the database has been in use, because `flows/` is a
+snapshot frozen at migration time rather than a live mirror.
 
 Default-preset records still use legacy linear backfill when `depends_on` is
 absent. Edge-less custom records without a recoverable preset remain readable
@@ -182,10 +191,16 @@ but degraded; their stored statuses are preserved except where a later
 phase-affecting mutation can safely re-derive readiness from explicit edges.
 
 AutoMode is drain-based for DAGs. A successful phase completion arms an
-in-memory drain for that Flow; each poll launches the first ready non-merge
-launchable phase only when no phase in that Flow is `running` and no
-flow-scoped embedded terminal is still open or auto-closing. This serializes
-branches so parallel agents do not collide in one worktree. Skipped phases do
+in-memory drain for that Flow; each poll picks the first ready non-merge
+launchable phase from the poll snapshot and launches it only when no phase in
+that Flow is `running`, no flow-scoped embedded terminal is still open or
+auto-closing, no manual resume or repair on that Flow is mid-write, and no
+session recorded against the candidate phase is still live. The candidate is
+then re-validated — not re-selected — against the authoritative record before
+it launches, so an earlier phase becoming ready in that window does not steal
+the launch; the already-chosen candidate proceeds as long as it is still
+launchable on its own merits, which is the same rule the store enforces. This
+serializes branches so parallel agents do not collide in one worktree. Skipped phases do
 not arm the drain, even when skip-with-notes readies successors. Resetting a
 phase back to `ready` also does not arm the drain. Completing an
 `autoreview`-kind phase may launch a custom non-merge successor; in the default
@@ -221,11 +236,70 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.
 
+## Per-phase agent settings
+
+Every phase persists three optional fields — `agent`, `model`, and
+`reasoning_effort` — captured from the agent settings in effect when the Flow is
+created. All Flow creation paths stamp them: the TUI "create Flow" and "create
+Flow and plan now" actions, the Ready-Beads shortcut, and `approach flow create`
+(from the `[agent]` config). Implementation child phases inherit their parent
+implementation phase's values when they are first created; re-running
+`approach flow phase add-child` never overwrites them.
+
+The fields are validated against the same rules as the `[agent]` config, with
+one addition: the stored model and reasoning effort are checked against the
+phase's own agent. The agent is required whenever a model or reasoning effort is
+set, so a model with no agent is rejected; an agent on its own is fine.
+
+Two layers enforce that, and they behave differently on purpose:
+
+- The store is the invariant. `flowstore.Store.CreateWithOptions` rejects an
+  unusable triple and writes no record, for both the create-time default and any
+  phase that declares its own settings.
+- The TUI request mapping drops before it stores. `FlowStarter` discards an
+  unusable triple rather than passing it down, so Flow creation cannot start
+  failing on an agent selection that used to be accepted. A dropped triple
+  stamps nothing, which reads as "resolve from the global setting at launch".
+
+In practice neither path is reachable from normal use: config loading already
+validates the `[agent]` block, and the TUI picks models and efforts from fixed
+choice lists.
+
+Each field means something on its own:
+
+- Empty — nothing was captured; resolve that field from the global setting in
+  effect at launch.
+- `default` — captured, and means the provider default. It is stored verbatim.
+- Anything else — captured and concrete.
+
+Nothing consumes these values at launch yet: `FlowPhaseLauncher`,
+`FlowStarter.StartPlan`, and Flow repair still resolve the agent, model, and
+reasoning effort from the current global settings. The fields are recorded for
+the follow-up that surfaces and then honors them.
+
 ## Compatibility and migration
 
-- The persisted schema is unchanged: `schema_version` stays `1` and no status
-  strings were added, removed, or renamed. Existing Flow JSON needs no
-  migration.
+- The persisted schema gains three optional phase fields (`agent`, `model`,
+  `reasoning_effort`); `schema_version` stays `1` and no status strings were
+  added, removed, or renamed. Records written without those phase fields keep
+  reading and writing without them. New records also always persist the
+  metadata field `headless`, and a legacy record that omitted it migrates to
+  `true`.
+- Records themselves are migrated once, on first open: `flows/<id>/meta.json`
+  is imported into `approach.db` and the old tree is left untouched in place.
+  See `docs/config.md` for the cutover's guarantees. Phase and
+  status semantics are unchanged by that move — only the storage medium is.
+- Preset-based `depends_on` recovery is part of that one-time migration and no
+  longer re-runs on read. A record whose preset was missing at migration keeps
+  its `missing_edges_unresolved` marker permanently, and restoring the preset
+  afterwards does not clear it; the migration notice names such Flows while
+  re-running the cutover is still safe, and the mutation-fence error afterwards
+  offers only remedies that do not discard post-migration Flows.
+- Records are canonical at write time rather than re-derived on every read, so
+  a rejected `approach flow phase reset` now leaves the record untouched
+  instead of demoting the phase to `pending` as a side effect. A reset blocked
+  by unsatisfied predecessors reports `requires satisfied predecessors` rather
+  than the older, less precise `requires running recoverable phase`.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
   `ResetRecoverableRunningPhase`) re-derive readiness for any graph. Records
