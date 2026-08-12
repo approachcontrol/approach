@@ -231,11 +231,24 @@ Flow and plan now" actions, the Ready-Beads shortcut, and `approach flow create`
 implementation phase's values when they are first created; re-running
 `approach flow phase add-child` never overwrites them.
 
-The fields are validated at creation against the same rules as the `[agent]`
-config, with one addition: the stored model and reasoning effort are checked
-against the phase's own agent, so a model with no agent is rejected. A selection
-that cannot be validated (for example an agent Approach does not support) stamps
-nothing rather than failing Flow creation.
+The fields are validated against the same rules as the `[agent]` config, with
+one addition: the stored model and reasoning effort are checked against the
+phase's own agent. The agent is required whenever a model or reasoning effort is
+set, so a model with no agent is rejected; an agent on its own is fine.
+
+Two layers enforce that, and they behave differently on purpose:
+
+- The store is the invariant. `flowstore.Store.CreateWithOptions` rejects an
+  unusable triple and writes no record, for both the create-time default and any
+  phase that declares its own settings.
+- The TUI request mapping drops before it stores. `FlowStarter` discards an
+  unusable triple rather than passing it down, so Flow creation cannot start
+  failing on an agent selection that used to be accepted. A dropped triple
+  stamps nothing, which reads as "resolve from the global setting at launch".
+
+In practice neither path is reachable from normal use: config loading already
+validates the `[agent]` block, and the TUI picks models and efforts from fixed
+choice lists.
 
 Each field means something on its own:
 

@@ -1,10 +1,6 @@
 package agent
 
 // Preferences is the full set of stored per-provider agent selections.
-//
-// The fields are named rather than positional because the codex and claude
-// values are pairwise swappable at the same type: a transposition would compile
-// and validate, and would then persist a Codex model under claude.
 type Preferences struct {
 	Command      string
 	CodexModel   string

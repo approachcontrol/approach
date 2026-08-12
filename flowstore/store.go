@@ -134,9 +134,10 @@ type FlowPhase struct {
 
 // PhaseAgentSettings is the agent selection captured for a Flow phase.
 //
-// Each field is independent: an empty field means nothing was captured and the
-// value must be resolved from the global setting in effect at launch, while
-// "default" means the provider default was captured explicitly.
+// Each field is read independently: an empty field means nothing was captured
+// and the value must be resolved from the global setting in effect at launch,
+// while "default" means the provider default was captured explicitly. Writing
+// them is not independent — see Validate.
 type PhaseAgentSettings struct {
 	Agent           string
 	Model           string
@@ -144,7 +145,9 @@ type PhaseAgentSettings struct {
 }
 
 // PhaseAgentSettingsFrom converts a resolved launch selection into the
-// persistence shape. It is the only conversion between the two triples.
+// persistence shape. It is the only conversion between the two triples, so
+// callers holding an agent.Settings should route through it rather than
+// assigning the three fields by hand.
 func PhaseAgentSettingsFrom(settings agent.Settings) PhaseAgentSettings {
 	return PhaseAgentSettings{
 		Agent:           settings.Command,
@@ -156,7 +159,11 @@ func PhaseAgentSettingsFrom(settings agent.Settings) PhaseAgentSettings {
 // IsZero reports whether no setting was captured. Emptiness is evaluated after
 // normalization, so whitespace-only fields count as empty.
 func (s PhaseAgentSettings) IsZero() bool {
-	s = s.Normalize()
+	return s.Normalize().isEmpty()
+}
+
+// isEmpty is the plain emptiness check on an already-normalized triple.
+func (s PhaseAgentSettings) isEmpty() bool {
 	return s.Agent == "" && s.Model == "" && s.ReasoningEffort == ""
 }
 
@@ -174,7 +181,7 @@ func (s PhaseAgentSettings) Normalize() PhaseAgentSettings {
 // model cannot be interpreted without knowing its agent.
 func (s PhaseAgentSettings) Validate() error {
 	s = s.Normalize()
-	if s.IsZero() {
+	if s.isEmpty() {
 		return nil
 	}
 	if err := agent.Validate(s.Agent); err != nil {
@@ -207,14 +214,18 @@ func (p FlowPhase) withAgentSettings(settings PhaseAgentSettings) FlowPhase {
 // defaults, and a phase that declares any of them keeps its own triple, which
 // is then validated as a unit. Nothing is merged per field, so a phase that
 // declares a model without an agent fails rather than silently inheriting one.
+//
+// Phases are stamped in place, so a rejected phase leaves the ones before it
+// already stamped. Callers must discard the slice on error rather than reuse
+// it; CreateWithOptions does, by returning no record at all.
 func applyDeclaredPhaseAgentSettings(phases []FlowPhase, defaults PhaseAgentSettings) ([]FlowPhase, error) {
 	for i, phase := range phases {
 		settings := phase.AgentSettings().Normalize()
-		if settings.IsZero() {
+		if settings.isEmpty() {
 			settings = defaults
 		}
 		if err := settings.Validate(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("phase %q agent settings: %w", phase.PhaseID, err)
 		}
 		phases[i] = phase.withAgentSettings(settings)
 	}
@@ -483,7 +494,7 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	// rejected selection can never leave a partial Flow behind.
 	phaseAgent := opts.PhaseAgent.Normalize()
 	if err := phaseAgent.Validate(); err != nil {
-		return FlowRecord{}, err
+		return FlowRecord{}, fmt.Errorf("flow phase agent settings: %w", err)
 	}
 	if record.FlowID == "" {
 		id, err := s.generateID(record.Title)
@@ -2464,8 +2475,9 @@ func hasPlanReviewKind(record FlowRecord) bool {
 // collapseDuplicatePhaseRows keeps the row at keepIndex and drops every other
 // row whose normalized phase id matches it, repairing records that duplicated
 // one logical phase before phase ids were normalized. Launch and session
-// history from dropped rows is merged into the survivor; dropped notes and
-// summaries are kept only when the survivor's own fields are empty.
+// history from dropped rows is merged into the survivor; dropped notes,
+// summaries, and agent settings are kept only when the survivor's own fields
+// are empty.
 func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 	survivor := phases[keepIndex]
 	want := artifacts.NormalizePhaseID(survivor.PhaseID)
@@ -2492,6 +2504,12 @@ func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 		}
 		if survivor.Summary == "" {
 			survivor.Summary = phase.Summary
+		}
+		// Agent settings fall back as a whole triple, never per field, so a
+		// survivor never ends up with a model from one row and an agent from
+		// another.
+		if survivor.AgentSettings().IsZero() {
+			survivor = survivor.withAgentSettings(phase.AgentSettings())
 		}
 	}
 	kept[survivorPos] = survivor

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -247,11 +248,11 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 // so. An unusable selection stamps nothing, which means "resolve from the
 // global setting at launch".
 func phaseAgentSettingsForRequest(req FlowStartRequest) flowstore.PhaseAgentSettings {
-	settings := flowstore.PhaseAgentSettings{
-		Agent:           req.AgentCommand,
+	settings := flowstore.PhaseAgentSettingsFrom(agent.Settings{
+		Command:         req.AgentCommand,
 		Model:           req.Model,
 		ReasoningEffort: req.ReasoningEffort,
-	}.Normalize()
+	}).Normalize()
 	if settings.Validate() != nil {
 		return flowstore.PhaseAgentSettings{}
 	}

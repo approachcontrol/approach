@@ -2217,10 +2217,11 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 		m = m.setStatus(statusOther, "Cannot determine launch path for this plan")
 		return actions.AgentLaunchContext{}, false, m
 	}
+	launch := m.launchAgentSettings(m.agentCommand)
 	ctx := actions.AgentLaunchContext{
 		Command:          m.agentCommand,
-		Model:            m.launchModelFor(m.agentCommand),
-		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+		Model:            launch.Model,
+		ReasoningEffort:  launch.ReasoningEffort,
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     launchPath,
@@ -2678,10 +2679,11 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 			branch = row.Branch.Name
 		}
 	}
+	launch := m.launchAgentSettings(m.agentCommand)
 	return actions.AgentLaunchContext{
 		Command:          m.agentCommand,
-		Model:            m.launchModelFor(m.agentCommand),
-		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+		Model:            launch.Model,
+		ReasoningEffort:  launch.ReasoningEffort,
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     path,
