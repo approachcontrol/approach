@@ -567,6 +567,102 @@ func TestCommittedPhaseRowSurvivesDuplicateRowCollapse(t *testing.T) {
 	}
 }
 
+// TestCommittedCompletionGuardRejectsASameStampedRewrite pins that an equal
+// UpdatedAt is never on its own proof of identity. A timestamp is not a unique
+// write token: clock resolution, a clock adjustment, or an injected
+// StoreOptions.Now that does not advance can all give a later, different
+// completion the same stamp as this caller's. Accepting on the stamp alone would
+// let the compensation demote that writer's completion, which is exactly the
+// clobber the guard exists to prevent.
+func TestCommittedCompletionGuardRejectsASameStampedRewrite(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	committed := FlowPhase{
+		PhaseID:   "plan",
+		Status:    PhaseCompleted,
+		Outcome:   "approved",
+		Summary:   "Committed by this caller.",
+		UpdatedAt: now,
+	}
+	if !phaseStillHoldsCommittedCompletion(committed, committed) {
+		t.Fatal("guard rejected the untouched row it committed")
+	}
+	for name, mutate := range map[string]func(FlowPhase) FlowPhase{
+		"outcome": func(phase FlowPhase) FlowPhase { phase.Outcome = "changes-requested"; return phase },
+		"summary": func(phase FlowPhase) FlowPhase { phase.Summary = "Re-completed by another writer."; return phase },
+		"notes":   func(phase FlowPhase) FlowPhase { phase.Notes = "Re-completed by another writer."; return phase },
+	} {
+		t.Run(name, func(t *testing.T) {
+			current := mutate(committed)
+			if !current.UpdatedAt.Equal(committed.UpdatedAt) {
+				t.Fatalf("test setup changed UpdatedAt, which is the condition under test")
+			}
+			if phaseStillHoldsCommittedCompletion(current, committed) {
+				t.Fatalf("guard accepted a different completion sharing this caller's stamp: %+v", current)
+			}
+		})
+	}
+}
+
+// TestMarkManualMergeSkipsCompensationWhenThePRIdentityChanged pins the rest of
+// the PR clause. SetPR replaces record.PR wholesale, so a concurrent writer can
+// point the Flow at a different PR that is itself already merged — same status,
+// new number and URL — without touching record.Merge or the merge phase. Keying
+// the guard on PR.Status alone would let the rollback stamp this caller's
+// pre-merge status onto that writer's PR.
+func TestMarkManualMergeSkipsCompensationWhenThePRIdentityChanged(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, record := newMergeReadySeamFlow(t, syncer)
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		merged, err := store.MarkManualMerge(ManualMergeUpdate{
+			FlowID:   record.FlowID,
+			PRNumber: record.PR.Number,
+			PRURL:    record.PR.URL,
+			Commit:   "deadbeef",
+			MergedAt: time.Date(2026, 5, 6, 9, 0, 0, 0, time.UTC),
+		})
+		results <- syncOutcome{record: merged, err: err}
+	}()
+	block.waitReached(t)
+
+	if _, err := store.SetPR(PRUpdate{
+		FlowID: record.FlowID, Provider: "github", Number: 99,
+		URL: "https://github.com/o/r/pull/99", HeadBranch: "feat/seam", BaseBranch: "main", Status: MergeMerged,
+	}); err != nil {
+		t.Fatalf("SetPR(during the window) error = %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("MarkManualMerge() error = %v, want the sync failure", got.err)
+	}
+	stored, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if stored.PR.Number != 99 || stored.PR.Status != MergeMerged {
+		t.Fatalf("stored PR = %+v, want the concurrent writer's PR untouched", stored.PR)
+	}
+	if stored.Merge.Commit != "deadbeef" {
+		t.Fatalf("stored merge = %+v, want no rollback over a concurrent PR write", stored.Merge)
+	}
+	phase := phaseFromStore(t, store, record.FlowID, "merge")
+	if phase.Status != PhaseCompleted {
+		t.Fatalf("merge phase status = %q, want %q preserved", phase.Status, PhaseCompleted)
+	}
+	if strings.Contains(phase.Notes, "Linked plan phase sync failed") {
+		t.Fatalf("merge phase notes = %q, want no compensation note over a concurrent write", phase.Notes)
+	}
+}
+
 // failSecondUpdateBackend delegates to the real backend but fails every update
 // after the first. In both entry points the first update is the committing one
 // and the second is the compensation, so this drives the folded-error path

@@ -890,9 +890,16 @@ type phaseCommit struct {
 // the already-merged no-op path, whose sync error is discarded rather than
 // compensated.
 type manualMergeCommit struct {
-	phase            FlowPhase
-	stored           FlowPhase
-	merge            Merge
+	phase  FlowPhase
+	stored FlowPhase
+	merge  Merge
+	// pr is the WHOLE PullRequest as committed, not just its status, because
+	// SetPR replaces record.PR wholesale. A concurrent writer can point the Flow
+	// at a different PR that is itself already merged — new number and URL, same
+	// merged status — without touching record.Merge or the merge phase, and a
+	// guard that only checked the status would then stamp previousPRStatus onto
+	// that writer's PR. PullRequest is all scalars, so == is a full comparison.
+	pr               PullRequest
 	previousPRStatus string
 	retry            bool
 }
@@ -903,20 +910,24 @@ type manualMergeCommit struct {
 //
 // Status alone is insufficient: a concurrent re-completion preserves completed,
 // and demoting it would attribute this caller's sync failure to a completion it
-// did not make. The exact test for "this is still my write" is the timestamp —
-// phases ride inside the JSON blob and round-trip through RFC3339Nano (trailing
-// zeros trimmed, nanosecond value preserved), and s.now() returns a UTC time
-// with no monotonic reading, so Equal is a pure wall-clock comparison.
+// did not make. So the test is the completion-bearing fields, and only a change
+// there means someone else owns this completion now.
 //
-// That test alone is too strict, because writes that are not completions also
-// stamp phase.UpdatedAt: AttachSession and MarkPhaseLaunchEnded both bump it on
-// a completed row without touching the completion, and both are driven by agent
-// session lifecycle events that fire at almost exactly the moment the
-// completing write is parked on the plan lock. Rejecting on those is the
-// expensive direction — it produces a completed phase with a stale plan and NO
-// marker anywhere, which is silent. So a later stamp falls through to the
-// completion-bearing fields, and only a change there means someone else owns
-// this completion now.
+// phase.UpdatedAt is deliberately NOT part of it, in either direction. It is too
+// strict as a requirement, because writes that are not completions stamp it too:
+// AttachSession and MarkPhaseLaunchEnded both bump it on a completed row without
+// touching the completion, and both are driven by agent session lifecycle events
+// that fire at almost exactly the moment the completing write is parked on the
+// plan lock. Rejecting on those is the expensive direction — it produces a
+// completed phase with a stale plan and NO marker anywhere, which is silent.
+//
+// And it is not sufficient as a shortcut, because a timestamp is not a unique
+// write token. Two writes can carry the same stamp under a coarse or adjusted
+// clock, or under an injected StoreOptions.Now that does not advance, so an equal
+// UpdatedAt cannot license skipping the field comparison: doing so would accept a
+// different completion that happened to land on this caller's stamp. The fields
+// are compared unconditionally, which costs nothing — when the row really is
+// this caller's write they are equal by construction.
 //
 // It is a heuristic, not a fence. A bare re-completion that rewrites none of
 // those fields is indistinguishable from a metadata write, so it is accepted and
@@ -935,9 +946,6 @@ type manualMergeCommit struct {
 func phaseStillHoldsCommittedCompletion(current, committed FlowPhase) bool {
 	if current.Status != PhaseCompleted {
 		return false
-	}
-	if current.UpdatedAt.Equal(committed.UpdatedAt) {
-		return true
 	}
 	return current.Outcome == committed.Outcome &&
 		current.Summary == committed.Summary &&
@@ -1301,6 +1309,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 				phase:            phase,
 				stored:           phase,
 				merge:            record.Merge,
+				pr:               record.PR,
 				previousPRStatus: record.PR.Status,
 				retry:            true,
 			}
@@ -1331,6 +1340,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			phase:            phase,
 			stored:           committedPhaseRow(record, phase),
 			merge:            merge,
+			pr:               record.PR,
 			previousPRStatus: previousPRStatus,
 		}
 		return record, nil
@@ -1382,7 +1392,7 @@ func (s *Store) compensateManualMergeSyncFailure(flowID string, committed manual
 		index := phaseIndexByID(record.Phases, committed.stored.PhaseID)
 		if index < 0 ||
 			!phaseStillHoldsCommittedCompletion(record.Phases[index], committed.stored) ||
-			record.PR.Status != MergeMerged ||
+			record.PR != committed.pr ||
 			!mergeEqual(record.Merge, committed.merge) {
 			return record, nil
 		}
