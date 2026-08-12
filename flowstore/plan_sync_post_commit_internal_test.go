@@ -932,3 +932,44 @@ func TestPostCommitSyncFailureResetsATerminalSuccessor(t *testing.T) {
 		t.Fatalf("successor = %+v, want it reset to %q with the outcome cleared", successor, PhasePending)
 	}
 }
+
+// TestCompensatedPhaseRecoversThroughRestartAndCompletion pins the documented
+// recovery for the case where the compensation DID land, which is not the same
+// one as for the no-marker windows. A demoted phase cannot simply be completed
+// again — needs_attention -> completed is not in the transition table — so the
+// route is restart, then complete, and only that second completion re-runs the
+// plan write.
+func TestCompensatedPhaseRecoversThroughRestartAndCompletion(t *testing.T) {
+	syncer := &phaseScopedPlanSyncer{failPhase: "plan", err: errors.New("plan write exploded")}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{
+		Now: advancingClock(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), time.Millisecond),
+	})
+
+	if _, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted}); err == nil {
+		t.Fatal("SetPhase() error = nil, want the sync failure")
+	}
+	assertPhaseNeedsAttention(t, store, linked.FlowID, "plan")
+
+	if _, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted}); err == nil {
+		t.Fatal("SetPhase(direct repeat) error = nil, want needs_attention -> completed rejected")
+	}
+
+	if _, err := store.RestartPhase(PhaseRestartUpdate{
+		FlowID:  linked.FlowID,
+		PhaseID: "plan",
+		Notes:   "Retrying after the linked-plan sync failed.",
+	}); err != nil {
+		t.Fatalf("RestartPhase() error = %v", err)
+	}
+	syncer.failPhase = ""
+
+	if _, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted}); err != nil {
+		t.Fatalf("SetPhase(after restart) error = %v", err)
+	}
+	if got := phaseFromStore(t, store, linked.FlowID, "plan").Status; got != PhaseCompleted {
+		t.Fatalf("plan phase status = %q, want %q after the recovery", got, PhaseCompleted)
+	}
+	if got := syncer.calls; len(got) != 2 || got[1] != "seam-plan/plan" {
+		t.Fatalf("syncer calls = %v, want the recovery completion to re-run the plan write", got)
+	}
+}

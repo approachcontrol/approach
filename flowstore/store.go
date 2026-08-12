@@ -1132,6 +1132,14 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 // re-syncs on a completed -> completed repeat, and MarkManualMerge re-syncs on
 // an already-merged repeat; both discard the retry's own sync error rather than
 // demote durable state.
+//
+// Two limits on that recovery, both documented for operators in
+// docs/flow-phases.md. It applies to the windows above, where the phase is still
+// completed — once the compensation HAS landed the phase must be restarted
+// before it can complete again, because needs_attention -> completed is not a
+// legal transition. And the merge-side repeat is currently store-level only: the
+// TUI gates its manual-merge action on the Flow not being derived as merged, so
+// after a durable merge the reachable repair is the plan artifact itself.
 func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
 	planID := strings.TrimSpace(record.PlanID)
 	if planID == "" || phase.Status != PhaseCompleted {

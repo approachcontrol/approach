@@ -295,13 +295,30 @@ completion makes the successor ready again but does not restore its outcome. The
 same states are reachable without any sync failure, by restarting a completed
 predecessor.
 
-The recovery is the same in every case and is always safe to run: repeat the
-phase completion, or re-record the manual merge with the same metadata. Both
-re-run the idempotent plan write, and neither demotes state that is already
-correct. One caveat on the manual-merge retry: because it must not roll back a
-merge that is already durable, it **discards** a second sync failure and returns
-success. Confirm the linked plan's own phase status rather than trusting that
-return value.
+Recovery is always the same idempotent plan write, but which command reaches it
+depends on the state the Flow was left in.
+
+- **The phase is still `completed` and carries no marker** — the crash, lost
+  writer, and declined-guard windows above. Repeat the phase completion, or
+  re-record the manual merge with the same metadata. `completed` → `completed`
+  and an already-merged repeat are both accepted as idempotent no-ops that re-run
+  the plan write, and neither demotes state that is already correct.
+- **The phase was demoted to `needs_attention`** — the compensation landed, which
+  is the ordinary sync failure. Repeating the completion is rejected here:
+  `needs_attention → completed` is not a legal transition. Restart the phase
+  first (`approach flow phase restart`), then complete it; that completion runs
+  the plan write.
+- **The Flow already reads as `merged`** — a manual merge whose compensation did
+  not land. The store accepts the already-merged repeat, but the TUI offers its
+  manual-merge action only while the Flow is not yet derived as `merged`, so that
+  repeat is not reachable from the TUI once the merge is durable. The linked plan
+  is the only stale artifact, so repair it directly:
+  `approach plan phase set --plan-id "$PLAN_ID" --phase-id merge --status completed`.
+
+One caveat on the manual-merge retry: because it must not roll back a merge that
+is already durable, it **discards** a second sync failure and returns success.
+Confirm the linked plan's own phase status rather than trusting that return
+value.
 
 ## Per-phase agent settings
 
