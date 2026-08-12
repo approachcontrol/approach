@@ -500,6 +500,49 @@ func TestRunFlowReadPrintsJSONRecord(t *testing.T) {
 	}
 }
 
+// The closure round-trips only if the storage DTO carries it, so this is also
+// the end-to-end proof that the hand-written codec converters were updated.
+func TestRunFlowReadExposesClosure(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Closable", "--instructions", "close it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: created.FlowID, Reason: "superseded by #42"}); err != nil {
+		t.Fatalf("CloseFlow() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout})); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "superseded by #42") {
+		t.Fatalf("flow read output missing the close reason:\n%s", output)
+	}
+	if !strings.Contains(output, "closed_at") {
+		t.Fatalf("flow read output missing closed_at:\n%s", output)
+	}
+
+	var read flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &read); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, output)
+	}
+	if read.Status != flowstore.StatusClosed {
+		t.Fatalf("read Status = %q, want closed", read.Status)
+	}
+	if read.Closed.Reason != "superseded by #42" || read.Closed.ClosedAt == nil {
+		t.Fatalf("read closure = %#v, want the reason and timestamp", read.Closed)
+	}
+}
+
 func TestRunFlowPlanSetLinksPlanArtifact(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

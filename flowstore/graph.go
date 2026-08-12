@@ -506,6 +506,9 @@ func phaseDependsOnPlanReviewFailure(record FlowRecord, graph phaseGraph, idx in
 // for launch. It is index-aware so stale duplicate rows from hand-authored
 // records cannot be launched even when their stored status is ready.
 func PhaseLaunchEligible(record FlowRecord, orderedIndex int) bool {
+	if FlowClosed(record) {
+		return false
+	}
 	ordered := OrderedPhases(record.Phases)
 	if orderedIndex < 0 || orderedIndex >= len(ordered) {
 		return false
@@ -524,7 +527,14 @@ func PhaseLaunchEligible(record FlowRecord, orderedIndex int) bool {
 	return SemanticKind(phase) != KindMerge
 }
 
+// phaseLaunchEligibleAtIndex is the non-ordered twin of PhaseLaunchEligible and
+// carries its own closed-Flow guard: it is reached from validateAutoPhaseLaunch,
+// not through PhaseLaunchEligible, so guarding only that one would let a stale
+// in-flight auto launch persist a launch ID on a Flow the user just closed.
 func phaseLaunchEligibleAtIndex(record FlowRecord, phaseIndex int) bool {
+	if FlowClosed(record) {
+		return false
+	}
 	if phaseIndex < 0 || phaseIndex >= len(record.Phases) {
 		return false
 	}

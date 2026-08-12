@@ -326,6 +326,31 @@ func (m Model) hasPendingRepairAutoDrainMarker(flowID string) bool {
 	return ok
 }
 
+// withoutRepairAutoDrainMarker drops a marker before the poll that would have
+// consumed it. It copies rather than deleting in place because the caller is a
+// message handler whose Model may still share this map with a value copy the
+// poll captured.
+func (m Model) withoutRepairAutoDrainMarker(flowID string) Model {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return m
+	}
+	if _, ok := m.pendingRepairAutoDrainFlowIDs[flowID]; !ok {
+		return m
+	}
+	pending := make(map[string]repairAutoDrainMarker, len(m.pendingRepairAutoDrainFlowIDs)-1)
+	for existingFlowID, marker := range m.pendingRepairAutoDrainFlowIDs {
+		if existingFlowID != flowID {
+			pending[existingFlowID] = marker
+		}
+	}
+	if len(pending) == 0 {
+		pending = nil
+	}
+	m.pendingRepairAutoDrainFlowIDs = pending
+	return m
+}
+
 func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, request uint64) Model {
 	if request == 0 || len(m.pendingRepairAutoDrainFlowIDs) == 0 {
 		return m
@@ -348,7 +373,7 @@ func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, req
 				continue
 			}
 			switch flowstore.DeriveStatus(record) {
-			case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+			case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned, flowstore.StatusClosed:
 				delete(m.pendingRepairAutoDrainFlowIDs, flowID)
 				continue
 			}
@@ -369,7 +394,7 @@ func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, req
 			continue
 		}
 		switch flowstore.DeriveStatus(record) {
-		case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+		case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned, flowstore.StatusClosed:
 			continue
 		}
 		m = m.armAutoAdvanceDrain(flowID)
@@ -470,6 +495,16 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 			m = m.disarmAutoAdvanceDrain(flowID)
 			continue
 		}
+		// Closure is checked before occupancy, unlike every other reason to
+		// stop draining. Occupancy only defers, so a closed Flow held by a
+		// running terminal would keep its drain armed for as long as the
+		// terminal lives, and a peer process closing the Flow emits no local
+		// message that would clear it.
+		if flowstore.FlowClosed(record) {
+			m = m.disarmAutoAdvanceDrain(flowID)
+			m = m.withoutRepairAutoDrainMarker(flowID)
+			continue
+		}
 		// A cheap snapshot filter, not policy: the lifecycle re-checks
 		// occupancy against the fresh record. Keeping it here means the two
 		// occupancy sets are applied as a union.
@@ -563,6 +598,11 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 }
 
 func flowPhaseCanLaunchAtIndex(record flowstore.FlowRecord, phaseIndex int) bool {
+	// The merge-kind and autoreview-rerun branches below bypass
+	// PhaseLaunchEligible, so a closed Flow needs its own guard here.
+	if flowstore.FlowClosed(record) {
+		return false
+	}
 	if phaseIndex < 0 || phaseIndex >= len(record.Phases) {
 		return false
 	}

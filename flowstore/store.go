@@ -25,12 +25,23 @@ const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
 
-var errFlowNotFound = errors.New("flow not found")
+// ErrFlowNotFound is the sentinel every missing-record error wraps. It is
+// exported alongside IsNotFound so callers and their test doubles can build the
+// same error the store returns.
+var ErrFlowNotFound = errors.New("flow not found")
+
+var errFlowNotFound = ErrFlowNotFound
 
 // ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
 // wraps. It is exported so callers outside this package can build the rejection
 // their AutoMode handling has to survive.
 var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
+
+// ErrFlowClosed is the sentinel every closed-Flow mutation refusal wraps. A
+// reservation reports a closed Flow and an unreadable one through the same
+// error return, and only the first may block a caller: callers that must stay
+// permissive when a Flow is missing test for this rather than for any error.
+var ErrFlowClosed = errors.New("flow is closed")
 
 const (
 	StatusPending        = "pending"
@@ -40,6 +51,7 @@ const (
 	StatusCompleted      = "completed"
 	StatusMerged         = "merged"
 	StatusAbandoned      = "abandoned"
+	StatusClosed         = "closed"
 )
 
 const (
@@ -85,6 +97,12 @@ const (
 type Store struct {
 	backend  backend
 	planSync planPhaseSyncer
+	// canonicalRoot and lockTimeout back the short cross-process repair-launch
+	// reservation shared with CloseFlow. The advisory lock orders the final
+	// closed-state read and terminal start without persisting transient launch
+	// metadata that a crash could strand.
+	canonicalRoot string
+	lockTimeout   time.Duration
 	// root outlives the storage seam because the plan side is only half behind
 	// it: SetPhase syncs through planSync (which captures root itself), but
 	// SetPlanLink still resolves plan paths and constructs a planstore.Store
@@ -319,6 +337,47 @@ type Merge struct {
 	MergedAt *time.Time `json:"merged_at,omitempty"`
 }
 
+// Closure records why and when a Flow was deliberately closed. Derivation keys
+// on ClosedAt, never on Reason, so a record can never drift into closed because
+// of an empty-string comparison.
+type Closure struct {
+	Reason   string     `json:"reason,omitempty"`
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+}
+
+// ClosureUpdate records a deliberate close of a Flow with its required reason.
+type ClosureUpdate struct {
+	FlowID string
+	Reason string
+}
+
+// FlowClosed reports whether a Flow was deliberately closed.
+func FlowClosed(record FlowRecord) bool {
+	return record.Closed.ClosedAt != nil
+}
+
+func validateClosure(closure Closure) error {
+	reason := strings.TrimSpace(closure.Reason)
+	switch {
+	case closure.ClosedAt != nil && reason == "":
+		return errors.New("flow closure timestamp requires a reason")
+	case closure.ClosedAt == nil && reason != "":
+		return errors.New("flow closure reason requires a timestamp")
+	default:
+		return nil
+	}
+}
+
+func closedFlowMutationError(record FlowRecord, action string) error {
+	return fmt.Errorf("cannot %s flow %q because it is closed: %w", action, record.FlowID, ErrFlowClosed)
+}
+
+// IsFlowClosed reports whether err is a refusal to mutate or launch a closed
+// Flow, as opposed to a missing record or a failed read.
+func IsFlowClosed(err error) bool {
+	return errors.Is(err, ErrFlowClosed)
+}
+
 // AutoModeUpdate changes whether the TUI may automatically launch ready phases
 // for a single Flow after successful phase completion.
 type AutoModeUpdate struct {
@@ -350,6 +409,7 @@ type FlowRecord struct {
 	Issue         Issue       `json:"issue,omitempty"`
 	PR            PullRequest `json:"pr,omitempty"`
 	Merge         Merge       `json:"merge,omitempty"`
+	Closed        Closure     `json:"closed,omitzero"`
 	AutoMode      bool        `json:"auto_mode,omitempty"`
 	// Headless is the per-Flow manual-launch preference. Like AutoMode, it is
 	// forced on at creation and can only be changed afterwards through
@@ -482,10 +542,12 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Store{
-		backend:  store,
-		planSync: planstoreSyncer{root: root},
-		root:     root,
-		now:      now,
+		backend:       store,
+		planSync:      planstoreSyncer{root: root},
+		root:          root,
+		canonicalRoot: store.root,
+		lockTimeout:   lockTimeout,
+		now:           now,
 	}, nil
 }
 
@@ -534,6 +596,9 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	}
 	if !filepath.IsAbs(record.RepoPath) {
 		return FlowRecord{}, fmt.Errorf("flow repo path must be absolute: %s", record.RepoPath)
+	}
+	if err := validateClosure(record.Closed); err != nil {
+		return FlowRecord{}, err
 	}
 	// Validate the captured agent settings before any record is written, so a
 	// rejected selection can never leave a partial Flow behind.
@@ -648,6 +713,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if FlowClosed(record) && update.Status == PhaseRunning {
+			return FlowRecord{}, closedFlowMutationError(record, "set a phase running on")
+		}
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -727,6 +795,9 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("phase restart requires notes")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "restart a phase on")
+		}
 		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
@@ -969,6 +1040,9 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "set merge metadata on")
+		}
 		merge, err := validateMergeUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -997,6 +1071,9 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "mark merged")
+		}
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -1065,6 +1142,11 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		// Disabling auto mode is safe cleanup on a closed Flow; only arming it
+		// could revive stale launch work after the close wins the race.
+		if FlowClosed(record) && update.Enabled {
+			return FlowRecord{}, closedFlowMutationError(record, "enable auto mode on")
+		}
 		if record.AutoMode == update.Enabled {
 			return record, nil
 		}
@@ -1084,6 +1166,108 @@ func (s *Store) SetHeadless(update HeadlessUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 		record.Headless = update.Enabled
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// CloseFlow marks a Flow deliberately closed with a required reason. Phases are
+// left exactly as they are, so the record still explains where work stopped;
+// terminality is enforced by the launch guards, not by rewriting phase rows.
+//
+// Unlike SetAutoMode and SetHeadless, a redundant call is an error rather than a
+// no-op: a second close discards a reason the user typed, which is worth
+// reporting.
+func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	reason := strings.TrimSpace(update.Reason)
+	if reason == "" {
+		return FlowRecord{}, errors.New("flow close requires a reason")
+	}
+	release, err := s.acquireLaunchCloseLock(update.FlowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	defer release()
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, fmt.Errorf("flow %q is already closed", update.FlowID)
+		}
+		switch DeriveStatus(record) {
+		case StatusAbandoned:
+			return FlowRecord{}, fmt.Errorf("flow %q is already abandoned", update.FlowID)
+		case StatusMerged:
+			return FlowRecord{}, fmt.Errorf("flow %q is already merged", update.FlowID)
+		}
+		closedAt := now
+		record.Closed = Closure{Reason: reason, ClosedAt: &closedAt}
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// ReserveRepairLaunch holds the Flow's cross-process repair-launch lock and
+// returns the current record. Callers must invoke the returned release function
+// after the terminal has either started or failed to start. CloseFlow takes the
+// same lock, so exactly one ordering wins: a completed close makes this call
+// reject, while an admitted repair starts before a concurrent close proceeds.
+// The OS releases the advisory lock automatically if the process exits.
+func (s *Store) ReserveRepairLaunch(flowID string) (FlowRecord, func(), error) {
+	return s.reserveLaunchAgainstClose(flowID, "reserve a repair launch for")
+}
+
+// ReserveAgentLaunch orders an agent spawn with CloseFlow. The caller must
+// hold the returned reservation until the terminal or external launcher has
+// either started or failed, so a close and a launch have one authoritative
+// cross-process ordering.
+func (s *Store) ReserveAgentLaunch(flowID string) (FlowRecord, func(), error) {
+	return s.reserveLaunchAgainstClose(flowID, "launch an agent for")
+}
+
+func (s *Store) reserveLaunchAgainstClose(flowID, action string) (FlowRecord, func(), error) {
+	if err := validateFlowID(flowID); err != nil {
+		return FlowRecord{}, nil, err
+	}
+	release, err := s.acquireLaunchCloseLock(flowID)
+	if err != nil {
+		return FlowRecord{}, nil, err
+	}
+	record, err := s.Read(flowID)
+	if err != nil {
+		release()
+		return FlowRecord{}, nil, err
+	}
+	if FlowClosed(record) {
+		release()
+		return FlowRecord{}, nil, closedFlowMutationError(record, action)
+	}
+	return record, release, nil
+}
+
+func (s *Store) acquireLaunchCloseLock(flowID string) (func(), error) {
+	// Keep the original filename so mixed-version processes contend on the same
+	// advisory lock while the reservation's scope expands beyond repair.
+	path := filepath.Join(s.canonicalRoot, ".approach.flow-repair."+flowID+".lock")
+	release, err := artifacts.AcquireFileLockNoFollow(path, "Flow launch/close lock", s.lockTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("acquire launch/close reservation for flow %q: %w", flowID, err)
+	}
+	return release, nil
+}
+
+// ReopenFlow clears the closure from a closed Flow, restoring the launchability
+// it had before the close.
+func (s *Store) ReopenFlow(flowID string) (FlowRecord, error) {
+	if err := validateFlowID(flowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlowMetadataOnly(flowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if !FlowClosed(record) {
+			return FlowRecord{}, fmt.Errorf("flow %q is not closed", flowID)
+		}
+		record.Closed = Closure{}
 		record.UpdatedAt = now
 		return record, nil
 	})
@@ -1141,6 +1325,13 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			if update.AutoLaunch {
+				return FlowRecord{}, fmt.Errorf("auto launch target %q is not eligible because flow %q is closed: %w",
+					update.PhaseID, record.FlowID, ErrAutoLaunchOutdated)
+			}
+			return FlowRecord{}, closedFlowMutationError(record, "record a phase launch for")
+		}
 		// Launch bookkeeping targets the requested phase row. Legacy records may
 		// contain an earlier stale duplicate whose id only matches after
 		// normalization; prefer the exact row before deciding whether a resume
@@ -1290,6 +1481,9 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		return FlowRecord{}, fmt.Errorf("phase id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "reset a phase on")
+		}
 		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
@@ -2116,6 +2310,10 @@ func reviewPhaseLabel(phase FlowPhase) string {
 
 // DeriveStatus computes the flow-level status from phase and merge state.
 func DeriveStatus(record FlowRecord) string {
+	// A deliberate human close outranks anything derived from phase or merge state.
+	if FlowClosed(record) {
+		return StatusClosed
+	}
 	if record.Status == StatusAbandoned {
 		return StatusAbandoned
 	}

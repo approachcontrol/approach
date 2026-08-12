@@ -138,6 +138,10 @@ type Model struct {
 	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
 	markFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
+	closeFlow                 func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
+	reopenFlow                func(string) (flowstore.FlowRecord, error)
+	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
+	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -258,6 +262,10 @@ type Options struct {
 	SetFlowHeadless          func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	LookupPRMerge            func(int, string) (actions.PullRequestMerge, error)
 	MarkFlowManualMerge      func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
+	CloseFlow                func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
+	ReopenFlow               func(flowID string) (flowstore.FlowRecord, error)
+	ReserveFlowRepairLaunch  func(flowID string) (flowstore.FlowRecord, func(), error)
+	ReserveFlowLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase           func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow               func(flowID string) error
@@ -297,6 +305,7 @@ func New(repos []scanner.Repo) Model {
 
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
+	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -465,6 +474,54 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return store.MarkManualMerge(update)
 		}
 	}
+	closeFlow := opts.CloseFlow
+	if closeFlow == nil {
+		closeFlow = func(update flowstore.ClosureUpdate) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.CloseFlow(update)
+		}
+	}
+	reopenFlow := opts.ReopenFlow
+	if reopenFlow == nil {
+		reopenFlow = func(flowID string) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.ReopenFlow(flowID)
+		}
+	}
+	reserveFlowRepairLaunch := opts.ReserveFlowRepairLaunch
+	if reserveFlowRepairLaunch == nil {
+		reserveFlowRepairLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, nil, err
+			}
+			return store.ReserveRepairLaunch(flowID)
+		}
+	}
+	reserveFlowLaunch := opts.ReserveFlowLaunch
+	if reserveFlowLaunch == nil {
+		if customPhaseLaunchPersistence {
+			// A caller that replaces launch persistence owns its storage boundary;
+			// opening the default store here would reserve a different backend.
+			reserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+				return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
+			}
+		} else {
+			reserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+				store, err := newFlowStore()
+				if err != nil {
+					return flowstore.FlowRecord{}, nil, err
+				}
+				return store.ReserveAgentLaunch(flowID)
+			}
+		}
+	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
 	if addFlowPhaseLaunchID == nil {
 		addFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -576,6 +633,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			SetStartMetadata:     setFlowStartMetadata,
 			SetPhase:             setFlowPhase,
 			AddPhaseLaunchID:     addFlowPhaseLaunchID,
+			ReserveLaunch:        reserveFlowLaunch,
 			BootstrapHookForRepo: bootstrapHookForRepo,
 			RunBootstrapHook:     runBootstrapHook,
 			ResolveCommit:        actions.ResolveWorktreeCommit,
@@ -652,6 +710,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		setFlowHeadless:          setFlowHeadless,
 		lookupPRMerge:            lookupPRMerge,
 		markFlowManualMerge:      markFlowManualMerge,
+		closeFlow:                closeFlow,
+		reopenFlow:               reopenFlow,
+		reserveFlowRepairLaunch:  reserveFlowRepairLaunch,
+		reserveFlowLaunch:        reserveFlowLaunch,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
 		resetFlowPhase:           resetFlowPhase,
 		deleteFlow:               deleteFlow,
@@ -1121,6 +1183,7 @@ func (m Model) View() string {
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
 		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
+		FlowCloseActionSelected:      m.selectedFlowCloseActionHint(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:   m.selectedFlowPhaseResumable(),
 		OverlayText:                  modalView.Text,
@@ -1630,6 +1693,14 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowManualMergeSet(msg), nil
 	case FlowManualMergeSetFailedMsg:
 		return m.handleFlowManualMergeSetFailed(msg), nil
+	case FlowClosedMsg:
+		return m.handleFlowClosed(msg), nil
+	case FlowCloseFailedMsg:
+		return m.handleFlowCloseFailed(msg), nil
+	case FlowReopenedMsg:
+		return m.handleFlowReopened(msg), nil
+	case FlowReopenFailedMsg:
+		return m.handleFlowReopenFailed(msg), nil
 	case flowPhaseResetConfirmedMsg:
 		return m.handleFlowPhaseResetConfirmed(msg)
 	case flowPhaseResetMsg:
@@ -1712,10 +1783,11 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
+			releaseFlowLaunchReservation(msg.LaunchRelease)
 			return m, nil
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
-		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchAgentWithContextReservation(msg.LaunchContext, msg.LaunchRelease)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
@@ -1724,6 +1796,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case FlowEmbeddedLaunchRequestedMsg:
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
+				releaseFlowLaunchReservation(msg.LaunchRelease)
 				return m, nil
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
@@ -1973,6 +2046,12 @@ func (m Model) selectedFlowPhaseIndex() (int, bool) {
 }
 
 func (m Model) selectedFlowPhaseResumable() bool {
+	// Unlike selectedFlowPhaseResettable, this accessor has no record in scope,
+	// so the closed-Flow gate needs its own lookup to keep the r hint in step
+	// with the handler.
+	if record, ok := m.selectedFlow(); ok && flowstore.FlowClosed(record) {
+		return false
+	}
 	phase, ok := m.selectedFlowPhase()
 	if !ok || flowPhaseHasRecoverableRunningSession(phase) ||
 		flowPhaseHasStaleRunningLatestLaunch(phase) {

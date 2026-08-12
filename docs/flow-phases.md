@@ -208,11 +208,43 @@ preset it still stops because the only successor is merge-kind.
 
 ## Derived Flow status
 
-The Flow-level `status` field is always derived, in priority order: abandoned
-record → `abandoned`; merge recorded merged → `merged`; merge blocked or any
-phase blocked → `blocked`; any phase needs_attention → `needs_attention`; all
-phases completed/skipped → `completed`; any phase started → `in_progress`;
-otherwise `pending`.
+The Flow-level `status` field is always derived, in priority order: closed
+record → `closed`; abandoned record → `abandoned`; merge recorded merged →
+`merged`; merge blocked or any phase blocked → `blocked`; any phase
+needs_attention → `needs_attention`; all phases completed/skipped → `completed`;
+any phase started → `in_progress`; otherwise `pending`.
+
+## Closing a Flow
+
+`C` in the TUI closes a Flow, which records a required human-entered reason and
+a close timestamp on the record. An explicit close outranks everything derived
+from phase or merge state, so a closed Flow derives `closed` no matter what its
+phases say. Closing is deliberately distinct from `d` delete: the record, its
+phases, its plan link, and its history all survive.
+
+Closing does **not** rewrite phases. A Flow closed mid-implementation keeps its
+`running` and `ready` phases exactly as they were, so the record still explains
+where the work stopped, and a running session is not killed. Terminality is
+enforced at the launch gates instead: a closed Flow accepts no phase launch
+(manual, auto-mode, or store-side auto-launch validation), no repair, no
+mark-merged, no auto-mode arming, no phase reset, and no session resume, and it
+drops out of the Active Flows view the way merged Flows already do.
+The store repeats those checks inside the mutation transaction so a close that
+wins a stale launch/reset/merge request cannot be overwritten. Repair's final
+read and terminal start share a short cross-process advisory lock with close,
+giving concurrent repair and close operations an explicit order.
+
+`C` on a closed Flow reopens it through a `y/n` confirm, which clears the
+closure. Because phases were never touched, reopening restores exactly the
+launchability the Flow had before the close.
+
+The close reason is visible in the flows pane row, indexed by `/` search, and
+present in `approach flow read` JSON as `closed.reason` and `closed.closed_at`.
+
+One compatibility caveat: a build predating this feature reads the record,
+ignores the unknown `closed` field, and derives whatever the phases imply — so
+its auto-mode could launch a phase on a Flow you closed. This is inherent to the
+additive-field approach and resolves as builds update.
 
 The TUI can also record a manual GitHub merge for a Flow whose PR metadata is
 present and whose Merge phase is eligible. That operation verifies the PR is
@@ -280,9 +312,10 @@ the follow-up that surfaces and then honors them.
 ## Compatibility and migration
 
 - The persisted schema gains three optional phase fields (`agent`, `model`,
-  `reasoning_effort`); `schema_version` stays `1` and no status strings were
-  added, removed, or renamed. Records written without those phase fields keep
-  reading and writing without them. New records also always persist the
+  `reasoning_effort`); `schema_version` stays `1`, `closed` is an additive
+  status, and no existing status strings were removed or renamed. Records
+  written without those phase fields keep reading and writing without them.
+  New records also always persist the
   metadata field `headless`, and a legacy record that omitted it migrates to
   `true`.
 - Records themselves are migrated once, on first open: `flows/<id>/meta.json`

@@ -214,6 +214,24 @@ func TestRenderConfirmDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
 	}
 }
 
+func TestRenderInputDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
+	const unsafePrompt = "Close Flow bd-1: \x1b]52;c;dGVzdA==\aUnsafe\nTitle? Reason"
+	view := Render(RenderParams{
+		Width:            120,
+		Height:           12,
+		Overlay:          OverlayInput,
+		InputPrompt:      unsafePrompt,
+		InputPlaceholder: "why this Flow is closed",
+	})
+
+	if strings.Contains(view, "\x1b]52;") {
+		t.Fatalf("input dialog retained OSC sequence: %q", view)
+	}
+	if got := ansi.Strip(view); !strings.Contains(got, "Close Flow bd-1: Unsafe Title? Reason") {
+		t.Fatalf("input dialog text = %q, want sanitized single-line prompt", got)
+	}
+}
+
 func TestStatusBar_IndicatorLegendSpacing(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, PaneTop, true, false, false)
 	for _, pair := range [][2]string{

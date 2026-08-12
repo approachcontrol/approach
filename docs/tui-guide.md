@@ -103,6 +103,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
+| `C` | Close the selected Flow with a required reason, or reopen it after confirmation if it is already closed (flows and active flows views) |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected recoverable Flow phase after confirmation |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
@@ -471,7 +472,8 @@ On a Flow row or an expanded phase row:
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal
   slot is occupied, no headless write for that Flow is in flight, and the Flow
-  is not completed, merged, abandoned, or at a ready/manual Merge boundary.
+  is not completed, merged, abandoned, closed, or at a ready/manual Merge
+  boundary.
   Like `g`, a refusal names the obstacle, preferring a durable one (a pending
   repair, a pending resume, an open terminal) over the transient write.
 - `i` opens the linked GitHub issue and `p` opens the linked PR in the
@@ -494,6 +496,17 @@ On a Flow row or an expanded phase row:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
   lists without launching a Merge phase agent.
+- `C` on an open Flow row opens an input modal demanding a reason, and refuses
+  to submit an empty one. Closing records that reason plus a close timestamp,
+  renders the row as `closed` with `(closed: <reason>)` after the title, and
+  removes it from Active Flows. A closed Flow is terminal: `g`, `R`, `m`, `a`,
+  `x`, and `r` are all withdrawn from the footer and refuse, while `h`, `E`,
+  `M`, `d`, `c`, `o`, `i`, `p`, `y`, and `enter` still work so the record stays
+  inspectable. Phases are left untouched, so a running session keeps running.
+  `C` on a closed row reopens it after a `y/n` confirm, restoring exactly the
+  launchability it had before the close. Closing is not gated behind destructive
+  mode — it destroys nothing. See [flow-phases.md](flow-phases.md) for the
+  derived status precedence.
 - With destructive mode enabled, `d` deletes only the selected top-level Flow
   record under the Flow artifact store; it does not remove repositories,
   worktrees, branches, checked-out code, linked plans, sessions, transcripts,
@@ -667,10 +680,12 @@ readiness, gating, and merge requirements are documented in
 Browse active Flow records across all repos. Press `ctrl+a` from any normal
 TUI view to open it across the combined content height, and press `ctrl+a`
 again to restore the exact top mode, bottom mode, remembered pane, and focus;
-number keys and arrows do not leave Active Flows. This view hides merged Flow
-records; moving focus to the left repo pane temporarily filters the visible
-active rows to the selected repo, and returning focus to the middle pane
+number keys and arrows do not leave Active Flows. This view hides merged and
+closed Flow records; moving focus to the left repo pane temporarily filters the
+visible active rows to the selected repo, and returning focus to the middle pane
 restores the global list. Normal Flow actions — phase launches, repairs,
 attached-session resumes, auto-mode toggles, `i` issue and `p` PR opening,
 `c`/`y` copies, and embedded Flow terminals in the shared dock — work from the
-visible active Flow rows and their expanded phase rows.
+visible active Flow rows and their expanded phase rows. `C` closes a Flow from
+here too, which removes its row; reopening is reachable only from the repo's
+flows pane, since a closed Flow has no Active Flows row to select.

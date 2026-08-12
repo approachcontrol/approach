@@ -376,6 +376,30 @@ type FlowManualMergeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowClosedMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+}
+
+type FlowCloseFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Err      string
+}
+
+type FlowReopenedMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+}
+
+type FlowReopenFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Err      string
+}
+
 type PlanReadResultMsg struct {
 	RepoPath    string
 	PlanID      string
@@ -469,6 +493,7 @@ type flowLaunchFailurePersistedMsg struct {
 type PlanLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Request       uint64
+	LaunchRelease func()
 }
 
 type FlowEmbeddedLaunchRequestedMsg struct {
@@ -476,11 +501,14 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	Request             uint64
 	RepairRecord        flowstore.FlowRecord
 	RepairValidationErr string
+	RepairRelease       func()
+	LaunchRelease       func()
 }
 
 type flowPhaseResumePersistedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Flow          flowstore.FlowRecord
+	LaunchRelease func()
 }
 
 type flowPhaseResumePersistFailedMsg struct {
@@ -1555,6 +1583,48 @@ func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) M
 	}
 	if msg.Flow.FlowID != "" {
 		m = m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowClosed(msg FlowClosedMsg) Model {
+	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+		return m
+	}
+	// An unscoped poll disarms a drain on a closed Flow only after occupancy
+	// clears, so a close taken while a terminal is running would otherwise
+	// leave the drain armed and let a reopen launch the successor. Disarming
+	// here makes the close, not poll timing, decide.
+	m = m.disarmAutoAdvanceDrain(msg.FlowID)
+	m = m.withoutRepairAutoDrainMarker(msg.FlowID)
+	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+}
+
+func (m Model) handleFlowCloseFailed(msg FlowCloseFailedMsg) Model {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to close Flow"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowReopened(msg FlowReopenedMsg) Model {
+	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+		return m
+	}
+	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+}
+
+func (m Model) handleFlowReopenFailed(msg FlowReopenFailedMsg) Model {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to reopen Flow"
 	}
 	return m.setStatus(statusOther, errText)
 }

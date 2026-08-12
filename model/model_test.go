@@ -56,7 +56,47 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			if record, ok := testFlowRecords[flowID]; ok {
 				return record, nil
 			}
-			return flowstore.FlowRecord{}, fmt.Errorf("flow %s not found", flowID)
+			// Wrapped like the store's own miss so callers that treat a missing
+			// Flow differently from a failed read see the same thing here.
+			return flowstore.FlowRecord{}, fmt.Errorf("flow %s not found: %w", flowID, flowstore.ErrFlowNotFound)
+		}
+	}
+	if opts.ReserveFlowRepairLaunch == nil {
+		listFlows := opts.ListFlows
+		opts.ReserveFlowRepairLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if listFlows != nil {
+				records, err := listFlows(flowstore.FlowFilter{})
+				if err != nil {
+					return flowstore.FlowRecord{}, nil, err
+				}
+				for _, record := range records {
+					if record.FlowID == flowID {
+						return record, func() {}, nil
+					}
+				}
+			}
+			if record, ok := testFlowRecords[flowID]; ok {
+				return record, func() {}, nil
+			}
+			return flowstore.FlowRecord{}, nil, fmt.Errorf("flow %s not found", flowID)
+		}
+	}
+	if opts.ReserveFlowLaunch == nil {
+		readFlow := opts.ReadFlow
+		opts.ReserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			record, err := readFlow(flowID)
+			if err != nil {
+				if !flowstore.IsNotFound(err) {
+					// A real read failure must stay a failure; production
+					// refuses every reservation error except a missing record.
+					return flowstore.FlowRecord{}, nil, err
+				}
+				// A Flow created during the test was never registered with the
+				// read double, and the real store reserves such a Flow without
+				// complaint.
+				return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
+			}
+			return record, func() {}, nil
 		}
 	}
 	return model.NewWithOptions(repos, opts)

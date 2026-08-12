@@ -393,9 +393,13 @@ func flowSearchText(record flowstore.FlowRecord) string {
 		record.PR.BaseBranch,
 		record.Merge.Status,
 		record.Merge.Commit,
+		record.Closed.Reason,
 	}
 	if record.Merge.MergedAt != nil {
 		parts = append(parts, record.Merge.MergedAt.UTC().Format(time.RFC3339))
+	}
+	if record.Closed.ClosedAt != nil {
+		parts = append(parts, record.Closed.ClosedAt.UTC().Format(time.RFC3339))
 	}
 	if record.PR.Number > 0 {
 		parts = append(parts, fmt.Sprintf("#%d", record.PR.Number))

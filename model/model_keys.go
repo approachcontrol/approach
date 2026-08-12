@@ -501,6 +501,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleMarkFlowManuallyMerged()
 		}
+	case "C":
+		if m.flowSurfaceVisible() {
+			return m.handleCloseFlow()
+		}
 	case "N":
 		if mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(true)
@@ -744,6 +748,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenFlowPlanText()
 	case "m":
 		return m.handleMarkFlowManuallyMerged()
+	case "C":
+		return m.handleCloseFlow()
 	case "a":
 		return m.handleToggleFlowAutoMode()
 	case "i":
@@ -924,11 +930,11 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
-			ctx, ok, next := m.sessionResumeLaunchContext(record)
+			ctx, release, ok, next := m.sessionResumeLaunchContext(record)
 			if !ok {
 				return next, nil
 			}
-			return next.launchAgentWithContext(ctx)
+			return next.launchAgentWithContextReservation(ctx, release)
 		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
@@ -1154,7 +1160,7 @@ func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" {
+	if !ok || record.FlowID == "" || flowstore.FlowClosed(record) {
 		return m, nil
 	}
 	repoPath := record.RepoPath
@@ -1200,6 +1206,133 @@ func (m Model) handleMarkFlowManuallyMerged() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// flowCloseAction is the tri-state C binds to: an open Flow can be closed, a
+// closed one reopened, and everything else offers nothing.
+type flowCloseAction int
+
+const (
+	flowCloseActionNone flowCloseAction = iota
+	flowCloseActionClose
+	flowCloseActionReopen
+)
+
+func flowCloseActionForRecord(record flowstore.FlowRecord) flowCloseAction {
+	if record.FlowID == "" {
+		return flowCloseActionNone
+	}
+	if flowstore.FlowClosed(record) {
+		return flowCloseActionReopen
+	}
+	switch flowstore.DeriveStatus(record) {
+	case flowstore.StatusAbandoned, flowstore.StatusMerged:
+		return flowCloseActionNone
+	}
+	return flowCloseActionClose
+}
+
+// selectedFlowCloseAction resolves what C would do for the selected Flow. It
+// deliberately ignores phase-row selection: the footer needs the Flow's own
+// closed state even while a phase row is selected, to suppress the r, x and a
+// hints. handleCloseFlow applies the phase-row check itself.
+func (m Model) selectedFlowCloseAction() (flowstore.FlowRecord, string, flowCloseAction) {
+	if !m.flowSurfaceVisible() {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	record, ok := m.selectedFlow()
+	if !ok {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	action := flowCloseActionForRecord(record)
+	if action == flowCloseActionNone {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	return record, repoPath, action
+}
+
+// selectedFlowCloseActionHint is the footer's view of selectedFlowCloseAction.
+func (m Model) selectedFlowCloseActionHint() ui.FlowCloseAction {
+	_, _, action := m.selectedFlowCloseAction()
+	switch action {
+	case flowCloseActionClose:
+		return ui.FlowCloseActionClose
+	case flowCloseActionReopen:
+		return ui.FlowCloseActionReopen
+	default:
+		return ui.FlowCloseActionNone
+	}
+}
+
+func (m Model) handleCloseFlow() (tea.Model, tea.Cmd) {
+	if m.currentSelectedFlowPhaseID() != "" {
+		return m, nil
+	}
+	record, repoPath, action := m.selectedFlowCloseAction()
+	switch action {
+	case flowCloseActionClose:
+		m.modal = modal.OpenSingleLineInput(
+			fmt.Sprintf("Close Flow %s (%s)? Reason:", record.Title, record.FlowID),
+			ui.FlowCloseReasonInputPlaceholder,
+			"",
+			validateFlowCloseReason,
+			func(reason string) tea.Cmd {
+				return m.closeFlowCmd(repoPath, record, reason)
+			},
+		)
+	case flowCloseActionReopen:
+		m.modal = modal.OpenConfirm(
+			fmt.Sprintf("Reopen Flow %s (%s)? (y/n)", record.Title, record.FlowID),
+			func() tea.Cmd {
+				return m.reopenFlowCmd(repoPath, record)
+			},
+		)
+	default:
+		return m, nil
+	}
+	return m, nil
+}
+
+func validateFlowCloseReason(input string) error {
+	if input == "" {
+		return fmt.Errorf("enter a reason for closing this flow")
+	}
+	return nil
+}
+
+func (m Model) closeFlowCmd(repoPath string, record flowstore.FlowRecord, reason string) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.closeFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: reason})
+		if err != nil {
+			return FlowCloseFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				Err:      fmt.Sprintf("failed to close Flow: %v", err),
+			}
+		}
+		return FlowClosedMsg{RepoPath: repoPath, FlowID: record.FlowID, Flow: flow}
+	}
+}
+
+func (m Model) reopenFlowCmd(repoPath string, record flowstore.FlowRecord) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.reopenFlow(record.FlowID)
+		if err != nil {
+			return FlowReopenFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				Err:      fmt.Sprintf("failed to reopen Flow: %v", err),
+			}
+		}
+		return FlowReopenedMsg{RepoPath: repoPath, FlowID: record.FlowID, Flow: flow}
+	}
+}
+
 func (m Model) selectedManualMergeFlow() (flowstore.FlowRecord, string, bool) {
 	if !m.flowSurfaceVisible() || m.currentSelectedFlowPhaseID() != "" {
 		return flowstore.FlowRecord{}, "", false
@@ -1219,6 +1352,9 @@ func (m Model) selectedManualMergeFlow() (flowstore.FlowRecord, string, bool) {
 }
 
 func flowManualMergeEligible(record flowstore.FlowRecord) bool {
+	if flowstore.FlowClosed(record) {
+		return false
+	}
 	if record.Status == flowstore.StatusMerged || !flowstore.HasPRTarget(record.PR) {
 		return false
 	}
@@ -2037,7 +2173,12 @@ func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.F
 	return record, phase, repoPath, true
 }
 
+// flowPhaseResettable feeds both the x handler and its footer hint, so the
+// closed-Flow guard here covers AC4 and AC7 in one place.
 func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
+	if flowstore.FlowClosed(record) {
+		return false
+	}
 	_, recoverable := flowstore.RecoverableRunningPhaseResetReason(phase)
 	return recoverable &&
 		!flowstore.PhaseSessionLaunchMismatch(phase) &&
@@ -2158,14 +2299,14 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		return next.resumeSessionInEmbeddedTerminal(ctx, record)
+		return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
 	}
-	return next.launchAgentWithContext(ctx)
+	return next.launchAgentWithContextReservation(ctx, release)
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
@@ -2174,6 +2315,11 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	}
 	record, ok := m.selectedFlow()
 	if !ok || record.FlowID == "" || record.FlowID != m.currentExpandedFlowID() || m.currentSelectedFlowPhaseID() == "" {
+		return m, nil
+	}
+	// A resume spawns an agent and records a launch, and the store-side auto
+	// gate does not cover it, so a closed Flow has to refuse here.
+	if flowstore.FlowClosed(record) {
 		return m, nil
 	}
 	phase, ok := m.selectedFlowPhase()
@@ -2211,20 +2357,77 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	}
 	if ctx.Command == agent.CommandCodexApp {
 		// Codex App resume deep links cannot carry approach launch metadata, so treat
-		// them as app navigation instead of a tracked Flow launch attempt.
-		ctx.LaunchID = ""
-		ctx.FlowID = ""
-		ctx.FlowPhaseID = ""
-		return next.launchAgentWithContext(ctx)
+		// them as app navigation instead of a tracked Flow launch attempt. Keep the
+		// Flow identity until a lock-backed authoritative admission check succeeds.
+		return next, next.untrackedCodexAppFlowPhaseResumeCmd(ctx)
 	}
 	return next.launchTrackedFlowPhaseResumeWithContext(ctx)
 }
 
-func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, bool, Model) {
+func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContext) tea.Cmd {
+	reserve := m.reserveFlowLaunch
+	launchAgent := m.launchAgent
+	flowID := ctx.FlowID
+	repoPath := ctx.RepoPath
+	return func() tea.Msg {
+		_, release, err := reserve(flowID)
+		if err != nil {
+			return ActionFailedMsg{RepoPath: repoPath, Err: "Resume Flow phase session: " + err.Error()}
+		}
+		defer release()
+
+		ctx.LaunchID = ""
+		ctx.FlowID = ""
+		ctx.FlowPhaseID = ""
+		launch, err := launchAgent(ctx)
+		if err != nil {
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+		}
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+		}
+		return AgentResultMsg{LaunchContext: ctx, Detached: true}
+	}
+}
+
+// reserveSessionResume holds the cross-process launch/close reservation for the
+// Flow that owns this session, so a peer process cannot commit a close between
+// the closed-state answer and the spawn. The caller releases once the spawn has
+// happened or failed.
+//
+// A missing Flow is the one error that still permits the resume: a session
+// outlives its Flow, so a deleted record must not strand it. Every other
+// failure — a held lock, an unreadable store — means the reservation was never
+// obtained, and resuming anyway would spawn across a concurrent close.
+func (m Model) reserveSessionResume(record sessions.SessionRecord) (func(), string, bool) {
+	flowID := strings.TrimSpace(record.FlowID)
+	if flowID == "" || m.reserveFlowLaunch == nil {
+		return func() {}, "", true
+	}
+	_, release, err := m.reserveFlowLaunch(flowID)
+	switch {
+	case err == nil:
+		return release, "", true
+	case flowstore.IsNotFound(err):
+		return func() {}, "", true
+	case flowstore.IsFlowClosed(err):
+		return func() {}, "Flow is closed; reopen it to resume this session", false
+	default:
+		return func() {}, err.Error(), false
+	}
+}
+
+// sessionResumeLaunchContext returns the launch context for resuming a session
+// from the Sessions pane, plus the launch/close reservation the caller must
+// release after spawning.
+func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, func(), bool, Model) {
 	sessionID := strings.TrimSpace(record.SessionID)
 	if sessionID == "" {
 		m = m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed")
-		return actions.AgentLaunchContext{}, false, m
+		return actions.AgentLaunchContext{}, nil, false, m
 	}
 	command := string(record.Provider)
 	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
@@ -2236,7 +2439,16 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 	}
 	if workingDir == "" && command != agent.CommandCodexApp {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
-		return actions.AgentLaunchContext{}, false, m
+		return actions.AgentLaunchContext{}, nil, false, m
+	}
+	// The launch context below is deliberately Flow-agnostic, so the launch
+	// paths it feeds cannot apply the closed-Flow guard the Flow-phase pane
+	// applies. Resuming still spawns an agent for the Flow that owns the
+	// session, so the refusal has to happen here instead.
+	release, refusal, allowed := m.reserveSessionResume(record)
+	if !allowed {
+		m = m.setStatus(statusOther, refusal)
+		return actions.AgentLaunchContext{}, nil, false, m
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
@@ -2251,7 +2463,7 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
 	}
-	return ctx, true, m
+	return ctx, release, true, m
 }
 
 func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, phase flowstore.FlowPhase, session flowstore.Session) (actions.AgentLaunchContext, bool, Model) {
@@ -2486,26 +2698,37 @@ func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, 
 }
 
 func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	return m.launchAgentWithContextReservation(ctx, nil)
+}
+
+func (m Model) launchAgentWithContextReservation(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
+		releaseFlowLaunchReservation(release)
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
-	return m.runAgentLaunchWithContext(ctx, launch)
+	return m.runAgentLaunchWithReservation(ctx, launch, release)
 }
 
 func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
+	if msg.RepairRelease != nil {
+		defer msg.RepairRelease()
+	}
+	if msg.LaunchRelease != nil {
+		defer msg.LaunchRelease()
+	}
 	var repairRecord *flowstore.FlowRecord
 	if msg.LaunchContext.FlowRepair && msg.RepairValidationErr == "" && strings.TrimSpace(msg.RepairRecord.FlowID) != "" {
 		repairRecord = &msg.RepairRecord
 	}
-	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr)
+	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr, msg.LaunchRelease != nil)
 }
 
 func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
-	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "")
+	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "", false)
 }
 
-func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string) (Model, tea.Cmd) {
+func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string, launchReserved bool) (Model, tea.Cmd) {
 	ctx.Embedded = true
 	if ctx.FlowRepair {
 		var current bool
@@ -2525,7 +2748,11 @@ func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchCon
 		}
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	open := m.openFlowEmbeddedTerminal
+	if launchReserved {
+		open = m.openFlowEmbeddedTerminalReserved
+	}
+	next, opened, err, prefillCmd := open(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
@@ -2573,6 +2800,10 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	ctx.Headless = false
 	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
 	return m, func() tea.Msg {
+		_, release, reserveErr := m.reserveTrackedFlowLaunch(ctx.FlowID)
+		if reserveErr != nil {
+			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: reserveErr}
+		}
 		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   ctx.FlowID,
 			PhaseID:  ctx.FlowPhaseID,
@@ -2580,13 +2811,15 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 			Resume:   true,
 		})
 		if err != nil {
+			releaseFlowLaunchReservation(release)
 			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: err}
 		}
-		return flowPhaseResumePersistedMsg{LaunchContext: ctx, Flow: updated}
+		return flowPhaseResumePersistedMsg{LaunchContext: ctx, Flow: updated, LaunchRelease: release}
 	}
 }
 
 func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (Model, tea.Cmd) {
+	defer releaseFlowLaunchReservation(msg.LaunchRelease)
 	key, ok := m.matchingPendingFlowPhaseResume(msg.LaunchContext)
 	if !ok {
 		return m, nil
@@ -2604,7 +2837,7 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
@@ -2698,11 +2931,24 @@ func (m Model) withoutPendingFlowPhaseResume(key flowPhaseResumeKey) Model {
 }
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
+	return m.runAgentLaunchWithReservation(ctx, launch, nil)
+}
+
+func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec, heldRelease func()) (Model, tea.Cmd) {
 	if launch.Interactive {
+		release := heldRelease
+		if release == nil {
+			var err error
+			release, err = m.reserveFlowSpawn(ctx)
+			if err != nil {
+				return m.startFlowLaunchFailure(ctx, err.Error())
+			}
+		}
 		// approach hands over the TTY until the launch command exits. Some launch
 		// commands are only terminal/multiplexer clients; launch.Detached records
 		// whether provider hooks, not this result, own session completion.
 		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
+			defer release()
 			if err != nil {
 				if launch.Cleanup != nil {
 					launch.Cleanup()
@@ -2715,6 +2961,15 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 	// Detached launch: the command only opens or switches to an external
 	// terminal/multiplexer session and returns while the agent keeps running.
 	return m, func() tea.Msg {
+		release := heldRelease
+		if release == nil {
+			var err error
+			release, err = m.reserveFlowSpawn(ctx)
+			if err != nil {
+				return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+			}
+		}
+		defer release()
 		if err := launch.Cmd.Run(); err != nil {
 			if launch.Cleanup != nil {
 				launch.Cleanup()
@@ -2723,6 +2978,29 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 		}
 		return AgentResultMsg{LaunchContext: ctx, Detached: true}
 	}
+}
+
+func (m Model) reserveTrackedFlowLaunch(flowID string) (flowstore.FlowRecord, func(), error) {
+	if m.reserveFlowLaunch == nil {
+		return flowstore.FlowRecord{}, func() {}, nil
+	}
+	return m.reserveFlowLaunch(flowID)
+}
+
+func releaseFlowLaunchReservation(release func()) {
+	if release != nil {
+		release()
+	}
+}
+
+func (m Model) reserveFlowSpawn(ctx actions.AgentLaunchContext) (func(), error) {
+	tracked := ctx.FlowLaunchTracked || (agent.Normalize(ctx.Command) == agent.CommandCodexApp &&
+		strings.TrimSpace(ctx.FlowPhaseID) != "" && strings.TrimSpace(ctx.LaunchID) != "")
+	if strings.TrimSpace(ctx.FlowID) == "" || !tracked || ctx.FlowRepair || m.reserveFlowLaunch == nil {
+		return func() {}, nil
+	}
+	_, release, err := m.reserveFlowLaunch(ctx.FlowID)
+	return release, err
 }
 
 func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText string) (flowstore.PhaseUpdate, bool) {

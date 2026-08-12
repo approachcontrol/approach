@@ -595,12 +595,14 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			Headless:                    flowHeadlessPointer(headless),
 		})
 		if err != nil {
+			releaseFlowLaunchReservation(result.LaunchRelease)
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
 		}
 		if result.LaunchSkipped {
+			releaseFlowLaunchReservation(result.LaunchRelease)
 			return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title}
 		}
-		return flowPlanLaunchMessage(result.LaunchContext)
+		return flowPlanLaunchMessage(result.LaunchContext, result.LaunchRelease)
 	}
 }
 
@@ -642,14 +644,18 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 	}
 }
 
-func flowPlanLaunchMessage(ctx actions.AgentLaunchContext) tea.Msg {
+// flowPlanLaunchMessage carries the reservation StartPlan is still holding into
+// the handler that spawns, which owns releasing it. A non-nil release also
+// tells the embedded path the spawn is already reserved, so it must not take
+// the same lock a second time.
+func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, release func()) tea.Msg {
 	switch agent.Normalize(ctx.Command) {
 	case agent.CommandCodex, agent.CommandClaude:
 		ctx.Embedded = true
 		ctx.FlowLaunchTracked = true
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx, LaunchRelease: release}
 	default:
-		return PlanLaunchRequestedMsg{LaunchContext: ctx}
+		return PlanLaunchRequestedMsg{LaunchContext: ctx, LaunchRelease: release}
 	}
 }
 

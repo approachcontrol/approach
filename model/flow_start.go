@@ -40,6 +40,11 @@ type FlowStartResult struct {
 	LaunchID      string
 	LaunchSkipped bool
 	LaunchContext actions.AgentLaunchContext
+	// LaunchRelease is the still-held launch/close reservation covering the
+	// launch ID this result carries. It is non-nil only when StartPlan
+	// persisted launch bookkeeping, and the caller that spawns the agent owns
+	// releasing it once the spawn has happened or failed.
+	LaunchRelease func()
 }
 
 // FlowStarterOptions groups the deeper orchestration adapters for starting a
@@ -50,6 +55,7 @@ type FlowStarterOptions struct {
 	SetStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	AddPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	ReserveLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 	ResolveCommit        func(string) string
@@ -65,6 +71,7 @@ type FlowStarter struct {
 	setStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	setPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	addPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	reserveLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
 	bootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 	resolveCommit        func(string) string
@@ -79,6 +86,7 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 		setStartMetadata:     opts.SetStartMetadata,
 		setPhase:             opts.SetPhase,
 		addPhaseLaunchID:     opts.AddPhaseLaunchID,
+		reserveLaunch:        opts.ReserveLaunch,
 		bootstrapHookForRepo: opts.BootstrapHookForRepo,
 		runBootstrapHook:     opts.RunBootstrapHook,
 		resolveCommit:        opts.ResolveCommit,
@@ -104,6 +112,11 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 	if starter.addPhaseLaunchID == nil {
 		starter.addPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		}
+	}
+	if starter.reserveLaunch == nil {
+		starter.reserveLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
 		}
 	}
 	if starter.bootstrapHookForRepo == nil {
@@ -139,6 +152,15 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	if err := validateInitialFlowLaunchPhase(flow, phase); err != nil {
 		return result, err
 	}
+	// Startup is long enough — worktree creation, then the bootstrap hook —
+	// that another process can close this Flow before the launch is recorded.
+	// The reservation is taken before the launch ID is persisted and stays held
+	// through the caller's spawn, so a close either loses the race outright or
+	// wins it before any launch bookkeeping exists.
+	_, release, err := s.reserveLaunch(flow.FlowID)
+	if err != nil {
+		return result, err
+	}
 	launchID := s.newLaunchID()
 	launchedFlow, err := s.addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   flow.FlowID,
@@ -146,11 +168,13 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		LaunchID: launchID,
 	})
 	if err != nil {
+		releaseFlowLaunchReservation(release)
 		return result, err
 	}
 	flow = launchedFlow
 	result.Flow = flow
 	result.LaunchID = launchID
+	result.LaunchRelease = release
 
 	phaseTitle := req.PlanPhaseTitle
 	if phaseTitle == "" {

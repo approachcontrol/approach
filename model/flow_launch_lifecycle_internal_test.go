@@ -37,6 +37,7 @@ type manualLaunchHarness struct {
 	addLaunchIDErr   error
 	planBodyErr      error
 	launchAgentErr   error
+	reserveLaunchErr error
 
 	agentCommand   string
 	persistedFlows []flowstore.FlowRecord
@@ -44,7 +45,9 @@ type manualLaunchHarness struct {
 	sessionRecords []sessions.SessionRecord
 	sessionsErr    error
 
-	sessionListCalls int
+	sessionListCalls   int
+	launchReservations int
+	launchReleases     int
 
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
@@ -64,7 +67,9 @@ func (h *manualLaunchHarness) persistedFlow(flowID string) (flowstore.FlowRecord
 	if flowID == h.record.FlowID {
 		return h.record, nil
 	}
-	return flowstore.FlowRecord{}, errors.New("flow not found")
+	// Wrapped like the store's own miss so callers that distinguish a missing
+	// Flow from a failed read see the same thing here.
+	return flowstore.FlowRecord{}, fmt.Errorf("flow %q not found: %w", flowID, flowstore.ErrFlowNotFound)
 }
 
 func newManualLaunchHarness(t *testing.T, record flowstore.FlowRecord) *manualLaunchHarness {
@@ -94,6 +99,20 @@ func (h *manualLaunchHarness) options() Options {
 		},
 		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
 			return h.persistedFlow(strings.TrimSpace(flowID))
+		},
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if h.reserveLaunchErr != nil {
+				return flowstore.FlowRecord{}, nil, h.reserveLaunchErr
+			}
+			record, err := h.persistedFlow(strings.TrimSpace(flowID))
+			if err == nil && flowstore.FlowClosed(record) {
+				// The real reservation refuses a closed Flow, and callers tell
+				// that refusal apart from a missing record by the sentinel.
+				return flowstore.FlowRecord{}, nil, fmt.Errorf(
+					"cannot launch an agent for flow %q because it is closed: %w", record.FlowID, flowstore.ErrFlowClosed)
+			}
+			h.launchReservations++
+			return record, func() { h.launchReleases++ }, nil
 		},
 		ReadPlan: func(planID string) (string, error) {
 			if h.planBodyErr != nil {
@@ -2061,6 +2080,112 @@ func TestFlowLaunchPrepareFailureLeavesPhaseAlone(t *testing.T) {
 				t.Fatal("a failed prepare must release the attempt")
 			}
 		})
+	}
+}
+
+func TestFlowLaunchCloseBetweenReadAndPrepareStartsNoAgent(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+
+	next, readCmd := m.handleLaunchNextFlowPhase()
+	m = next.(Model)
+	if readCmd == nil {
+		t.Fatal("manual launch should schedule the authoritative read")
+	}
+	readMsg := readCmd()
+	nextModel, prepareCmd := m.Update(readMsg)
+	m = nextModel.(Model)
+	if prepareCmd == nil {
+		t.Fatal("authoritative read should schedule preparation")
+	}
+
+	// The close lands after the lifecycle's authoritative read but before the
+	// transactional launch-ID reservation performed by Prepare.
+	h.addLaunchIDErr = errors.New("flow is closed")
+	preparedMsg := prepareCmd()
+	nextModel, handoffCmd := m.Update(preparedMsg)
+	m = nextModel.(Model)
+	if handoffCmd != nil {
+		m = h.drain(m, handoffCmd, 0)
+	}
+
+	if len(h.launchUpdates) != 1 {
+		t.Fatalf("launch reservations = %d, want one rejected reservation", len(h.launchUpdates))
+	}
+	if len(h.launchContexts) != 0 || len(h.agentContexts) != 0 {
+		t.Fatalf("closed Flow started an agent: embedded=%d external=%d", len(h.launchContexts), len(h.agentContexts))
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("rejected prepare must release the launch attempt")
+	}
+	if got := m.status.Text; !strings.Contains(got, "closed") {
+		t.Fatalf("status = %q, want closed rejection", got)
+	}
+}
+
+func TestFlowLaunchCloseBeforeEmbeddedPersistenceStartsNoAgent(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+
+	next, readCmd := m.handleLaunchNextFlowPhase()
+	m = next.(Model)
+	readMsg := readCmd()
+	nextModel, prepareCmd := m.Update(readMsg)
+	m = nextModel.(Model)
+	// The close wins before the command can persist launch bookkeeping. The
+	// reservation rejects the whole persistence-to-spawn operation atomically.
+	h.reserveLaunchErr = errors.New("flow is closed")
+	preparedMsg := prepareCmd()
+	nextModel, handoffCmd := m.Update(preparedMsg)
+	m = nextModel.(Model)
+	if handoffCmd != nil {
+		m = h.drain(m, handoffCmd, 0)
+	}
+
+	if len(h.launchContexts) != 0 {
+		t.Fatalf("closed Flow started %d embedded agents after persistence, want zero", len(h.launchContexts))
+	}
+	if len(h.launchUpdates) != 0 {
+		t.Fatalf("closed Flow recorded launch updates %#v, want none", h.launchUpdates)
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("rejected final spawn must release the launch attempt")
+	}
+	if got := m.status.Text; !strings.Contains(got, "closed") {
+		t.Fatalf("status = %q, want final-spawn closed rejection", got)
+	}
+}
+
+func TestFlowLaunchCloseBeforeExternalPersistenceStartsNoAgent(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.agentCommand = "codex-app"
+	m := h.model()
+
+	next, readCmd := m.handleLaunchNextFlowPhase()
+	m = next.(Model)
+	readMsg := readCmd()
+	nextModel, prepareCmd := m.Update(readMsg)
+	m = nextModel.(Model)
+	h.reserveLaunchErr = errors.New("flow is closed")
+	preparedMsg := prepareCmd()
+	nextModel, handoffCmd := m.Update(preparedMsg)
+	m = nextModel.(Model)
+	if handoffCmd == nil {
+		t.Fatal("external handoff should return a command that performs final admission")
+	}
+	m = h.drain(m, handoffCmd, 0)
+
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("rejected external spawn must release the launch attempt")
+	}
+	if len(h.launchUpdates) != 0 || len(h.agentContexts) != 0 {
+		t.Fatalf("closed Flow external launch state = updates %#v contexts %#v, want none", h.launchUpdates, h.agentContexts)
+	}
+	if got := m.status.Text; !strings.Contains(got, "closed") {
+		t.Fatalf("status = %q, want final-spawn closed rejection", got)
 	}
 }
 

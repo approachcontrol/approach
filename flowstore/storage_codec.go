@@ -23,22 +23,26 @@ type storageGraphRecovery struct {
 // storedFlowDTO declares the byte-stable storage field order. It deliberately
 // mirrors FlowRecord and appends the storage-only recovery marker last.
 type storedFlowDTO struct {
-	SchemaVersion int                   `json:"schema_version"`
-	FlowID        string                `json:"flow_id"`
-	Title         string                `json:"title"`
-	Instructions  string                `json:"instructions"`
-	Status        string                `json:"status"`
-	RepoPath      string                `json:"repo_path"`
-	WorktreePath  string                `json:"worktree_path,omitempty"`
-	Branch        string                `json:"branch,omitempty"`
-	BaseRef       string                `json:"base_ref,omitempty"`
-	Commit        string                `json:"commit,omitempty"`
-	PresetName    string                `json:"preset_name,omitempty"`
-	PlanID        string                `json:"plan_id,omitempty"`
-	PlanPath      string                `json:"plan_path,omitempty"`
-	Issue         Issue                 `json:"issue,omitempty"`
-	PR            PullRequest           `json:"pr,omitempty"`
-	Merge         Merge                 `json:"merge,omitempty"`
+	SchemaVersion int         `json:"schema_version"`
+	FlowID        string      `json:"flow_id"`
+	Title         string      `json:"title"`
+	Instructions  string      `json:"instructions"`
+	Status        string      `json:"status"`
+	RepoPath      string      `json:"repo_path"`
+	WorktreePath  string      `json:"worktree_path,omitempty"`
+	Branch        string      `json:"branch,omitempty"`
+	BaseRef       string      `json:"base_ref,omitempty"`
+	Commit        string      `json:"commit,omitempty"`
+	PresetName    string      `json:"preset_name,omitempty"`
+	PlanID        string      `json:"plan_id,omitempty"`
+	PlanPath      string      `json:"plan_path,omitempty"`
+	Issue         Issue       `json:"issue,omitempty"`
+	PR            PullRequest `json:"pr,omitempty"`
+	Merge         Merge       `json:"merge,omitempty"`
+	// Closed is omitzero, deliberately unlike its omitempty neighbours:
+	// omitempty does not omit a zero struct, and this struct is what the
+	// default_seed golden is marshalled from.
+	Closed        Closure               `json:"closed,omitzero"`
 	AutoMode      bool                  `json:"auto_mode,omitempty"`
 	Headless      bool                  `json:"headless"`
 	Phases        []FlowPhase           `json:"phases"`
@@ -79,6 +83,7 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 		Issue:         record.Issue,
 		PR:            record.PR,
 		Merge:         record.Merge,
+		Closed:        record.Closed,
 		AutoMode:      record.AutoMode,
 		Headless:      record.Headless,
 		Phases:        record.Phases,
@@ -109,6 +114,7 @@ func (dto storedFlowDTO) record() FlowRecord {
 		Issue:         dto.Issue,
 		PR:            dto.PR,
 		Merge:         dto.Merge,
+		Closed:        dto.Closed,
 		AutoMode:      dto.AutoMode,
 		Headless:      dto.Headless,
 		Phases:        dto.Phases,
@@ -125,6 +131,9 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 	if !storageGraphRecoveryStatusEncodable(record.GraphRecovery.Status) {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: unknown graph recovery status %q",
 			record.FlowID, record.GraphRecovery.Status)
+	}
+	if err := validateClosure(record.Closed); err != nil {
+		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
 	}
 	updatedAt, err := formatStorageTime(record.UpdatedAt)
 	if err != nil {
@@ -153,6 +162,9 @@ func decodeStoredFlow(flowID, repoPath, status, updatedAt string, data []byte) (
 		return storedFlow{}, fmt.Errorf("flow %q has unknown graph recovery status %q", flowID, dto.GraphRecovery.Status)
 	}
 	record := dto.record()
+	if err := validateClosure(record.Closed); err != nil {
+		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
+	}
 	if record.SchemaVersion != schemaVersion {
 		return storedFlow{}, fmt.Errorf("flow %q has unsupported schema version %d", flowID, record.SchemaVersion)
 	}
