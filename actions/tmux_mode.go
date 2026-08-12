@@ -197,20 +197,25 @@ func matchesAnySuffix(name string, suffixes []string) bool {
 // dies between the probe and new-window retries as new-session. Retried
 // attempts suppress their stderr so only the last one can write; either way the
 // caller sees the script's exit status, not its message.
+//
+// Every creation is detached (`-d`): without it new-window makes its window the
+// session's current one, so a user attached to the repo session — the workflow T
+// exists for — would be yanked off whatever agent they were watching every time
+// the TUI launched another. A launch must not move anyone's client.
 const repoTmuxLaunchScript = `
 session=$1
 window=$2
 dir=$3
 cmd=$4
 if tmux has-session -t "=$session" 2>/dev/null; then
-	if tmux new-window -t "=$session:" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
+	if tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
 		exit 0
 	fi
 fi
 if tmux new-session -d -s "$session" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
 	exit 0
 fi
-exec tmux new-window -t "=$session:" -n "$window" -c "$dir" "$cmd"
+exec tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd"
 `
 
 // RepoTmuxAgentLaunch builds a CLI agent launch that runs in the repo's tmux

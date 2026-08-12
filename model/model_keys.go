@@ -2474,6 +2474,15 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
 		return actions.AgentLaunchContext{}, nil, false, m
 	}
+	// In tmux mode there is no embedded slot to make a still-running agent
+	// visible, so nothing else stops a resume from starting a second process on
+	// a session whose first one is alive in a window. Probed here, above the
+	// reservation, because this is the one admission point all three
+	// record-based resumes share and there is nothing to release yet.
+	if m.tmuxSessionAgentStillRunning(record, command) {
+		m = m.setStatus(statusOther, tmuxSessionLiveWindowRefusal)
+		return actions.AgentLaunchContext{}, nil, false, m
+	}
 	// The launch context below is deliberately Flow-agnostic, so the launch
 	// paths it feeds cannot apply the closed-Flow guard the Flow-phase pane
 	// applies. Resuming still spawns an agent for the Flow that owns the

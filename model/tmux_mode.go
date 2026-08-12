@@ -9,6 +9,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // tmuxFallbackNote is reported when tmux mode wanted the tmux route and could
@@ -159,8 +160,8 @@ func (m Model) launchAgentForBackend(ctx actions.AgentLaunchContext, release fun
 	return m.launchAgentWithContextStatus(ctx, release, launchedStatus)
 }
 
-// tmuxPhaseLaunchWindowLive reports whether any of these launches still has an
-// open tmux window.
+// tmuxLaunchWindowLive reports whether any of these launches still has an open
+// tmux window.
 //
 // It replaces what the embedded dock's running slot does for reset, repeat
 // resume, and repair: in tmux mode there is no slot, and persisted session state
@@ -173,7 +174,14 @@ func (m Model) launchAgentForBackend(ctx actions.AgentLaunchContext, release fun
 // and never in a predicate the renderer evaluates. It is advisory in one
 // direction only: false can mean "probe failed", so it never asserts an agent is
 // gone.
-func (m Model) tmuxPhaseLaunchWindowLive(repoPath string, launchIDs []string) bool {
+//
+// The backend gate is deliberate, and it does mean a window launched in tmux
+// mode stops being probed for if the user then switches back to the embedded
+// backend. Probing regardless would put a tmux subprocess on every default-mode
+// reset, resume, and repair to cover a mid-flight config change; knowing which
+// transport a launch actually used would take persisting it per launch, which
+// the launch record has no room for today.
+func (m Model) tmuxLaunchWindowLive(repoPath string, launchIDs []string) bool {
 	if !m.tmuxLaunchBackend() || strings.TrimSpace(repoPath) == "" || len(launchIDs) == 0 {
 		return false
 	}
@@ -186,14 +194,37 @@ func (m Model) tmuxPhaseLaunchWindowLive(repoPath string, launchIDs []string) bo
 	return m.repoTmuxLaunchWindowLive(repoPath, launchIDs...)
 }
 
-// tmuxPhaseAgentStillRunning is tmuxPhaseLaunchWindowLive for one phase of a
-// record, resolving both the repo and the launches a window could belong to.
+// tmuxPhaseAgentStillRunning is tmuxLaunchWindowLive for one phase of a record,
+// resolving both the repo and the launches a window could belong to.
 //
 // Every launch the phase made is checked, not only the newest: an earlier
 // launch's window can outlive a later one that already exited, and one
 // `list-windows` answers for all of them anyway.
 func (m Model) tmuxPhaseAgentStillRunning(record flowstore.FlowRecord, phase flowstore.FlowPhase, fallbackRepoPath string) bool {
-	return m.tmuxPhaseLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), phase.LaunchIDs)
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), phase.LaunchIDs)
+}
+
+// tmuxSessionAgentStillRunning is tmuxLaunchWindowLive for a session record, and
+// it is what stops a resume from starting a second process on a provider session
+// that is still open in a tmux window.
+//
+// The Flow-phase resume has its own phase-scoped guard, but the resumes that
+// start from a session record — sessions view, the inline worktree session list,
+// and the dock's session picker — carry no phase, mint a fresh launch ID, and
+// deliberately drop Flow identity, so that guard can never see them. The record's
+// own LaunchID is the one thing that ties it back to the window its agent is
+// running in. Codex makes this ordinary rather than exotic: its Stop hook records
+// an `ended` session after each turn while the CLI stays open, so the record a
+// user resumes from is routinely one whose agent is still live.
+func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, command string) bool {
+	if !tmuxRouteEligible(actions.AgentLaunchContext{Command: command}) {
+		return false
+	}
+	repoPath := strings.TrimSpace(record.RepoPath)
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	return m.tmuxLaunchWindowLive(repoPath, []string{record.LaunchID})
 }
 
 // tmuxFlowAgentStillRunning is tmuxPhaseAgentStillRunning for a whole record.
@@ -204,7 +235,7 @@ func (m Model) tmuxFlowAgentStillRunning(record flowstore.FlowRecord, fallbackRe
 	for _, phase := range record.Phases {
 		launchIDs = append(launchIDs, phase.LaunchIDs...)
 	}
-	return m.tmuxPhaseLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
 }
 
 // tmuxProbeRepoPath resolves which repo's session to probe. It has to agree with
@@ -247,8 +278,9 @@ func (m Model) tmuxAttachRepoPath() (string, bool) {
 // Flow-wide and can be armed by an obstruction that names no phase at all, so
 // naming a phase there would point at the wrong scope.
 const (
-	tmuxPhaseLiveWindowRefusal = "Flow phase still has an agent running in tmux"
-	tmuxFlowLiveWindowRefusal  = "Flow still has an agent running in tmux"
+	tmuxPhaseLiveWindowRefusal   = "Flow phase still has an agent running in tmux"
+	tmuxFlowLiveWindowRefusal    = "Flow still has an agent running in tmux"
+	tmuxSessionLiveWindowRefusal = "Session still has an agent running in tmux"
 )
 
 // tmuxRepoSessionExists probes the default tmux server for a repo's session.

@@ -412,6 +412,79 @@ func TestLiveTmuxWindowRefusesRepeatResumeOfTerminalPhase(t *testing.T) {
 	}
 }
 
+// TestLiveTmuxWindowRefusesSessionRecordResume covers the resumes that start
+// from a session record rather than a Flow phase — sessions view, the inline
+// worktree session list, and the dock's session picker. They mint a fresh launch
+// ID and drop Flow identity, so the phase-scoped guard can never see them; the
+// record's own LaunchID is what ties it back to a live window. Codex makes this
+// routine: its Stop hook records an `ended` session after each turn while the
+// CLI stays open, so the record offered for resume often still has an agent.
+func TestLiveTmuxWindowRefusesSessionRecordResume(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "session-1",
+		LaunchID:  "launch-1",
+		RepoPath:  "/dev/alpha",
+		CWD:       "/dev/alpha",
+		Status:    "ended",
+	}
+
+	t.Run("refuses while the record's own window is live", func(t *testing.T) {
+		spy := &tmuxResumeSpy{t: t}
+		m := spy.modelWithRepos("tmux", true)
+		probed := ""
+		var probedLaunchIDs []string
+		m.repoTmuxLaunchWindowLive = func(repoPath string, launchIDs ...string) bool {
+			probed = repoPath
+			probedLaunchIDs = launchIDs
+			return true
+		}
+
+		_, release, ok, next := m.sessionResumeLaunchContext(record)
+		if ok {
+			t.Fatal("a live window must not admit a second resume of the same session")
+		}
+		if release != nil {
+			t.Fatal("a refusal must not hand back a reservation to release")
+		}
+		if next.status.Text != tmuxSessionLiveWindowRefusal {
+			t.Fatalf("status = %q, want the live-window refusal", next.status.Text)
+		}
+		// The record's launch, not the resume's new one: only the launch that
+		// opened the window can be matched against a window name.
+		if probed != "/dev/alpha" || len(probedLaunchIDs) != 1 || probedLaunchIDs[0] != "launch-1" {
+			t.Fatalf("probed repo %q launches %#v, want /dev/alpha and the record's launch-1", probed, probedLaunchIDs)
+		}
+	})
+
+	t.Run("admits the resume when no window is live", func(t *testing.T) {
+		spy := &tmuxResumeSpy{t: t}
+		m := spy.modelWithRepos("tmux", true)
+		m.repoTmuxLaunchWindowLive = func(string, ...string) bool { return false }
+
+		ctx, _, ok, next := m.sessionResumeLaunchContext(record)
+		if !ok {
+			t.Fatalf("no live window must admit the resume, status = %q", next.status.Text)
+		}
+		if ctx.ResumeSessionID != "session-1" {
+			t.Fatalf("resume session = %q, want session-1", ctx.ResumeSessionID)
+		}
+	})
+
+	t.Run("the default backend never probes", func(t *testing.T) {
+		spy := &tmuxResumeSpy{t: t}
+		m := spy.modelWithRepos("embedded", true)
+		m.repoTmuxLaunchWindowLive = func(string, ...string) bool {
+			t.Fatal("the embedded backend routes no launch to tmux and must not probe")
+			return true
+		}
+
+		if _, _, ok, next := m.sessionResumeLaunchContext(record); !ok {
+			t.Fatalf("the default backend must admit the resume, status = %q", next.status.Text)
+		}
+	})
+}
+
 // TestRenderPathNeverProbesTmux guards the placement rule the probe depends on.
 // flowPhaseResettable feeds the footer hint, so it is evaluated on every frame;
 // probing there would fork a tmux process per render.
@@ -480,16 +553,16 @@ func TestLiveTmuxWindowProbeIsAdvisoryOnly(t *testing.T) {
 		t.Fatal("an unavailable tmux must not be probed")
 		return true
 	}
-	if m.tmuxPhaseLaunchWindowLive("/dev/alpha", []string{"launch-1"}) {
+	if m.tmuxLaunchWindowLive("/dev/alpha", []string{"launch-1"}) {
 		t.Fatal("tmux unavailable must report no live window")
 	}
 
 	available := spy.model("tmux", true)
 	available.repoTmuxLaunchWindowLive = func(string, ...string) bool { return false }
-	if available.tmuxPhaseLaunchWindowLive("", []string{"launch-1"}) {
+	if available.tmuxLaunchWindowLive("", []string{"launch-1"}) {
 		t.Fatal("an unknown repo must report no live window")
 	}
-	if available.tmuxPhaseLaunchWindowLive("/dev/alpha", nil) {
+	if available.tmuxLaunchWindowLive("/dev/alpha", nil) {
 		t.Fatal("an unknown launch must report no live window")
 	}
 }

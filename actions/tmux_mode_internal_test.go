@@ -175,7 +175,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			// must never reach new-session.
 			name: "reuses an existing session",
 			fail: nil,
-			want: []string{"has-session -t =sess", "new-window -t =sess: -n win -c DIR agent"},
+			want: []string{"has-session -t =sess", "new-window -d -t =sess: -n win -c DIR agent"},
 		},
 		{
 			name: "creates the session when absent",
@@ -189,7 +189,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			fail: []string{"new-window"},
 			want: []string{
 				"has-session -t =sess",
-				"new-window -t =sess: -n win -c DIR agent",
+				"new-window -d -t =sess: -n win -c DIR agent",
 				"new-session -d -s sess -n win -c DIR agent",
 			},
 		},
@@ -201,7 +201,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			want: []string{
 				"has-session -t =sess",
 				"new-session -d -s sess -n win -c DIR agent",
-				"new-window -t =sess: -n win -c DIR agent",
+				"new-window -d -t =sess: -n win -c DIR agent",
 			},
 		},
 	}

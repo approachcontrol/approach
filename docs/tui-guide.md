@@ -402,7 +402,13 @@ Limitations:
   three actions instead ask tmux whether a window for that work is still open,
   and refuse with "Flow phase still has an agent running in tmux" when one is.
   `x` and `r` check the selected phase's launches; `R` checks every launch the
-  Flow has made, since a repair is Flow-wide. Consequences worth knowing:
+  Flow has made, since a repair is Flow-wide. Resumes that start from a session
+  record instead of a Flow phase — sessions view `r`, the inline worktree session
+  list, and the dock's session picker — check the launch that produced that
+  record and refuse with "Session still has an agent running in tmux". Codex
+  makes that ordinary rather than rare: it records an `ended` session after each
+  turn while its CLI stays open, so the record you resume from often still has a
+  live agent. Consequences worth knowing:
   - The probe runs when you confirm a reset or press `r` or `R`, not while
     rendering, so the footer may still offer `x` for a phase whose reset is then
     refused.
@@ -411,6 +417,10 @@ Limitations:
     probe failure can never strand a phase.
   - It matches windows by the launch ID that Approach put in the window name.
     Renaming a window by hand makes it invisible to the probe.
+  - It only runs while `backend = "tmux"`. Windows outlive Approach, so if you
+    switch back to `embedded` while one is still running, that window stops
+    counting as a live agent and the guard no longer sees it. Close the windows
+    before switching back.
 - A window killed out of band (`tmux kill-window`, a killed agent, a machine
   sleeping) fires no provider hook, so the phase keeps whatever the last hook
   recorded: `running` and awaiting session capture if none ever fired. The probe
