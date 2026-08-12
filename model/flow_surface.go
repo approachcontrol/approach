@@ -135,7 +135,7 @@ func (m Model) visibleActiveFlowRecords() []flowstore.FlowRecord {
 func activeFlowRecords(records []flowstore.FlowRecord) []flowstore.FlowRecord {
 	active := make([]flowstore.FlowRecord, 0, len(records))
 	for _, record := range records {
-		if record.Status == flowstore.StatusMerged {
+		if record.Status == flowstore.StatusMerged || flowstore.FlowClosed(record) {
 			continue
 		}
 		active = append(active, record)

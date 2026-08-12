@@ -31,7 +31,7 @@ func phaseRepairObstruction(phase flowstore.FlowPhase, description string) flowR
 // repair can help.
 func flowRepairObstructionForRecord(record flowstore.FlowRecord) (flowRepairObstruction, bool) {
 	switch flowstore.DeriveStatus(record) {
-	case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+	case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned, flowstore.StatusClosed:
 		return flowRepairObstruction{}, false
 	}
 

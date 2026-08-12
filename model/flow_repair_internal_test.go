@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
@@ -129,6 +130,15 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 			record: func() flowstore.FlowRecord {
 				record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseBlocked})
 				record.Status = flowstore.StatusAbandoned
+				return record
+			}(),
+		},
+		{
+			name: "closed",
+			record: func() flowstore.FlowRecord {
+				record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseBlocked})
+				closedAt := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+				record.Closed = flowstore.Closure{Reason: "abandoning this approach", ClosedAt: &closedAt}
 				return record
 			}(),
 		},

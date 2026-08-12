@@ -501,6 +501,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleMarkFlowManuallyMerged()
 		}
+	case "C":
+		if m.flowSurfaceVisible() {
+			return m.handleCloseFlow()
+		}
 	case "N":
 		if mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(true)
@@ -744,6 +748,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenFlowPlanText()
 	case "m":
 		return m.handleMarkFlowManuallyMerged()
+	case "C":
+		return m.handleCloseFlow()
 	case "a":
 		return m.handleToggleFlowAutoMode()
 	case "i":
@@ -1154,7 +1160,7 @@ func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" {
+	if !ok || record.FlowID == "" || flowstore.FlowClosed(record) {
 		return m, nil
 	}
 	repoPath := record.RepoPath
@@ -1200,6 +1206,132 @@ func (m Model) handleMarkFlowManuallyMerged() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// flowCloseAction is the tri-state C binds to: an open Flow can be closed, a
+// closed one reopened, and everything else offers nothing.
+type flowCloseAction int
+
+const (
+	flowCloseActionNone flowCloseAction = iota
+	flowCloseActionClose
+	flowCloseActionReopen
+)
+
+func flowCloseActionForRecord(record flowstore.FlowRecord) flowCloseAction {
+	if record.FlowID == "" {
+		return flowCloseActionNone
+	}
+	if flowstore.FlowClosed(record) {
+		return flowCloseActionReopen
+	}
+	if flowstore.DeriveStatus(record) == flowstore.StatusMerged {
+		return flowCloseActionNone
+	}
+	return flowCloseActionClose
+}
+
+// selectedFlowCloseAction resolves what C would do for the selected Flow. It
+// deliberately ignores phase-row selection: the footer needs the Flow's own
+// closed state even while a phase row is selected, to suppress the r, x and a
+// hints. handleCloseFlow applies the phase-row check itself.
+func (m Model) selectedFlowCloseAction() (flowstore.FlowRecord, string, flowCloseAction) {
+	if !m.flowSurfaceVisible() {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	record, ok := m.selectedFlow()
+	if !ok {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	action := flowCloseActionForRecord(record)
+	if action == flowCloseActionNone {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return flowstore.FlowRecord{}, "", flowCloseActionNone
+	}
+	return record, repoPath, action
+}
+
+// selectedFlowCloseActionHint is the footer's view of selectedFlowCloseAction.
+func (m Model) selectedFlowCloseActionHint() ui.FlowCloseAction {
+	_, _, action := m.selectedFlowCloseAction()
+	switch action {
+	case flowCloseActionClose:
+		return ui.FlowCloseActionClose
+	case flowCloseActionReopen:
+		return ui.FlowCloseActionReopen
+	default:
+		return ui.FlowCloseActionNone
+	}
+}
+
+func (m Model) handleCloseFlow() (tea.Model, tea.Cmd) {
+	if m.currentSelectedFlowPhaseID() != "" {
+		return m, nil
+	}
+	record, repoPath, action := m.selectedFlowCloseAction()
+	switch action {
+	case flowCloseActionClose:
+		m.modal = modal.OpenSingleLineInput(
+			fmt.Sprintf("Close Flow %s (%s)? Reason:", record.Title, record.FlowID),
+			ui.FlowCloseReasonInputPlaceholder,
+			"",
+			validateFlowCloseReason,
+			func(reason string) tea.Cmd {
+				return m.closeFlowCmd(repoPath, record, reason)
+			},
+		)
+	case flowCloseActionReopen:
+		m.modal = modal.OpenConfirm(
+			fmt.Sprintf("Reopen Flow %s (%s)? (y/n)", record.Title, record.FlowID),
+			func() tea.Cmd {
+				return m.reopenFlowCmd(repoPath, record)
+			},
+		)
+	default:
+		return m, nil
+	}
+	return m, nil
+}
+
+func validateFlowCloseReason(input string) error {
+	if input == "" {
+		return fmt.Errorf("enter a reason for closing this flow")
+	}
+	return nil
+}
+
+func (m Model) closeFlowCmd(repoPath string, record flowstore.FlowRecord, reason string) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.closeFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: reason})
+		if err != nil {
+			return FlowCloseFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				Err:      fmt.Sprintf("failed to close Flow: %v", err),
+			}
+		}
+		return FlowClosedMsg{RepoPath: repoPath, FlowID: record.FlowID, Flow: flow}
+	}
+}
+
+func (m Model) reopenFlowCmd(repoPath string, record flowstore.FlowRecord) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.reopenFlow(record.FlowID)
+		if err != nil {
+			return FlowReopenFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				Err:      fmt.Sprintf("failed to reopen Flow: %v", err),
+			}
+		}
+		return FlowReopenedMsg{RepoPath: repoPath, FlowID: record.FlowID, Flow: flow}
+	}
+}
+
 func (m Model) selectedManualMergeFlow() (flowstore.FlowRecord, string, bool) {
 	if !m.flowSurfaceVisible() || m.currentSelectedFlowPhaseID() != "" {
 		return flowstore.FlowRecord{}, "", false
@@ -1219,6 +1351,9 @@ func (m Model) selectedManualMergeFlow() (flowstore.FlowRecord, string, bool) {
 }
 
 func flowManualMergeEligible(record flowstore.FlowRecord) bool {
+	if flowstore.FlowClosed(record) {
+		return false
+	}
 	if record.Status == flowstore.StatusMerged || !flowstore.HasPRTarget(record.PR) {
 		return false
 	}
@@ -2034,7 +2169,12 @@ func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.F
 	return record, phase, repoPath, true
 }
 
+// flowPhaseResettable feeds both the x handler and its footer hint, so the
+// closed-Flow guard here covers AC4 and AC7 in one place.
 func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
+	if flowstore.FlowClosed(record) {
+		return false
+	}
 	_, recoverable := flowstore.RecoverableRunningPhaseResetReason(phase)
 	return recoverable &&
 		!flowstore.PhaseSessionLaunchMismatch(phase) &&
@@ -2171,6 +2311,11 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	}
 	record, ok := m.selectedFlow()
 	if !ok || record.FlowID == "" || record.FlowID != m.currentExpandedFlowID() || m.currentSelectedFlowPhaseID() == "" {
+		return m, nil
+	}
+	// A resume spawns an agent and records a launch, and the store-side auto
+	// gate does not cover it, so a closed Flow has to refuse here.
+	if flowstore.FlowClosed(record) {
 		return m, nil
 	}
 	phase, ok := m.selectedFlowPhase()

@@ -37,6 +37,7 @@ const (
 	StatusCompleted      = "completed"
 	StatusMerged         = "merged"
 	StatusAbandoned      = "abandoned"
+	StatusClosed         = "closed"
 )
 
 const (
@@ -211,6 +212,25 @@ type Merge struct {
 	MergedAt *time.Time `json:"merged_at,omitempty"`
 }
 
+// Closure records why and when a Flow was deliberately closed. Derivation keys
+// on ClosedAt, never on Reason, so a record can never drift into closed because
+// of an empty-string comparison.
+type Closure struct {
+	Reason   string     `json:"reason,omitempty"`
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+}
+
+// ClosureUpdate records a deliberate close of a Flow with its required reason.
+type ClosureUpdate struct {
+	FlowID string
+	Reason string
+}
+
+// FlowClosed reports whether a Flow was deliberately closed.
+func FlowClosed(record FlowRecord) bool {
+	return record.Closed.ClosedAt != nil
+}
+
 // AutoModeUpdate changes whether the TUI may automatically launch ready phases
 // for a single Flow after successful phase completion.
 type AutoModeUpdate struct {
@@ -242,6 +262,7 @@ type FlowRecord struct {
 	Issue         Issue       `json:"issue,omitempty"`
 	PR            PullRequest `json:"pr,omitempty"`
 	Merge         Merge       `json:"merge,omitempty"`
+	Closed        Closure     `json:"closed,omitzero"`
 	AutoMode      bool        `json:"auto_mode,omitempty"`
 	// Headless is the per-Flow manual-launch preference. Like AutoMode, it is
 	// forced on at creation and can only be changed afterwards through
@@ -962,6 +983,51 @@ func (s *Store) SetHeadless(update HeadlessUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 		record.Headless = update.Enabled
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// CloseFlow marks a Flow deliberately closed with a required reason. Phases are
+// left exactly as they are, so the record still explains where work stopped;
+// terminality is enforced by the launch guards, not by rewriting phase rows.
+//
+// Unlike SetAutoMode and SetHeadless, a redundant call is an error rather than a
+// no-op: a second close discards a reason the user typed, which is worth
+// reporting.
+func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	reason := strings.TrimSpace(update.Reason)
+	if reason == "" {
+		return FlowRecord{}, errors.New("flow close requires a reason")
+	}
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, fmt.Errorf("flow %q is already closed", update.FlowID)
+		}
+		if DeriveStatus(record) == StatusMerged {
+			return FlowRecord{}, fmt.Errorf("flow %q is already merged", update.FlowID)
+		}
+		closedAt := now
+		record.Closed = Closure{Reason: reason, ClosedAt: &closedAt}
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// ReopenFlow clears the closure from a closed Flow, restoring the launchability
+// it had before the close.
+func (s *Store) ReopenFlow(flowID string) (FlowRecord, error) {
+	if err := validateFlowID(flowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlowMetadataOnly(flowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if !FlowClosed(record) {
+			return FlowRecord{}, fmt.Errorf("flow %q is not closed", flowID)
+		}
+		record.Closed = Closure{}
 		record.UpdatedAt = now
 		return record, nil
 	})
@@ -1994,6 +2060,10 @@ func reviewPhaseLabel(phase FlowPhase) string {
 
 // DeriveStatus computes the flow-level status from phase and merge state.
 func DeriveStatus(record FlowRecord) string {
+	// A deliberate human close outranks anything derived from phase or merge state.
+	if FlowClosed(record) {
+		return StatusClosed
+	}
 	if record.Status == StatusAbandoned {
 		return StatusAbandoned
 	}

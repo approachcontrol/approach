@@ -13,6 +13,7 @@ func populatedFlowRecord() FlowRecord {
 	created := time.Date(2024, 3, 4, 5, 6, 7, 8, time.UTC)
 	updated := created.Add(time.Hour)
 	mergedAt := updated.Add(time.Minute)
+	closedAt := updated.Add(2 * time.Minute)
 	return FlowRecord{
 		SchemaVersion: schemaVersion,
 		FlowID:        "20240304-050607-parity",
@@ -30,6 +31,7 @@ func populatedFlowRecord() FlowRecord {
 		Issue:         Issue{Provider: "github", Number: 7, URL: "https://github.com/o/r/issues/7"},
 		PR:            PullRequest{Provider: "github", Number: 9, URL: "https://github.com/o/r/pull/9", HeadBranch: "feature", BaseBranch: "main", Status: "open"},
 		Merge:         Merge{Status: MergeMerged, Commit: "def456", MergedAt: &mergedAt},
+		Closed:        Closure{Reason: "superseded", ClosedAt: &closedAt},
 		AutoMode:      true,
 		Headless:      true,
 		Phases: []FlowPhase{{

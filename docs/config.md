@@ -539,9 +539,10 @@ Flows also persist `headless: true` unless the New Flow form explicitly seeds
 `false`. Legacy records without `headless` read as `true`, while a stored
 `false` is preserved across reads, lists, and later metadata writes.
 
-Flow statuses are derived from phase and merge state. Flow statuses include
+Flow statuses are derived from phase and merge state, except `closed`, which
+records an explicit close and outranks every other status. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
-and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
+`abandoned`, and `closed`. Phase statuses include `pending`, `ready`, `running`,
 `needs_attention`, `completed`, `blocked`, and `skipped`. The canonical phase
 transition table, derived-readiness gate rules, and the on-disk compatibility
 story live in [flow-phases.md](flow-phases.md).

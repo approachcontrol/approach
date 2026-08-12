@@ -376,6 +376,30 @@ type FlowManualMergeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowClosedMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+}
+
+type FlowCloseFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Err      string
+}
+
+type FlowReopenedMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+}
+
+type FlowReopenFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Err      string
+}
+
 type PlanReadResultMsg struct {
 	RepoPath    string
 	PlanID      string
@@ -1549,6 +1573,42 @@ func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) M
 	}
 	if msg.Flow.FlowID != "" {
 		m = m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowClosed(msg FlowClosedMsg) Model {
+	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+		return m
+	}
+	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+}
+
+func (m Model) handleFlowCloseFailed(msg FlowCloseFailedMsg) Model {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to close Flow"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowReopened(msg FlowReopenedMsg) Model {
+	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+		return m
+	}
+	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+}
+
+func (m Model) handleFlowReopenFailed(msg FlowReopenFailedMsg) Model {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to reopen Flow"
 	}
 	return m.setStatus(statusOther, errText)
 }

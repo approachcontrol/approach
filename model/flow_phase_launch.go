@@ -395,7 +395,7 @@ func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, req
 				continue
 			}
 			switch flowstore.DeriveStatus(record) {
-			case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+			case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned, flowstore.StatusClosed:
 				delete(m.pendingRepairAutoDrainFlowIDs, flowID)
 				continue
 			}
@@ -416,7 +416,7 @@ func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, req
 			continue
 		}
 		switch flowstore.DeriveStatus(record) {
-		case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+		case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned, flowstore.StatusClosed:
 			continue
 		}
 		m = m.armAutoAdvanceDrain(flowID)
@@ -611,6 +611,11 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 }
 
 func flowPhaseCanLaunchAtIndex(record flowstore.FlowRecord, phaseIndex int) bool {
+	// The merge-kind and autoreview-rerun branches below bypass
+	// PhaseLaunchEligible, so a closed Flow needs its own guard here.
+	if flowstore.FlowClosed(record) {
+		return false
+	}
 	if phaseIndex < 0 || phaseIndex >= len(record.Phases) {
 		return false
 	}

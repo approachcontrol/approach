@@ -70,6 +70,16 @@ const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
 const AgentInputPlaceholder = "codex, codex-app, or claude"
+const FlowCloseReasonInputPlaceholder = "why this flow is closed"
+
+// FlowCloseAction is what pressing C on the selected Flow will do.
+type FlowCloseAction int
+
+const (
+	FlowCloseActionNone FlowCloseAction = iota
+	FlowCloseActionClose
+	FlowCloseActionReopen
+)
 
 type SelectItem struct {
 	Label string
@@ -437,6 +447,7 @@ type RenderParams struct {
 	FlowNextLaunchReady          bool
 	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
+	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseResumableSelected   bool
 	OverlayText                  string
@@ -731,6 +742,7 @@ func renderApplication(p RenderParams) string {
 		FlowNextLaunchReady:          p.FlowNextLaunchReady,
 		FlowRepairReady:              p.FlowRepairReady,
 		FlowManualMergeReadySelected: p.FlowManualMergeReadySelected && flowSelected && !flowPhaseSelected,
+		FlowCloseActionSelected:      p.FlowCloseActionSelected,
 		FlowPhaseResetReadySelected:  p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:   p.FlowPhaseResumableSelected,
 		TransientError:               p.TransientError,
@@ -1488,6 +1500,7 @@ type statusBarParams struct {
 	FlowNextLaunchReady          bool
 	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
+	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseResumableSelected   bool
 	TransientError               string
@@ -2015,6 +2028,14 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			if !sp.FlowPhaseSelected && sp.FlowManualMergeReadySelected {
 				actions = append(actions, shortcutHint{Key: "m", Label: "mark merged"})
 			}
+			if !sp.FlowPhaseSelected {
+				switch sp.FlowCloseActionSelected {
+				case FlowCloseActionClose:
+					actions = append(actions, shortcutHint{Key: "C", Label: "close"})
+				case FlowCloseActionReopen:
+					actions = append(actions, shortcutHint{Key: "C", Label: "reopen"})
+				}
+			}
 			if sp.FlowPhaseSelected && sp.FlowPhaseResetReadySelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
 			}
@@ -2037,7 +2058,12 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			if !sp.FlowPhaseSelected && sp.Destructive && sp.FlowDeletableSelected {
 				actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 			}
-			flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
+			// A closed Flow refuses auto mode, so the hint has to go with it.
+			// It lives in flowModeControls, so suppressing it leaves h behind
+			// and the section survives.
+			if sp.FlowCloseActionSelected != FlowCloseActionReopen {
+				flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
+			}
 		}
 	}
 	if !sp.Destructive {
@@ -3452,6 +3478,9 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
 		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
 		title := terminalSafeSingleLine(record.Title)
+		if reason := strings.TrimSpace(record.Closed.Reason); reason != "" && flowstore.FlowClosed(record) {
+			title += "  (closed: " + terminalSafeSingleLine(reason) + ")"
+		}
 		titleCell := stashMsgStyle.Render(title)
 		line := formatFlowColumns(showRepo, flowRowPrefix(false, active.hasFlow(record.FlowID)),
 			statusCell,
