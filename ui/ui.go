@@ -474,6 +474,9 @@ type RenderParams struct {
 	WorktreeSessionsOpen         bool
 	AgentAvailable               bool
 	NewAgentAvailable            bool
+	// TmuxAttachAvailable reports that [launch].backend is "tmux" and tmux is
+	// installed, so the T attach affordance has something to offer.
+	TmuxAttachAvailable bool
 }
 
 // ResolveEmbeddedTerminalDock reserves enough shared outer rows for both
@@ -745,6 +748,7 @@ func renderApplication(p RenderParams) string {
 		FlowCloseActionSelected:      p.FlowCloseActionSelected,
 		FlowPhaseResetReadySelected:  p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:   p.FlowPhaseResumableSelected,
+		TmuxAttachAvailable:          p.TmuxAttachAvailable,
 		TransientError:               p.TransientError,
 		TransientErrorFadeStep:       p.TransientErrorFadeStep,
 		SearchActive:                 p.SearchActive,
@@ -1503,6 +1507,7 @@ type statusBarParams struct {
 	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseResumableSelected   bool
+	TmuxAttachAvailable          bool
 	TransientError               string
 	TransientErrorFadeStep       int
 	SearchActive                 bool
@@ -1822,6 +1827,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
+	}
+	// Only offered in tmux mode: with the embedded backend there is no per-repo
+	// tmux session to attach to.
+	if sp.TmuxAttachAvailable {
+		global = slices.Insert(global, 1, shortcutHint{Key: "T", Label: "attach tmux"})
 	}
 
 	var actions []shortcutHint
@@ -2451,7 +2461,13 @@ func footerHintsForKeys(hints []shortcutHint, keys ...string) []string {
 	return parts
 }
 
+// footerKeysWithRepoRestore builds the always-present footer keys every mode's
+// renderer starts from. T joins them only in tmux mode, where it is the one way
+// back to a running agent from the TUI.
 func footerKeysWithRepoRestore(sp statusBarParams, keys ...string) []string {
+	if sp.TmuxAttachAvailable {
+		keys = append(append([]string{}, keys...), "T")
+	}
 	if !sp.RepoPaneCollapsed {
 		return keys
 	}

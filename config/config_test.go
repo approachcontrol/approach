@@ -47,6 +47,55 @@ func TestLoadFrom_AllowsMissingConfig(t *testing.T) {
 	if cfg.Scan.Root != "" {
 		t.Fatalf("expected empty scan root, got %q", cfg.Scan.Root)
 	}
+	if cfg.Launch.Backend != config.LaunchBackendEmbedded {
+		t.Fatalf("expected embedded launch backend by default, got %q", cfg.Launch.Backend)
+	}
+}
+
+func TestLoadFrom_ParsesLaunchBackend(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "omitted", body: "[launch]\nprefer_multiplexer = true\n", want: config.LaunchBackendEmbedded},
+		{name: "empty", body: "[launch]\nbackend = \"\"\n", want: config.LaunchBackendEmbedded},
+		{name: "embedded", body: "[launch]\nbackend = \"embedded\"\n", want: config.LaunchBackendEmbedded},
+		{name: "tmux", body: "[launch]\nbackend = \"tmux\"\n", want: config.LaunchBackendTmux},
+		{name: "normalized", body: "[launch]\nbackend = \"  TMUX \"\n", want: config.LaunchBackendTmux},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := config.LoadFrom(path)
+			if err != nil {
+				t.Fatalf("LoadFrom returned error: %v", err)
+			}
+			if cfg.Launch.Backend != tt.want {
+				t.Fatalf("expected launch backend %q, got %q", tt.want, cfg.Launch.Backend)
+			}
+		})
+	}
+}
+
+func TestLoadFrom_RejectsUnknownLaunchBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[launch]\nbackend = \"zellij\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected unknown launch backend error")
+	}
+	if !strings.Contains(err.Error(), "launch.backend") {
+		t.Fatalf("expected error to mention launch.backend, got %q", err.Error())
+	}
 }
 
 func TestLoadFrom_ParsesConfigSections(t *testing.T) {

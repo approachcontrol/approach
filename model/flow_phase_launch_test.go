@@ -309,3 +309,130 @@ func TestFlowPhaseLauncherGenericTemplateReadsPlanBody(t *testing.T) {
 		t.Fatalf("generic phase prompt missing plan body: %q", result.Context.InitialPrompt)
 	}
 }
+
+func tmuxRouteLauncher(t *testing.T, backend string, tmuxAvailable bool) model.FlowPhaseLauncher {
+	t.Helper()
+	return model.FlowPhaseLauncher{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID: update.FlowID,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   update.PhaseID,
+					Status:    flowstore.PhaseRunning,
+					LaunchIDs: []string{update.LaunchID},
+				}},
+			}, nil
+		},
+		NewLaunchID:   func() string { return "launch-1" },
+		AgentCommand:  "codex",
+		Backend:       backend,
+		TmuxAvailable: func() bool { return tmuxAvailable },
+	}
+}
+
+func tmuxRoutePreparedRequest(t *testing.T, launcher model.FlowPhaseLauncher, headless bool) model.FlowPhaseLaunchPreparedRequest {
+	t.Helper()
+	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+		Phases:       []flowstore.FlowPhase{phase},
+	}
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: phase, Headless: headless})
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	return prepared
+}
+
+func TestFlowPhaseLauncherPrepareSelectsTmuxRoute(t *testing.T) {
+	launcher := tmuxRouteLauncher(t, "tmux", true)
+	result, err := launcher.Prepare(tmuxRoutePreparedRequest(t, launcher, false))
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if result.Route != model.FlowPhaseLaunchTmux {
+		t.Fatalf("route = %d, want tmux", result.Route)
+	}
+	if result.FallbackNote != "" {
+		t.Fatalf("tmux route must not report a fallback, got %q", result.FallbackNote)
+	}
+	ctx := result.Context
+	// Embedded=false is load-bearing: it is what makes InitialPrompt reach the
+	// agent as argv instead of waiting for a dock prefill that never comes.
+	if ctx.Embedded {
+		t.Fatal("tmux route context must not be embedded")
+	}
+	if !ctx.FlowLaunchTracked {
+		t.Fatal("tmux route launches stay phase-tracked")
+	}
+	if ctx.Headless {
+		t.Fatal("tmux route is interactive only")
+	}
+}
+
+func TestFlowPhaseLauncherPrepareFallsBackToEmbeddedWithoutTmux(t *testing.T) {
+	launcher := tmuxRouteLauncher(t, "tmux", false)
+	result, err := launcher.Prepare(tmuxRoutePreparedRequest(t, launcher, false))
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if result.Route != model.FlowPhaseLaunchEmbedded {
+		t.Fatalf("route = %d, want embedded fallback", result.Route)
+	}
+	if !strings.Contains(result.FallbackNote, "tmux") {
+		t.Fatalf("fallback note = %q, want it to mention tmux", result.FallbackNote)
+	}
+	if !result.Context.Embedded {
+		t.Fatal("fallback context must be embedded")
+	}
+}
+
+func TestFlowPhaseLauncherPrepareReportsNoFallbackWithoutTmuxMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		backend  string
+		tmux     bool
+		headless bool
+	}{
+		// The embedded backend is a choice, not a fallback.
+		{name: "embedded backend", backend: "embedded", tmux: false},
+		// Headless is a design exclusion, not a fallback.
+		{name: "headless in tmux mode", backend: "tmux", tmux: true, headless: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := tmuxRouteLauncher(t, tt.backend, tt.tmux)
+			result, err := launcher.Prepare(tmuxRoutePreparedRequest(t, launcher, tt.headless))
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			if result.Route != model.FlowPhaseLaunchEmbedded {
+				t.Fatalf("route = %d, want embedded", result.Route)
+			}
+			if result.FallbackNote != "" {
+				t.Fatalf("fallback note = %q, want none", result.FallbackNote)
+			}
+		})
+	}
+}
+
+func TestFlowPhaseLauncherPrepareKeepsCodexAppExternalInTmuxMode(t *testing.T) {
+	launcher := tmuxRouteLauncher(t, "tmux", true)
+	launcher.AgentCommand = "codex-app"
+	result, err := launcher.Prepare(tmuxRoutePreparedRequest(t, launcher, false))
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if result.Route != model.FlowPhaseLaunchExternal {
+		t.Fatalf("route = %d, want external", result.Route)
+	}
+	if result.FallbackNote != "" {
+		t.Fatalf("fallback note = %q, want none", result.FallbackNote)
+	}
+}

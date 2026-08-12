@@ -54,8 +54,22 @@ type ProviderConfig struct {
 	Name string `toml:"name"`
 }
 
-// LaunchConfig is parsed now so launch behavior can be wired in later.
+// Launch backends select where CLI agent sessions run.
+const (
+	// LaunchBackendEmbedded runs agents in the TUI's embedded terminal. It is
+	// the default and leaves every launch route exactly as it has always been.
+	LaunchBackendEmbedded = "embedded"
+	// LaunchBackendTmux runs agents as windows in a per-repo tmux session on
+	// the user's default tmux server, so they survive the TUI process.
+	LaunchBackendTmux = "tmux"
+)
+
+// LaunchConfig selects the launch backend for CLI agent sessions.
 type LaunchConfig struct {
+	// Backend is "embedded" (default) or "tmux".
+	Backend string `toml:"backend"`
+	// PreferMultiplexer is superseded by Backend. It is still parsed so older
+	// config files keep loading, but nothing reads it.
 	PreferMultiplexer bool `toml:"prefer_multiplexer"`
 }
 
@@ -230,6 +244,12 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		}
 	}
 
+	backend, err := normalizeLaunchBackend(cfg.Launch.Backend)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	cfg.Launch.Backend = backend
+
 	if cfg.Sessions.Root != "" {
 		root, err := expandHome(cfg.Sessions.Root, opts.homeDir)
 		if err != nil {
@@ -253,7 +273,21 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 }
 
 func defaultConfig() Config {
-	return Config{}
+	return Config{Launch: LaunchConfig{Backend: LaunchBackendEmbedded}}
+}
+
+// normalizeLaunchBackend lowercases and validates [launch].backend. An unknown
+// value is fatal at startup rather than silently falling back, matching how
+// every other known-value config key behaves.
+func normalizeLaunchBackend(value string) (string, error) {
+	switch backend := strings.ToLower(strings.TrimSpace(value)); backend {
+	case "", LaunchBackendEmbedded:
+		return LaunchBackendEmbedded, nil
+	case LaunchBackendTmux:
+		return LaunchBackendTmux, nil
+	default:
+		return "", fmt.Errorf("launch.backend %q must be %q or %q", value, LaunchBackendEmbedded, LaunchBackendTmux)
+	}
 }
 
 func normalizeFlowConfig(path string, cfg *FlowConfig) error {

@@ -1128,7 +1128,7 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if ctx.Command == agent.CommandCodexApp {
 		return next.launchAgentWithContextReservation(ctx, release)
 	}
-	return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
+	return next.resumeSessionForBackend(ctx, record, release)
 }
 
 // resumeSessionInEmbeddedTerminal owns the resume reservation from here on. The

@@ -110,3 +110,15 @@ func TestRender_FlowPaneKeepsMultilineCloseReasonOnOneLine(t *testing.T) {
 	}
 	t.Fatalf("a newline-bearing close reason should render on one line:\n%s", view)
 }
+
+func TestStatusBar_TmuxAttachHintOnlyWhenAvailable(t *testing.T) {
+	params := statusBarParams{Width: 400, Mode: ModeWorktrees, ActivePane: PaneBottom, RepoSelected: true}
+	if bar := renderStatusBarWithState(params); strings.Contains(bar, "attach tmux") {
+		t.Fatalf("default backend should hide the tmux attach hint, got %q", bar)
+	}
+
+	params.TmuxAttachAvailable = true
+	if bar := renderStatusBarWithState(params); !strings.Contains(bar, "T: attach tmux") {
+		t.Fatalf("tmux mode should offer T: attach tmux, got %q", bar)
+	}
+}

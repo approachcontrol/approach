@@ -477,6 +477,11 @@ type AgentResultMsg struct {
 	// returns. Detached launches must not finalize the captured session here;
 	// provider hooks remain the source of truth for completed session metadata.
 	Detached bool
+	// LaunchedStatus replaces the generic "Launched <agent> in a terminal
+	// session" text for transports that can say something more useful, such as
+	// tmux mode naming the session and its attach command. Empty keeps the
+	// generic text.
+	LaunchedStatus string
 }
 
 type agentSessionFinalizedMsg struct {

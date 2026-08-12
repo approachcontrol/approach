@@ -68,6 +68,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
 | `enter` | Collapse the repos pane and focus the top content pane |
 | `tab` | Focus the top content pane without collapsing the repos pane |
+| `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only) |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Quit |
 
@@ -102,6 +103,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview |
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
+| `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
 | `C` | Close the selected Flow with a required reason, or reopen it after confirmation if it is already closed (flows and active flows views) |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected recoverable Flow phase after confirmation |
@@ -318,6 +320,63 @@ for confirmation and terminates them first. Terminate/quit cleanup kills tmux
 sessions created by that embedded launch; detached tmux sessions are no longer
 owned by Approach and are not prompted for on quit. Embedded terminals are not
 restored after Approach restarts.
+
+## tmux Mode
+
+Setting `[launch].backend = "tmux"` (see `docs/config.md`) moves interactive
+CLI agent launches out of the embedded dock and into a per-repo tmux session on
+your default tmux server. The embedded terminal is the default and is unchanged
+unless you opt in.
+
+What changes in tmux mode:
+
+- **Flow phase launches (`g`), AutoMode interactive launches, Flow phase
+  resumes (`r`), and Sessions-view resumes (`r`)** run as windows in the repo's
+  tmux session instead of the embedded dock.
+- **Worktree `a`, `N` (new worktree + agent), and plans-mode implement (`a` /
+  `i`)** run there too. This is a behavior change to launches that today open a
+  *new external terminal* attached to a per-worktree multiplexer session. If
+  you rely on that workflow, keep the default backend; it is untouched.
+- Every launch reports the window, the session, and the exact
+  `tmux attach -t <session>` command in the status line.
+- Press `T` from the repos pane or any content pane to open your configured
+  external terminal attached to the selected repo's session. When no session
+  exists Approach says so rather than creating an empty one.
+
+What does not change:
+
+- **Flow repair (`R`)** stays embedded: repair sessions are phase-untracked and
+  their obstruction/recovery contract assumes the embedded slot.
+- **Headless launches** (Flow-level `h`, and therefore AutoMode) stay embedded.
+  `claude --print` buffers all output until it exits, so a self-closing tmux
+  window would render nothing and then discard it.
+- **`codex-app`** launches remain external deep links.
+
+Lifecycle and ownership:
+
+- Sessions are named `approach-<repo-dir>-<hash>` and are visible to your own
+  `tmux ls`. Approach creates one on the first launch for a repo and reuses it
+  after that.
+- Quitting Approach does not prompt about, terminate, or otherwise touch these
+  sessions — persisting past the TUI is the point. Reattach with `T` or
+  `tmux attach`.
+- A window closes when its agent exits. The session ends with its last window
+  and the next launch recreates it.
+- If `tmux` is missing, launches fall back to their default-backend route and
+  the status line says `tmux unavailable`. Nothing is refused.
+
+Limitations:
+
+- **Your tmux config applies.** That is mostly desirable (your prefix, your
+  status bar), but `remain-on-exit on` keeps dead windows, `exit-empty off`
+  keeps empty sessions, and `destroy-unattached on` can kill sessions this
+  feature promises will persist. Approach does not override your config.
+- Removing a worktree while a tmux window is still `cd`'d into it is not
+  fenced. Worktree removal is already destructive-gated; close the window
+  first.
+- A window killed out of band (`tmux kill-session`) may never fire the provider
+  session hook, leaving a `live` session record that blocks that Flow until it
+  is repaired. This is the same exposure external launches already have.
 
 ## Plans View (bottom `2`)
 

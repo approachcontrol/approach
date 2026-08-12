@@ -350,6 +350,10 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.startFetchVisibleRepos()
 	case "n":
 		return m.handleNewRepo()
+	case "T":
+		if m.tmuxLaunchBackend() {
+			return m.handleAttachRepoTmuxSession()
+		}
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
@@ -530,6 +534,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handlePull()
 	case "t":
 		return m.handleOpenTerminal()
+	case "T":
+		if m.tmuxLaunchBackend() {
+			return m.handleAttachRepoTmuxSession()
+		}
 	case "c":
 		if m.flowSurfaceVisible() {
 			return m.handleCopyFlowID()
@@ -770,6 +778,10 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleResetSelectedFlowPhase()
 	case "d":
 		return m.handleDelete()
+	case "T":
+		if m.tmuxLaunchBackend() {
+			return m.handleAttachRepoTmuxSession()
+		}
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
@@ -2304,9 +2316,24 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		return next.resumeSessionInEmbeddedTerminal(ctx, record, release)
+		return next.resumeSessionForBackend(ctx, record, release)
 	}
 	return next.launchAgentWithContextReservation(ctx, release)
+}
+
+// resumeSessionForBackend routes a CLI-agent resume to the repo's tmux session
+// in tmux mode and to the embedded terminal otherwise. The tmux branch takes
+// over the resume reservation exactly as resumeSessionInEmbeddedTerminal's
+// external fallback does.
+func (m Model) resumeSessionForBackend(ctx actions.AgentLaunchContext, record sessions.SessionRecord, release func()) (Model, tea.Cmd) {
+	route, fellBack := m.tmuxLaunchRoute(ctx.Command, ctx.Headless)
+	if route {
+		return m.launchAgentInRepoTmuxSession(ctx, release)
+	}
+	if fellBack {
+		m = m.setStatus(statusOther, tmuxFallbackNote)
+	}
+	return m.resumeSessionInEmbeddedTerminal(ctx, record, release)
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
@@ -2620,7 +2647,7 @@ func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowP
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
 	ctx := m.agentLaunchContext(path)
-	return m.launchAgentWithContext(ctx)
+	return m.launchAgentForBackend(ctx, nil)
 }
 
 func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, tea.Cmd) {
@@ -2628,20 +2655,27 @@ func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, 
 	if branch != nil {
 		ctx.Branch = *branch
 	}
-	return m.launchAgentWithContext(ctx)
+	return m.launchAgentForBackend(ctx, nil)
 }
 
+// launchAgentWithContext is the unrouted external launch. It stays as it is:
+// codex-app resumes and the embedded-unsupported resume fallback both reach it
+// and neither has a tmux equivalent.
 func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	return m.launchAgentWithContextReservation(ctx, nil)
 }
 
 func (m Model) launchAgentWithContextReservation(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
+	return m.launchAgentWithContextStatus(ctx, release, "")
+}
+
+func (m Model) launchAgentWithContextStatus(ctx actions.AgentLaunchContext, release func(), launchedStatus string) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
 		releaseFlowLaunchReservation(release)
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
-	return m.runAgentLaunchWithReservation(ctx, launch, release)
+	return m.runAgentLaunchWithStatus(ctx, launch, release, launchedStatus)
 }
 
 func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
@@ -2724,6 +2758,14 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 }
 
 func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec, heldRelease func()) (Model, tea.Cmd) {
+	return m.runAgentLaunchWithStatus(ctx, launch, heldRelease, "")
+}
+
+// runAgentLaunchWithStatus is runAgentLaunchWithReservation with a transport
+// specific success message. The status has to travel on the result rather than
+// be set here: a detached launch's own AgentResultMsg lands afterwards and
+// would otherwise replace it with the generic text.
+func (m Model) runAgentLaunchWithStatus(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec, heldRelease func(), launchedStatus string) (Model, tea.Cmd) {
 	if launch.Interactive {
 		release := heldRelease
 		if release == nil {
@@ -2744,7 +2786,7 @@ func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, lau
 				}
 				return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: launch.Detached}
 			}
-			return AgentResultMsg{LaunchContext: ctx, Detached: launch.Detached}
+			return AgentResultMsg{LaunchContext: ctx, Detached: launch.Detached, LaunchedStatus: launchedStatus}
 		})
 	}
 	// Detached launch: the command only opens or switches to an external
@@ -2765,7 +2807,7 @@ func (m Model) runAgentLaunchWithReservation(ctx actions.AgentLaunchContext, lau
 			}
 			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
 		}
-		return AgentResultMsg{LaunchContext: ctx, Detached: true}
+		return AgentResultMsg{LaunchContext: ctx, Detached: true, LaunchedStatus: launchedStatus}
 	}
 }
 

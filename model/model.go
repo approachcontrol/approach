@@ -13,6 +13,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/beadsquery"
+	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
@@ -160,6 +161,11 @@ type Model struct {
 	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
 	launchDetachedTerminal    func(string, string) (actions.TerminalLaunchSpec, error)
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	launchBackend             string
+	tmuxLaunchAvailable       func() bool
+	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
+	repoTmuxSessionExists     func(string) bool
+	tmuxAttachHint            bool
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
 	nextEmbeddedTerminalID    int
@@ -278,9 +284,15 @@ type Options struct {
 	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
 	LaunchDetachedTerminal   func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error)
 	LaunchAgent              func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
-	StartEmbeddedTerminal    EmbeddedTerminalStarter
-	FinalizeAgentSession     func(actions.AgentLaunchContext) error
-	SessionStateRoot         string
+	// LaunchBackend is config's [launch].backend. Empty means embedded, which
+	// leaves every launch route exactly as it is without tmux mode.
+	LaunchBackend         string
+	TmuxLaunchAvailable   func() bool
+	LaunchRepoTmuxAgent   func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
+	RepoTmuxSessionExists func(repoPath string) bool
+	StartEmbeddedTerminal EmbeddedTerminalStarter
+	FinalizeAgentSession  func(actions.AgentLaunchContext) error
+	SessionStateRoot      string
 	// FlowStore is the process's already-open Flow store. When set, the fallback
 	// mutators below reuse it instead of opening a second one against the same
 	// approach.db: two pools would bootstrap twice and then contend for SQLite's
@@ -591,6 +603,18 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
 	}
+	tmuxLaunchAvailable := opts.TmuxLaunchAvailable
+	if tmuxLaunchAvailable == nil {
+		tmuxLaunchAvailable = actions.TmuxAvailable
+	}
+	launchRepoTmuxAgent := opts.LaunchRepoTmuxAgent
+	if launchRepoTmuxAgent == nil {
+		launchRepoTmuxAgent = actions.RepoTmuxAgentLaunch
+	}
+	repoTmuxSessionExists := opts.RepoTmuxSessionExists
+	if repoTmuxSessionExists == nil {
+		repoTmuxSessionExists = actions.RepoTmuxSessionExists
+	}
 	startEmbeddedTerminal := opts.StartEmbeddedTerminal
 	if startEmbeddedTerminal == nil {
 		startEmbeddedTerminal = defaultEmbeddedTerminalStarter
@@ -726,6 +750,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchTerminal:           launchTerminal,
 		launchDetachedTerminal:   launchDetachedTerminal,
 		launchAgent:              launchAgent,
+		launchBackend:            normalizeLaunchBackend(opts.LaunchBackend),
+		tmuxLaunchAvailable:      tmuxLaunchAvailable,
+		launchRepoTmuxAgent:      launchRepoTmuxAgent,
+		repoTmuxSessionExists:    repoTmuxSessionExists,
+		tmuxAttachHint:           normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
 		startEmbeddedTerminal:    startEmbeddedTerminal,
 		finalizeAgentSession:     finalizeAgentSession,
 		sessionStateRoot:         opts.SessionStateRoot,
@@ -1204,6 +1233,7 @@ func (m Model) View() string {
 		WorktreeSessionsOpen:         m.inlineWorktreeSessionPath != "",
 		AgentAvailable:               m.canLaunchAgent(),
 		NewAgentAvailable:            m.canCreateAndLaunchAgent(),
+		TmuxAttachAvailable:          m.tmuxModeAttachAvailable(),
 	})
 }
 
@@ -1781,7 +1811,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
-		next, launchCmd := m.launchAgentWithContextReservation(msg.LaunchContext, msg.LaunchRelease)
+		next, launchCmd := m.launchAgentForBackend(msg.LaunchContext, msg.LaunchRelease)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
@@ -1866,7 +1896,11 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
 	} else if msg.Detached {
-		m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
+		status := msg.LaunchedStatus
+		if strings.TrimSpace(status) == "" {
+			status = agentLaunchedStatus(msg.LaunchContext.Command)
+		}
+		m = m.setStatus(statusOther, status)
 	}
 	return m, nil
 }

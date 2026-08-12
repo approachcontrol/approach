@@ -31,6 +31,12 @@ type manualLaunchHarness struct {
 	phaseUpdates   []flowstore.PhaseUpdate
 	launchUpdates  []flowstore.PhaseLaunchUpdate
 	agentContexts  []actions.AgentLaunchContext
+	tmuxContexts   []actions.AgentLaunchContext
+
+	launchBackend  string
+	tmuxAvailable  bool
+	tmuxLaunchErr  error
+	tmuxLaunchRuns int
 
 	startTerminalErr error
 	setPhaseErr      error
@@ -83,7 +89,25 @@ func (h *manualLaunchHarness) options() Options {
 		command = "codex"
 	}
 	return Options{
-		AgentCommand: command,
+		AgentCommand:        command,
+		LaunchBackend:       h.launchBackend,
+		TmuxLaunchAvailable: func() bool { return h.tmuxAvailable },
+		LaunchRepoTmuxAgent: func(ctx actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error) {
+			h.tmuxContexts = append(h.tmuxContexts, ctx)
+			if h.tmuxLaunchErr != nil {
+				return actions.RepoTmuxAgentSpec{}, h.tmuxLaunchErr
+			}
+			return actions.RepoTmuxAgentSpec{
+				SessionName:   "approach-alpha-0001",
+				WindowName:    "implementation-abcd1234",
+				AttachCommand: "tmux attach -t 'approach-alpha-0001'",
+				Launch: actions.TerminalLaunchSpec{
+					Cmd:      exec.Command("true"),
+					Detached: true,
+					Cleanup:  func() { h.tmuxLaunchRuns-- },
+				},
+			}, nil
+		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{h.record}, nil
 		},
@@ -2529,5 +2553,137 @@ func TestFlowLaunchSharedHandlersKeepWorkingWithoutAnAttempt(t *testing.T) {
 	h.drain(failed, failCmd, 0)
 	if len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
 		t.Fatalf("phase updates = %#v, want main's needs_attention update", h.phaseUpdates)
+	}
+}
+
+// --- tmux mode ---
+
+func newTmuxLaunchHarness(t *testing.T, tmuxAvailable bool) *manualLaunchHarness {
+	t.Helper()
+	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+	h.launchBackend = "tmux"
+	h.tmuxAvailable = tmuxAvailable
+	return h
+}
+
+func TestManualFlowLaunchRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	m := h.launch(h.model())
+
+	if len(h.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %d, want one", len(h.tmuxContexts))
+	}
+	if len(h.launchContexts) != 0 {
+		t.Fatalf("tmux mode must not open an embedded terminal, got %#v", h.launchContexts)
+	}
+	if m.hasRunningEmbeddedTerminal() {
+		t.Fatal("tmux mode must not install an embedded terminal slot")
+	}
+	ctx := h.tmuxContexts[0]
+	if ctx.Embedded {
+		t.Fatal("tmux route context must not be embedded")
+	}
+	if !ctx.FlowLaunchTracked || ctx.FlowPhaseID != "implementation" || ctx.FlowID != "flow-1" {
+		t.Fatalf("tmux launch context = %#v, want a tracked implementation launch", ctx)
+	}
+	// The phase reservation is what makes the launch phase-tracked at all.
+	if len(h.launchUpdates) != 1 || h.launchUpdates[0].PhaseID != "implementation" {
+		t.Fatalf("launch updates = %#v, want one implementation reservation", h.launchUpdates)
+	}
+	if got := m.status.Text; !strings.Contains(got, "tmux attach -t") || !strings.Contains(got, "approach-alpha-0001") {
+		t.Fatalf("status = %q, want the attach command and session name", got)
+	}
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations = %d releases = %d, want the cross-process reservation taken and released", h.launchReservations, h.launchReleases)
+	}
+	if m.flowLaunchAttemptOccupied("flow-1") {
+		t.Fatal("attempt must be released once the tmux window is handed off")
+	}
+}
+
+func TestTmuxFlowLaunchSurvivesQuitWithoutConfirmation(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	m := h.launch(h.model())
+
+	next, cmd := m.handleEmbeddedTerminalQuitPrefix()
+	if next.modal.IsOpen() {
+		t.Fatal("tmux sessions outlive the TUI, so quit must not ask to terminate them")
+	}
+	if cmd == nil {
+		t.Fatal("expected quit to proceed immediately")
+	}
+}
+
+func TestManualFlowLaunchFallsBackToEmbeddedWithoutTmux(t *testing.T) {
+	h := newTmuxLaunchHarness(t, false)
+	m := h.launch(h.model())
+
+	if len(h.tmuxContexts) != 0 {
+		t.Fatalf("tmux is unavailable, so no tmux launch may be attempted, got %#v", h.tmuxContexts)
+	}
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %d, want the fallback launch", len(h.launchContexts))
+	}
+	if !h.launchContexts[0].Embedded {
+		t.Fatal("fallback launch must be embedded")
+	}
+	if got := m.status.Text; !strings.Contains(got, "tmux unavailable") {
+		t.Fatalf("status = %q, want the fallback note", got)
+	}
+}
+
+func TestEmbeddedBackendLaunchReportsNoTmuxNote(t *testing.T) {
+	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+	m := h.launch(h.model())
+
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %d, want one", len(h.launchContexts))
+	}
+	if got := m.status.Text; strings.Contains(got, "tmux") {
+		t.Fatalf("status = %q, want no tmux note on the default backend", got)
+	}
+}
+
+func TestTmuxFlowLaunchFailureRegressesPhase(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	h.tmuxLaunchErr = errors.New("tmux server refused")
+	m := h.launch(h.model())
+
+	if len(h.phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want the persisted running phase corrected", h.phaseUpdates)
+	}
+	if h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("phase status = %q, want needs_attention", h.phaseUpdates[0].Status)
+	}
+	if got := m.status.Text; !strings.Contains(got, "tmux server refused") {
+		t.Fatalf("status = %q, want the launch error", got)
+	}
+	if h.launchReleases != 1 {
+		t.Fatalf("releases = %d, want the reservation released on failure", h.launchReleases)
+	}
+	if m.flowLaunchAttemptOccupied("flow-1") {
+		t.Fatal("a failed tmux launch must not hold the Flow")
+	}
+}
+
+func TestAutoModeFlowLaunchUsesTmuxSessionWhenNotHeadless(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = "tmux"
+	h.tmuxAvailable = true
+	m := h.autoDrain(h.model(), record)
+
+	// AutoMode Flows launch headless by default, and headless stays embedded
+	// because claude --print buffers its output until exit.
+	if len(h.tmuxContexts) != 0 {
+		t.Fatalf("headless AutoMode launches must stay embedded, got %#v", h.tmuxContexts)
+	}
+	if len(h.launchContexts) != 1 || !h.launchContexts[0].Headless {
+		t.Fatalf("embedded launches = %#v, want one headless launch", h.launchContexts)
+	}
+	// The headless exclusion is not a fallback. A note here would be re-set by
+	// the 1 Hz advance poll over whatever the user is actually looking at.
+	if strings.Contains(m.status.Text, "tmux") {
+		t.Fatalf("status = %q, want no tmux note on a headless AutoMode launch", m.status.Text)
 	}
 }
