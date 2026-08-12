@@ -1223,7 +1223,8 @@ func flowCloseActionForRecord(record flowstore.FlowRecord) flowCloseAction {
 	if flowstore.FlowClosed(record) {
 		return flowCloseActionReopen
 	}
-	if flowstore.DeriveStatus(record) == flowstore.StatusMerged {
+	switch flowstore.DeriveStatus(record) {
+	case flowstore.StatusAbandoned, flowstore.StatusMerged:
 		return flowCloseActionNone
 	}
 	return flowCloseActionClose
@@ -2353,13 +2354,40 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	}
 	if ctx.Command == agent.CommandCodexApp {
 		// Codex App resume deep links cannot carry approach launch metadata, so treat
-		// them as app navigation instead of a tracked Flow launch attempt.
+		// them as app navigation instead of a tracked Flow launch attempt. Keep the
+		// Flow identity until a lock-backed authoritative admission check succeeds.
+		return next, next.untrackedCodexAppFlowPhaseResumeCmd(ctx)
+	}
+	return next.launchTrackedFlowPhaseResumeWithContext(ctx)
+}
+
+func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContext) tea.Cmd {
+	reserve := m.reserveFlowResumeLaunch
+	launchAgent := m.launchAgent
+	flowID := ctx.FlowID
+	repoPath := ctx.RepoPath
+	return func() tea.Msg {
+		_, release, err := reserve(flowID)
+		if err != nil {
+			return ActionFailedMsg{RepoPath: repoPath, Err: "Resume Flow phase session: " + err.Error()}
+		}
+		defer release()
+
 		ctx.LaunchID = ""
 		ctx.FlowID = ""
 		ctx.FlowPhaseID = ""
-		return next.launchAgentWithContext(ctx)
+		launch, err := launchAgent(ctx)
+		if err != nil {
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+		}
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
+		}
+		return AgentResultMsg{LaunchContext: ctx, Detached: true}
 	}
-	return next.launchTrackedFlowPhaseResumeWithContext(ctx)
 }
 
 func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, bool, Model) {

@@ -1056,7 +1056,10 @@ func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, fmt.Errorf("flow %q is already closed", update.FlowID)
 		}
-		if DeriveStatus(record) == StatusMerged {
+		switch DeriveStatus(record) {
+		case StatusAbandoned:
+			return FlowRecord{}, fmt.Errorf("flow %q is already abandoned", update.FlowID)
+		case StatusMerged:
 			return FlowRecord{}, fmt.Errorf("flow %q is already merged", update.FlowID)
 		}
 		closedAt := now
@@ -1073,6 +1076,18 @@ func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
 // reject, while an admitted repair starts before a concurrent close proceeds.
 // The OS releases the advisory lock automatically if the process exits.
 func (s *Store) ReserveRepairLaunch(flowID string) (FlowRecord, func(), error) {
+	return s.reserveLaunchAgainstClose(flowID, "reserve a repair launch for")
+}
+
+// ReserveUntrackedResumeLaunch orders an untracked agent-session resume with
+// CloseFlow. The caller must hold the returned reservation until the external
+// launcher has either started or failed, so a close and a resume have one
+// authoritative cross-process ordering.
+func (s *Store) ReserveUntrackedResumeLaunch(flowID string) (FlowRecord, func(), error) {
+	return s.reserveLaunchAgainstClose(flowID, "resume a phase session for")
+}
+
+func (s *Store) reserveLaunchAgainstClose(flowID, action string) (FlowRecord, func(), error) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, nil, err
 	}
@@ -1087,7 +1102,7 @@ func (s *Store) ReserveRepairLaunch(flowID string) (FlowRecord, func(), error) {
 	}
 	if FlowClosed(record) {
 		release()
-		return FlowRecord{}, nil, closedFlowMutationError(record, "reserve a repair launch for")
+		return FlowRecord{}, nil, closedFlowMutationError(record, action)
 	}
 	return record, release, nil
 }

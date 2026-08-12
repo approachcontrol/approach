@@ -327,6 +327,8 @@ func TestModel_CKeyIsInertWhereClosingDoesNotApply(t *testing.T) {
 	merged := closableFlow()
 	merged.Status = flowstore.StatusMerged
 	merged.Merge = flowstore.Merge{Status: flowstore.MergeMerged}
+	abandoned := closableFlow()
+	abandoned.Status = flowstore.StatusAbandoned
 
 	tests := []struct {
 		name  string
@@ -367,6 +369,18 @@ func TestModel_CKeyIsInertWhereClosingDoesNotApply(t *testing.T) {
 					},
 				})
 				return flowsInRightPane(t, m, []flowstore.FlowRecord{merged})
+			},
+		},
+		{
+			name: "abandoned Flow",
+			build: func(t *testing.T) model.Model {
+				m := newTestModel(testRepos(), model.Options{
+					CloseFlow: func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error) {
+						t.Fatal("CloseFlow must not run for an abandoned Flow")
+						return flowstore.FlowRecord{}, nil
+					},
+				})
+				return flowsInRightPane(t, m, []flowstore.FlowRecord{abandoned})
 			},
 		},
 	}

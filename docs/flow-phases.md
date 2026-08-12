@@ -264,9 +264,10 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 
 ## Compatibility and migration
 
-- `schema_version` stays `1` and no status strings were added, removed, or
-  renamed. New records always persist the metadata field `headless`, and a
-  legacy record that omitted it migrates to `true`.
+- `schema_version` stays `1`; `closed` is an additive status, and no existing
+  status strings were removed or renamed. New records always persist the
+  metadata field `headless`, and a legacy record that omitted it migrates to
+  `true`.
 - Records themselves are migrated once, on first open: `flows/<id>/meta.json`
   is imported into `approach.db` and the old tree is left untouched in place.
   See `docs/config.md` for the cutover's guarantees. Phase and

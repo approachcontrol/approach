@@ -4783,6 +4783,7 @@ func styleInputDialogPlaceholderLine(line string, lineStart, placeholderStart in
 }
 
 func inputDialogLabel(prompt string) string {
+	prompt = terminalSafeSingleLine(prompt)
 	switch strings.TrimSpace(prompt) {
 	case BranchPrompt:
 		return "Create branch: "

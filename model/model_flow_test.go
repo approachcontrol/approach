@@ -948,6 +948,93 @@ func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
 	}
 }
 
+func TestModel_CodexAppFlowPhaseResumeUsesAuthoritativeCloseReservation(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/codex-app-resume"
+	flow.Phases = []flowstore.FlowPhase{{
+		PhaseID: "review-loop",
+		Title:   "Review loop",
+		Status:  flowstore.PhaseCompleted,
+		Sessions: []flowstore.Session{{
+			Provider: "codex", SessionID: "codex-review", Status: "ended",
+		}},
+	}}
+	launches := 0
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex-app",
+		ReserveFlowResumeLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, errors.New("cannot resume because flow is closed")
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launches++
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected Codex App resume reservation command")
+	}
+	m, _ = update(m, cmd())
+	if launches != 0 {
+		t.Fatalf("closed persisted Flow launched Codex App %d times, want zero", launches)
+	}
+	if !strings.Contains(m.TransientError(), "closed") {
+		t.Fatalf("status = %q, want authoritative closed rejection", m.TransientError())
+	}
+}
+
+func TestModel_CodexAppFlowPhaseResumeHoldsReservationThroughOpen(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/codex-app-resume"
+	flow.Phases = []flowstore.FlowPhase{{
+		PhaseID: "review-loop",
+		Title:   "Review loop",
+		Status:  flowstore.PhaseCompleted,
+		Sessions: []flowstore.Session{{
+			Provider: "codex", SessionID: "codex-review", Status: "ended",
+		}},
+	}}
+	released := false
+	var launched actions.AgentLaunchContext
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex-app",
+		ReserveFlowResumeLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != flow.FlowID {
+				t.Fatalf("reserved flow = %q, want %q", flowID, flow.FlowID)
+			}
+			return flow, func() { released = true }, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			if released {
+				t.Fatal("resume reservation released before Codex App open")
+			}
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected Codex App resume reservation command")
+	}
+	if _, ok := cmd().(model.AgentResultMsg); !ok {
+		t.Fatal("Codex App resume command did not return AgentResultMsg")
+	}
+	if !released {
+		t.Fatal("resume reservation was not released after Codex App open")
+	}
+	if launched.ResumeSessionID != "codex-review" || launched.FlowID != "" || launched.FlowPhaseID != "" {
+		t.Fatalf("Codex App resume context = %#v, want resumed session with Flow metadata cleared after admission", launched)
+	}
+}
+
 func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) {
 	var started actions.AgentLaunchContext
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
@@ -7635,6 +7722,9 @@ func TestModel_CodexAppFlowResumeBypassesPendingTrackedCLIResume(t *testing.T) {
 	appModel, appCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if appCmd == nil {
 		t.Fatal("codex-app navigation should not be suppressed by pending tracked CLI persistence")
+	}
+	if msg, ok := appCmd().(model.AgentResultMsg); !ok || msg.Err != "" {
+		t.Fatalf("codex-app navigation result = %#v, want successful AgentResultMsg", msg)
 	}
 	if launched.Command != "codex-app" || launched.ResumeSessionID != "codex-session" ||
 		launched.LaunchID != "" || launched.FlowID != "" || launched.FlowPhaseID != "" ||

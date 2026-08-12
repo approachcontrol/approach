@@ -216,6 +216,32 @@ func TestCloseFlowRejectsMergedFlow(t *testing.T) {
 	}
 }
 
+func TestCloseFlowRejectsAbandonedFlow(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	store, root := newCloseTestStore(t, &now)
+	record := closeTestRecord(now)
+	record.RepoPath = filepath.Join(root, "repo")
+	record.Status = flowstore.StatusAbandoned
+	created, err := store.Create(record)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.Status != flowstore.StatusAbandoned {
+		t.Fatalf("created status = %q, want abandoned", created.Status)
+	}
+
+	if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: created.FlowID, Reason: "no longer needed"}); err == nil || !strings.Contains(err.Error(), "abandoned") {
+		t.Fatalf("CloseFlow(abandoned) error = %v, want abandoned rejection", err)
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Status != flowstore.StatusAbandoned || flowstore.FlowClosed(read) {
+		t.Fatalf("rejected close changed abandoned Flow: %#v", read)
+	}
+}
+
 func TestCloseFlowUnknownFlow(t *testing.T) {
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	store, _ := newCloseTestStore(t, &now)
@@ -615,5 +641,52 @@ func TestRepairLaunchReservationSerializesWithClose(t *testing.T) {
 
 	if _, _, err := launchStore.ReserveRepairLaunch(record.FlowID); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("ReserveRepairLaunch(closed) error = %v, want closed rejection", err)
+	}
+}
+
+func TestUntrackedResumeReservationSerializesWithClose(t *testing.T) {
+	root := t.TempDir()
+	resumeStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(resume) error = %v", err)
+	}
+	closeStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(close) error = %v", err)
+	}
+	record := createCloseTestFlow(t, resumeStore, root)
+
+	reserved, release, err := resumeStore.ReserveUntrackedResumeLaunch(record.FlowID)
+	if err != nil {
+		t.Fatalf("ReserveUntrackedResumeLaunch() error = %v", err)
+	}
+	if reserved.FlowID != record.FlowID || flowstore.FlowClosed(reserved) {
+		t.Fatalf("reserved record = %#v, want current open Flow", reserved)
+	}
+
+	var once sync.Once
+	defer once.Do(release)
+	result := make(chan error, 1)
+	go func() {
+		_, err := closeStore.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "close raced resume"})
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		t.Fatalf("CloseFlow() returned before resume launch reservation released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	once.Do(release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("CloseFlow() after release error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CloseFlow() did not proceed after resume reservation release")
+	}
+
+	if _, _, err := resumeStore.ReserveUntrackedResumeLaunch(record.FlowID); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("ReserveUntrackedResumeLaunch(closed) error = %v, want closed rejection", err)
 	}
 }

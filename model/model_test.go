@@ -79,6 +79,13 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return flowstore.FlowRecord{}, nil, fmt.Errorf("flow %s not found", flowID)
 		}
 	}
+	if opts.ReserveFlowResumeLaunch == nil {
+		readFlow := opts.ReadFlow
+		opts.ReserveFlowResumeLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			record, err := readFlow(flowID)
+			return record, func() {}, err
+		}
+	}
 	return model.NewWithOptions(repos, opts)
 }
 
