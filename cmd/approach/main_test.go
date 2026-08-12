@@ -70,6 +70,7 @@ func TestRun_HelpBypassesConfigAndScan(t *testing.T) {
 		"Usage: approach [--version] [command]",
 		"approach plan --help",
 		"approach flow --help",
+		"approach serve --help",
 		"approach session-hook --provider codex",
 	})
 }
@@ -128,9 +129,12 @@ func TestRun_UnknownCommandFarFromValidShowsUsageWithoutSuggestion(t *testing.T)
 }
 
 func TestNearestCommandSuggestsOnlyNearbyCommands(t *testing.T) {
-	valid := []string{"plan", "flow", "session-hook"}
+	valid := []string{"plan", "flow", "serve", "session-hook"}
 	if got := nearestCommand("flw", valid); got != "flow" {
 		t.Fatalf("nearestCommand(flw) = %q, want flow", got)
+	}
+	if got := nearestCommand("serv", valid); got != "serve" {
+		t.Fatalf("nearestCommand(serv) = %q, want serve", got)
 	}
 	if got := nearestCommand("definitely-not-close", valid); got != "" {
 		t.Fatalf("nearestCommand(definitely-not-close) = %q, want no suggestion", got)

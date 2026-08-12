@@ -816,24 +816,13 @@ Examples:
 }
 
 func nextFlowPhaseActionState(record flowstore.FlowRecord, updated flowstore.FlowPhase) *flowPhaseActionState {
-	if flowPhaseIsActionable(updated) && updated.Status != flowstore.PhaseCompleted && updated.Status != flowstore.PhaseSkipped {
+	if flowstore.PhaseIsActionable(updated) && updated.Status != flowstore.PhaseCompleted && updated.Status != flowstore.PhaseSkipped {
 		return newFlowPhaseActionState(updated)
 	}
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if flowPhaseIsActionable(phase) {
-			return newFlowPhaseActionState(phase)
-		}
+	if phase, ok := flowstore.NextActionablePhase(record); ok {
+		return newFlowPhaseActionState(phase)
 	}
 	return nil
-}
-
-func flowPhaseIsActionable(phase flowstore.FlowPhase) bool {
-	switch phase.Status {
-	case flowstore.PhaseReady, flowstore.PhaseRunning, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked:
-		return true
-	default:
-		return false
-	}
 }
 
 func newFlowPhaseActionState(phase flowstore.FlowPhase) *flowPhaseActionState {

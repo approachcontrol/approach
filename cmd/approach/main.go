@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -37,6 +38,8 @@ type runDeps struct {
 	startProgramWithOptions func([]scanner.Repo, startProgramOptions) error
 	stdin                   io.Reader
 	stdout                  io.Writer
+	stderr                  io.Writer
+	listen                  func(network, address string) (net.Listener, error)
 }
 
 type startProgramOptions struct {
@@ -60,6 +63,9 @@ func run(args []string, deps runDeps) error {
 	if len(args) > 1 && args[1] == "flow" {
 		return runFlow(args, deps)
 	}
+	if len(args) > 1 && args[1] == "serve" {
+		return runServe(args, deps)
+	}
 
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -69,7 +75,7 @@ func run(args []string, deps runDeps) error {
 		return err
 	}
 	if flags.NArg() > 0 {
-		return unknownCommandError(flags.Arg(0), []string{"plan", "flow", "session-hook"}, mainHelpText)
+		return unknownCommandError(flags.Arg(0), []string{"plan", "flow", "serve", "session-hook"}, mainHelpText)
 	}
 
 	if *versionFlag {
@@ -130,6 +136,7 @@ Launch the worktree TUI, or use a command to persist agent artifacts.
 Commands:
   plan          Save, list, read, and update saved plans.
   flow          Create, inspect, and update Flow records.
+  serve         Serve the read-only GraphQL API over HTTP.
   session-hook  Capture Claude or Codex session hook payloads.
 
 Flags:
@@ -140,6 +147,7 @@ Examples:
   approach
   approach plan --help
   approach flow --help
+  approach serve --help
   approach session-hook --provider codex
 `
 
@@ -239,6 +247,12 @@ func fillRunDeps(deps runDeps) runDeps {
 	}
 	if deps.stdout == nil {
 		deps.stdout = os.Stdout
+	}
+	if deps.stderr == nil {
+		deps.stderr = os.Stderr
+	}
+	if deps.listen == nil {
+		deps.listen = net.Listen
 	}
 	return deps
 }
