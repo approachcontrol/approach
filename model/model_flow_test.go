@@ -3298,8 +3298,10 @@ func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testi
 	m = selectFlowPhaseByID(t, m, "plan-review")
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
 	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	manualResult := manualCmd()
-	resumed, _ := update(pending, manualResult)
+	if manualCmd == nil {
+		t.Fatal("manual tracked resume should return the authoritative read command")
+	}
+	resumed := settleModelCommands(t, pending, manualCmd, 2)
 	if !model.HasRunningFlowEmbeddedTerminalForPhaseForTest(resumed, current.FlowID, "plan-review") {
 		t.Fatal("manual persistence success did not register the resumed source terminal")
 	}
@@ -7143,7 +7145,17 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	if launchUpdate.FlowID != "" || started.Command != "" {
 		t.Fatalf("resume persistence or terminal start ran inside Update: update=%#v started=%#v", launchUpdate, started)
 	}
-	persisted := cmd()
+	// The key press now buys an authoritative read first; nothing is written
+	// until the read has re-validated the phase and its session.
+	read := cmd()
+	if launchUpdate.FlowID != "" || started.Command != "" {
+		t.Fatalf("authoritative read did work: update=%#v started=%#v", launchUpdate, started)
+	}
+	m, persistCmd := update(m, read)
+	if persistCmd == nil {
+		t.Fatal("expected resume persistence command after the authoritative read")
+	}
+	persisted := persistCmd()
 	if launchUpdate.FlowID != "flow-1" || started.Command != "" {
 		t.Fatalf("resume command sequencing = update %#v started %#v; want persistence only", launchUpdate, started)
 	}
@@ -7279,7 +7291,19 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForSQLiteWriterInUpdate(t *test
 		t.Fatal("Update did not return while the Flow lock was held")
 	}
 	if result.cmd == nil {
-		t.Fatal("resume Update returned nil persistence command")
+		t.Fatal("resume Update returned nil authoritative read command")
+	}
+	// The read hop reaches the Flow read seam, never the writer, so it settles
+	// even while the contending transaction is held.
+	readEvent := result.cmd()
+	select {
+	case call := <-enteredPersistence:
+		t.Fatalf("AddPhaseLaunchID entered during the authoritative read: %#v", call)
+	default:
+	}
+	resumed, persistCmd := update(result.model, readEvent)
+	if persistCmd == nil {
+		t.Fatal("the authoritative read returned no persistence command")
 	}
 	select {
 	case call := <-enteredPersistence:
@@ -7299,7 +7323,7 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForSQLiteWriterInUpdate(t *test
 
 	persistenceResults := make(chan tea.Msg, 1)
 	persistenceDone = persistenceResults
-	go func() { persistenceResults <- result.cmd() }()
+	go func() { persistenceResults <- persistCmd() }()
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	select {
 	case launchUpdate = <-enteredPersistence:
@@ -7333,7 +7357,8 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForSQLiteWriterInUpdate(t *test
 	case <-time.After(10 * time.Second):
 		t.Fatal("resume persistence did not finish after releasing the lock")
 	}
-	result.model, _ = update(result.model, persisted)
+	resumed, _ = update(resumed, persisted)
+	_ = resumed
 	if len(terminalStarts) != 1 {
 		t.Fatalf("terminal starts after persistence = %d, want 1", len(terminalStarts))
 	}
@@ -7394,7 +7419,15 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 		t.Fatalf("work ran before persistence command: updates=%#v terminals=%#v", launchUpdates, terminalStarts)
 	}
 
-	persisted := firstCmd()
+	read := firstCmd()
+	if len(launchUpdates) != 0 || len(terminalStarts) != 0 {
+		t.Fatalf("authoritative read did work: updates=%#v terminals=%#v", launchUpdates, terminalStarts)
+	}
+	pendingAfterDuplicate, persistCmd := update(pendingAfterDuplicate, read)
+	if persistCmd == nil {
+		t.Fatal("the authoritative read should hand off to persistence")
+	}
+	persisted := persistCmd()
 	if len(launchUpdates) != 1 || launchUpdates[0].PhaseID != "Review-Loop" || launchUpdates[0].LaunchID == "" {
 		t.Fatalf("launch updates = %#v, want one normalized-target request identity", launchUpdates)
 	}
@@ -7501,8 +7534,23 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	firstPending, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	oldSuccess := firstCmd()
+	// A resume now takes two hops: an authoritative read, then persistence. The
+	// prepared result of the second hop is the message a later replay has to be
+	// fenced against, so it is what each of these helpers hands back.
+	resumeToPrepared := func(source model.Model) (model.Model, tea.Msg) {
+		t.Helper()
+		pending, readCmd := update(source, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		if readCmd == nil {
+			t.Fatal("resume should return the authoritative read command")
+		}
+		pending, prepareCmd := update(pending, readCmd())
+		if prepareCmd == nil {
+			t.Fatal("the authoritative read should hand off to persistence")
+		}
+		return pending, prepareCmd()
+	}
+
+	firstPending, oldSuccess := resumeToPrepared(m)
 	firstStarted, _ := update(firstPending, oldSuccess)
 	if len(terminalStarts) != 1 {
 		t.Fatalf("terminal starts after first success = %#v, want 1", terminalStarts)
@@ -7512,12 +7560,15 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	firstStarted, _ = switchTestMode(firstStarted, ui.ModeFlows)
 	firstStarted = selectFlowPhaseByID(t, firstStarted, "implementation")
 
-	secondPending, secondCmd := update(firstStarted, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if secondCmd == nil {
-		t.Fatal("second resume should return a persistence command")
+	secondPending, oldFailure := resumeToPrepared(firstStarted)
+	// A pre-persistence failure now reports through the lifecycle's shared
+	// failure message, which is what carries the status and the Flow surface
+	// refresh a hop later.
+	afterFailure, failureCmd := update(secondPending, oldFailure)
+	if failureCmd == nil {
+		t.Fatal("a pre-persistence resume failure should report a failure")
 	}
-	oldFailure := secondCmd()
-	afterFailure, refreshCmd := update(secondPending, oldFailure)
+	afterFailure, refreshCmd := update(afterFailure, failureCmd())
 	if refreshCmd == nil || !strings.Contains(afterFailure.TransientError(), "failed to mark flow phase resume: state root locked") {
 		t.Fatalf("persistence failure = cmd %T status %q", refreshCmd, afterFailure.TransientError())
 	}
@@ -7536,8 +7587,7 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 		t.Fatalf("old failure disturbed retry: cmd=%T terminals=%#v status=%q", staleFailureCmd, terminalStarts, afterOldFailure.TransientError())
 	}
 
-	retrySuccess := retryCmd()
-	completed, _ := update(afterOldFailure, retrySuccess)
+	completed := settleModelCommands(t, afterOldFailure, retryCmd, 2)
 	if addCalls != 3 || len(terminalStarts) != 2 || terminalStarts[0].LaunchID == terminalStarts[1].LaunchID {
 		t.Fatalf("retry completion: add calls=%d terminals=%#v", addCalls, terminalStarts)
 	}
@@ -7619,8 +7669,18 @@ func TestModel_TrackedFlowPhaseResumesForIndependentTargetsCompleteOutOfOrder(t 
 		t.Fatal("adding target B to a derived model mutated the retained A-only model")
 	}
 
-	msgA := cmdA()
-	msgB := cmdB()
+	// Each target reads authoritatively before it persists, and the two chains
+	// are independent all the way through.
+	pendingAB, prepareA := update(pendingAB, cmdA())
+	if prepareA == nil {
+		t.Fatal("target A's read should hand off to persistence")
+	}
+	pendingAB, prepareB := update(pendingAB, cmdB())
+	if prepareB == nil {
+		t.Fatal("target B's read should hand off to persistence")
+	}
+	msgA := prepareA()
+	msgB := prepareB()
 	if len(launchUpdates) != 2 || launchUpdates[0].FlowID != "flow-a" || launchUpdates[1].FlowID != "flow-b" {
 		t.Fatalf("launch updates = %#v, want independent A then B persistence", launchUpdates)
 	}
@@ -7674,11 +7734,25 @@ func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *
 	if cmd == nil || persisted || started {
 		t.Fatalf("resume Update sequencing: cmd=%T persisted=%v started=%v", cmd, persisted, started)
 	}
-	result := cmd()
+	read := cmd()
+	if persisted || started {
+		t.Fatalf("authoritative read sequencing: persisted=%v started=%v", persisted, started)
+	}
+	m, persistCmd := update(m, read)
+	if persistCmd == nil {
+		t.Fatal("the authoritative read should hand off to persistence")
+	}
+	result := persistCmd()
 	if !persisted || started {
 		t.Fatalf("resume persistence command sequencing: persisted=%v started=%v", persisted, started)
 	}
-	m, refreshCmd := update(m, result)
+	m, failureCmd := update(m, result)
+	if started || failureCmd == nil {
+		t.Fatalf("persistence failure state: started=%v failure=%T", started, failureCmd)
+	}
+	// The status and the Flow surface refresh arrive on the lifecycle's shared
+	// failure message rather than on a resume-specific one.
+	m, refreshCmd := update(m, failureCmd())
 	if started || refreshCmd == nil || !strings.Contains(m.TransientError(), "failed to mark flow phase resume: state root locked") {
 		t.Fatalf("persistence failure state: started=%v refresh=%T status=%q", started, refreshCmd, m.TransientError())
 	}

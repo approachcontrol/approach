@@ -78,8 +78,16 @@ type flowLaunchEventMsg struct {
 	RepoPath     string
 	WorktreePath string
 	PlanPath     string
-	Err          string
-	Release      func()
+	// Provider, ProviderSessionID, and ResumeCommand are phase-resume only.
+	// Session identity is resolved once, at the key press, and re-validated by
+	// the read stage; prepare must never re-derive it, because AddPhaseLaunchID
+	// appends a launch ID with no session yet and LatestPhaseSession would then
+	// fall through to a different session than the read authorized.
+	Provider          string
+	ProviderSessionID string
+	ResumeCommand     string
+	Err               string
+	Release           func()
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -118,12 +126,20 @@ func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher FlowPhaseLauncher
 // admission verdict: AutoMode needs it synchronously to decide whether to
 // disarm its drain, and a refusal's text never has to reach a caller because
 // any status it produces is already applied to the returned Model.
+//
+// One kind breaks that shape. A codex-app phase resume returns the untracked
+// navigation command with admitted = false, because no attempt holds the Flow:
+// the command is not a read command, and a caller that batches only on
+// admitted — as AutoMode's drain does — would drop it. Only phaseResume
+// submits it, and its caller returns the command regardless of the verdict.
 func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	switch intent.Kind {
 	case flowLaunchKindManualPhase:
 		return m.admitManualFlowLaunch(intent)
 	case flowLaunchKindAutoPhase:
 		return m.admitAutoFlowLaunch(intent)
+	case flowLaunchKindPhaseResume:
+		return m.admitPhaseResumeFlowLaunch(intent)
 	default:
 		// Later beads route the remaining kinds; nothing submits them yet.
 		return m, nil, false
@@ -359,6 +375,11 @@ func (m Model) flowLaunchLauncher(token string) FlowPhaseLauncher {
 
 func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	seams := m.launchSeams
+	// Resume dispatches before the launcher is built: it never runs Preflight,
+	// whose new-launch rules would reject the very phases resume exists for.
+	if intent.Kind == flowLaunchKindPhaseResume {
+		return phaseResumeFlowLaunchReadCmd(seams, intent, token)
+	}
 	launcher := settings.apply(m.flowLaunchLauncher(token))
 	if intent.Kind == flowLaunchKindAutoPhase {
 		return autoFlowLaunchReadCmd(seams, launcher, intent, token)
@@ -485,6 +506,11 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 }
 
 func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
+	// Resume dispatches before the candidate lookup below, whose failure path
+	// emits noLaunchableFlowPhaseStatus — a string a resume may never show.
+	if msg.Kind == flowLaunchKindPhaseResume {
+		return m.phaseResumeFlowLaunchPrepareCmd(msg, settings)
+	}
 	launcher := settings.apply(m.flowLaunchLauncher(msg.Token))
 	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
 	if !ok {
@@ -656,8 +682,14 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	ctx.FlowLaunchTracked = true
 	if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
 		// Admission makes this unreachable, but dropping the backstop would be
-		// a regression against a future unguarded source.
-		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow phase launch canceled because a repair terminal is already open for this Flow")
+		// a regression against a future unguarded source. The wording comes
+		// from the attempt's own kind, never from the prefill-failure
+		// re-reservation, which labels every source manualPhase.
+		canceled := "Flow phase launch canceled because a repair terminal is already open for this Flow"
+		if attempt.Kind == flowLaunchKindPhaseResume {
+			canceled = "Flow phase resume canceled because a repair terminal is already open for this Flow"
+		}
+		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, canceled)
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
@@ -818,9 +850,21 @@ func (seams flowLaunchSeams) newLaunchID() string {
 // ID belongs to this phase count. A wider rule would let one crashed agent make
 // the Flow permanently unlaunchable.
 func flowLaunchPhaseSessionOccupied(phase flowstore.FlowPhase, records []sessions.SessionRecord) bool {
-	if phaseHasMatchingLiveSession(phase) {
+	return flowLaunchPhaseSessionOccupiedExcept(phase, records, "")
+}
+
+// flowLaunchPhaseSessionOccupiedExcept is the same rule with one session
+// exempted. Resume is the only caller that passes a session ID: the session it
+// is reattaching to is expected to look live — a never-finalized record is the
+// common case resume exists for — so counting it would refuse every resume.
+// Competing sessions on the same phase still occupy it. The exemption applies
+// to both halves, because the target session appears in the store listing as
+// well as in the phase's own mirror.
+func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []sessions.SessionRecord, skipSessionID string) bool {
+	if phaseHasMatchingLiveSessionExcept(phase, skipSessionID) {
 		return true
 	}
+	skip := strings.TrimSpace(skipSessionID)
 	launches := make(map[string]struct{}, len(phase.LaunchIDs))
 	for _, launchID := range phase.LaunchIDs {
 		if launchID = strings.TrimSpace(launchID); launchID != "" {
@@ -828,7 +872,8 @@ func flowLaunchPhaseSessionOccupied(phase flowstore.FlowPhase, records []session
 		}
 	}
 	for _, record := range records {
-		if strings.TrimSpace(record.SessionID) == "" {
+		sessionID := strings.TrimSpace(record.SessionID)
+		if sessionID == "" || (skip != "" && sessionID == skip) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(record.LaunchID)]; !ok {

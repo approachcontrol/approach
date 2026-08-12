@@ -110,6 +110,15 @@ func flowRepairObstructionForRecord(record flowstore.FlowRecord) (flowRepairObst
 }
 
 func phaseHasMatchingLiveSession(phase flowstore.FlowPhase) bool {
+	return phaseHasMatchingLiveSessionExcept(phase, "")
+}
+
+// phaseHasMatchingLiveSessionExcept is the same rule with one session exempted.
+// See flowLaunchPhaseSessionOccupiedExcept for why resume is the only caller
+// that passes a session ID; every other call site uses the zero-skip wrapper
+// and is unchanged.
+func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skipSessionID string) bool {
+	skip := strings.TrimSpace(skipSessionID)
 	launches := make(map[string]struct{}, len(phase.LaunchIDs))
 	for _, launchID := range phase.LaunchIDs {
 		if launchID = strings.TrimSpace(launchID); launchID != "" {
@@ -117,7 +126,8 @@ func phaseHasMatchingLiveSession(phase flowstore.FlowPhase) bool {
 		}
 	}
 	for _, session := range phase.Sessions {
-		if strings.TrimSpace(session.SessionID) == "" {
+		sessionID := strings.TrimSpace(session.SessionID)
+		if sessionID == "" || (skip != "" && sessionID == skip) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {
@@ -146,7 +156,6 @@ func (m Model) selectedFlowRepairReady() bool {
 	record, _, ok := m.selectedFlowRepairObstruction()
 	return ok &&
 		!m.hasFlowEmbeddedTerminalForFlow(record.FlowID) &&
-		!m.hasPendingFlowPhaseResumeForFlow(record.FlowID) &&
 		!m.hasPendingFlowRepairLaunch(record.FlowID) &&
 		// A repair must not arm while the launch lifecycle holds this Flow.
 		!m.flowLaunchAttemptOccupied(record.FlowID) &&
@@ -167,7 +176,7 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		if m.hasPendingFlowRepairLaunch(record.FlowID) {
 			return m.setStatus(statusOther, "A repair launch is already pending for this Flow"), nil
 		}
-		if m.hasPendingFlowPhaseResumeForFlow(record.FlowID) {
+		if m.flowLaunchAttemptKind(record.FlowID) == flowLaunchKindPhaseResume {
 			return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), nil
 		}
 		if m.hasFlowEmbeddedTerminalForFlow(record.FlowID) || m.flowLaunchAttemptOccupied(record.FlowID) {
@@ -330,7 +339,7 @@ func (m Model) consumePendingFlowRepairLaunch(ctx actions.AgentLaunchContext, au
 	if _, repairable := flowRepairObstructionForRecord(record); !repairable {
 		return m.setStatus(statusOther, "Flow is no longer repairable"), false
 	}
-	if m.hasPendingFlowPhaseResumeForFlow(flowID) {
+	if m.flowLaunchAttemptKind(flowID) == flowLaunchKindPhaseResume {
 		return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), false
 	}
 	if m.hasFlowEmbeddedTerminalForFlow(flowID) {

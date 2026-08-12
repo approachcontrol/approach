@@ -62,6 +62,17 @@ func (m Model) flowLaunchAttemptOccupied(flowID string) bool {
 	return ok
 }
 
+// flowLaunchAttemptKind names what is holding this Flow, for the one caller
+// that has to tell launch sources apart rather than just detect occupancy. It
+// returns the zero kind when nothing holds it.
+func (m Model) flowLaunchAttemptKind(flowID string) flowLaunchKind {
+	attempt, ok := m.flowLaunchAttempt(flowID)
+	if !ok {
+		return 0
+	}
+	return attempt.Kind
+}
+
 func (m Model) flowLaunchAttempt(flowID string) (flowLaunchAttempt, bool) {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {

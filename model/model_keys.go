@@ -2326,42 +2326,22 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); ok {
-		if reason == flowstore.PhaseResetReasonAwaitSession {
-			m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
+	// Everything past surface, selection, and closure is the lifecycle's: the
+	// resolver owns the snapshot refusals, and admission owns occupancy. The
+	// check order is unchanged, because occupancy already ran last.
+	intent, refusal, ok := m.flowPhaseResumeRequest(record, phase)
+	if !ok {
+		if refusal == "" {
 			return m, nil
 		}
-		m = m.setStatus(statusOther, "Flow phase has an ended session; reset it to ready")
-		return m, nil
+		return m.setStatus(statusOther, refusal), nil
 	}
-	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
-		m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
-		return m, nil
-	}
-	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseLatestLaunchEnded(phase) {
-		m = m.setStatus(statusOther, "Flow phase has an ended session and cannot be resumed")
-		return m, nil
-	}
-	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
-		m = m.setStatus(statusOther, "Flow phase has missing session id")
-		return m, nil
-	}
-	session, ok := flowstore.LatestPhaseSession(phase, true)
-	if !ok {
-		m = m.setStatus(statusOther, "Flow phase has no session to resume")
-		return m, nil
-	}
-	ctx, ok, next := m.flowPhaseSessionResumeLaunchContext(record, phase, session)
-	if !ok {
-		return next, nil
-	}
-	if ctx.Command == agent.CommandCodexApp {
-		// Codex App resume deep links cannot carry approach launch metadata, so treat
-		// them as app navigation instead of a tracked Flow launch attempt. Keep the
-		// Flow identity until a lock-backed authoritative admission check succeeds.
-		return next, next.untrackedCodexAppFlowPhaseResumeCmd(ctx)
-	}
-	return next.launchTrackedFlowPhaseResumeWithContext(ctx)
+	intent.Origin = m.flowLaunchOrigin()
+	next, cmd, _ := m.requestFlowLaunch(intent)
+	// The verdict is deliberately ignored: a codex-app resume returns its
+	// navigation command with admitted = false, because no attempt holds the
+	// Flow.
+	return next, cmd
 }
 
 func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContext) tea.Cmd {
