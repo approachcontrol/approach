@@ -1,0 +1,19 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# vercel
+.vercel
+
+# env files (never commit secrets; .env.example is the template)
+.env
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# testing
+/coverage

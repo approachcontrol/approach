@@ -1,0 +1,305 @@
+/*
+ * Approach is a terminal tool; this reads as its instrument panel rather than
+ * a generic dashboard — dense monospaced metadata, a single accent, and
+ * status carried by color plus a written label so it survives a grayscale
+ * screen or a color-vision difference.
+ */
+
+:root {
+  --bg: #0d1117;
+  --bg-raised: #151b23;
+  --bg-sunken: #010409;
+  --border: #2a313c;
+  --border-strong: #3d444d;
+  --fg: #e6edf3;
+  --fg-muted: #9198a1;
+  --fg-dim: #656c76;
+  --accent: #6cb6ff;
+
+  --tone-active: #6cb6ff;
+  --tone-good: #57ab5a;
+  --tone-warn: #daaa3f;
+  --tone-danger: #e5534b;
+  --tone-muted: #768390;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.shell {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+.masthead__title {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+
+.masthead__title a {
+  color: inherit;
+}
+
+.masthead__tag {
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+}
+
+.crumbs {
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+  margin-bottom: 0.75rem;
+  word-break: break-all;
+}
+
+.crumbs__sep {
+  padding: 0 0.4rem;
+}
+
+.page-title {
+  font-size: 1.35rem;
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.page-subtitle {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+  margin: 0 0 1.5rem;
+  word-break: break-all;
+}
+
+.section-heading {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fg-dim);
+  margin: 2rem 0 0.6rem;
+}
+
+/* Cards -------------------------------------------------------------- */
+
+.card-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.card {
+  display: block;
+  padding: 0.7rem 0.85rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: inherit;
+}
+
+a.card:hover {
+  border-color: var(--border-strong);
+  text-decoration: none;
+}
+
+.card__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.card__name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.card__meta {
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
+  word-break: break-all;
+}
+
+.card__aside {
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Badges ------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.badge--active {
+  color: var(--tone-active);
+}
+.badge--good {
+  color: var(--tone-good);
+}
+.badge--warn {
+  color: var(--tone-warn);
+}
+.badge--danger {
+  color: var(--tone-danger);
+}
+.badge--muted {
+  color: var(--tone-muted);
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+/* Definition grid ---------------------------------------------------- */
+
+.facts {
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+  padding: 0.85rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+}
+
+.facts dt {
+  color: var(--fg-dim);
+}
+
+.facts dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+/* Phases ------------------------------------------------------------- */
+
+.phase {
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.phase--current {
+  border-left-color: var(--accent);
+  background: var(--bg-sunken);
+}
+
+.phase__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.phase__title {
+  font-weight: 600;
+}
+
+.phase__order {
+  color: var(--fg-dim);
+  margin-right: 0.5rem;
+}
+
+.phase__summary {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+  margin-top: 0.35rem;
+  white-space: pre-wrap;
+}
+
+.phase__meta {
+  color: var(--fg-dim);
+  font-size: 0.72rem;
+  margin-top: 0.35rem;
+}
+
+/* States ------------------------------------------------------------- */
+
+.panel {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+
+.panel--error {
+  border-color: var(--tone-danger);
+  color: var(--fg);
+}
+
+.panel__title {
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+  color: var(--tone-danger);
+}
+
+.panel__hint {
+  margin: 0.6rem 0 0;
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+}
+
+.skeleton {
+  height: 3.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  opacity: 0.6;
+}
