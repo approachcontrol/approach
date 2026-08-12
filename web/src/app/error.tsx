@@ -6,7 +6,7 @@
  * anything reaching here is unexpected, and Next has already replaced its
  * message with a generic string plus a server-side digest.
  */
-export default function GlobalError({
+export default function SegmentError({
   error,
   reset,
 }: {

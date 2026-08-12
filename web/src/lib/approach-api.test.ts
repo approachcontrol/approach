@@ -109,6 +109,52 @@ describe('approach api client', () => {
       await expect(getRepos()).rejects.toMatchObject({ kind: 'http' })
     })
 
+    // The status table is documented under "Hardening" in docs/graphql-api.md.
+    // Collapsing these into one kind made a stale token and a stopped tunnel
+    // indistinguishable to the reader.
+    it.each([
+      [401, 'unauthorized'],
+      [403, 'forbidden'],
+      [404, 'not-found'],
+      [503, 'busy'],
+      [504, 'timeout'],
+      [400, 'http'],
+      [405, 'http'],
+      [413, 'http'],
+      [415, 'http'],
+      // The tunnel answers for the API when `approach serve` is not running.
+      // 521-530 are Cloudflare's origin-side failures.
+      [502, 'unreachable'],
+      [521, 'unreachable'],
+      [522, 'unreachable'],
+      [523, 'unreachable'],
+      [530, 'unreachable'],
+    ])('maps status %i to the %s kind', async (status, kind) => {
+      fetchMock.mockResolvedValue(jsonResponse({ errors: [{ message: 'nope' }] }, status))
+
+      await expect(getRepos()).rejects.toMatchObject({ kind })
+    })
+
+    // The server bounds snapshot construction at 20s and answers 504 itself,
+    // which fires before this client's 25s abort — so 504 is the timeout path
+    // that actually happens in production, not the abort.
+    it('reports the API’s own 20s snapshot timeout as a timeout, not a generic failure', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({ errors: [{ message: 'request timed out' }] }, 504),
+      )
+
+      const error = await getRepos().catch((caught: unknown) => caught)
+
+      expect(error).toMatchObject({ kind: 'timeout' })
+      expect((error as Error).message).toBe('The Approach API did not respond in time.')
+    })
+
+    it('classifies an unparseable body by status too', async () => {
+      fetchMock.mockResolvedValue(new Response('<html>gateway timeout</html>', { status: 504 }))
+
+      await expect(getRepos()).rejects.toMatchObject({ kind: 'timeout' })
+    })
+
     it('maps a 200 carrying a GraphQL errors array to a graphql error', async () => {
       fetchMock.mockResolvedValue(
         jsonResponse({ data: null, errors: [{ message: 'internal error reading application state' }] }),

@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { EmptyPanel, ErrorPanel } from '@/components/error-panel'
-import { Badge, StatusBadge } from '@/components/status-badge'
+import { Badge, OutcomeBadge, StatusBadge } from '@/components/status-badge'
 import { getFlow, type FlowDetail, type Phase } from '@/lib/approach-api'
 import { formatCommit, formatTimestamp } from '@/lib/format'
 import { load } from '@/lib/load'
@@ -22,7 +22,7 @@ export default async function FlowPage({ params }: { params: Promise<{ id: strin
           <Link href="/">repositories</Link>
         </nav>
         <h1 className="page-title">Flow</h1>
-        <ErrorPanel message={flow.message} />
+        <ErrorPanel message={flow.message} kind={flow.kind} />
       </>
     )
   }
@@ -199,7 +199,7 @@ function PhaseCard({ phase, isCurrent }: { phase: Phase; isCurrent: boolean }) {
 
       <div className="badge-row" style={{ marginTop: '0.35rem' }}>
         <Badge>{phase.kind}</Badge>
-        {phase.outcome ? <Badge tone="good">{phase.outcome}</Badge> : null}
+        {phase.outcome ? <OutcomeBadge outcome={phase.outcome} /> : null}
       </div>
 
       {phase.summary ? <p className="phase__summary">{phase.summary}</p> : null}

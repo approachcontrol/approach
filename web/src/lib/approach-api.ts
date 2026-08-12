@@ -8,13 +8,22 @@ import 'server-only'
  * the shape the API's own "Consuming from a web app" guidance recommends.
  */
 
-/** The API bounds snapshot construction at 20s; abort after that, not before. */
+/**
+ * Backstop only. The API bounds snapshot construction at 20s and answers 504
+ * itself, so a slow scan is normally a response, not an abort; this catches the
+ * case where no response arrives at all — a hung tunnel or a dropped
+ * connection — before the platform's own function timeout does.
+ */
 const REQUEST_TIMEOUT_MS = 25_000
 
 export type ApproachApiErrorKind =
   | 'not-configured'
+  | 'not-found'
   | 'unreachable'
   | 'timeout'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'busy'
   | 'http'
   | 'graphql'
 
@@ -35,10 +44,55 @@ export class ApproachApiError extends Error {
 
 const MESSAGES: Record<ApproachApiErrorKind, string> = {
   'not-configured': 'The Approach API endpoint is not configured for this deployment.',
+  'not-found': 'Nothing is serving the Approach API at the configured URL.',
   unreachable: 'Could not reach the Approach API.',
   timeout: 'The Approach API did not respond in time.',
+  unauthorized: 'The Approach API rejected this deployment’s token.',
+  forbidden: 'The Approach API refused a request from this deployment.',
+  busy: 'The Approach API is at its concurrent-request limit.',
   http: 'The Approach API returned an unexpected response.',
   graphql: 'The Approach API could not answer that query.',
+}
+
+/**
+ * The API's own status contract is a table in `docs/graphql-api.md` under
+ * "Hardening". Collapsing it all into one message made a stale token and a dead
+ * tunnel look identical, and hid the 504 the server raises at its own 20s
+ * snapshot bound — which fires well before this client's abort, so it is the
+ * timeout path that actually happens in production.
+ *
+ * The tunnel in front of the API has a contract too, and it is the more likely
+ * thing to be broken: the deploy story requires one, and it answers for the API
+ * whenever `approach serve` is not running. Those statuses map to `unreachable`
+ * so the panel names the tunnel rather than shrugging.
+ */
+function kindForStatus(status: number): ApproachApiErrorKind {
+  switch (status) {
+    case 401:
+      return 'unauthorized'
+    case 403:
+      return 'forbidden'
+    case 404:
+      // The API 404s only on an unknown path, so this is the URL, not the data.
+      return 'not-found'
+    case 503:
+      return 'busy'
+    case 504:
+      return 'timeout'
+    // 502 is a generic bad gateway; 521-530 are Cloudflare's origin-side
+    // failures, which is what a stopped `approach serve` behind `cloudflared`
+    // actually produces.
+    case 502:
+    case 521:
+    case 522:
+    case 523:
+    case 530:
+      return 'unreachable'
+    default:
+      // 400/405/413/415 are all "this client sent something wrong" — a bug
+      // here, not a condition the reader can act on.
+      return 'http'
+  }
 }
 
 function fail(kind: ApproachApiErrorKind, detail: unknown): never {
@@ -92,14 +146,19 @@ async function query<T>(document: string, variables?: Record<string, unknown>): 
   try {
     body = (await response.json()) as GraphQLResponse<T>
   } catch (caught) {
-    // A tunnel or proxy error page arrives as HTML, including on a 200.
-    fail('http', `status ${response.status}: ${caught}`)
+    // A tunnel or proxy error page arrives as HTML, including on a 200. The
+    // status still classifies it: a 504 from the API and a 504 from the tunnel
+    // mean the same thing to the reader.
+    fail(kindForStatus(response.status), `status ${response.status}: unparseable body: ${caught}`)
   }
 
   if (!response.ok) {
-    // Transport, auth, and limit failures. Messages are fixed server-side
+    // Transport, auth, and limit failures. The server's own messages are fixed
     // strings, but they still describe the deployment, so they only get logged.
-    fail('http', `status ${response.status}: ${JSON.stringify(body.errors ?? null)}`)
+    fail(
+      kindForStatus(response.status),
+      `status ${response.status}: ${JSON.stringify(body.errors ?? null)}`,
+    )
   }
   if (body.errors?.length) {
     fail('graphql', JSON.stringify(body.errors))

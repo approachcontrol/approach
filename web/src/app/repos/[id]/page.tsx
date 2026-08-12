@@ -25,7 +25,7 @@ export default async function RepoPage({ params }: { params: Promise<{ id: strin
       <>
         <Crumbs />
         <h1 className="page-title">Repository</h1>
-        <ErrorPanel message={repo.message} />
+        <ErrorPanel message={repo.message} kind={repo.kind} />
       </>
     )
   }

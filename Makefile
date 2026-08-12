@@ -10,8 +10,13 @@ LDFLAGS := -X $(VERSION_PACKAGE).version=dev -X $(VERSION_PACKAGE).commit=$(COMM
 # files, which `./...` and `gofmt -l .` would otherwise pick up on any machine
 # that has run `npm install`. Both gate targets exclude it; CI checks out clean
 # and never installs, so this only matters locally.
-GO_PACKAGES = $(shell go list ./... | grep -v '/node_modules/')
-GO_FILES    = $(shell git ls-files '*.go')
+#
+# `-co --exclude-standard` is tracked *plus* new-but-unignored files: a file you
+# just wrote is the one most likely to be misformatted, and listing only tracked
+# files would let it pass a gate the docs tell you to run before shipping.
+# `--exclude-standard` is also what honours web/.gitignore, so node_modules
+# stays out.
+GO_FILES = $(shell git ls-files -co --exclude-standard '*.go')
 
 .PHONY: build test fmt-check run clean tidy
 
@@ -19,11 +24,25 @@ build:
 	mkdir -p $(BIN_DIR)
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/approach
 
+# The package list is built in the recipe, not in a `$(shell ...)` variable: a
+# variable swallows `go list`'s exit status, so a package that fails to load
+# would yield a *partial* list and the surviving packages would pass green.
 test:
-	go test $(GO_PACKAGES)
+	@packages=$$(go list ./...) || exit 1; \
+	packages=$$(printf '%s\n' "$$packages" | grep -v '/node_modules/'); \
+	if [ -z "$$packages" ]; then echo 'test: no Go packages found' >&2; exit 1; fi; \
+	go test $$packages
 
+# An empty file list would leave `gofmt -l` with no arguments, which reads stdin
+# and hangs instead of failing, so a non-git checkout is an explicit error.
 fmt-check:
-	@test -z "$$(gofmt -l $(GO_FILES))" || { gofmt -l $(GO_FILES); exit 1; }
+	@files='$(GO_FILES)'; \
+	if [ -z "$$files" ]; then \
+		echo 'fmt-check: no Go files found; run from a git checkout' >&2; \
+		exit 1; \
+	fi; \
+	unformatted=$$(gofmt -l $$files) || exit 1; \
+	if [ -n "$$unformatted" ]; then echo "$$unformatted"; exit 1; fi
 
 run: build
 	XDG_CONFIG_HOME="$(CURDIR)/.config" ./$(BINARY)

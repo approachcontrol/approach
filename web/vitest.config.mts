@@ -10,6 +10,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // `.tsx` is included deliberately: with a `.ts`-only glob a component test
+    // is collected by nobody and the suite still reports green.
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 })

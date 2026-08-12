@@ -1,9 +1,14 @@
+import 'server-only'
+
 /**
  * `Repo.id` is a normalized absolute filesystem path, so it carries slashes.
  * Percent-encoding a `/` as `%2F` inside a single dynamic route segment is
  * normalized and re-split inconsistently between Next's router, dev server,
  * and the edge proxy, so repo ids travel as base64url instead: the encoded
  * form uses only `[A-Za-z0-9_-]` and never needs escaping.
+ *
+ * Server-only because it encodes with `Buffer`. Without the marker a client
+ * component could import it and fail in the browser instead of at build time.
  */
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/

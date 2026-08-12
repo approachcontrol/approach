@@ -24,7 +24,7 @@ export default async function ReposPage() {
       </p>
 
       {!repos.ok ? (
-        <ErrorPanel message={repos.message} />
+        <ErrorPanel message={repos.message} kind={repos.kind} />
       ) : repos.value.length === 0 ? (
         <EmptyPanel>
           No repositories. The server found nothing under its scan root and no Flow references a

@@ -5,9 +5,14 @@ read-only GraphQL API served by `approach serve`. It is a browser-accessible
 view of the same state the TUI shows: a repo list, a repo detail with its
 Flows, and a Flow detail with phases and status.
 
-It is a **separate deployable**, not part of the Go build. `go test ./...`,
-`gofmt -l .`, and `make build` never look inside `web/`; CI runs it as its own
-job (`.github/workflows/ci.yml`).
+It is a **separate deployable**, not part of the Go build. `make build`, `make
+test`, and `make fmt-check` never look inside `web/`; CI runs it as its own job
+(`.github/workflows/ci.yml`).
+
+One wrinkle: `web/node_modules` lives inside the repo tree and some npm packages
+ship Go files, so *bare* `go test ./...` and `gofmt -l .` do pick them up once
+you have run `npm install`. That is why the gate targets exist — use `make test`
+and `make fmt-check`, not the bare commands.
 
 ## How it talks to Approach
 
@@ -25,9 +30,15 @@ Never give either a `NEXT_PUBLIC_` prefix; that would ship it to the browser.
 
 Requests use `cache: 'no-store'` and a 25s `AbortSignal` timeout, and the data
 routes set `maxDuration = 30`. The ordering is deliberate: the API bounds
-snapshot construction at 20s, the client aborts after that, and the platform's
-function timeout is longer still — so a slow scan surfaces as this app's error
-panel rather than an opaque platform timeout.
+snapshot construction at 20s and answers **504** itself, the client aborts at
+25s, and the platform's function timeout is longer still — so a slow scan
+surfaces as this app's error panel rather than an opaque platform timeout.
+
+In practice the server's 504 is the timeout path that fires; the client abort is
+the backstop for a request that gets no response at all, such as a hung tunnel.
+The client maps status to a distinct message per condition (401 stale token, 403
+refused host, 503 busy, 504 timed out), because "the API returned an unexpected
+response" is useless when the actual fix is a new environment variable.
 
 ## Local development
 
@@ -51,7 +62,8 @@ empty for that setup.
 ```bash
 npm run lint        # eslint (flat config, eslint-config-next)
 npm run typecheck   # tsc --noEmit
-npm test            # vitest — GraphQL client + repo-id codec + formatting
+npm test            # vitest — API client and status mapping, load(), repo-id
+                    #   codec, formatting, badge tones, header rules
 npm run build       # next build
 ```
 
@@ -135,11 +147,29 @@ Leaving the instance public is a deliberate decision to publish that data, not
 a default. Make it knowingly.
 
 The app narrows the exposure on its own too: it never selects
-`Flow.instructions` or `Phase.notes` — the unbounded, agent-authored free-text
-fields — so they cannot be rendered even by accident. Error messages are fixed
-strings that never carry the endpoint URL or the token; the detail goes to the
-server log only. `robots` metadata is `noindex, nofollow`, and every response
-carries `Cache-Control: no-store`.
+`Flow.instructions` or `Phase.notes`, the two largest agent-authored free-text
+fields, so they cannot be rendered even by accident. That is a narrowing, not a
+guarantee of brevity — `Phase.summary` *is* rendered and is also unvalidated
+agent text, bounded only by the API's 16 MiB response cap. Error messages are
+fixed strings that never carry the endpoint URL or the token; the detail goes to
+the server log only. `robots` metadata is `noindex, nofollow`, and page
+responses are uncacheable.
+
+Two caveats worth knowing:
+
+- The `Cache-Control: no-store` header in `next.config.ts` is belt-and-braces.
+  The actual guarantee comes from `dynamic = 'force-dynamic'`, which makes Next
+  send `private, no-cache, no-store, max-age=0, must-revalidate` on every
+  dynamic route on its own — and on a prerendered route Next's own value wins
+  over the configured one, so do not read the configured header as the control.
+  Content-hashed `_next/static` assets are deliberately excluded from the rule
+  so they keep their `immutable` caching; `src/test/next-config.test.ts` pins
+  that, because the blanket version shipped once and silently disabled asset
+  caching everywhere.
+- **An API outage still renders HTTP 200** with an error panel, because the
+  failure is caught and rendered rather than thrown. An uptime monitor pointed
+  at `/` will report the app healthy while it shows nothing. Monitor
+  `approach serve`'s own `/healthz` through the tunnel instead.
 
 ## Layout
 
@@ -152,6 +182,19 @@ web/
   src/components/           status badges, error and empty panels
   src/app/                  layout, `/`, `/repos/[id]`, `/flows/[id]`
 ```
+
+The queries in `src/lib/approach-api.ts` are the only place this app hard-codes
+the server's schema, and nothing in the JavaScript toolchain can check them. A
+Go test does: `graphqlapi/web_documents_test.go` reads the documents out of that
+file and validates them against the live schema, so renaming a field in
+`graphqlapi/schema.go` fails `make test` instead of only breaking production.
+Keep the `const NAME_QUERY = \`…\`` shape — that test extracts them by pattern,
+and fails if it finds a `_QUERY` constant it could not extract.
+
+It binds the *documents*, not the TypeScript types. A field that changes
+nullability — `Flow.branch` becoming non-null, say — still validates while the
+interfaces in that file quietly lie about it. Check the interfaces by hand when
+you touch nullability in `graphqlapi/schema.go`.
 
 Two things are worth knowing before changing them:
 
