@@ -1105,13 +1105,17 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 //     any reader sees a legitimately completed phase with a legitimately ready
 //     successor. The TUI's auto-advance drain can launch that successor; the
 //     compensation then demotes the predecessor, and readiness resets the
-//     just-launched successor to pending with a live agent session attached.
-//     That state is already reachable without this change — completed -> running
-//     is a legal transition, so restarting a completed predecessor while its
-//     successor runs produces the same reset — and the session does not wedge:
-//     MarkPhaseLaunchEnded works on any phase status, though the agent's own
-//     completed write is rejected while its phase sits at pending until
-//     readiness re-promotes the row.
+//     just-launched successor to pending with a live agent session attached. The
+//     reset is not limited to a running successor: refreshPhaseReadiness resets
+//     every downstream row whose gate the demotion unsatisfies, so a successor
+//     that reached completed or skipped inside the window goes back to pending
+//     with its outcome cleared, and repeating the predecessor's completion
+//     restores its readiness but not that outcome. All of it is already
+//     reachable without this change — completed -> running is a legal
+//     transition, so restarting a completed predecessor produces the same resets
+//     — and the session does not wedge: MarkPhaseLaunchEnded works on any phase
+//     status, though the agent's own completed write is rejected while its phase
+//     sits at pending until readiness re-promotes the row.
 //  3. NO MARKER AT ALL. The second update can fail to acquire the writer under
 //     contention, or its stale-state guard can deliberately decline to write
 //     because another writer re-completed the phase first. Either way the window

@@ -287,9 +287,13 @@ auto-advance can launch that successor; the failed sync then demotes the
 predecessor and readiness resets the just-launched successor to `pending` while
 its launch attempt stays recorded against it. The launched agent is not wedged —
 its session ends normally, and readiness re-promotes the row — but the agent's
-own completion write is rejected while its phase sits at `pending`. The same
-state is reachable without any sync failure, by restarting a completed
-predecessor while its successor runs.
+own completion write is rejected while its phase sits at `pending`. A successor
+that gets all the way to `completed` or `skipped` inside the window is reset the
+same way, and its outcome is cleared: demoting a phase resets every downstream
+phase whose dependency gate it satisfied, so repeating the predecessor's
+completion makes the successor ready again but does not restore its outcome. The
+same states are reachable without any sync failure, by restarting a completed
+predecessor.
 
 The recovery is the same in every case and is always safe to run: repeat the
 phase completion, or re-record the manual merge with the same metadata. Both

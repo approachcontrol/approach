@@ -848,3 +848,87 @@ func TestPostCommitSyncFailureResetsAnAutoLaunchedSuccessor(t *testing.T) {
 		t.Fatalf("successor launch ids = %v, want the launched attempt retained", successor.LaunchIDs)
 	}
 }
+
+// phaseScopedPlanSyncer fails the plan write for ONE phase id and lets every
+// other phase through, so a test can park a failing sync on the predecessor
+// while a concurrent writer completes the successor for real. It locks because,
+// unlike the other post-commit tests, both syncs here run to completion.
+type phaseScopedPlanSyncer struct {
+	mu        sync.Mutex
+	failPhase string
+	err       error
+	calls     []string
+}
+
+func (s *phaseScopedPlanSyncer) open() (planPhaseWriter, error) {
+	return phaseScopedPlanWriter{parent: s}, nil
+}
+
+type phaseScopedPlanWriter struct{ parent *phaseScopedPlanSyncer }
+
+func (w phaseScopedPlanWriter) markPhaseCompleted(planID, phaseID string) error {
+	w.parent.mu.Lock()
+	defer w.parent.mu.Unlock()
+	w.parent.calls = append(w.parent.calls, planID+"/"+phaseID)
+	if phaseID == w.parent.failPhase {
+		return w.parent.err
+	}
+	return nil
+}
+
+// TestPostCommitSyncFailureResetsATerminalSuccessor is the sharper edge of the
+// same accepted window, and the reason the docs do not limit it to a launched
+// successor. A successor that reaches a TERMINAL status inside the window is
+// reset too, losing the outcome the concurrent writer recorded, because
+// refreshPhaseReadiness resets every downstream row whose gate the demotion
+// unsatisfies. That is not special to the compensation — any predecessor
+// demotion does it, including an operator restarting a completed phase — but the
+// compensation reaches it without an operator, so it is pinned here to catch the
+// behavior changing silently rather than to assert it is desirable.
+func TestPostCommitSyncFailureResetsATerminalSuccessor(t *testing.T) {
+	syncer := &phaseScopedPlanSyncer{failPhase: "plan", err: errors.New("plan write exploded")}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{
+		Now: advancingClock(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), time.Millisecond),
+	})
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		record, err := store.SetPhase(PhaseUpdate{FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted})
+		results <- syncOutcome{record: record, err: err}
+	}()
+	block.waitReached(t)
+
+	// The successor is legitimately ready in the window, so this completion is a
+	// legal write that succeeds and returns nil to its own caller.
+	if _, err := store.SetPhase(PhaseUpdate{
+		FlowID:  linked.FlowID,
+		PhaseID: "plan-review",
+		Status:  PhaseCompleted,
+		Outcome: OutcomeApproved,
+	}); err != nil {
+		t.Fatalf("SetPhase(successor during the window) error = %v", err)
+	}
+	if got := phaseFromStore(t, store, linked.FlowID, "plan-review"); got.Status != PhaseCompleted || got.Outcome != OutcomeApproved {
+		t.Fatalf("successor during the window = %+v, want a completed %q", got, OutcomeApproved)
+	}
+
+	block.release()
+	if got := <-results; got.err == nil {
+		t.Fatal("SetPhase() error = nil, want the sync failure")
+	}
+
+	predecessor := phaseFromStore(t, store, linked.FlowID, "plan")
+	if predecessor.Status != PhaseNeedsAttention {
+		t.Fatalf("predecessor status = %q, want %q", predecessor.Status, PhaseNeedsAttention)
+	}
+	successor := phaseFromStore(t, store, linked.FlowID, "plan-review")
+	if successor.Status != PhasePending || successor.Outcome != "" {
+		t.Fatalf("successor = %+v, want it reset to %q with the outcome cleared", successor, PhasePending)
+	}
+}
