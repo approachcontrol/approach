@@ -264,7 +264,10 @@ func phaseResumeFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent
 			event.Err = err.Error()
 			return event
 		}
-		if flowLaunchPhaseSessionOccupiedExcept(phase, records, intent.ProviderSessionID) {
+		if flowLaunchPhaseSessionOccupiedExcept(phase, records, flowSessionIdentity{
+			Provider:  intent.Provider,
+			SessionID: intent.ProviderSessionID,
+		}) {
 			event.Err = flowPhaseResumeLiveSessionStatus
 			return event
 		}

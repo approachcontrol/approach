@@ -110,15 +110,14 @@ func flowRepairObstructionForRecord(record flowstore.FlowRecord) (flowRepairObst
 }
 
 func phaseHasMatchingLiveSession(phase flowstore.FlowPhase) bool {
-	return phaseHasMatchingLiveSessionExcept(phase, "")
+	return phaseHasMatchingLiveSessionExcept(phase, flowSessionIdentity{})
 }
 
 // phaseHasMatchingLiveSessionExcept is the same rule with one session exempted.
 // See flowLaunchPhaseSessionOccupiedExcept for why resume is the only caller
-// that passes a session ID; every other call site uses the zero-skip wrapper
-// and is unchanged.
-func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skipSessionID string) bool {
-	skip := strings.TrimSpace(skipSessionID)
+// that passes an identity, and why the exemption is keyed on provider and ID
+// together; every other call site uses the zero-skip wrapper and is unchanged.
+func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessionIdentity) bool {
 	launches := make(map[string]struct{}, len(phase.LaunchIDs))
 	for _, launchID := range phase.LaunchIDs {
 		if launchID = strings.TrimSpace(launchID); launchID != "" {
@@ -127,7 +126,7 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skipSessionID 
 	}
 	for _, session := range phase.Sessions {
 		sessionID := strings.TrimSpace(session.SessionID)
-		if sessionID == "" || (skip != "" && sessionID == skip) {
+		if sessionID == "" || skip.matches(session.Provider, sessionID) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {

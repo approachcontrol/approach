@@ -437,8 +437,38 @@ func TestPhaseResumeReadStageRefusals(t *testing.T) {
 			name: "competing live session on the phase",
 			persist: func(h *manualLaunchHarness) {
 				h.sessionRecords = []sessions.SessionRecord{{
-					SessionID: "codex-other", LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
+					Provider: sessions.ProviderCodex, SessionID: "codex-other",
+					LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
 				}}
+			},
+			wantErr: flowPhaseResumeLiveSessionStatus,
+		},
+		{
+			// The session store's identity is (provider, session ID), so a
+			// claude session that merely shares the target's ID is a competing
+			// agent rather than the session being resumed. Exempting on the ID
+			// alone would admit both onto the phase.
+			name: "competing live session sharing the target session id",
+			persist: func(h *manualLaunchHarness) {
+				h.sessionRecords = []sessions.SessionRecord{{
+					Provider: sessions.ProviderClaude, SessionID: "codex-session",
+					LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
+				}}
+			},
+			wantErr: flowPhaseResumeLiveSessionStatus,
+		},
+		{
+			// Same collision against the phase's own mirror, which carries the
+			// provider too. The target stays newest on the launch, so this is an
+			// occupancy refusal rather than drift.
+			name: "competing live mirrored session sharing the target session id",
+			persist: func(h *manualLaunchHarness) {
+				h.persistedFlows = []flowstore.FlowRecord{resumePersistedFlow(func(phase *flowstore.FlowPhase) {
+					phase.Sessions = []flowstore.Session{
+						{Provider: "claude", SessionID: "codex-session", LaunchID: "launch-old", Status: "last_seen"},
+						endedSession("codex-session", "launch-old"),
+					}
+				})}
 			},
 			wantErr: flowPhaseResumeLiveSessionStatus,
 		},
@@ -490,8 +520,11 @@ func TestPhaseResumeAdmitsItsOwnLiveSession(t *testing.T) {
 					Provider: "codex", SessionID: "codex-session", LaunchID: "launch-old", Status: "last_seen",
 				}}
 			})}
+			// The store rejects a provider-less key, so the exempted record
+			// carries the target's provider the way a real one does.
 			h.sessionRecords = []sessions.SessionRecord{{
-				SessionID: "codex-session", LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
+				Provider: sessions.ProviderCodex, SessionID: "codex-session",
+				LaunchID: "launch-old", FlowID: "flow-1", Status: "last_seen",
 			}}
 
 			m := h.resume(h.resumeModel())

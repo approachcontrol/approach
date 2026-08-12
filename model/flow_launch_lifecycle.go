@@ -851,21 +851,41 @@ func (seams flowLaunchSeams) newLaunchID() string {
 // ID belongs to this phase count. A wider rule would let one crashed agent make
 // the Flow permanently unlaunchable.
 func flowLaunchPhaseSessionOccupied(phase flowstore.FlowPhase, records []sessions.SessionRecord) bool {
-	return flowLaunchPhaseSessionOccupiedExcept(phase, records, "")
+	return flowLaunchPhaseSessionOccupiedExcept(phase, records, flowSessionIdentity{})
+}
+
+// flowSessionIdentity names one session the way both stores key it: provider
+// plus ID. The resume exemption below matches on the pair rather than the ID
+// alone, because two providers can hand out the same session ID and exempting
+// by ID would then also exempt a live competing agent.
+type flowSessionIdentity struct {
+	Provider  string
+	SessionID string
+}
+
+// matches reuses the read stage's drift comparison: providers compare
+// normalized, so a record spelling one "Codex" still matches, and session IDs
+// compare exactly. A zero identity — every caller but resume — matches nothing.
+func (id flowSessionIdentity) matches(provider, sessionID string) bool {
+	if strings.TrimSpace(id.SessionID) == "" {
+		return false
+	}
+	return agent.Normalize(provider) == agent.Normalize(id.Provider) &&
+		strings.TrimSpace(sessionID) == strings.TrimSpace(id.SessionID)
 }
 
 // flowLaunchPhaseSessionOccupiedExcept is the same rule with one session
-// exempted. Resume is the only caller that passes a session ID: the session it
+// exempted. Resume is the only caller that passes an identity: the session it
 // is reattaching to is expected to look live — a never-finalized record is the
 // common case resume exists for — so counting it would refuse every resume.
-// Competing sessions on the same phase still occupy it. The exemption applies
+// Competing sessions on the same phase still occupy it, including one from
+// another provider that shares the target's session ID. The exemption applies
 // to both halves, because the target session appears in the store listing as
 // well as in the phase's own mirror.
-func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []sessions.SessionRecord, skipSessionID string) bool {
-	if phaseHasMatchingLiveSessionExcept(phase, skipSessionID) {
+func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []sessions.SessionRecord, skip flowSessionIdentity) bool {
+	if phaseHasMatchingLiveSessionExcept(phase, skip) {
 		return true
 	}
-	skip := strings.TrimSpace(skipSessionID)
 	launches := make(map[string]struct{}, len(phase.LaunchIDs))
 	for _, launchID := range phase.LaunchIDs {
 		if launchID = strings.TrimSpace(launchID); launchID != "" {
@@ -874,7 +894,7 @@ func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []s
 	}
 	for _, record := range records {
 		sessionID := strings.TrimSpace(record.SessionID)
-		if sessionID == "" || (skip != "" && sessionID == skip) {
+		if sessionID == "" || skip.matches(string(record.Provider), sessionID) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(record.LaunchID)]; !ok {

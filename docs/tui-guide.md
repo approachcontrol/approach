@@ -496,7 +496,9 @@ On a Flow row or an expanded phase row:
   occupancy entirely. A different live session on the same phase refuses with
   `Flow phase already has a running session`; the session being resumed does
   not count against itself, which is what keeps `r` open for a phase whose
-  agent died without recording an end.
+  agent died without recording an end. That exemption is keyed on the store's
+  own identity — provider and session ID together — so a live session from a
+  different provider still refuses even when it shares the target's ID.
 - `a` toggles per-Flow auto mode, which is on by default for new Flows and
   persisted on that Flow record. Flows created before this field existed
   remain manual until toggled on.
