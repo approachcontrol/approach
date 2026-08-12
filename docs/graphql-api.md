@@ -206,12 +206,15 @@ are load-bearing, and each was a hole before it was closed:
   `"<55 KiB alias>":[]` across 400 repos is a 22 MB response from a request
   that fits the 64 KiB body cap, and 999 aliases of `flows { id }` across 800
   repos runs `Repo.flows` 799 200 times; both were assessed at nearly nothing.
-- **A field the parent type does not define is charged no width at all.** It
+- **A selection the schema cannot execute is charged nothing at all** — a field
+  the parent type does not define, or a selection set hung off a leaf. Either
   fails GraphQL validation for the whole document, so nothing executes and
-  there is no response to bound. The pessimistic fallback below is for a
-  *schema* field nobody measured; applying it to a typo and multiplying by the
-  repo count made `{ repos { typo } }` a 400 "response too large" on any store
-  with a couple of thousand repos, against the 200-with-`errors` contract.
+  there is no response to bound. Charging it and then multiplying by the
+  enclosing list turned typos into transport-level 400s on a large store:
+  `{ repos { typo } }` was "response too large" past ~2 000 repos, and 1 000
+  aliases of an unknown field was "too many values" past ~500 — both against
+  the 200-with-`errors` contract. The pessimistic fallback below is for a
+  *schema* field nobody measured, not for a field that does not exist.
 - **Encoded widths are counted, not produced.** `jsonStringBytes` reimplements
   `encoding/json`'s escaping rules rather than calling `json.Marshal` and
   measuring the result. `snapshot.bounds()` measures every stored string on

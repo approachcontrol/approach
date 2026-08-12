@@ -506,6 +506,18 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 		if err != nil {
 			return costMeasure{}, err
 		}
+		if !shape.known || selectsBeneathALeaf(node, shape) {
+			// The parent type does not define this field, or a selection set
+			// has been hung off a leaf that has no subtree. Either way the
+			// document fails GraphQL validation *as a whole*, so nothing
+			// executes and there is no response to charge for. Charging it
+			// anyway and multiplying by the enclosing list turned a typo into
+			// a transport-level 400 on a large snapshot — 1000 aliases of an
+			// unknown field under `repos` measured 500 000 values across 500
+			// repos — against the contract that says a validation error is a
+			// 200 with an errors array.
+			return costMeasure{}, nil
+		}
 		// Charged once per parent object, outside the multiplier: the resolver
 		// runs once and the response key is written once, whatever the field's
 		// list turns out to hold — including nothing. Scaling these too made a
@@ -536,6 +548,9 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 // counted once per parent, so counting it here too would halve the effective
 // budget for every ordinary query. Object-typed elements carry only their
 // braces; their scalar leaves carry the payload.
+//
+// Only reached for a field the schema defines: costOfSelection returns before
+// this for anything that cannot execute.
 func (w *costWalker) elementCost(node *ast.Field, parent *graphql.Object, shape fieldShape) costMeasure {
 	cost := costMeasure{bytes: elementOverheadBytes}
 	if shape.list {
@@ -545,22 +560,20 @@ func (w *costWalker) elementCost(node *ast.Field, parent *graphql.Object, shape 
 		return cost
 	}
 	if node.Name.Value == typenameField {
-		// __typename resolves to the enclosing type's name. It is not in
-		// parent.Fields(), so it has to be answered before the drift fallback.
+		// __typename resolves to the enclosing type's name.
 		cost.bytes += int64(len(parent.Name())) + 2
-		return cost
-	}
-	if !shape.known {
-		// A field the parent type does not define fails GraphQL validation for
-		// the whole document: nothing executes, so there is no value whose
-		// width to charge. Charging the pessimistic drift fallback instead
-		// turned the plain typo `{ repos { typo } }` into a 400 "response too
-		// large" on any snapshot with a couple of thousand repos, when the
-		// contract says a validation error is a 200 with an errors array.
 		return cost
 	}
 	cost.bytes += w.bounds.valueBytes(parent.Name(), node.Name.Value)
 	return cost
+}
+
+// selectsBeneathALeaf reports whether the document selects fields under a
+// field that has no subtree to select from. It is as invalid as naming a field
+// the type does not define, and fails the document the same way, so it carries
+// no cost either.
+func selectsBeneathALeaf(node *ast.Field, shape fieldShape) bool {
+	return shape.object == nil && node.SelectionSet != nil && len(node.SelectionSet.Selections) > 0
 }
 
 // responseKey is the key graphql-go writes for this field: the alias when one
@@ -588,14 +601,20 @@ type fieldShape struct {
 	// object means the walk has left the schema — an unknown field, or a
 	// scalar's non-existent subtree.
 	object *graphql.Object
-	// known is whether parent actually defines the field, which is what
-	// separates a real leaf from a typo that carries no data cost at all.
+	// known is whether the field is selectable on parent at all, which is what
+	// separates a real field from a typo that carries no cost whatsoever
+	// because the document containing it can never execute.
 	known bool
 }
 
 func (w *costWalker) fieldShape(node *ast.Field, parent *graphql.Object) fieldShape {
 	if parent == nil || node.Name == nil {
 		return fieldShape{multiplier: 1}
+	}
+	if node.Name.Value == typenameField {
+		// __typename is selectable on every object but is a meta field, so it
+		// is not in Fields().
+		return fieldShape{multiplier: 1, known: true}
 	}
 	definition, ok := parent.Fields()[node.Name.Value]
 	if !ok || definition == nil {

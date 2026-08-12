@@ -380,9 +380,14 @@ func TestInspectCostChargesNoWidthForFieldsOutsideTheSchema(t *testing.T) {
 		`{ repos { typo } }`,
 		`{ repos { flows { typo } } }`,
 		`{ repos { typo { alsoTypo } } }`,
+		// A selection set hung off a scalar is the same class: the walk has
+		// left the schema, so nothing under it can execute either.
+		`{ repos { path { alsoTypo } } }`,
+		aliasedQuery("{ repos { ", "%s: typo ", 1000, "} }"),
+		aliasedQuery("{ repos { ", "%s: path { alsoTypo } ", 1000, "} }"),
 	} {
 		if err := costOf(t, query, bounds); err != nil {
-			t.Errorf("inspectCost(%s) error = %v, want nil", query, err)
+			t.Errorf("inspectCost(%s) error = %v, want nil", truncateQuery(query), err)
 		}
 	}
 	// A real field on the same shape still costs its real width, so this is
@@ -391,6 +396,30 @@ func TestInspectCostChargesNoWidthForFieldsOutsideTheSchema(t *testing.T) {
 	if err := costOf(t, `{ repos { path } }`, bounds); !errors.Is(err, errResponseTooLarge) {
 		t.Errorf("inspectCost(wide real field) error = %v, want errResponseTooLarge", err)
 	}
+	// And the same alias fan-out over a field that *does* exist is still
+	// rejected, so this is a contract fix rather than a hole in the budget.
+	if err := costOf(t, aliasedQuery("{ repos { ", "%s: path ", 1000, "} }"), bounds); err == nil {
+		t.Error("inspectCost(aliased real field) error = nil, want a budget rejection")
+	}
+}
+
+// aliasedQuery repeats body — which must contain one %s for the alias — count
+// times inside prefix/suffix.
+func aliasedQuery(prefix, body string, count int, suffix string) string {
+	var builder strings.Builder
+	builder.WriteString(prefix)
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&builder, body, fmt.Sprintf("a%d", i))
+	}
+	builder.WriteString(suffix)
+	return builder.String()
+}
+
+func truncateQuery(query string) string {
+	if len(query) <= 80 {
+		return query
+	}
+	return query[:80] + "..."
 }
 
 func TestInspectCostExemptsIntrospection(t *testing.T) {
