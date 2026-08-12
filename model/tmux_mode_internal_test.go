@@ -130,122 +130,99 @@ func TestSessionResumeFallsBackToEmbeddedWithoutTmux(t *testing.T) {
 	}
 }
 
-func flowPhaseResumeTmuxContext() actions.AgentLaunchContext {
-	ctx := resumeContext()
-	ctx.FlowID = "flow-1"
-	ctx.FlowPhaseID = "implementation"
-	ctx.FlowLaunchTracked = true
-	// launchTrackedFlowPhaseResumeWithContext hardcodes this; the tmux handoff
-	// has to clear it or the prompt would wait for a dock prefill.
-	ctx.Embedded = true
-	return ctx
+// newTmuxResumeHarness drives the tracked Flow phase resume through the launch
+// lifecycle with tmux mode on. The live-window probe is stubbed out: the
+// repeat-resume guard has its own coverage below, and an unstubbed probe would
+// shell out to the developer's own tmux server.
+func newTmuxResumeHarness(t *testing.T, tmuxAvailable bool) (*manualLaunchHarness, Model) {
+	t.Helper()
+	h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
+	h.launchBackend = "tmux"
+	h.tmuxAvailable = tmuxAvailable
+	m := h.resumeModel()
+	m.repoTmuxLaunchWindowLive = func(string, ...string) bool { return false }
+	return h, m
 }
 
 func TestFlowPhaseResumeRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
-	spy := &tmuxResumeSpy{t: t}
-	m := spy.model("tmux", true)
-	ctx := flowPhaseResumeTmuxContext()
-	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-	if !ok {
-		t.Fatal("expected a valid resume key")
-	}
-	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
-	released := false
+	h, m := newTmuxResumeHarness(t, true)
 
-	next, cmd := m.handleFlowPhaseResumePersisted(flowPhaseResumePersistedMsg{
-		LaunchContext: ctx,
-		LaunchRelease: func() { released = true },
-	})
+	next := h.resume(m)
 
-	if len(spy.tmuxContexts) != 1 {
-		t.Fatalf("tmux launches = %d, want one", len(spy.tmuxContexts))
+	if len(h.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %d, want one", len(h.tmuxContexts))
 	}
-	if spy.tmuxContexts[0].Embedded {
-		t.Fatal("the tmux handoff must clear the hardcoded Embedded flag")
+	ctx := h.tmuxContexts[0]
+	// The resume pipeline hardcodes Embedded; clearing it is what sends the
+	// prompt to argv instead of a dock prefill that would never arrive.
+	if ctx.Embedded {
+		t.Fatal("the tmux route must clear the hardcoded Embedded flag")
 	}
-	if spy.embeddedStart != 0 {
-		t.Fatal("tmux mode must not open an embedded terminal for a phase resume")
+	if !ctx.FlowLaunchTracked || ctx.FlowID != "flow-1" || ctx.FlowPhaseID != "implementation" {
+		t.Fatalf("tmux launch context = %#v, want a tracked implementation resume", ctx)
 	}
-	if next.hasPendingFlowPhaseResumeForFlow("flow-1") {
-		t.Fatal("the pending resume must be consumed")
+	if ctx.ResumeSessionID != "codex-session" {
+		t.Fatalf("resume session = %q, want the phase's own session", ctx.ResumeSessionID)
 	}
-	if cmd == nil {
-		t.Fatal("expected a launch command")
+	if len(h.launchContexts) != 0 {
+		t.Fatalf("tmux mode must not open an embedded terminal, got %#v", h.launchContexts)
 	}
-	drainResumeCmd(t, cmd)
-	if !released {
-		t.Fatal("expected the reservation released once the spawn returned")
+	if next.hasRunningEmbeddedTerminal() {
+		t.Fatal("tmux resume must not install an embedded slot")
+	}
+	if len(h.launchUpdates) != 1 || !h.launchUpdates[0].Resume {
+		t.Fatalf("launch updates = %#v, want one resume write", h.launchUpdates)
+	}
+	if got := next.status.Text; !strings.Contains(got, "tmux attach -t") {
+		t.Fatalf("status = %q, want the attach command", got)
+	}
+	if next.flowLaunchAttemptOccupied("flow-1") {
+		t.Fatal("the attempt must be released once the window is handed off")
 	}
 }
 
 func TestFlowPhaseResumeFallsBackToEmbeddedWithoutTmux(t *testing.T) {
-	spy := &tmuxResumeSpy{t: t}
-	m := spy.model("tmux", false)
-	ctx := flowPhaseResumeTmuxContext()
-	key, _ := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
-	released := false
+	h, m := newTmuxResumeHarness(t, false)
 
-	next, _ := m.handleFlowPhaseResumePersisted(flowPhaseResumePersistedMsg{
-		LaunchContext: ctx,
-		LaunchRelease: func() { released = true },
-	})
+	next := h.resume(m)
 
-	if len(spy.tmuxContexts) != 0 {
-		t.Fatalf("tmux is unavailable, so no tmux launch may be attempted, got %#v", spy.tmuxContexts)
+	if len(h.tmuxContexts) != 0 {
+		t.Fatalf("tmux is unavailable, so no tmux launch may be attempted, got %#v", h.tmuxContexts)
 	}
-	if spy.embeddedStart != 1 {
-		t.Fatalf("embedded starts = %d, want the fallback resume", spy.embeddedStart)
+	if len(h.launchContexts) != 1 || !h.launchContexts[0].Embedded {
+		t.Fatalf("embedded launches = %#v, want the fallback resume", h.launchContexts)
 	}
-	if !released {
-		t.Fatal("the embedded branch releases the reservation on return")
-	}
-	if !strings.Contains(next.status.Text, "tmux unavailable") {
-		t.Fatalf("status = %q, want the fallback note", next.status.Text)
+	if got := next.status.Text; !strings.Contains(got, "tmux unavailable") {
+		t.Fatalf("status = %q, want the fallback note", got)
 	}
 }
 
 // TestFlowPhaseResumeReleasesReservationExactlyOnce counts releases rather than
-// recording a bool: the resume paths converted a deferred release into explicit
-// calls on every branch, so a double release has to fail as loudly as a leak.
+// recording a bool: the tmux route hands the cross-process reservation to the
+// spawn instead of to an embedded install, so a double release has to fail as
+// loudly as a leak.
 func TestFlowPhaseResumeReleasesReservationExactlyOnce(t *testing.T) {
 	tests := []struct {
 		name      string
 		available bool
 		launchErr error
-		pending   bool
 	}{
-		{name: "tmux route", available: true, pending: true},
-		{name: "tmux build error", available: true, launchErr: errTmuxSpyLaunch, pending: true},
-		{name: "embedded fallback", pending: true},
-		// The early return for a resume no longer pending: nothing launches, and
-		// the reservation still has to be handed back.
-		{name: "stale resume", available: true},
+		{name: "tmux route", available: true},
+		{name: "tmux build error", available: true, launchErr: errTmuxSpyLaunch},
+		{name: "embedded fallback"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			spy := &tmuxResumeSpy{t: t, launchErr: tc.launchErr}
-			m := spy.model("tmux", tc.available)
-			ctx := flowPhaseResumeTmuxContext()
-			if tc.pending {
-				key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-				if !ok {
-					t.Fatal("expected a valid resume key")
-				}
-				m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
-			}
-			releases := 0
+			h, m := newTmuxResumeHarness(t, tc.available)
+			h.tmuxLaunchErr = tc.launchErr
 
-			_, cmd := m.handleFlowPhaseResumePersisted(flowPhaseResumePersistedMsg{
-				LaunchContext: ctx,
-				LaunchRelease: func() { releases++ },
-			})
-			if cmd != nil {
-				drainResumeCmd(t, cmd)
-			}
+			h.resume(m)
 
-			if releases != 1 {
-				t.Fatalf("releases = %d, want exactly one", releases)
+			if h.launchReservations != 1 {
+				t.Fatalf("reservations = %d, want exactly one", h.launchReservations)
+			}
+			if h.launchReleases != 1 {
+				t.Fatalf("releases = %d, want exactly one", h.launchReleases)
 			}
 		})
 	}
@@ -397,7 +374,7 @@ func TestLiveTmuxWindowRefusesRepeatResumeOfTerminalPhase(t *testing.T) {
 			next := nextModel.(Model)
 
 			if windowLive {
-				if next.hasPendingFlowPhaseResumeForFlow(record.FlowID) {
+				if next.flowLaunchAttemptOccupied(record.FlowID) {
 					t.Fatal("a live window must not admit a second resume")
 				}
 				if !strings.Contains(next.status.Text, "running in tmux") {
@@ -405,7 +382,7 @@ func TestLiveTmuxWindowRefusesRepeatResumeOfTerminalPhase(t *testing.T) {
 				}
 				return
 			}
-			if !next.hasPendingFlowPhaseResumeForFlow(record.FlowID) {
+			if !next.flowLaunchAttemptOccupied(record.FlowID) {
 				t.Fatalf("no live window must admit the resume, status = %q", next.status.Text)
 			}
 		})
