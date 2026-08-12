@@ -501,18 +501,20 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 		if isSchemaIntrospectionField(node) {
 			return costMeasure{}, nil
 		}
-		multiplier, child := w.fieldShape(node, parent)
-		cost, err := w.costOfSelectionSet(node.SelectionSet, child)
+		shape := w.fieldShape(node, parent)
+		subtree, err := w.costOfSelectionSet(node.SelectionSet, shape.object)
 		if err != nil {
 			return costMeasure{}, err
 		}
-		// The response key is written once per parent object however many
-		// elements the field resolves to, so it is charged outside the
-		// multiplier while the value and its subtree are charged inside it.
-		// Scaling the key too would make a field free whenever its list is
-		// empty in this snapshot — and `"<60 KiB alias>":[]` repeated across
-		// every repo is tens of megabytes the multiplier alone cannot see.
-		return keyCost(node).plus(cost.plus(w.ownCost(node, parent, child != nil)).scaledBy(multiplier)), nil
+		// Charged once per parent object, outside the multiplier: the resolver
+		// runs once and the response key is written once, whatever the field's
+		// list turns out to hold — including nothing. Scaling these too made a
+		// field free wherever its list is empty in this snapshot, which is two
+		// holes at once. `"<55 KiB alias>":[]` across 400 repos is a 22 MB
+		// response, and 999 aliases of `flows { id }` across 800 repos really
+		// do run Repo.flows 799 200 times, both assessed at nearly nothing.
+		perParent := costMeasure{values: 1, bytes: int64(fieldNameOverheadBytes + len(responseKey(node)))}
+		return perParent.plus(w.elementCost(node, parent, shape).plus(subtree).scaledBy(shape.multiplier)), nil
 	case *ast.InlineFragment:
 		// The schema has no interfaces or unions, so an inline fragment's type
 		// condition is always the enclosing type; anything else is a
@@ -528,34 +530,37 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 	}
 }
 
-// keyCost is the response key's contribution. It is charged once per parent
-// object, because that is how often the key is written — the key of a list
-// field appears once whether the list resolves to zero elements or a thousand.
-//
-// The key is the alias when there is one, and an alias is client-chosen and
-// unbounded, so charging the field name instead would leave a 60 KiB alias
-// under a list traversal free.
-func keyCost(node *ast.Field) costMeasure {
-	return costMeasure{bytes: int64(fieldNameOverheadBytes + len(responseKey(node)))}
-}
-
-// ownCost is what one resolved *occurrence* of the field contributes before
-// its subtree: one resolved value, plus the bytes that value serializes to.
-// Object-typed values carry only their braces — their scalar leaves carry the
-// payload. The response key is deliberately not here; keyCost charges it once
-// per parent, outside the list multiplier.
-func (w *costWalker) ownCost(node *ast.Field, parent *graphql.Object, isObject bool) costMeasure {
-	bytes := int64(elementOverheadBytes)
-	if isObject || parent == nil || node.Name == nil {
-		return costMeasure{values: 1, bytes: bytes}
+// elementCost is what one resolved element of the field's value contributes
+// before its subtree: the bytes that element serializes to, and — for a list
+// only — one more resolved value. A non-list field's single value is already
+// counted once per parent, so counting it here too would halve the effective
+// budget for every ordinary query. Object-typed elements carry only their
+// braces; their scalar leaves carry the payload.
+func (w *costWalker) elementCost(node *ast.Field, parent *graphql.Object, shape fieldShape) costMeasure {
+	cost := costMeasure{bytes: elementOverheadBytes}
+	if shape.list {
+		cost.values = 1
+	}
+	if shape.object != nil || parent == nil || node.Name == nil {
+		return cost
 	}
 	if node.Name.Value == typenameField {
-		// __typename resolves to the enclosing type's name.
-		bytes += int64(len(parent.Name())) + 2
-	} else {
-		bytes += w.bounds.valueBytes(parent.Name(), node.Name.Value)
+		// __typename resolves to the enclosing type's name. It is not in
+		// parent.Fields(), so it has to be answered before the drift fallback.
+		cost.bytes += int64(len(parent.Name())) + 2
+		return cost
 	}
-	return costMeasure{values: 1, bytes: bytes}
+	if !shape.known {
+		// A field the parent type does not define fails GraphQL validation for
+		// the whole document: nothing executes, so there is no value whose
+		// width to charge. Charging the pessimistic drift fallback instead
+		// turned the plain typo `{ repos { typo } }` into a 400 "response too
+		// large" on any snapshot with a couple of thousand repos, when the
+		// contract says a validation error is a 200 with an errors array.
+		return cost
+	}
+	cost.bytes += w.bounds.valueBytes(parent.Name(), node.Name.Value)
+	return cost
 }
 
 // responseKey is the key graphql-go writes for this field: the alias when one
@@ -570,18 +575,33 @@ func responseKey(node *ast.Field) string {
 	return ""
 }
 
-// fieldShape returns how many times the field's subtree is resolved and the
-// object type its subtree resolves against. A nil object means the walk has
-// left the schema — an unknown field, or a scalar's non-existent subtree.
-func (w *costWalker) fieldShape(node *ast.Field, parent *graphql.Object) (int64, *graphql.Object) {
+// fieldShape is how one selected field resolves against its parent type.
+type fieldShape struct {
+	// multiplier is how many times the field's value is resolved: its list
+	// cardinality in this snapshot, or 1 when the field is not a list.
+	multiplier int64
+	// list separates "resolves to one value" from "resolves to zero or more".
+	// It cannot be recovered from multiplier, because an empty list and a
+	// single value both measure 1... or 0.
+	list bool
+	// object is the object type the field's subtree resolves against. A nil
+	// object means the walk has left the schema — an unknown field, or a
+	// scalar's non-existent subtree.
+	object *graphql.Object
+	// known is whether parent actually defines the field, which is what
+	// separates a real leaf from a typo that carries no data cost at all.
+	known bool
+}
+
+func (w *costWalker) fieldShape(node *ast.Field, parent *graphql.Object) fieldShape {
 	if parent == nil || node.Name == nil {
-		return 1, nil
+		return fieldShape{multiplier: 1}
 	}
 	definition, ok := parent.Fields()[node.Name.Value]
 	if !ok || definition == nil {
-		return 1, nil
+		return fieldShape{multiplier: 1}
 	}
-	multiplier := int64(1)
+	shape := fieldShape{multiplier: 1, known: true}
 	named := definition.Type
 	for {
 		switch typed := named.(type) {
@@ -589,14 +609,15 @@ func (w *costWalker) fieldShape(node *ast.Field, parent *graphql.Object) (int64,
 			named = typed.OfType
 			continue
 		case *graphql.List:
-			multiplier = saturate(multiplier*int64(w.bounds.listSize(parent.Name(), node.Name.Value)), maxQueryCost)
+			shape.list = true
+			shape.multiplier = saturate(shape.multiplier*int64(w.bounds.listSize(parent.Name(), node.Name.Value)), maxQueryCost)
 			named = typed.OfType
 			continue
 		}
 		break
 	}
-	object, _ := named.(*graphql.Object)
-	return multiplier, object
+	shape.object, _ = named.(*graphql.Object)
+	return shape
 }
 
 // costOfFragment memoizes per (fragment, parent type) — the same reason

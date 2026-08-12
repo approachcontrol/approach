@@ -85,6 +85,11 @@ curl -s -H 'Content-Type: application/json' \
   the listener opens if it is missing.
 - The token is accepted as `Authorization: Bearer <token>` or
   `X-Approach-Token`, compared with `crypto/subtle.ConstantTimeCompare`.
+- **Set the token through `APPROACH_API_TOKEN`, not `--token`.** A flag value
+  lands in `argv`, readable by any local account for as long as the server
+  runs, and in shell history after it stops. `--token` stays for scripts and
+  one-off runs, but the missing-token error and `serve --help` both point at
+  the environment variable first.
 - **When a token is configured the `Host` header is not checked.** Rebinding is
   only a threat while the token is optional — a rebound browser cannot supply a
   bearer token it does not have. Checking `Host` unconditionally would 403 every
@@ -188,13 +193,30 @@ are load-bearing, and each was a hole before it was closed:
 - The byte charge for a field's key uses its **alias** when it has one. An
   alias is client-chosen and unbounded, so charging the field name would leave
   a 55 KiB alias under a list traversal free.
-- That key is charged **once per parent object, outside the cardinality
-  multiplier**, because that is how often JSON writes it — a list field's key
-  appears once whether the list holds zero elements or a thousand. Charging it
-  inside the multiplier instead makes the field free wherever the list is empty
-  in this snapshot, and `"<55 KiB alias>":[]` repeated across 400 repos is a
-  22 MB response from a request that fits the 64 KiB body cap. Only the
-  resolved value and its subtree scale with cardinality.
+- **One resolver call and one response key are charged per parent object,
+  outside the cardinality multiplier**; only elements and their subtrees scale
+  with it. A list field runs its resolver once and writes its key once whether
+  the list holds zero elements or a thousand, so scaling those made the whole
+  field free wherever the list is empty in this snapshot — two holes at once.
+  `"<55 KiB alias>":[]` across 400 repos is a 22 MB response from a request
+  that fits the 64 KiB body cap, and 999 aliases of `flows { id }` across 800
+  repos runs `Repo.flows` 799 200 times; both were assessed at nearly nothing.
+- **A field the parent type does not define is charged no width at all.** It
+  fails GraphQL validation for the whole document, so nothing executes and
+  there is no response to bound. The pessimistic fallback below is for a
+  *schema* field nobody measured; applying it to a typo and multiplying by the
+  repo count made `{ repos { typo } }` a 400 "response too large" on any store
+  with a couple of thousand repos, against the 200-with-`errors` contract.
+- **Encoded widths are counted, not produced.** `jsonStringBytes` reimplements
+  `encoding/json`'s escaping rules rather than calling `json.Marshal` and
+  measuring the result. `snapshot.bounds()` measures every stored string on
+  every request, whether or not the query selects it, so marshalling to measure
+  allocated an escaped copy — up to six times the value — of unbounded
+  `Flow.instructions` and `Phase.notes`, before any budget had been consulted,
+  across up to 8 requests at once. `TestJSONStringBytesMatchesTheEncoder` sweeps
+  every byte and every escape class to keep the two exactly equal, since a
+  width that drifts *below* the encoder's is the undercount this budget exists
+  to prevent.
 - **`__typename` is not exempt from the cost limit**, unlike `__schema` and
   `__type`. It resolves once per snapshot object rather than against the fixed
   schema, so it is a data-proportional leaf that happens to start with `__`.

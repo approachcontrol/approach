@@ -9,7 +9,6 @@
 package graphqlapi
 
 import (
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -276,30 +275,62 @@ func (f fieldValueBytes) observePhase(phase flowstore.FlowPhase) {
 }
 
 // jsonStringBytes is the width of value once encoding/json has escaped and
-// quoted it. The scan is an exact match for the encoder's rules on plain text,
-// which is the overwhelmingly common case and allocates nothing; anything
-// needing an escape defers to the encoder itself rather than re-deriving its
-// table here, because a width that drifts below the encoder's is precisely the
-// undercount the byte budget exists to prevent.
+// quoted it.
+//
+// It counts what encoding/json's appendString would emit with HTML escaping on
+// — the default for json.Encoder — rather than calling json.Marshal and
+// measuring the result. Marshalling to measure would allocate an escaped copy
+// of the value: Flow.instructions and Phase.notes are unbounded agent-supplied
+// markdown, bounds() walks every one of them on every request whether or not
+// the query selects them, and a string of `<` escapes to six times its size.
+// That is a per-request multiple of the store's whole text, taken *before* any
+// budget has been consulted, across up to MaxInFlight requests at once.
+//
+// The rules are duplicated from the encoder rather than derived from it, so
+// TestJSONStringBytesMatchesTheEncoder pins the two together over every byte
+// and every escape class: a width that drifts *below* the encoder's is exactly
+// the undercount the byte budget exists to prevent.
 func jsonStringBytes(value string) int {
-	plain := true
-	for i := 0; i < len(value); i++ {
-		if b := value[i]; b < 0x20 || b >= utf8.RuneSelf || b == '"' || b == '\\' ||
-			b == '<' || b == '>' || b == '&' {
-			plain = false
-			break
+	size := 2 // the surrounding quotes
+	for i := 0; i < len(value); {
+		if b := value[i]; b < utf8.RuneSelf {
+			switch {
+			case jsonPlainByte(b):
+				size++
+			case b == '"' || b == '\\' || b == '\b' || b == '\f' ||
+				b == '\n' || b == '\r' || b == '\t':
+				size += 2
+			default:
+				// Every other byte below 0x20 becomes \u00XX.
+				size += 6
+			}
+			i++
+			continue
 		}
+		decoded, width := utf8.DecodeRuneInString(value[i:])
+		switch {
+		case decoded == utf8.RuneError && width == 1:
+			size += 6 // \ufffd, one per invalid byte
+		case decoded == '\u2028' || decoded == '\u2029':
+			// Escaped unconditionally: valid in JSON, unsafe in JSONP.
+			size += 6
+		default:
+			size += width
+		}
+		i += width
 	}
-	if plain {
-		return len(value) + 2 // the surrounding quotes
+	return size
+}
+
+// jsonPlainByte reports whether the encoder passes an ASCII byte through
+// untouched. It is encoding/json's htmlSafeSet: printable ASCII except the two
+// JSON metacharacters and the three HTML ones.
+func jsonPlainByte(b byte) bool {
+	switch b {
+	case '"', '\\', '<', '>', '&':
+		return false
 	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		// Unreachable for a string, but a silent undercount here would be the
-		// one that matters, so fall back to the worst case: \uXXXX per byte.
-		return len(value)*6 + 2
-	}
-	return len(encoded)
+	return b >= 0x20
 }
 
 // Repos returns the union of scanned and flow-derived repositories.

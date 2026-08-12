@@ -347,6 +347,52 @@ func TestInspectCostChargesKeysOfEmptyLists(t *testing.T) {
 	}
 }
 
+func TestInspectCostCountsResolverWorkOnEmptyLists(t *testing.T) {
+	// Repo.flows runs once per repo whether or not it has any flows, so the
+	// value budget has to see that work. Scaling the field's own value by the
+	// cardinality hid it: with no flows in the snapshot, aliasing the field
+	// 999 times over 800 repos ran the resolver 799 200 times and was assessed
+	// at about 800.
+	bounds := resultBounds{repos: 800, flows: 0, flowsPerRepo: 0, values: fieldValueBytes{}}
+	var builder strings.Builder
+	builder.WriteString("{ repos { ")
+	for i := 0; i < 999; i++ {
+		fmt.Fprintf(&builder, "a%d: flows { id } ", i)
+	}
+	builder.WriteString("} }")
+	if measured := measure(t, builder.String()); measured.nodes > maxQueryNodes {
+		t.Fatalf("fixture is %d nodes; the node cap would have rejected it first", measured.nodes)
+	}
+	if err := costOf(t, builder.String(), bounds); !errors.Is(err, errQueryTooExpensive) {
+		t.Fatalf("inspectCost(aliased empty lists) error = %v, want errQueryTooExpensive", err)
+	}
+}
+
+func TestInspectCostChargesNoWidthForFieldsOutsideTheSchema(t *testing.T) {
+	// A field the parent type does not define fails validation for the whole
+	// document, so nothing executes and there is no response to bound. The
+	// drift fallback is a width for a *schema* field nobody measured; applying
+	// it to a typo and then multiplying by the repo count turned every typo
+	// into a 400 "response too large", against the documented contract that a
+	// validation error is a 200 with an errors array.
+	bounds := resultBounds{repos: 2045, flows: 10, flowsPerRepo: 10, values: fieldValueBytes{}}
+	for _, query := range []string{
+		`{ repos { typo } }`,
+		`{ repos { flows { typo } } }`,
+		`{ repos { typo { alsoTypo } } }`,
+	} {
+		if err := costOf(t, query, bounds); err != nil {
+			t.Errorf("inspectCost(%s) error = %v, want nil", query, err)
+		}
+	}
+	// A real field on the same shape still costs its real width, so this is
+	// not a hole: Repo.path is measured, not fallen back to.
+	bounds.values = fieldValueBytes{"Repo.path": maxResponseBytes}
+	if err := costOf(t, `{ repos { path } }`, bounds); !errors.Is(err, errResponseTooLarge) {
+		t.Errorf("inspectCost(wide real field) error = %v, want errResponseTooLarge", err)
+	}
+}
+
 func TestInspectCostExemptsIntrospection(t *testing.T) {
 	// Introspection resolves against the schema, which is small and fixed, so
 	// snapshot size must not make client codegen start failing.

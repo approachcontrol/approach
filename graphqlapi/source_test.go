@@ -425,18 +425,46 @@ func TestJSONStringBytesMatchesTheEncoder(t *testing.T) {
 		"", "plain text", `"quoted"`, `back\slash`,
 		"<script>", "a & b", "less < greater >",
 		"tab\tnewline\ncarriage\r", "\x00\x01\x1f",
+		"backspace\bformfeed\f", "delete\x7f",
 		"héllo wörld", "日本語のテキスト", "emoji 🚀",
-		"  ", "\xff\xfe invalid utf8",
+		"\u2028\u2029", "\xff\xfe invalid utf8",
 		strings.Repeat("<&>", 100),
 	} {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatalf("Marshal(%q) error = %v", value, err)
-		}
-		got := jsonStringBytes(value)
-		if got != len(encoded) {
-			t.Errorf("jsonStringBytes(%q) = %d, want %d (the encoder's own width)", value, got, len(encoded))
-		}
+		assertEncodedWidth(t, value)
+	}
+
+	// jsonStringBytes counts the encoder's rules instead of calling it, so that
+	// measuring an unbounded Flow.instructions does not allocate an escaped copy
+	// of it on every request. That is only sound while the two agree exactly —
+	// and only a *sweep* proves it, since a corpus can only miss a byte quietly.
+	for b := 0; b < 256; b++ {
+		assertEncodedWidth(t, string([]byte{byte(b)}))
+		assertEncodedWidth(t, "pad"+string([]byte{byte(b)})+"pad")
+	}
+	for r := rune(0); r < 0x3000; r++ {
+		assertEncodedWidth(t, string(r))
+	}
+}
+
+func assertEncodedWidth(t *testing.T, value string) {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal(%q) error = %v", value, err)
+	}
+	if got := jsonStringBytes(value); got != len(encoded) {
+		t.Errorf("jsonStringBytes(%q) = %d, want %d (the encoder's own width)", value, got, len(encoded))
+	}
+}
+
+func TestJSONStringBytesDoesNotAllocate(t *testing.T) {
+	// bounds() measures every stored string on every request, whether or not the
+	// query selects it. Marshalling to measure allocated up to six times the
+	// value per call, before any budget had been consulted, across up to
+	// MaxInFlight requests at once.
+	value := strings.Repeat("<a & b> héllo\n", 4096)
+	if allocs := testing.AllocsPerRun(50, func() { jsonStringBytes(value) }); allocs != 0 {
+		t.Errorf("jsonStringBytes allocated %v times per call, want 0", allocs)
 	}
 }
 

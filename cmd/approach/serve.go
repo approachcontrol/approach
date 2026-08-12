@@ -61,7 +61,7 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 	// Fail before the listener opens: an unauthenticated listener on a
 	// non-loopback interface must never exist, even briefly.
 	if !loopback && token == "" {
-		return fmt.Errorf("a token is required for the non-loopback bind address %q; pass --token or set APPROACH_API_TOKEN", addr)
+		return fmt.Errorf("a token is required for the non-loopback bind address %q; set APPROACH_API_TOKEN (preferred: --token puts the token in argv, where any local account can read it)", addr)
 	}
 
 	cfg, err := deps.loadConfig()
@@ -196,8 +196,10 @@ Flags:
   --addr ADDRESS     Bind address (default 127.0.0.1:8787, or APPROACH_API_ADDR).
                      Use 127.0.0.1:0 to pick a free port; the resolved address
                      is printed on startup.
-  --token TOKEN      Shared token (or APPROACH_API_TOKEN). Optional on a
-                     loopback bind, required on any other bind address.
+  --token TOKEN      Shared token. Optional on a loopback bind, required on any
+                     other bind address. Prefer APPROACH_API_TOKEN: a flag puts
+                     the token in argv and in shell history, where any local
+                     account can read it.
   --state-root PATH  Override the artifact state root.
   --scan-root PATH   Override the repository scan root (or WORKTREE_ROOT).
   --help, -h         Print this help and exit.
