@@ -134,6 +134,7 @@ type Model struct {
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
+	ensureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
@@ -256,6 +257,7 @@ type Options struct {
 	CountClosedBeads         func(repoPath string) (int, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
+	EnsureFlowWorktree       func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
@@ -635,43 +637,55 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	createFlow := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		createOpts.Preset = opts.FlowPreset
+		return store.CreateWithOptions(record, createOpts)
+	}
+	setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.SetStartMetadata(update)
+	}
+	// The starter is built unconditionally because the launch path needs its
+	// EnsureWorktree even when a test injects both CreateFlow and StartFlowPlan.
+	// Nothing here is called until one of its methods is, so the cost is a few
+	// closures. A test that launches a phase on a worktree-less Flow must set
+	// Options.EnsureFlowWorktree, or replace launch persistence and get the
+	// refusing contract instead: the default runs real git and a real hook.
+	starter := NewFlowStarter(FlowStarterOptions{
+		CreateFlow:           createFlow,
+		CreateWorktree:       actions.CreateFlowWorktree,
+		SetStartMetadata:     setFlowStartMetadata,
+		SetPhase:             setFlowPhase,
+		AddPhaseLaunchID:     addFlowPhaseLaunchID,
+		ReserveLaunch:        reserveFlowLaunch,
+		BootstrapHookForRepo: bootstrapHookForRepo,
+		RunBootstrapHook:     runBootstrapHook,
+		ResolveCommit:        actions.ResolveWorktreeCommit,
+		NewLaunchID:          newLaunchID,
+		FlowPromptTemplates:  opts.FlowPromptTemplates,
+	})
 	createFlowForRepo := opts.CreateFlow
+	if createFlowForRepo == nil {
+		createFlowForRepo = starter.PrepareFlow
+	}
 	startFlowPlan := opts.StartFlowPlan
-	if createFlowForRepo == nil || startFlowPlan == nil {
-		createFlow := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			createOpts.Preset = opts.FlowPreset
-			return store.CreateWithOptions(record, createOpts)
-		}
-		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			return store.SetStartMetadata(update)
-		}
-		starter := NewFlowStarter(FlowStarterOptions{
-			CreateFlow:           createFlow,
-			CreateWorktree:       actions.CreateFlowWorktree,
-			SetStartMetadata:     setFlowStartMetadata,
-			SetPhase:             setFlowPhase,
-			AddPhaseLaunchID:     addFlowPhaseLaunchID,
-			ReserveLaunch:        reserveFlowLaunch,
-			BootstrapHookForRepo: bootstrapHookForRepo,
-			RunBootstrapHook:     runBootstrapHook,
-			ResolveCommit:        actions.ResolveWorktreeCommit,
-			NewLaunchID:          newLaunchID,
-			FlowPromptTemplates:  opts.FlowPromptTemplates,
-		})
-		if createFlowForRepo == nil {
-			createFlowForRepo = starter.PrepareFlow
-		}
-		if startFlowPlan == nil {
-			startFlowPlan = starter.StartPlan
-		}
+	if startFlowPlan == nil {
+		startFlowPlan = starter.StartPlan
+	}
+	ensureFlowWorktree := opts.EnsureFlowWorktree
+	if ensureFlowWorktree == nil && !customPhaseLaunchPersistence {
+		// Same storage boundary as reserveFlowLaunch above, and for a stronger
+		// reason: the default seam runs real git and a real bootstrap hook, then
+		// writes start metadata into the default store. Left nil, the launcher's
+		// documented contract takes over and refuses worktree-less launches.
+		ensureFlowWorktree = starter.EnsureWorktree
 	}
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
@@ -719,11 +733,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
-		showBead:         showBead,
-		countClosedBeads: countClosedBeads,
-		createFlow:       createFlowForRepo,
-		startFlowPlan:    startFlowPlan,
-		setFlowPhase:     setFlowPhase,
+		showBead:           showBead,
+		countClosedBeads:   countClosedBeads,
+		createFlow:         createFlowForRepo,
+		startFlowPlan:      startFlowPlan,
+		ensureFlowWorktree: ensureFlowWorktree,
+		setFlowPhase:       setFlowPhase,
 		launchSeams: newFlowLaunchSeams(
 			readFlow,
 			listSessions,
@@ -1217,6 +1232,7 @@ func (m Model) View() string {
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
 		FlowCloseActionSelected:      m.selectedFlowCloseActionHint(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
+		FlowPhaseReleaseSelected:     m.selectedFlowPhaseSessionReleasable(),
 		FlowPhaseResumableSelected:   m.selectedFlowPhaseResumable(),
 		OverlayText:                  modalView.Text,
 		TransientError:               m.visibleStatusText(),
@@ -1740,6 +1756,14 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowPhaseReset(msg)
 	case flowPhaseResetFailedMsg:
 		return m.handleFlowPhaseResetFailed(msg)
+	case flowPhaseSessionReleaseProbedMsg:
+		return m.handleFlowPhaseSessionReleaseProbed(msg)
+	case flowPhaseSessionReleaseConfirmedMsg:
+		return m.handleFlowPhaseSessionReleaseConfirmed(msg)
+	case flowPhaseSessionReleasedMsg:
+		return m.handleFlowPhaseSessionReleased(msg)
+	case flowPhaseSessionReleaseFailedMsg:
+		return m.handleFlowPhaseSessionReleaseFailed(msg)
 	case FlowDeletedMsg:
 		return m.handleFlowDeleted(msg)
 	case FlowDeleteFailedMsg:
@@ -2154,6 +2178,15 @@ func (m Model) selectedFlowPhaseResettable() bool {
 	}
 	phase, ok := m.selectedFlowPhase()
 	return ok && m.flowPhaseResettable(record, phase)
+}
+
+func (m Model) selectedFlowPhaseSessionReleasable() bool {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return false
+	}
+	phase, ok := m.selectedFlowPhase()
+	return ok && m.flowPhaseSessionReleasable(record, phase)
 }
 
 func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flowstore.FlowPhase, bool) {

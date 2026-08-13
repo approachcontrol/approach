@@ -242,7 +242,17 @@ func (s *Store) ReadTranscript(provider Provider, sessionID string) ([]Transcrip
 	return readTranscriptEvents(file)
 }
 
+// MarkLaunchEnded matches launch IDs on their trimmed form, on both sides of
+// the comparison, and flowstore.MarkPhaseLaunchEnded now does the same. The two
+// run as one operation — FinalizeAgentSession calls both to end a launch in the
+// store and in the Flow phase mirror — so a padded ID that matched one half and
+// not the other would leave a launch recorded as ended in one place and still
+// live in the other, which is the exact shape of the stall session release
+// exists to clear. Ingestion takes APPROACH_LAUNCH_ID from the environment
+// verbatim into both, so the padding is the caller's to produce, not either
+// store's to assume away.
 func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
+	launchID = strings.TrimSpace(launchID)
 	if launchID == "" {
 		return nil
 	}
@@ -251,7 +261,7 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 		return err
 	}
 	for _, record := range records {
-		if record.LaunchID != launchID {
+		if strings.TrimSpace(record.LaunchID) != launchID {
 			continue
 		}
 		if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
@@ -268,7 +278,7 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 			release()
 			return err
 		}
-		if !ok || current.LaunchID != launchID {
+		if !ok || strings.TrimSpace(current.LaunchID) != launchID {
 			release()
 			continue
 		}

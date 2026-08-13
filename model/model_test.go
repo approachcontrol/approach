@@ -99,6 +99,22 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return record, func() {}, nil
 		}
 	}
+	if opts.EnsureFlowWorktree == nil {
+		// The production default runs real git and a real bootstrap hook, so a
+		// test model that launches a phase on a worktree-less Flow would shell
+		// out to a repository that does not exist. This stands in for the
+		// worktree the launch now creates instead of falling back to the repo.
+		opts.EnsureFlowWorktree = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			if record.WorktreePath != "" {
+				return record, nil
+			}
+			record.WorktreePath = record.RepoPath + "-worktrees/" + record.FlowID
+			if record.Branch == "" {
+				record.Branch = "flow/" + record.FlowID
+			}
+			return record, nil
+		}
+	}
 	return model.NewWithOptions(repos, opts)
 }
 

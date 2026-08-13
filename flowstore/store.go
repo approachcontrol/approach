@@ -1927,7 +1927,14 @@ func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, e
 		phase := record.Phases[phaseIndex]
 		changed := false
 		for i := range phase.Sessions {
-			if phase.Sessions[i].LaunchID != launchID {
+			// The stored side is trimmed too, and for the same reason the
+			// incoming one is: ingestion copies APPROACH_LAUNCH_ID into both this
+			// mirror and the session store verbatim, while every reader that
+			// decides whether a session still blocks its phase trims. An
+			// untrimmed comparison here would end the launch in the session store
+			// and leave this row live, which is the stall shape release exists to
+			// clear.
+			if strings.TrimSpace(phase.Sessions[i].LaunchID) != launchID {
 				continue
 			}
 			wasEnded := strings.TrimSpace(phase.Sessions[i].Status) == "ended"

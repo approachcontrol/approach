@@ -106,7 +106,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
 | `C` | Close the selected Flow with a required reason, or reopen it after confirmation if it is already closed (flows and active flows views) |
-| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected recoverable Flow phase after confirmation |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or recover a selected Flow phase after confirmation — reset it to ready when it is recoverable, otherwise release an unfinished session that is blocking it |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
@@ -536,11 +536,59 @@ and discards the pending result.
 
 The result is the same parked Flow a successful `n` form submission produces,
 so `g` on its first phase launches the agent inside the Flow's isolated
-worktree. If worktree creation or the bootstrap hook fails, the persisted Flow
-record keeps its launchable phases blocked with the failure noted, the Flows
-pane renders the worktree-less record with the `missing-worktree` branch label
-and a `recover-worktree` phase state, and the error is reported in the status
-line.
+worktree. If worktree creation fails, the persisted Flow record keeps its
+launchable phases blocked with the failure noted, the Flows pane renders the
+worktree-less record with the `missing-worktree` branch label and a
+`recover-worktree` phase state, and the error is reported in the status line. A
+bootstrap-hook failure comes after the start metadata is persisted, so that
+record does have a worktree; only its launchable phases are blocked.
+
+A Flow that has no worktree at all — one created by `approach flow create`
+without `--worktree-path`, or left behind by a failure before the start metadata
+was written — never launches in the repository root. Pressing `g` creates the
+worktree first, announcing it in the status line, and only then starts the
+agent.
+
+A record that already names a local branch gets a worktree for that branch, so
+the name prompts render as the push target keeps meaning what it said. If that
+branch already has a healthy linked worktree, the Flow adopts it rather than
+failing over a checkout git will not repeat — the bootstrap hook then runs
+against a directory that already exists, so a hook that scaffolds rather than
+installs sees a populated worktree. A registration git marks prunable is never
+adopted, whether the directory is gone or only its `.git` link is. Only a record
+whose branch resolves to nothing — or that names none — is given a fresh
+`flow/<slug>` pair from the recorded base ref, or from the repository's current
+HEAD when no base ref was recorded.
+
+Creating the worktree, recording it, and running the bootstrap hook all happen
+under the Flow's launch reservation, so two Approach processes launching the
+same worktree-less Flow serialize: the second one adopts the fully provisioned
+worktree the first recorded instead of allocating a second pair beside it. That
+reservation is held longer than its own lock timeout allows for, so a launch
+that arrives mid-provisioning is refused for now rather than for good — the
+status line says another launch is setting the worktree up, and AutoMode simply
+retries on its next poll. A Flow closed while the launch was reading is dropped
+without a status, the same as any other stale candidate.
+
+A manual launch is refused with the reason, and AutoMode blocks the phase with
+that reason in its notes rather than retrying every second, when:
+
+- the Flow records no repository of its own;
+- the recorded branch exists but is not a local branch — a tag, a
+  remote-tracking ref, or a raw commit — since checking one out would detach
+  HEAD under a record that keeps naming a branch;
+- the recorded branch is checked out in the repository's own working tree,
+  which is the launch this whole path exists to prevent;
+- `git worktree add` fails for any other reason, including a registration left
+  behind by a directory deleted without `git worktree prune`.
+
+Most of those refusals write nothing, but two happen after `git worktree add`
+has already run. A store that will not record the new worktree leaves a branch
+and directory on disk that no record names; the status line names the path. A
+bootstrap-hook failure comes after the start metadata is persisted, so the Flow
+does keep the worktree it just gained, and its status says so — note that a
+second `g` then takes the worktree as given and launches the agent into it even
+though the hook never completed.
 
 After the active subview settles, `enter` on its visible selected row
 asynchronously loads the raw human-readable output of
@@ -730,18 +778,49 @@ flight — both hold a launch attempt from their key press onward — and while 
 session recorded against the phase it would launch has not ended. Each of those
 defers the launch silently and it resumes on a later poll.
 
-That last one has no recovery path today. A session is treated as live until it
-is recorded as ended, and only an orderly exit records that, so an agent whose
+That last one is what `x` recovers. A session is treated as live until it is
+recorded as ended, and only an orderly exit records that, so an agent whose
 session is never finalized — Approach killed, the machine lost — leaves the
-phase looking permanently busy. Auto mode then waits forever, and the other
-routes out are all closed: launching the phase manually with `g` is refused with
-`No launchable Flow phase` even though the phase is ready, repair reports no
+phase looking permanently busy. Auto mode then waits forever, repair reports no
 obstruction because the phase is still launchable, and reset applies only to
-`running` phases. Resuming the stalled session with `r` is the one route back
-into the work — resume deliberately does not count the session it is
-reattaching to as occupancy — but it is not a fix: reattaching does not record
-the old session as ended, so auto mode stays blocked. Clearing the stall means
-editing the Flow record's session metadata by hand.
+`running` phases. Launching the phase manually with `g` says so, and names the
+phase because `g` acts on the Flow while release acts on the selection: `Flow
+phase implementation has an unfinished session; select it and x releases it`.
+
+`x` on that phase releases the session. It reads the phase's launches from both
+the session store and the Flow record, and asks before acting — *Release 1
+unverified session (…1a2b3c4d)? Recorded as ended.* — because Approach cannot
+prove those agents are gone: outside the embedded terminal and tmux there is
+nothing to probe. Confirming records each launch as ended, exactly as a clean
+exit would have, and the phase becomes launchable again. When that Flow's auto
+mode drain is armed in the running process, the prompt says so instead —
+*AutoMode may launch a phase.* — because the next poll starts an agent within a
+second. It stays that vague on purpose: the drain picks its own candidate when
+it runs, which need not be the phase whose session you released.
+
+Release refuses whole while an agent is provably live on the phase — a running
+embedded terminal, or a live tmux window for any of its launches — rather than
+releasing the stale launch beside it. That case is reachable after `r`, which
+starts a second agent on the same phase and persists a second launch ID:
+dismiss the embedded terminal, or attach with `T` and exit the agent in its tmux
+window, then press `x`.
+
+Resuming the stalled session with `r` still works and still gets you back into
+the work — resume deliberately does not count the session it is reattaching to
+as occupancy — but it is not a fix. Whether it clears the stall depends on the
+provider: one that reuses the session ID rebinds the old record to the new
+launch and a clean exit ends it, while one that mints a fresh ID leaves the
+crashed record live forever.
+
+The footer advertises `x release session` only for a `ready` phase, where a live
+session contradicts the phase's own status and is worth pointing at. Every other
+status is one a live session is unsurprising on: `running` is where a working
+agent belongs, and `completed`, `blocked`, `needs_attention`, and `skipped` are
+all set by the agent itself from inside its own session — the gap between
+`approach flow phase complete` and the agent exiting is ordinary. Those phases
+are recovered the same way — press `x` and it probes — they are just not
+advertised, because a standing hint beside a healthy agent would read as an
+invitation.
 
 There is a matching trap one step earlier, before a session is ever attached to
 its phase. A session record is written before the phase attach, and the attach
@@ -863,7 +942,7 @@ ordinary empty or pending work:
 
 | Label | Meaning |
 |-------|---------|
-| `recover-worktree` | Saved Flow with no branch/worktree metadata |
+| `recover-worktree` | Saved Flow with no branch/worktree metadata; a phase launch creates the missing worktree, and is refused with a message when it cannot |
 | `await-session` | Running phase with a recorded launch but no attached session yet |
 | `session-mismatch` | Attached session whose launch ID does not match the phase's launch attempts |
 | `ended-session` | Running phase whose latest attached session has ended |

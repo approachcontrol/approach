@@ -127,10 +127,14 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:   "flow-1",
 		RepoPath: "/dev/alpha",
-		Title:    "Flow with phases",
-		Status:   flowstore.StatusInProgress,
-		Branch:   "flow/with-phases",
-		Headless: true,
+		// An in-progress Flow has a worktree. Leaving it out would send every
+		// launch in this file through the worktree-creation step, which is its
+		// own path with its own tests.
+		WorktreePath: "/dev/alpha-worktrees/flow-with-phases",
+		Title:        "Flow with phases",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/with-phases",
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -2491,6 +2495,8 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 			resetCalled = true
 			return flowstore.FlowRecord{}, nil
 		},
+		ReadFlow:     func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) { return nil, nil },
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
@@ -2502,23 +2508,70 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 	if strings.Contains(view, "reset ready") {
 		t.Fatalf("session-mismatch Flow phase should hide reset shortcut:\n%s", view)
 	}
+	if strings.Contains(view, "release session") {
+		t.Fatalf("session-mismatch Flow phase has no live session to release:\n%s", view)
+	}
+	// The phase carries a launch ID, so x is no longer silent: it probes, and
+	// the probe reports what it found rather than leaving the press unanswered.
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if cmd != nil || m.Overlay() != ui.OverlayNone {
-		t.Fatalf("x on session-mismatch phase returned cmd=%T overlay=%d", cmd, m.Overlay())
+	if cmd == nil {
+		t.Fatal("x on a phase carrying launch IDs should probe for releasable sessions")
+	}
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("session-mismatch probe opened overlay=%d, want none", m.Overlay())
+	}
+	if got := m.TransientError(); !strings.Contains(got, "no unfinished session to release") {
+		t.Fatalf("status after probe = %q, want the named refusal", got)
 	}
 	if resetCalled {
 		t.Fatal("reset should not be called for session-mismatch phase")
 	}
 }
 
-func TestModel_SelectedLiveSessionFlowPhaseHidesResetShortcut(t *testing.T) {
+// The advertised case: a live session on a ready phase contradicts the phase's
+// own status — nothing has started — so the footer names the release. Every
+// other status can legitimately hold one, which is why the hint stops there.
+// Reset never applies to a ready phase either — it requires a running one — so
+// the two x labels cannot both show.
+func TestModel_StalledFlowPhaseAdvertisesSessionRelease(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.Phases[2].LaunchIDs = []string{"launch-crashed"}
+	flow.Phases[2].Sessions = []flowstore.Session{
+		{Provider: "codex", SessionID: "codex-crashed", LaunchID: "launch-crashed", Status: "last_seen"},
+	}
+	m := newTestModel(testRepos(), model.Options{})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "release session") {
+		t.Fatalf("stalled Flow phase should advertise session release:\n%s", view)
+	}
+	if strings.Contains(view, "reset ready") {
+		t.Fatalf("release and reset hints must not both show:\n%s", view)
+	}
+}
+
+// A running phase whose session never ended is the other stall variant. The
+// footer stays quiet — on a running phase a live session is normal, and nothing
+// cheap tells a working agent from a crashed one — but x still probes, so the
+// recovery is reachable on demand.
+func TestModel_SelectedLiveSessionFlowPhaseOffersSessionRelease(t *testing.T) {
 	flow := flowWithEndedRunningImplementation()
 	flow.Phases[2].Sessions[0].Status = "running"
 	resetCalled := false
+	var finalized []actions.AgentLaunchContext
 	m := newTestModel(testRepos(), model.Options{
 		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
 			resetCalled = true
 			return flowstore.FlowRecord{}, nil
+		},
+		ReadFlow:     func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) { return nil, nil },
+		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
+			finalized = append(finalized, ctx)
+			return nil
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
@@ -2528,9 +2581,36 @@ func TestModel_SelectedLiveSessionFlowPhaseHidesResetShortcut(t *testing.T) {
 	if strings.Contains(view, "reset ready") {
 		t.Fatalf("live attached Flow phase should hide reset shortcut:\n%s", view)
 	}
+	if strings.Contains(view, "release session") {
+		t.Fatalf("running Flow phase should not advertise session release:\n%s", view)
+	}
+
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if cmd != nil || m.Overlay() != ui.OverlayNone {
-		t.Fatalf("x on live attached phase returned cmd=%T overlay=%d", cmd, m.Overlay())
+	if cmd == nil {
+		t.Fatal("x on a live-session phase should probe for releasable sessions")
+	}
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlayConfirm || !strings.Contains(m.ConfirmPrompt(), "unverified session") {
+		t.Fatalf("release confirmation prompt = %q overlay=%d", m.ConfirmPrompt(), m.Overlay())
+	}
+	if len(finalized) != 0 {
+		t.Fatalf("release finalized before confirmation: %#v", finalized)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("accepting the release confirmation should return a command")
+	}
+	m, releaseCmd := update(m, cmd())
+	if releaseCmd == nil {
+		t.Fatal("confirmed release should return a finalization command")
+	}
+	m, _ = update(m, releaseCmd())
+	if len(finalized) != 1 || finalized[0].LaunchID != "launch-ended" {
+		t.Fatalf("finalized = %#v, want the phase's unfinished launch", finalized)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Released 1") {
+		t.Fatalf("status after release = %q, want the released count", got)
 	}
 	if resetCalled {
 		t.Fatal("reset should not be called for live attached phase")

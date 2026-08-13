@@ -84,6 +84,15 @@ unclear, ask the user instead of creating a malformed Flow.
 Skip worktree creation only in two cases:
 
 - The user explicitly asks for a metadata-only Flow (set `APPROACH_FLOW_METADATA_ONLY=1`).
+  Such a Flow becomes worktree-backed on its first phase launch rather than
+  running the agent in the repository root. Approach creates a `flow/<slug>` pair
+  from the recorded base ref, or from the repository's current HEAD when no base
+  ref was recorded. Set `APPROACH_BRANCH` only for a local branch that already
+  exists and is not checked out in the repository itself: such a branch keeps its
+  name and gets a worktree, or the Flow adopts the linked worktree it already
+  has. A branch that does not exist yet is silently replaced by the
+  `flow/<slug>` name; a branch checked out in the repository's own working tree,
+  and a tag, remote-tracking ref, or raw commit, each refuse the launch outright.
 - The user provides an existing worktree to reuse (set `APPROACH_WORKTREE_PATH`).
   `APPROACH_BRANCH` and `APPROACH_COMMIT` are derived from that worktree when unset, and
   `APPROACH_BASE_REF` still defaults to the repository's default branch, so the reuse
