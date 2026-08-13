@@ -5,8 +5,9 @@ import "github.com/approachcontrol/approach/actions"
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
 // than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase,
-// flowLaunchKindPhaseResume, and flowLaunchKindRepair are implemented today and
-// requestFlowLaunch refuses the rest.
+// flowLaunchKindPhaseResume, flowLaunchKindRepair, and
+// flowLaunchKindWorktreeAgent are implemented today and requestFlowLaunch
+// refuses the rest.
 type flowLaunchKind int
 
 const (

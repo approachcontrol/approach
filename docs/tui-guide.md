@@ -95,6 +95,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
+| `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
@@ -679,6 +680,37 @@ On a Flow row or an expanded phase row:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
   lists without launching a Merge phase agent.
+- `U` on an eligible Flow row launches an agent in that Flow's worktree with the
+  prompt `autofix pr #<num>`, where `<num>` is the Flow's PR number. Its gate is
+  `m`'s — a non-closed, unmerged Flow with a PR target whose Merge phase is ready
+  (or completed at a pending/merged Merge boundary) — plus a non-empty worktree
+  path: with no worktree the shortcut is simply unavailable rather than running
+  the agent in the repository root. The launch goes through the same lifecycle as
+  `g`, so occupancy, the persisted `h` headless preference, tmux mode, and the
+  current agent/model/effort all apply, and interactive embedded launches prefill
+  the dock for you to send.
+
+  It is deliberately **phase-untracked**: it writes no phase state, marks no
+  phase running, and attaches its session to no phase history, so an autofix run
+  cannot make the Merge phase someone else's responsibility. Ownership is
+  therefore the embedded slot on the embedded route, or — on the tmux route,
+  where no slot and no running phase exist — an in-process record of the Flow's
+  newest worktree-agent window, which a second `U` probes before launching. That
+  record is not restart-durable and cannot see a *detached* embedded terminal, so
+  close or dismiss an autofix terminal rather than detaching it.
+
+  Because occupancy is part of `U`'s footer predicate and not `m`'s, the two are
+  not advertised identically: while a launch, a resume, a repair, a Flow terminal,
+  or a headless write holds the Flow, `U` withdraws and `m` stays. Refusals name
+  the obstacle — `Close or dismiss the existing Flow terminal before running
+  autofix`, `A Flow launch is already in flight`, `Flow still has an agent running
+  in tmux` — and `codex-app` is refused outright with `Flow autofix requires codex
+  or claude; press A to choose one`. Like `g`, the fresh record decides: a Flow
+  that loses its PR, its worktree, or its eligibility between the key press and
+  the read is refused with `Flow changed; refresh and try again`, and a live
+  session on any non-terminal phase refuses with `Flow already has a running agent
+  session`. A stale session on an already-completed phase deliberately does not
+  refuse, so one crashed run cannot make `U` permanently dead.
 - `C` on an open Flow row opens an input modal demanding a reason, and refuses
   to submit an empty one. Closing records that reason plus a close timestamp,
   renders the row as `closed` with `(closed: <reason>)` after the title, and

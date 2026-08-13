@@ -447,6 +447,7 @@ type RenderParams struct {
 	FlowNextLaunchReady          bool
 	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
+	FlowAutofixReadySelected     bool
 	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseReleaseSelected     bool
@@ -746,6 +747,7 @@ func renderApplication(p RenderParams) string {
 		FlowNextLaunchReady:          p.FlowNextLaunchReady,
 		FlowRepairReady:              p.FlowRepairReady,
 		FlowManualMergeReadySelected: p.FlowManualMergeReadySelected && flowSelected && !flowPhaseSelected,
+		FlowAutofixReadySelected:     p.FlowAutofixReadySelected && flowSelected && !flowPhaseSelected,
 		FlowCloseActionSelected:      p.FlowCloseActionSelected,
 		FlowPhaseResetReadySelected:  p.FlowPhaseResetReadySelected,
 		FlowPhaseReleaseSelected:     p.FlowPhaseReleaseSelected,
@@ -1506,6 +1508,7 @@ type statusBarParams struct {
 	FlowNextLaunchReady          bool
 	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
+	FlowAutofixReadySelected     bool
 	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseReleaseSelected     bool
@@ -2040,6 +2043,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			}
 			if !sp.FlowPhaseSelected && sp.FlowManualMergeReadySelected {
 				actions = append(actions, shortcutHint{Key: "m", Label: "mark merged"})
+			}
+			if !sp.FlowPhaseSelected && sp.FlowAutofixReadySelected {
+				actions = append(actions, shortcutHint{Key: "U", Label: "autofix PR"})
 			}
 			if !sp.FlowPhaseSelected {
 				switch sp.FlowCloseActionSelected {

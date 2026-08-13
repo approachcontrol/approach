@@ -2660,3 +2660,61 @@ func TestRender_FlowsModeEmptyMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusBar_FlowsModeShowsAutofixAlongsideManualMergeOnlyWhenReady(t *testing.T) {
+	base := statusBarParams{
+		Width:                        200,
+		Mode:                         ModeFlows,
+		ActivePane:                   PaneBottom,
+		RepoSelected:                 true,
+		FlowSelected:                 true,
+		FlowManualMergeReadySelected: true,
+		FlowAutofixReadySelected:     true,
+	}
+	flowRow := renderStatusBarWithState(base)
+	if !strings.Contains(flowRow, "U: autofix PR") {
+		t.Fatalf("eligible Flow row should expose the autofix shortcut, got %q", flowRow)
+	}
+	if !strings.Contains(flowRow, "m: mark merged") {
+		t.Fatalf("autofix must be offered alongside mark merged, got %q", flowRow)
+	}
+
+	base.FlowPhaseSelected = true
+	phaseRow := renderStatusBarWithState(base)
+	if strings.Contains(phaseRow, "autofix PR") {
+		t.Fatalf("selected Flow phase should hide the autofix shortcut, got %q", phaseRow)
+	}
+
+	base.FlowPhaseSelected = false
+	base.FlowAutofixReadySelected = false
+	ineligible := renderStatusBarWithState(base)
+	if strings.Contains(ineligible, "autofix PR") {
+		t.Fatalf("ineligible Flow row should hide the autofix shortcut, got %q", ineligible)
+	}
+	// Occupancy withdraws U while m stays: the two gates deliberately differ.
+	if !strings.Contains(ineligible, "m: mark merged") {
+		t.Fatalf("withdrawing autofix must not withdraw mark merged, got %q", ineligible)
+	}
+}
+
+func TestRender_FlowsModeAutofixHintNeedsAFlowRowSelection(t *testing.T) {
+	params := RenderParams{
+		Repos:                        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Width:                        200,
+		Height:                       20,
+		Mode:                         ModeFlows,
+		ActivePane:                   PaneBottom,
+		Flows:                        []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Autofix flow", Status: flowstore.StatusInProgress}},
+		FlowSelected:                 0,
+		FlowManualMergeReadySelected: true,
+		FlowAutofixReadySelected:     true,
+	}
+	if view := Render(params); !strings.Contains(view, "autofix PR") {
+		t.Fatalf("selected Flow row should expose the autofix shortcut, got %q", view)
+	}
+
+	params.FlowSelected = -1
+	if view := Render(params); strings.Contains(view, "autofix PR") {
+		t.Fatalf("no selected Flow row should hide the autofix shortcut, got %q", view)
+	}
+}

@@ -177,6 +177,13 @@ type Model struct {
 	autoAdvanceDrainFlows     map[string]struct{}
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
+	// flowWorktreeAgentTmuxLaunches maps a Flow ID to its newest worktree-agent
+	// tmux launch ID. A phase-untracked launch writes no phase, so on the tmux
+	// route this is the only in-process record that the Flow already has an
+	// agent window open. One entry per Flow, overwritten on each handoff, and it
+	// needs no expiry: the probe asks whether that window is still live, so a
+	// closed one re-enables the shortcut on its own.
+	flowWorktreeAgentTmuxLaunches map[string]string
 	flowLaunchAttempts            map[string]flowLaunchAttempt
 	launchSeams                   flowLaunchSeams
 
@@ -1230,6 +1237,7 @@ func (m Model) View() string {
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
 		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
+		FlowAutofixReadySelected:     m.selectedFlowAutofixReady(),
 		FlowCloseActionSelected:      m.selectedFlowCloseActionHint(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
 		FlowPhaseReleaseSelected:     m.selectedFlowPhaseSessionReleasable(),
@@ -2164,6 +2172,25 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 		FlowID: record.FlowID,
 	})
 	return ok
+}
+
+// withFlowWorktreeAgentTmuxLaunch records the newest worktree-agent tmux launch
+// for a Flow. It clones the map rather than mutating it, like every other
+// per-Flow map on the value-typed Model, so a copy taken before the write is
+// unaffected.
+func (m Model) withFlowWorktreeAgentTmuxLaunch(flowID, launchID string) Model {
+	flowID = strings.TrimSpace(flowID)
+	launchID = strings.TrimSpace(launchID)
+	if flowID == "" || launchID == "" {
+		return m
+	}
+	launches := make(map[string]string, len(m.flowWorktreeAgentTmuxLaunches)+1)
+	for existingFlowID, existingLaunchID := range m.flowWorktreeAgentTmuxLaunches {
+		launches[existingFlowID] = existingLaunchID
+	}
+	launches[flowID] = launchID
+	m.flowWorktreeAgentTmuxLaunches = launches
+	return m
 }
 
 func (m Model) selectedFlowManualMergeReady() bool {

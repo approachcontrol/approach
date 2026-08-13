@@ -505,6 +505,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleMarkFlowManuallyMerged()
 		}
+	case "U":
+		if m.flowSurfaceVisible() {
+			return m.handleAutofixSelectedFlowPR()
+		}
 	case "C":
 		if m.flowSurfaceVisible() {
 			return m.handleCloseFlow()
@@ -756,6 +760,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenFlowPlanText()
 	case "m":
 		return m.handleMarkFlowManuallyMerged()
+	case "U":
+		return m.handleAutofixSelectedFlowPR()
 	case "C":
 		return m.handleCloseFlow()
 	case "a":

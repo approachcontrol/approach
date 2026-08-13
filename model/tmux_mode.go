@@ -231,11 +231,36 @@ func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, comma
 // Repair needs it because a Flow-level obstruction names no phase, and a repair
 // agent must not start while any of the Flow's phases still has a live window.
 func (m Model) tmuxFlowAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), flowRecordPhaseLaunchIDs(record))
+}
+
+// tmuxWorktreeAgentStillRunning is tmuxFlowAgentStillRunning plus this Flow's
+// newest worktree-agent window. The phase half is real collision protection —
+// an untracked agent must not start while any of the Flow's phases still has a
+// live window in the same worktree — but it is blind to a prior worktree-agent
+// launch, whose ID lands in no phase's LaunchIDs. On the embedded route the
+// retained slot covers that; on the tmux route nothing else does, so the
+// registry is what stops a second press starting a second agent.
+//
+// Its limits are real and deliberately not papered over: the registry is
+// in-process only, so the gap reopens for a window that outlives a TUI restart;
+// the probe is point-in-time, so a window opening between it and the handoff is
+// not caught; and a detached embedded terminal lives in its own worktree-keyed
+// session, so it is not probeable here at all.
+func (m Model) tmuxWorktreeAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
+	launchIDs := flowRecordPhaseLaunchIDs(record)
+	if launchID := strings.TrimSpace(m.flowWorktreeAgentTmuxLaunches[strings.TrimSpace(record.FlowID)]); launchID != "" {
+		launchIDs = append(launchIDs, launchID)
+	}
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+}
+
+func flowRecordPhaseLaunchIDs(record flowstore.FlowRecord) []string {
 	var launchIDs []string
 	for _, phase := range record.Phases {
 		launchIDs = append(launchIDs, phase.LaunchIDs...)
 	}
-	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+	return launchIDs
 }
 
 // tmuxProbeRepoPath resolves which repo's session to probe. It has to agree with

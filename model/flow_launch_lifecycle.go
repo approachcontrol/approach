@@ -40,6 +40,11 @@ func flowLaunchPhaseSessionLiveStatus(phaseID string) string {
 	return fmt.Sprintf("Flow phase %s has an unfinished session; select it and x releases it", phaseID)
 }
 
+// flowLaunchNoAgentCommandStatus is the refusal every lifecycle admission emits
+// for an unset agent command. It is a constant because more than one admission
+// needs it and the two must stay byte-identical.
+const flowLaunchNoAgentCommandStatus = "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent"
+
 // flowLaunchStage names the two asynchronous hops the lifecycle emits. Handoff
 // results and failure persistence arrive on messages that already exist, so
 // they are not stages.
@@ -185,6 +190,8 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 		return m.admitPhaseResumeFlowLaunch(intent)
 	case flowLaunchKindRepair:
 		return m.admitRepairFlowLaunch(intent)
+	case flowLaunchKindWorktreeAgent:
+		return m.admitWorktreeAgentFlowLaunch(intent)
 	default:
 		// Later beads route the remaining kinds; nothing submits them yet.
 		return m, nil, false
@@ -207,7 +214,7 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
 	if command, _, _ := m.flowLaunchAgentSettings(); agent.Normalize(command) == "" {
-		return m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent"), nil, false
+		return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
@@ -427,6 +434,11 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 	if intent.Kind == flowLaunchKindRepair {
 		return repairFlowLaunchReadCmd(seams, intent, token)
 	}
+	// The worktree agent dispatches here for the same reason: it targets no
+	// phase, so Preflight's phase-centric rules cannot apply to it.
+	if intent.Kind == flowLaunchKindWorktreeAgent {
+		return worktreeAgentFlowLaunchReadCmd(seams, intent, token)
+	}
 	launcher := settings.apply(m.flowLaunchLauncher(token))
 	if intent.Kind == flowLaunchKindAutoPhase {
 		return autoFlowLaunchReadCmd(seams, launcher, intent, token)
@@ -604,6 +616,9 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 	if msg.Kind == flowLaunchKindRepair {
 		return m.repairFlowLaunchPrepareCmd(msg, settings)
 	}
+	if msg.Kind == flowLaunchKindWorktreeAgent {
+		return m.worktreeAgentFlowLaunchPrepareCmd(msg, settings)
+	}
 	launcher := settings.apply(m.flowLaunchLauncher(msg.Token))
 	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
 	if !ok {
@@ -720,14 +735,19 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
 		}
-		if msg.Kind != flowLaunchKindRepair {
-			// Repair's prepare stage persists nothing — it never calls
-			// AddPhaseLaunchID — so marking it would make the field assert a
-			// write that did not happen. This is a truthfulness invariant on the
-			// attempt record, not a guard: failFlowLaunch short-circuits on the
-			// repair kind before reading MutatedPhase, and flowLaunchFailureUpdate
-			// refuses on the empty FlowPhaseID besides. Both of those are pinned;
-			// this is here so a future reader can trust the field.
+		// Neither phase-untracked kind persists a launch ID in prepare — neither
+		// calls AddPhaseLaunchID — so marking either would make the field assert
+		// a write that did not happen.
+		//
+		// For repair this is a truthfulness invariant on the attempt record
+		// rather than a guard: failFlowLaunch short-circuits on the repair kind
+		// before reading MutatedPhase, and flowLaunchFailureUpdate refuses on the
+		// empty FlowPhaseID besides. For the worktree agent it is load-bearing:
+		// marking it would send every post-prepare failure through
+		// failFlowLaunch's persisting branch, where the empty phase ID makes
+		// flowLaunchFailureUpdate return false and the failure degrades to a bare
+		// status instead of ActionFailedMsg.
+		if msg.Kind != flowLaunchKindRepair && msg.Kind != flowLaunchKindWorktreeAgent {
 			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
 			attempt.MutatedPhase = true
 		}
@@ -863,10 +883,13 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	defer releaseFlowLaunchReservation(msg.Release)
 	ctx := msg.Context
 	ctx.Embedded = true
-	// A repair is Flow-scoped and phase-untracked: it names no phase and must
+	// Both phase-untracked kinds stay untracked. A repair names no phase and must
 	// never be stamped tracked, or its failures would look for a phase to
-	// regress.
-	if attempt.Kind != flowLaunchKindRepair {
+	// regress. For the worktree agent, forcing tracked would also run before the
+	// terminal open computes prefill, and the phase-untracked Flow agent would
+	// then fail both of ShouldPrefillEmbeddedPrompt's cases and send its prompt
+	// to argv instead of the dock.
+	if attempt.Kind != flowLaunchKindRepair && attempt.Kind != flowLaunchKindWorktreeAgent {
 		ctx.FlowLaunchTracked = true
 	}
 	if canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, ctx.FlowID); blocked {
@@ -924,6 +947,13 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		releaseFlowLaunchReservation(msg.Release)
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
 	}
+	if attempt.Kind == flowLaunchKindWorktreeAgent {
+		// A phase-untracked launch writes no running phase, so on this route
+		// nothing would cover the agent's work once the attempt is released and
+		// a second press would start a second agent in the same worktree.
+		// Recorded only after the spec built, so a failed build leaves no entry.
+		m = m.withFlowWorktreeAgentTmuxLaunch(attempt.FlowID, attempt.Token)
+	}
 	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {
 		m = next
 	} else {
@@ -974,6 +1004,10 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 	}
 	if kind == flowLaunchKindPhaseResume {
 		return "Flow phase resume canceled because a repair terminal is already open for this Flow", true
+	}
+	if kind == flowLaunchKindWorktreeAgent {
+		// This launch targets no phase, so naming one would be false.
+		return flowWorktreeAgentCanceledStatus, true
 	}
 	return "Flow phase launch canceled because a repair terminal is already open for this Flow", true
 }
