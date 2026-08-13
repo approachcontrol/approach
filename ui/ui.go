@@ -428,6 +428,8 @@ type RenderParams struct {
 	BeadsOpenAvailable           bool
 	BeadsOpenPending             bool
 	ReadyBeadFlowCreateAvailable bool
+	ReadyBeadFlowStartAvailable  bool
+	ReadyBeadFlowKeysOwned       bool
 	BeadsError                   string
 	BeadsQuery                   string
 	BeadsSourceCount             int
@@ -765,6 +767,8 @@ func renderApplication(p RenderParams) string {
 		AgentAvailable:               p.AgentAvailable,
 		NewAgent:                     p.NewAgentAvailable,
 		ReadyBeadFlowCreateAvailable: p.ReadyBeadFlowCreateAvailable,
+		ReadyBeadFlowStartAvailable:  p.ReadyBeadFlowStartAvailable,
+		ReadyBeadFlowKeysOwned:       p.ReadyBeadFlowKeysOwned,
 	}
 	dockState := dockAllocation.State
 	dockRows := dockAllocation.DockRows
@@ -1526,6 +1530,8 @@ type statusBarParams struct {
 	AgentAvailable               bool
 	NewAgent                     bool
 	ReadyBeadFlowCreateAvailable bool
+	ReadyBeadFlowStartAvailable  bool
+	ReadyBeadFlowKeysOwned       bool
 }
 
 type shortcutHint struct {
@@ -1535,6 +1541,7 @@ type shortcutHint struct {
 	Warning       bool
 	Inline        bool
 	Muted         bool
+	Ungrouped     bool
 }
 
 type shortcutSection struct {
@@ -1751,7 +1758,7 @@ func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
 				grouped = append(grouped, shortcutHint{Key: "↑/↓ ←/→", Label: "select/view", Warning: hint.Warning || next.Warning})
 				i++
 				continue
-			case hint.Key == "f" && next.Key == "F":
+			case hint.Key == "f" && next.Key == "F" && !hint.Ungrouped && !next.Ungrouped:
 				grouped = append(grouped, shortcutHint{Key: "f/F", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
 				i++
 				continue
@@ -1848,7 +1855,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		actions = append(actions, shortcutHint{Key: "n", Label: "new repo"})
 	}
 	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowCreateAvailable {
-		actions = append(actions, shortcutHint{Key: "f", Label: "new flow"})
+		actions = append(actions, shortcutHint{Key: "f", Label: "new flow", Ungrouped: true})
+	}
+	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowStartAvailable {
+		actions = append(actions, shortcutHint{Key: "F", Label: "new flow + start", Ungrouped: true})
 	}
 	if flowSurfaceActive {
 		return flowShortcutSections(sp, actions, navigation, global)
@@ -1984,7 +1994,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		if sp.FetchAvailable {
 			actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
 		}
-		if sp.PullAvailable {
+		if sp.PullAvailable && !(sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowKeysOwned) {
 			actions = append(actions, shortcutHint{Key: "F", Label: "pull"})
 		}
 	}

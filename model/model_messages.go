@@ -496,18 +496,20 @@ type flowLaunchFailurePersistedMsg struct {
 }
 
 type PlanLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
-	LaunchRelease func()
+	LaunchContext    actions.AgentLaunchContext
+	Request          uint64
+	ReadyBeadRequest uint64
+	LaunchRelease    func()
 }
 
 // FlowEmbeddedLaunchRequestedMsg is what remains of the pre-lifecycle embedded
-// launch path. Only Plan Now still emits it; repair, manual, automatic, and
-// resume launches all route through the launch lifecycle.
+// launch path. Creation-time Flow starts (Plan Now and Ready-Bead F) emit it;
+// repair, manual, automatic, and resume launches route through the lifecycle.
 type FlowEmbeddedLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
-	LaunchRelease func()
+	LaunchContext    actions.AgentLaunchContext
+	Request          uint64
+	ReadyBeadRequest uint64
+	LaunchRelease    func()
 }
 
 type FlowCreatedMsg struct {
@@ -534,6 +536,7 @@ type ReadyBeadFlowCreatedMsg struct {
 
 type ReadyBeadFlowCreateFailedMsg struct {
 	RepoPath string
+	FlowID   string
 	Title    string
 	Err      string
 	Request  uint64

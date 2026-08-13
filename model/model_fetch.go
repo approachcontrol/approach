@@ -300,6 +300,36 @@ func (m Model) invalidateReadyBeadFlowCreateRequest() Model {
 	return m
 }
 
+// acceptCreationTimeFlowLaunch validates the mutually exclusive request
+// namespaces used by Plan Now and Ready-Bead F before either launch path may
+// spawn. A valid Ready handoff clears its admission token here; from that point
+// the held Flow reservation and launch lifecycle own success or failure.
+func (m Model) acceptCreationTimeFlowLaunch(repoPath string, flowCreateRequest, readyBeadRequest uint64, release func()) (Model, bool) {
+	if flowCreateRequest != 0 && readyBeadRequest != 0 {
+		releaseFlowLaunchReservation(release)
+		return m, false
+	}
+	if flowCreateRequest != 0 {
+		if !m.isCurrentRepo(repoPath) || !m.isCurrentFlowCreateRequest(flowCreateRequest) {
+			releaseFlowLaunchReservation(release)
+			return m, false
+		}
+		return m.clearFlowCreateRequest(flowCreateRequest), true
+	}
+	if readyBeadRequest != 0 {
+		if !m.isCurrentReadyBeadFlowCreateRequest(readyBeadRequest) {
+			releaseFlowLaunchReservation(release)
+			return m, false
+		}
+		m = m.clearReadyBeadFlowCreateRequest(readyBeadRequest)
+		if !m.isCurrentRepo(repoPath) {
+			releaseFlowLaunchReservation(release)
+			return m, false
+		}
+	}
+	return m, true
+}
+
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
 	if m.visibleRepoFetch.Request != 0 {
 		return m, nil
@@ -626,21 +656,57 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 	}
 }
 
-func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64) tea.Cmd {
-	command, model, reasoningEffort := m.flowLaunchAgentSettings()
+func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64, intent readyBeadFlowIntent) tea.Cmd {
+	if intent == readyBeadFlowCreateOnly {
+		return func() tea.Msg {
+			result, err := m.createFlow(FlowStartRequest{
+				RepoPath:     repoPath,
+				Title:        title,
+				Instructions: instructions,
+			})
+			if err != nil {
+				return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
+			}
+			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
+		}
+	}
+	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
-		result, err := m.createFlow(FlowStartRequest{
-			RepoPath:        repoPath,
-			Title:           title,
-			Instructions:    instructions,
-			AgentCommand:    command,
-			Model:           model,
-			ReasoningEffort: reasoningEffort,
+		result, err := m.startFlowPlan(FlowStartRequest{
+			RepoPath:                    repoPath,
+			Title:                       title,
+			Instructions:                instructions,
+			AgentCommand:                command,
+			Model:                       launchModel,
+			ReasoningEffort:             reasoningEffort,
+			SessionStateRoot:            m.sessionStateRoot,
+			FlowPromptTemplates:         m.flowPromptTemplates,
+			FlowPromptTemplatesProvided: true,
+			Headless:                    flowHeadlessPointer(true),
 		})
 		if err != nil {
-			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error(), Request: request}
+			releaseFlowLaunchReservation(result.LaunchRelease)
+			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
 		}
-		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
+		if result.LaunchSkipped {
+			releaseFlowLaunchReservation(result.LaunchRelease)
+			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
+		}
+		return readyBeadFlowPlanLaunchMessage(result.LaunchContext, result.LaunchRelease, request)
+	}
+}
+
+func readyBeadFlowPlanLaunchMessage(ctx actions.AgentLaunchContext, release func(), request uint64) tea.Msg {
+	msg := flowPlanLaunchMessage(ctx, release)
+	switch msg := msg.(type) {
+	case FlowEmbeddedLaunchRequestedMsg:
+		msg.ReadyBeadRequest = request
+		return msg
+	case PlanLaunchRequestedMsg:
+		msg.ReadyBeadRequest = request
+		return msg
+	default:
+		return msg
 	}
 }
 

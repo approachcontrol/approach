@@ -1228,6 +1228,8 @@ func (m Model) View() string {
 		BeadsOpenAvailable:           beadsAvailable,
 		BeadsOpenPending:             beadsPending,
 		ReadyBeadFlowCreateAvailable: m.canCreateReadyBeadFlow(),
+		ReadyBeadFlowStartAvailable:  m.canStartReadyBeadFlow(),
+		ReadyBeadFlowKeysOwned:       m.readyBeadFlowKeysOwned(),
 		BeadsError:                   beadsError,
 		BeadsQuery:                   beadsQuery,
 		BeadsSourceCount:             beadsSourceCount,
@@ -1857,11 +1859,11 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
-		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
-			releaseFlowLaunchReservation(msg.LaunchRelease)
+		var accepted bool
+		m, accepted = m.acceptCreationTimeFlowLaunch(msg.LaunchContext.RepoPath, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		if !accepted {
 			return m, nil
 		}
-		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentForBackend(msg.LaunchContext, msg.LaunchRelease)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
@@ -1869,12 +1871,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
-		if msg.Request != 0 {
-			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
-				releaseFlowLaunchReservation(msg.LaunchRelease)
-				return m, nil
-			}
-			m = m.clearFlowCreateRequest(msg.Request)
+		var accepted bool
+		m, accepted = m.acceptCreationTimeFlowLaunch(msg.LaunchContext.RepoPath, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		if !accepted {
+			return m, nil
 		}
 		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
