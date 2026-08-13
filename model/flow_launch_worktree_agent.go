@@ -54,14 +54,23 @@ func (m Model) selectedFlowAutofixTarget() (flowstore.FlowRecord, string, bool) 
 }
 
 // selectedFlowAutofixReady is the footer's predicate: the eligibility gate plus
-// the occupancy signals admission refuses on, so the footer never advertises U
-// while the key would refuse it.
+// every occupancy signal admission refuses on, so the footer does not advertise
+// U while the Flow is already owned. That inclusion is also what makes U and m
+// diverge — occupancy and pending headless writes are in this predicate and in
+// no part of m's gate, so an occupied Flow keeps m and loses U.
 //
-// Three checks stay out of it deliberately. The tmux live-window probe shells
-// out and may not run in a predicate the renderer evaluates; the live-session
-// rule needs a session-store read; and drift cannot be seen from the display
-// cache. Because of the first two, U and m are not advertised identically: for
-// an occupied Flow, m still shows and U withdraws.
+// It is load-bearing beyond the footer: handleAutofixSelectedFlowPR gates the
+// tmux probe on it, which is sound only while every state it excludes is one
+// admission refuses too. A display-only condition must not be added here.
+//
+// Four refusals stay out of it deliberately, from three different places. The
+// tmux live-window probe is in the key handler because it shells out and may not
+// run in a predicate the renderer evaluates; the live-session and drift refusals
+// are in the read stage, the only place a fresh record and the session store
+// exist; and admission's unusable-agent-command refusal (unset, or codex-app) is
+// left advertised on purpose, exactly as repair leaves R advertised, because its
+// wording names the key that fixes it — "press A to choose one" teaches more
+// than a hint that silently disappears.
 func (m Model) selectedFlowAutofixReady() bool {
 	record, _, ok := m.selectedFlowAutofixTarget()
 	return ok &&
@@ -73,14 +82,18 @@ func (m Model) selectedFlowAutofixReady() bool {
 // admission for repair's reason — it shells out, and admission must not — and
 // before requestFlowLaunch rather than after, because admission reserves the
 // attempt and returns the read command in one call and so cannot be followed by
-// a refusal. The cost is accepted: in tmux mode an eligible-but-occupied Flow
-// reports the live-window refusal rather than its own more specific one.
+// a refusal.
+//
+// It is gated on the footer's own predicate so an already-owned Flow neither
+// forks tmux nor answers with the live-window refusal when admission has a more
+// specific one to give. What survives that gate is the press that could really
+// launch, which is the only one the probe exists to stop.
 func (m Model) handleAutofixSelectedFlowPR() (tea.Model, tea.Cmd) {
 	record, repoPath, ok := m.selectedFlowAutofixTarget()
 	if !ok {
 		return m, nil
 	}
-	if m.tmuxWorktreeAgentStillRunning(record, repoPath) {
+	if m.selectedFlowAutofixReady() && m.tmuxFlowAgentStillRunning(record, repoPath) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	next, cmd, _ := m.requestFlowLaunch(flowLaunchIntent{

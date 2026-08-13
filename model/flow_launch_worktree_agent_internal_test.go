@@ -841,6 +841,201 @@ func TestWorktreeAgentTmuxHandoffIsProbeableBySubsequentPresses(t *testing.T) {
 	}
 }
 
+// TestWorktreeAgentTmuxWindowBlocksRepairToo pins the reason the registry is
+// unioned into the shared Flow-wide probe rather than a probe of U's own: a
+// repair agent lands in the same worktree as the autofix agent, so it has to see
+// that window too.
+func TestWorktreeAgentTmuxWindowBlocksRepairToo(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+
+	m := h.autofix(h.model())
+	if len(h.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %#v, want exactly one", h.tmuxContexts)
+	}
+
+	var probed []string
+	h.windowLive = func(repoPath string, launchIDs []string) bool {
+		probed = append([]string{}, launchIDs...)
+		return true
+	}
+	// No phase carries the autofix launch ID, so a phase-IDs-only probe here
+	// would let R start a second agent in the worktree the first is mid-run in.
+	if !m.tmuxFlowAgentStillRunning(record, record.RepoPath) {
+		t.Fatal("the Flow-wide probe must see the worktree agent's window")
+	}
+	if len(probed) != 1 || probed[0] != h.tmuxContexts[0].LaunchID {
+		t.Fatalf("probed launch IDs = %#v, want the worktree agent's own launch", probed)
+	}
+}
+
+// TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux pins the probe's gate: an
+// already-owned Flow is refused by admission, which names the obstacle, instead
+// of by the live-window probe, which would name the wrong one and fork tmux to
+// do it. The gate is sound only because every state the footer predicate
+// withdraws for is one admission refuses too, so this also guards against a
+// display-only condition being added to that predicate.
+func TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+
+	m := h.autofix(h.model())
+	if len(h.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %#v, want exactly one", h.tmuxContexts)
+	}
+
+	probes := 0
+	h.windowLive = func(string, []string) bool {
+		probes++
+		return true
+	}
+	// An embedded Flow terminal is an occupancy signal the footer withdraws for,
+	// so the press must never reach the probe.
+	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+		Scope:    embeddedTerminalScopeFlow,
+		FlowID:   record.FlowID,
+		Terminal: flowPhaseLaunchTestTerminal{state: "running"},
+	})
+	if m.selectedFlowAutofixReady() {
+		t.Fatal("the fixture must be an owned Flow")
+	}
+
+	next, cmd := m.handleAutofixSelectedFlowPR()
+	blocked := next.(Model)
+	if cmd != nil {
+		t.Fatal("a refused press must start no work")
+	}
+	if probes != 0 {
+		t.Fatalf("tmux probes = %d, want none for a press a cheaper refusal answers", probes)
+	}
+	if got := blocked.status.Text; got != flowWorktreeAgentTerminalStatus {
+		t.Fatalf("status = %q, want the obstacle that actually holds the Flow", got)
+	}
+	if len(h.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %d, want no second launch", len(h.tmuxContexts))
+	}
+}
+
+// TestWorktreeAgentTmuxSpecFailureRecordsNoWindow pins the ordering claim in the
+// handoff: the registry entry is written after the spec builds, so a build that
+// never produced a window leaves nothing for a later probe to ask about.
+func TestWorktreeAgentTmuxSpecFailureRecordsNoWindow(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+	h.tmuxLaunchErr = errors.New("tmux boom")
+
+	m := h.autofix(h.model())
+
+	if got := m.status.Text; got != "tmux boom" {
+		t.Fatalf("status = %q, want the spec-build failure", got)
+	}
+	if len(m.flowWorktreeAgentTmuxLaunches) != 0 {
+		t.Fatalf("registry = %#v, want no entry for a window that was never opened", m.flowWorktreeAgentTmuxLaunches)
+	}
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("an untracked launch must write no phase status: %#v", h.phaseUpdates)
+	}
+	if m.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("a failed tmux handoff must release the attempt")
+	}
+	if h.launchReleases != 1 {
+		t.Fatalf("launch releases = %d, want the cross-process reservation released", h.launchReleases)
+	}
+	// With nothing recorded the shortcut stays available, so the next press is
+	// admitted rather than answered with the live-window refusal.
+	m = h.autofix(m)
+	if len(h.tmuxContexts) != 2 {
+		t.Fatalf("tmux launches = %d, want the next press still admitted", len(h.tmuxContexts))
+	}
+}
+
+// TestWithFlowWorktreeAgentTmuxLaunchClonesTheRegistry pins the copy-on-write
+// rule every per-Flow map on the value-typed Model follows: a Model taken before
+// the write must not observe it, or a launch that failed after being copied
+// would still block the next press through the older copy.
+func TestWithFlowWorktreeAgentTmuxLaunchClonesTheRegistry(t *testing.T) {
+	base := newManualLaunchHarness(t, autofixFlowRecord()).model()
+
+	first := base.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-1")
+	second := first.withFlowWorktreeAgentTmuxLaunch("flow-2", "launch-2")
+
+	if len(base.flowWorktreeAgentTmuxLaunches) != 0 {
+		t.Fatalf("the pre-write Model saw the write: %#v", base.flowWorktreeAgentTmuxLaunches)
+	}
+	if _, ok := first.flowWorktreeAgentTmuxLaunches["flow-2"]; ok {
+		t.Fatalf("the first copy saw the second write: %#v", first.flowWorktreeAgentTmuxLaunches)
+	}
+	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; got != "launch-1" {
+		t.Fatalf("flow-1 entry = %q, want the earlier write carried forward", got)
+	}
+	// Overwriting is the documented behaviour: one entry per Flow, newest wins.
+	third := second.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-3")
+	if got := third.flowWorktreeAgentTmuxLaunches["flow-1"]; got != "launch-3" {
+		t.Fatalf("flow-1 entry = %q, want the newest launch", got)
+	}
+	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; got != "launch-1" {
+		t.Fatalf("the overwrite reached an older copy: %q", got)
+	}
+	if next := third.withFlowWorktreeAgentTmuxLaunch("", "launch-4"); len(next.flowWorktreeAgentTmuxLaunches) != 2 {
+		t.Fatalf("an empty Flow ID must record nothing: %#v", next.flowWorktreeAgentTmuxLaunches)
+	}
+	if next := third.withFlowWorktreeAgentTmuxLaunch("flow-4", " "); len(next.flowWorktreeAgentTmuxLaunches) != 2 {
+		t.Fatalf("a blank launch ID must record nothing: %#v", next.flowWorktreeAgentTmuxLaunches)
+	}
+}
+
+// TestWorktreeAgentPrefillFailureCorrectsNoPhase covers the path FlowAgent newly
+// reaches in ShouldPrefillEmbeddedPrompt: the dock is filled for this launch, so
+// its prefill can fail, and the correction that follows must stay as untracked
+// as the launch was.
+func TestWorktreeAgentPrefillFailureCorrectsNoPhase(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+
+	m := h.autofix(h.model())
+	if len(m.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminals = %d, want the autofix slot", len(m.embeddedTerminals))
+	}
+	slot := m.embeddedTerminals[0]
+	ctx := h.launchContexts[0]
+	if !ctx.FlowAgent || ctx.FlowPhaseID != "" || ctx.FlowLaunchTracked {
+		t.Fatalf("the launch under test must be the untracked Flow agent: %#v", ctx)
+	}
+	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		t.Fatal("an interactive embedded Flow agent must prefill the dock")
+	}
+
+	next, cmd := m.Update(embeddedPromptPrefillResultMsg{
+		ID:            slot.ID,
+		LaunchContext: ctx,
+		Err:           errors.New("prefill failed"),
+	})
+	after := h.drain(next.(Model), cmd, 0)
+
+	if after.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
+		t.Fatal("the failed slot should have been dismissed")
+	}
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("an untracked launch has no phase to correct: %#v", h.phaseUpdates)
+	}
+	if got := after.status.Text; got != "prefill failed" {
+		t.Fatalf("status = %q, want the prefill failure verbatim", got)
+	}
+	if after.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("no attempt may be re-reserved for a launch with no phase to persist")
+	}
+	// Nothing owns the Flow any more, so the shortcut is usable again.
+	if !after.selectedFlowAutofixReady() {
+		t.Fatal("a dismissed slot must leave U advertised again")
+	}
+}
+
 // TestAutofixHintReachesTheRenderedView pins the model → ui plumbing: the flag
 // is built inside View, so rendering is the only place the wiring is
 // observable.

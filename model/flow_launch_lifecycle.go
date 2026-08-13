@@ -952,6 +952,9 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		// nothing would cover the agent's work once the attempt is released and
 		// a second press would start a second agent in the same worktree.
 		// Recorded only after the spec built, so a failed build leaves no entry.
+		// A spawn that fails later does leave one, and deliberately: the entry
+		// names a window to probe, not a promise that one exists, so the next
+		// probe finds nothing live and the shortcut re-arms itself.
 		m = m.withFlowWorktreeAgentTmuxLaunch(attempt.FlowID, attempt.Token)
 	}
 	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {

@@ -695,9 +695,12 @@ On a Flow row or an expanded phase row:
   cannot make the Merge phase someone else's responsibility. Ownership is
   therefore the embedded slot on the embedded route, or — on the tmux route,
   where no slot and no running phase exist — an in-process record of the Flow's
-  newest worktree-agent window, which a second `U` probes before launching. That
-  record is not restart-durable and cannot see a *detached* embedded terminal, so
-  close or dismiss an autofix terminal rather than detaching it.
+  newest worktree-agent window, which a second `U` and a repair (`R`) both probe
+  before launching. That record is not restart-durable, cannot see a *detached*
+  embedded terminal, and is not consulted by auto mode, whose poll answers
+  without shelling out — so close or dismiss an autofix terminal rather than
+  detaching it, and prefer not to leave auto mode advancing a Flow you are
+  running autofix on.
 
   Because occupancy is part of `U`'s footer predicate and not `m`'s, the two are
   not advertised identically: while a launch, a resume, a repair, a Flow terminal,
