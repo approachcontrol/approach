@@ -301,6 +301,13 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 // launch lifecycle threads it forward and looks the launching phase up in it.
 // That also holds for the bootstrap failure below, which returns a record whose
 // worktree is real — the caller must not report that one as a creation failure.
+// A recorded worktree path means the directory exists and the store names it.
+// It does not mean the bootstrap hook completed: the hook runs after
+// SetStartMetadata, so a Flow whose hook failed passes through here and launches
+// into the worktree it did get. That is the same contract PrepareFlow has had
+// since Flow creation gained a hook, and the TUI guide documents it for the
+// second `g`. Making path existence imply a finished bootstrap needs a
+// provisioning marker in the store, which is a change to Flow creation too.
 func (s FlowStarter) EnsureWorktree(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 	if strings.TrimSpace(record.WorktreePath) != "" {
 		return record, nil
