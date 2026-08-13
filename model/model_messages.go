@@ -606,12 +606,19 @@ type flowPhaseSessionReleasedMsg struct {
 // success message does: finalization runs once per launch, so a failure on the
 // second of two leaves the first genuinely ended, and reporting only the error
 // would send the user to retry a phase that has already moved.
+//
+// Finalized covers what Released cannot. One finalize call is itself two writes
+// — the session store, then the phase mirror — so a failure on the second one
+// changed persisted state without advancing Released. Anything that entered
+// finalization is therefore treated as having changed the phase; only a failure
+// before the first call is provably inert.
 type flowPhaseSessionReleaseFailedMsg struct {
-	RepoPath string
-	FlowID   string
-	PhaseID  string
-	Released int
-	Err      string
+	RepoPath  string
+	FlowID    string
+	PhaseID   string
+	Released  int
+	Finalized bool
+	Err       string
 }
 
 type DeleteFailedMsg struct {
@@ -1920,8 +1927,11 @@ func (m Model) handleFlowPhaseSessionReleaseFailed(msg flowPhaseSessionReleaseFa
 	}
 	if msg.Released > 0 {
 		errText = fmt.Sprintf("Released %d, then %s", msg.Released, errText)
-		// A partial release changed the phase, so the surface has to be refetched
-		// even though the gesture failed.
+	}
+	// A partial release changed the phase, so the surface has to be refetched
+	// even though the gesture failed — and a finalize call that failed part way
+	// through is a partial release too, one Released cannot count.
+	if msg.Released > 0 || msg.Finalized {
 		m = m.setStatus(statusOther, errText)
 		return m.startFlowSurfaceFetch()
 	}

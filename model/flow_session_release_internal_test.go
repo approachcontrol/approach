@@ -724,6 +724,23 @@ func TestFlowPhaseSessionReleaseReportsFinalizeFailure(t *testing.T) {
 	h.finalizeErr = errFinalizeFailed
 	m := h.selectPhase(h.model(), "implementation")
 
+	// The failure message itself, before the handler folds it into a status:
+	// the finalizer is two writes, so a failed call has to say it entered
+	// finalization even though it released nothing countable.
+	raw := m.releaseFlowPhaseSessionsCmd(flowPhaseSessionReleaseConfirmedMsg{
+		RepoPath:  "/dev/alpha",
+		FlowID:    "flow-1",
+		PhaseID:   "implementation",
+		LaunchIDs: []string{stalledReleaseLaunchID},
+	})()
+	failed, ok := raw.(flowPhaseSessionReleaseFailedMsg)
+	if !ok {
+		t.Fatalf("release message = %#v, want a failure", raw)
+	}
+	if failed.Released != 0 || !failed.Finalized {
+		t.Fatalf("failure = %#v, want nothing counted but finalization entered", failed)
+	}
+
 	m = h.confirm(h.pressX(m))
 
 	if !strings.Contains(m.status.Text, errFinalizeFailed.Error()) {
@@ -789,7 +806,22 @@ func TestFlowPhaseSessionReleaseRefetchesWhatItChanged(t *testing.T) {
 			wantFetch: true,
 		},
 		{
-			name: "a failure that released nothing has nothing to show",
+			// One finalize call is two writes, so a failure inside the first one
+			// can have ended the launch in the session store while Released is
+			// still 0. Counting that as nothing to show is how the user is left
+			// looking at a phase the failure already changed.
+			name: "a finalize failure that counted nothing still refetches",
+			handle: func(m Model) (tea.Model, tea.Cmd) {
+				return m.handleFlowPhaseSessionReleaseFailed(flowPhaseSessionReleaseFailedMsg{
+					RepoPath: "/dev/alpha", FlowID: "flow-1", PhaseID: "implementation", Finalized: true, Err: "boom",
+				})
+			},
+			wantFetch: true,
+		},
+		{
+			// The read before the first finalize call is the one failure that
+			// provably wrote nothing.
+			name: "a failure before any finalize has nothing to show",
 			handle: func(m Model) (tea.Model, tea.Cmd) {
 				return m.handleFlowPhaseSessionReleaseFailed(flowPhaseSessionReleaseFailedMsg{
 					RepoPath: "/dev/alpha", FlowID: "flow-1", PhaseID: "implementation", Err: "boom",

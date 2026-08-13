@@ -372,18 +372,25 @@ func (m Model) releaseFlowPhaseSessionsCmd(msg flowPhaseSessionReleaseConfirmedM
 		// launch and the loop stops at the first error, so a partial release is
 		// reachable, and a user told only "failed" would retry against a phase
 		// that has already changed underneath them.
-		fail := func(err error) tea.Msg {
+		//
+		// Finalized says which failure it was, because Released cannot: the
+		// finalizer is two writes — the session store, then the phase mirror —
+		// and a failure on the second one leaves the launch ended in the store
+		// with Released still on its old value. Only a failure before any
+		// finalize call is provably inert.
+		fail := func(err error, finalized bool) tea.Msg {
 			return flowPhaseSessionReleaseFailedMsg{
-				RepoPath: msg.RepoPath,
-				FlowID:   msg.FlowID,
-				PhaseID:  msg.PhaseID,
-				Released: released,
-				Err:      fmt.Sprintf("failed to release Flow phase session: %v", err),
+				RepoPath:  msg.RepoPath,
+				FlowID:    msg.FlowID,
+				PhaseID:   msg.PhaseID,
+				Released:  released,
+				Finalized: finalized,
+				Err:       fmt.Sprintf("failed to release Flow phase session: %v", err),
 			}
 		}
 		live, err := liveFlowPhaseLaunchIDs(seams, msg.FlowID, msg.PhaseID)
 		if err != nil {
-			return fail(err)
+			return fail(err, false)
 		}
 		stillLive := make(map[string]struct{}, len(live))
 		for _, launchID := range live {
@@ -402,7 +409,7 @@ func (m Model) releaseFlowPhaseSessionsCmd(msg flowPhaseSessionReleaseConfirmedM
 				FlowID:      msg.FlowID,
 				FlowPhaseID: msg.PhaseID,
 			}); err != nil {
-				return fail(err)
+				return fail(err, true)
 			}
 			released++
 		}
