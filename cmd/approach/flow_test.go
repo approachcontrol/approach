@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/planstore"
@@ -57,7 +58,7 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]",
 		"approach flow phase set --flow-id",
 		"approach flow phase complete --flow-id",
 		"approach flow phase block --flow-id",
@@ -66,6 +67,7 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		"approach flow phase reset --flow-id",
 		"--status completed",
 		"approach flow phase add-child --flow-id",
+		"approach flow phase agent set --flow-id",
 	})
 }
 
@@ -330,7 +332,7 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]",
 	})
 }
 
@@ -497,6 +499,62 @@ func TestRunFlowReadPrintsJSONRecord(t *testing.T) {
 	}
 	if read.FlowID != created.FlowID || read.Title != "Readable" || read.RepoPath != repoPath {
 		t.Fatalf("read record mismatch: %#v", read)
+	}
+}
+
+func TestRunFlowPhaseAgentSetReplacesAndClearsStamp(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Editable", "--instructions", "edit it", "--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root})
+	phaseID := created.Phases[0].PhaseID
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "phase", "agent", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", phaseID,
+		"--agent", agent.CommandClaude,
+		"--model", agent.ModelClaudeOpus5,
+		"--reasoning-effort", agent.ReasoningEffortHigh,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var updated flowstore.FlowRecord
+	updated = flowstore.FlowRecord{}
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got := updated.Phases[0].AgentSettings(); got != (flowstore.PhaseAgentSettings{Agent: agent.CommandClaude, Model: agent.ModelClaudeOpus5, ReasoningEffort: agent.ReasoningEffortHigh}) {
+		t.Fatalf("updated settings = %#v", got)
+	}
+
+	stdout.Reset()
+	if err := run([]string{
+		"approach", "flow", "phase", "agent", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", phaseID,
+		"--clear",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout})); err != nil {
+		t.Fatalf("clear returned error: %v", err)
+	}
+	updated = flowstore.FlowRecord{}
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Phases[0].AgentSettings().IsZero() {
+		t.Fatalf("cleared settings = %#v", updated.Phases[0].AgentSettings())
+	}
+
+	if err := run([]string{
+		"approach", "flow", "phase", "agent", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", phaseID,
+		"--clear", "--agent", agent.CommandCodex,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}})); err == nil {
+		t.Fatal("contradictory clear and agent flags succeeded")
 	}
 }
 

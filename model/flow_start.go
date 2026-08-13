@@ -27,15 +27,19 @@ var ErrFlowWorktreeUnreserved = errors.New("launch reservation unavailable")
 // FlowStartRequest contains the user operation inputs needed to create a Flow
 // and optionally prepare the initial plan-phase agent launch.
 type FlowStartRequest struct {
-	RepoPath            string
-	Title               string
-	Instructions        string
-	BaseRef             string
-	AgentCommand        string
-	Model               string
-	ReasoningEffort     string
-	SessionStateRoot    string
-	FlowPromptTemplates FlowPromptTemplates
+	RepoPath         string
+	Title            string
+	Instructions     string
+	BaseRef          string
+	AgentCommand     string
+	Model            string
+	ReasoningEffort  string
+	AgentPreferences agent.Preferences
+	// AgentPreferencesProvided distinguishes production's full per-provider
+	// bundle from legacy direct callers that provide only the selected triple.
+	AgentPreferencesProvided bool
+	SessionStateRoot         string
+	FlowPromptTemplates      FlowPromptTemplates
 	// FlowPromptTemplatesProvided forces StartPlan to use FlowPromptTemplates
 	// even when every template has been reset to the built-in default.
 	FlowPromptTemplatesProvided bool
@@ -198,6 +202,16 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	result.LaunchID = launchID
 	result.LaunchRelease = release
 
+	if persistedPhase, ok := findFlowPhaseByID(flow, phaseID); ok {
+		phase = persistedPhase
+	}
+	settings, err := resolveFlowStartPhaseAgentSettings(req, phase)
+	if err != nil {
+		releaseFlowLaunchReservation(release)
+		result.LaunchRelease = nil
+		return result, err
+	}
+
 	phaseTitle := req.PlanPhaseTitle
 	if phaseTitle == "" {
 		phaseTitle = phase.Title
@@ -210,9 +224,9 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		phaseStatus = flowstore.PhaseRunning
 	}
 	result.LaunchContext = actions.AgentLaunchContext{
-		Command:          req.AgentCommand,
-		Model:            req.Model,
-		ReasoningEffort:  req.ReasoningEffort,
+		Command:          settings.Command,
+		Model:            settings.Model,
+		ReasoningEffort:  settings.ReasoningEffort,
 		LaunchID:         launchID,
 		RepoPath:         req.RepoPath,
 		WorktreePath:     worktree.WorktreePath,
@@ -229,6 +243,33 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		InitialPrompt:    initialFlowLaunchPrompt(flowStartPromptRecord(flow, req, worktree, commit), phase, s.promptTemplatesForRequest(req)),
 	}
 	return result, nil
+}
+
+func flowStartAgentPreferences(req FlowStartRequest) agent.Preferences {
+	if req.AgentPreferencesProvided {
+		return req.AgentPreferences
+	}
+	prefs := agent.Preferences{Command: req.AgentCommand}
+	switch agent.Normalize(req.AgentCommand) {
+	case agent.CommandCodex:
+		prefs.CodexModel = req.Model
+		prefs.CodexEffort = req.ReasoningEffort
+	case agent.CommandClaude:
+		prefs.ClaudeModel = req.Model
+		prefs.ClaudeEffort = req.ReasoningEffort
+	}
+	return prefs
+}
+
+func resolveFlowStartPhaseAgentSettings(req FlowStartRequest, phase flowstore.FlowPhase) (agent.Settings, error) {
+	if !req.AgentPreferencesProvided &&
+		agent.Normalize(req.AgentCommand) == "" &&
+		agent.NormalizeModel(req.Model) == "" &&
+		agent.NormalizeReasoningEffort(req.ReasoningEffort) == "" &&
+		phase.AgentSettings().IsZero() {
+		return agent.Settings{}, nil
+	}
+	return flowstore.ResolvePhaseAgentSettings(flowStartAgentPreferences(req), phase.AgentSettings())
 }
 
 func validateInitialFlowLaunchPhase(flow flowstore.FlowRecord, phase flowstore.FlowPhase) error {

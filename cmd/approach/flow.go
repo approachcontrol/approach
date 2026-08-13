@@ -353,7 +353,7 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]")
+		return fmt.Errorf("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]")
 	}
 	switch args[0] {
 	case "set":
@@ -385,8 +385,10 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return runFlowPhaseReset(args[1:], deps)
 	case "add-child":
 		return runFlowPhaseAddChild(args[1:], deps)
+	case "agent":
+		return runFlowPhaseAgent(args[1:], deps)
 	default:
-		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "restart", "reset", "add-child"}, flowPhaseHelpText)
+		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "restart", "reset", "add-child", "agent"}, flowPhaseHelpText)
 	}
 }
 
@@ -394,7 +396,7 @@ func printFlowPhaseHelp(w io.Writer) {
 	io.WriteString(w, flowPhaseHelpText)
 }
 
-const flowPhaseHelpText = `Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]
+const flowPhaseHelpText = `Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]
 
 Update Flow phase state. Readiness is derived by approach; agents set running,
 completed, needs_attention, blocked, or skipped.
@@ -407,6 +409,7 @@ Commands:
   restart          Restart a blocked or needs-attention phase.
   reset            Recover a stale running phase back to ready.
   add-child        Add or update an implementation child phase.
+  agent set        Replace or clear a phase's agent settings stamp.
 
 Examples:
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
@@ -418,10 +421,103 @@ Examples:
   approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
   approach flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
   approach flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
+  approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --agent claude --model claude-opus-5
 
 Common flags:
   --state-root PATH  Override the artifact state root.
 `
+
+func runFlowPhaseAgent(args []string, deps runDeps) error {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowPhaseAgentHelp(deps.stdout)
+		return nil
+	}
+	if len(args) < 1 {
+		return fmt.Errorf("usage: approach flow phase agent set [flags]")
+	}
+	if args[0] != "set" {
+		return unknownCommandError(args[0], []string{"set"}, flowPhaseAgentHelpText)
+	}
+	return runFlowPhaseAgentSet(args[1:], deps)
+}
+
+const flowPhaseAgentHelpText = `Usage: approach flow phase agent set [flags]
+
+Replace or clear one Flow phase's agent, model, and reasoning-effort stamp.
+`
+
+func printFlowPhaseAgentHelp(w io.Writer) {
+	io.WriteString(w, flowPhaseAgentHelpText)
+}
+
+func runFlowPhaseAgentSet(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow phase agent set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPhaseAgentSetHelp(deps.stdout) }
+	flowID := flags.String("flow-id", "", "flow id")
+	phaseID := flags.String("phase-id", "", "phase id")
+	agentCommand := flags.String("agent", "", "agent command")
+	model := flags.String("model", "", "agent model")
+	effort := flags.String("reasoning-effort", "", "reasoning effort")
+	clear := flags.Bool("clear", false, "clear phase settings")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow phase agent set requires --flow-id")
+	}
+	if *phaseID == "" {
+		return fmt.Errorf("flow phase agent set requires --phase-id")
+	}
+	if *clear {
+		if strings.TrimSpace(*agentCommand) != "" || strings.TrimSpace(*model) != "" || strings.TrimSpace(*effort) != "" {
+			return fmt.Errorf("flow phase agent set --clear cannot be combined with --agent, --model, or --reasoning-effort")
+		}
+	} else if strings.TrimSpace(*agentCommand) == "" {
+		return fmt.Errorf("flow phase agent set requires --agent or --clear")
+	}
+	settings := flowstore.PhaseAgentSettings{}
+	if !*clear {
+		settings = flowstore.PhaseAgentSettings{Agent: *agentCommand, Model: *model, ReasoningEffort: *effort}
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{FlowID: *flowID, PhaseID: *phaseID, Settings: settings})
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func printFlowPhaseAgentSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: approach flow phase agent set [flags]
+
+Replace the complete agent settings stamp for one Flow phase. Omitted model or
+reasoning-effort fields inherit that provider's current global preference. Use
+--clear to make every field inherit globally; literal "default" is explicit.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+  --agent AGENT or --clear
+
+Common flags:
+  --model MODEL
+  --reasoning-effort EFFORT
+  --state-root PATH
+
+Examples:
+  approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --agent claude --model claude-opus-5
+  approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --clear
+`)
+}
 
 type flowPhaseActionSpec struct {
 	command        string

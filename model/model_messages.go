@@ -11,6 +11,7 @@ import (
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -466,6 +467,18 @@ type AgentReasoningEffortSetMsg struct {
 type AgentReasoningEffortSetFailedMsg struct {
 	Command string
 	Effort  string
+	Err     string
+}
+
+type FlowPhaseAgentSettingsSetMsg struct {
+	Flow          flowstore.FlowRecord
+	PhaseID       string
+	PhaseIdentity string
+}
+
+type FlowPhaseAgentSettingsSetFailedMsg struct {
+	FlowID  string
+	PhaseID string
 	Err     string
 }
 
@@ -1141,6 +1154,26 @@ func (m Model) handleAgentModelSet(msg AgentModelSetMsg) Model {
 	m = m.withModel(msg.Command, msg.Model)
 	m = m.clearStatus(statusOther)
 	return m
+}
+
+func (m Model) handleFlowPhaseAgentSettingsSet(msg FlowPhaseAgentSettingsSetMsg) Model {
+	if msg.Flow.FlowID == "" {
+		return m.setStatus(statusOther, "Unable to update Flow phase agent settings")
+	}
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok || record.FlowID != msg.Flow.FlowID || artifacts.NormalizePhaseID(phase.PhaseID) != msg.PhaseIdentity {
+		return m.setStatus(statusOther, "Flow phase selection changed before agent settings were applied")
+	}
+	m = m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+	return m.setStatus(statusOther, fmt.Sprintf("Updated agent settings for Flow phase %s", msg.PhaseID))
+}
+
+func (m Model) handleFlowPhaseAgentSettingsSetFailed(msg FlowPhaseAgentSettingsSetFailedMsg) Model {
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "Unable to update Flow phase agent settings"
+	}
+	return m.setStatus(statusOther, errText)
 }
 
 func (m Model) handleAgentModelSetFailed(msg AgentModelSetFailedMsg) Model {

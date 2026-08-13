@@ -142,6 +142,7 @@ type flowLaunchEventMsg struct {
 // validated. A user may change them while the authoritative read is in flight;
 // that must affect the next launch, not change this launch's route or prompt.
 type flowLaunchAgentSettingsSnapshot struct {
+	Preferences      agent.Preferences
 	Command          string
 	Model            string
 	ReasoningEffort  string
@@ -151,6 +152,7 @@ type flowLaunchAgentSettingsSnapshot struct {
 
 func snapshotFlowLaunchAgentSettings(launcher FlowPhaseLauncher) flowLaunchAgentSettingsSnapshot {
 	return flowLaunchAgentSettingsSnapshot{
+		Preferences:      launcher.AgentPreferences,
 		Command:          launcher.AgentCommand,
 		Model:            launcher.Model,
 		ReasoningEffort:  launcher.ReasoningEffort,
@@ -160,6 +162,7 @@ func snapshotFlowLaunchAgentSettings(launcher FlowPhaseLauncher) flowLaunchAgent
 }
 
 func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher FlowPhaseLauncher) FlowPhaseLauncher {
+	launcher.AgentPreferences = snapshot.Preferences
 	launcher.AgentCommand = snapshot.Command
 	launcher.Model = snapshot.Model
 	launcher.ReasoningEffort = snapshot.ReasoningEffort
@@ -207,11 +210,14 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
-	command, _, _ := m.flowLaunchAgentSettings()
-	command = agent.Normalize(command)
-	if command == "" {
-		return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
+	settings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+	if err != nil {
+		if agent.Normalize(m.agentCommand) == "" && agent.Normalize(phase.Agent) == "" {
+			return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
+		}
+		return m.setStatus(statusOther, err.Error()), nil, false
 	}
+	command := settings.Command
 	if err := agent.Validate(command); err != nil {
 		return m.setStatus(statusOther, err.Error()), nil, false
 	}

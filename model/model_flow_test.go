@@ -2091,8 +2091,56 @@ func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected Flow phase overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+	if view := m.View(); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
 		t.Fatalf("M on selected Flow phase did not open model picker:\n%s", view)
+	}
+}
+
+func TestModel_PhaseAgentPickerPersistsWithoutChangingGlobals(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	var got flowstore.PhaseAgentSettingsUpdate
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		CodexModel:   "gpt-5.5",
+		ClaudeModel:  "claude-sonnet-5",
+		SetFlowPhaseAgentSettings: func(update flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error) {
+			got = update
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Agent = update.Settings.Agent
+					updated.Phases[i].Model = update.Settings.Model
+					updated.Phases[i].ReasoningEffort = update.Settings.ReasoningEffort
+				}
+			}
+			updated.UpdatedAt = time.Now()
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "merge")
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	view := m.View()
+	if !strings.Contains(view, "inherit global settings") || !strings.Contains(view, "Choose agent for phase merge") {
+		t.Fatalf("phase agent picker contents:\n%s", view)
+	}
+	for range 3 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("phase agent selection returned no persistence command")
+	}
+	m, _ = update(m, cmd())
+	if got.FlowID != flow.FlowID || got.PhaseID != "merge" || got.Settings != (flowstore.PhaseAgentSettings{Agent: "claude"}) {
+		t.Fatalf("phase settings update = %#v", got)
+	}
+	if m.AgentCommand() != "codex" {
+		t.Fatalf("global agent changed to %q", m.AgentCommand())
+	}
+	if view := m.View(); !strings.Contains(view, "A      claude") || !strings.Contains(view, "M      sonnet-5") {
+		t.Fatalf("phase effective labels were not refreshed:\n%s", view)
 	}
 }
 
@@ -2283,7 +2331,7 @@ func TestModel_ShiftMOpensModelPickerOnSelectedActiveFlowPhaseRow(t *testing.T) 
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected active Flow phase overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+	if view := m.View(); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
 		t.Fatalf("M on selected active Flow phase did not open model picker:\n%s", view)
 	}
 }

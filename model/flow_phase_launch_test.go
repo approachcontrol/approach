@@ -5,9 +5,51 @@ import (
 	"testing"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
 )
+
+func TestFlowPhaseLauncherUsesAuthoritativeStampedSettings(t *testing.T) {
+	cachedPhase := flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseReady, Agent: agent.CommandClaude}
+	authoritativePhase := cachedPhase
+	authoritativePhase.Status = flowstore.PhaseRunning
+	authoritativePhase.Model = agent.ModelClaudeOpus5
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/repo",
+		WorktreePath: "/worktree",
+		Phases:       []flowstore.FlowPhase{cachedPhase},
+	}
+	launcher := model.FlowPhaseLauncher{
+		AgentPreferences: agent.Preferences{
+			Command:      agent.CommandCodex,
+			CodexModel:   agent.ModelGPT55,
+			ClaudeModel:  agent.ModelClaudeSonnet5,
+			CodexEffort:  agent.ReasoningEffortMedium,
+			ClaudeEffort: agent.ReasoningEffortMax,
+		},
+		NewLaunchID: func() string { return "launch-1" },
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := record
+			updated.Phases[0] = authoritativePhase
+			return updated, nil
+		},
+	}
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: cachedPhase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := launcher.Prepare(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := agent.Settings{Command: agent.CommandClaude, Model: agent.ModelClaudeOpus5, ReasoningEffort: agent.ReasoningEffortMax}
+	got := agent.Settings{Command: result.Context.Command, Model: result.Context.Model, ReasoningEffort: result.Context.ReasoningEffort}
+	if got != want {
+		t.Fatalf("launch settings = %#v, want %#v", got, want)
+	}
+}
 
 func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
