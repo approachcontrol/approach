@@ -351,23 +351,39 @@ func TestFlowRepairLiveSessionRemedyMatchesPhaseStatus(t *testing.T) {
 		{
 			// The agent moved the phase off running before it died. Reset would
 			// refuse with `flow phase reset requires running recoverable phase`,
-			// so the message has to carry the transition back first.
-			name:   "blocked returns to running first",
+			// so the message has to carry the transition back first — as
+			// `restart`, because a bare `phase set --status running` out of
+			// blocked is refused for missing notes.
+			name:   "blocked restarts first",
 			status: flowstore.PhaseBlocked,
-			want:   "Flow phase implementation already has a running session and is blocked; if its agent is gone, clear it with approach flow phase set --flow-id flow-1 --phase-id implementation --status running, then approach flow phase reset --flow-id flow-1 --phase-id implementation",
+			want:   "Flow phase implementation already has a running session and is blocked; if its agent is gone, clear it with approach flow phase restart --flow-id flow-1 --phase-id implementation, then approach flow phase reset --flow-id flow-1 --phase-id implementation",
 		},
 		{
-			name:   "needs attention returns to running first",
+			name:   "needs attention restarts first",
 			status: flowstore.PhaseNeedsAttention,
-			want:   "Flow phase implementation already has a running session and is needs_attention; if its agent is gone, clear it with approach flow phase set --flow-id flow-1 --phase-id implementation --status running, then approach flow phase reset --flow-id flow-1 --phase-id implementation",
+			want:   "Flow phase implementation already has a running session and is needs_attention; if its agent is gone, clear it with approach flow phase restart --flow-id flow-1 --phase-id implementation, then approach flow phase reset --flow-id flow-1 --phase-id implementation",
 		},
 		{
 			// Where a reset that stranded an older launch's live session lands
-			// the phase. pending -> running is not in the transition table, so
-			// there is no command to print and the message must not invent one.
+			// the phase. There is no non-destructive route back to running from
+			// here, so the message must not invent a command.
 			name:   "pending has no command remedy",
 			status: flowstore.PhasePending,
 			want:   "Flow phase implementation already has a running session and is pending; reset needs a running phase, so this phase's session metadata has to be corrected directly",
+		},
+		{
+			// completed -> running is a legal transition, which is exactly why
+			// the branch enumerates statuses instead of consulting the table:
+			// reopening a finished phase to clear a session record trades a real
+			// result for cleanup, and reset would then derive it back to ready.
+			name:   "completed is never reopened to clear a session",
+			status: flowstore.PhaseCompleted,
+			want:   "Flow phase implementation already has a running session and is completed; reset needs a running phase, so this phase's session metadata has to be corrected directly",
+		},
+		{
+			name:   "skipped is never reopened to clear a session",
+			status: flowstore.PhaseSkipped,
+			want:   "Flow phase implementation already has a running session and is skipped; reset needs a running phase, so this phase's session metadata has to be corrected directly",
 		},
 	}
 

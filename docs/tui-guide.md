@@ -677,10 +677,13 @@ running session; if its agent is gone, clear it with approach flow phase reset
 spelled out so it runs as printed, because unlike the identically-caused resume
 refusal repair has no in-app move left — see the trap below. Since the rule
 ignores phase status, the remedy is written for the status the phase is actually
-in: a phase that has moved off `running` reports `... and is <status>` and
-prepends the `approach flow phase set ... --status running` that makes reset
-legal, and a `pending` phase — where reset cannot help at all — says so instead
-of naming a command. The trap below covers all three. It names the phase
+in: a phase that has moved off `running` reports `... and is <status>` and, when
+it is `blocked` or `needs_attention`, prepends the `approach flow phase restart`
+that makes reset legal. Any other status — including `completed` and `skipped`,
+which the transition table would let you reopen — says the session metadata has
+to be corrected directly rather than naming a command, because no command there
+both runs and leaves the phase's result intact. The trap below covers all
+three. It names the phase
 because the rule is Flow-scoped while the CLI escape is per phase: the phase
 reported is the one holding the live session, which is usually not the gated
 phase you pressed `R` to unblock. It is wider
@@ -760,7 +763,9 @@ the refusal prints the one that matches. When the phase is still `running`,
 moved the phase off `running` before it died — to `blocked` or
 `needs_attention`, say — reset alone refuses with `flow phase reset requires
 running recoverable phase`, so the refusal prints two steps instead: `approach
-flow phase set` back to `running`, then `approach flow phase reset`. If the
+flow phase restart`, which returns the phase to `running` and supplies the note
+that a bare `phase set --status running` would demand, then `approach flow phase
+reset`. If the
 phase also carries session metadata that disagrees with its launch IDs, reset
 refuses again with `flow phase reset requires attached sessions to match phase
 launch ids`, and the record has to be corrected before either route works.
@@ -771,8 +776,11 @@ accumulated more than one launch, where the stranded live record belongs to an
 older one, therefore stays blocked after a reset that reported success — and `g`
 refuses on the same evidence, so there is no in-app move left either. Correcting
 that phase's session metadata directly is the only way out. That reset leaves
-the phase `pending`, which cannot transition back to `running`, so the refusal
-stops naming a command there and says the metadata has to be corrected directly.
+the phase `pending`, which has no non-destructive route back to `running`, so
+the refusal stops naming a command there and says the metadata has to be
+corrected directly. The refusal does not try to predict that residue for the
+`running` case: reset's own preconditions live in the store, and restating them
+in a status message would put a second copy of them one layer away.
 
 The occupancy rule deliberately does not filter by phase status, because a live
 session on a phase that has already been marked blocked is still an agent that

@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,27 +47,42 @@ const (
 // correct for one of the three cases. The occupancy rule deliberately does not
 // filter by status, so this message is raised for phases that have already moved
 // off running, and flowstore.ResetRecoverableRunningPhase refuses every one of
-// them with `flow phase reset requires running recoverable phase`. Where the
-// transition table can still reach running the message prepends the `phase set`
-// that makes reset legal; where it cannot — pending, which is where a reset that
-// left an older launch's live session behind lands the phase — no command
-// clears it, and claiming otherwise would be the same broken remedy one step
-// further along. docs/tui-guide.md covers all three.
+// them with `flow phase reset requires running recoverable phase`.
+//
+// The branch for those is `phase restart`, not `phase set --status running`,
+// and the two are not interchangeable here: validatePhaseUpdate rejects a bare
+// set out of blocked or needs_attention with `restarting <status> phase requires
+// notes`, while the restart command defaults the note, so only restart runs as
+// printed. Its accepted statuses are exactly blocked and needs_attention, which
+// is why this switch enumerates them instead of asking the transition table
+// which statuses can reach running: that table also allows completed -> running
+// and skipped -> running, and telling a user to reopen a finished phase to clear
+// a stale session record would trade a real result for a session cleanup.
+// Terminal and pending phases get no command at all, because none of them has
+// one that both runs and is non-destructive.
+//
+// What this message does not try to predict is whether a legal reset will also
+// be an effective one. Reset clears the phase's newest launch while occupancy
+// matches every launch the phase has recorded, so a live session stranded on an
+// older launch survives a reset that reported success — and reset has further
+// preconditions of its own (session/launch agreement, predecessors) that live in
+// flowstore. Restating those here would put a second copy of the store's
+// admission rules in a status string, where they would drift. docs/tui-guide.md
+// documents that residue, and this branch covers all three commands.
 func flowRepairLiveSessionStatus(flowID string, phase flowstore.FlowPhase) string {
+	head := fmt.Sprintf("Flow phase %s already has a running session", phase.PhaseID)
 	reset := fmt.Sprintf("approach flow phase reset --flow-id %s --phase-id %s", flowID, phase.PhaseID)
-	switch {
-	case phase.Status == flowstore.PhaseRunning:
+	switch phase.Status {
+	case flowstore.PhaseRunning:
+		return fmt.Sprintf("%s; if its agent is gone, clear it with %s", head, reset)
+	case flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention:
 		return fmt.Sprintf(
-			"Flow phase %s already has a running session; if its agent is gone, clear it with %s",
-			phase.PhaseID, reset)
-	case slices.Contains(flowstore.AllowedNextPhaseStatuses(phase.Status), flowstore.PhaseRunning):
-		return fmt.Sprintf(
-			"Flow phase %s already has a running session and is %s; if its agent is gone, clear it with approach flow phase set --flow-id %s --phase-id %s --status running, then %s",
-			phase.PhaseID, phase.Status, flowID, phase.PhaseID, reset)
+			"%s and is %s; if its agent is gone, clear it with approach flow phase restart --flow-id %s --phase-id %s, then %s",
+			head, phase.Status, flowID, phase.PhaseID, reset)
 	default:
 		return fmt.Sprintf(
-			"Flow phase %s already has a running session and is %s; reset needs a running phase, so this phase's session metadata has to be corrected directly",
-			phase.PhaseID, phase.Status)
+			"%s and is %s; reset needs a running phase, so this phase's session metadata has to be corrected directly",
+			head, phase.Status)
 	}
 }
 
