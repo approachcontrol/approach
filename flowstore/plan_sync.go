@@ -1,10 +1,19 @@
 package flowstore
 
 import (
+	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/approachcontrol/approach/planstore"
 )
+
+// planLinkResolver validates a saved plan and returns the configured-root path
+// that a Flow should persist for it.
+type planLinkResolver interface {
+	resolvePlanLink(planID, suppliedPath string) (string, error)
+}
 
 // planPhaseSyncer opens a writer for the plan store that mirrors completed Flow
 // phases into their linked plan. It is a two-phase interface on purpose: the
@@ -40,6 +49,35 @@ type planPhaseWriter interface {
 type planstoreSyncer struct {
 	root        string
 	lockTimeout time.Duration
+}
+
+func (s planstoreSyncer) resolvePlanLink(planID, suppliedPath string) (string, error) {
+	planPath, err := planstore.MarkdownPath(s.root, planID)
+	if err != nil {
+		return "", err
+	}
+	if supplied := strings.TrimSpace(suppliedPath); supplied != "" {
+		if !filepath.IsAbs(supplied) {
+			return "", fmt.Errorf("flow plan path must be absolute: %s", supplied)
+		}
+		if filepath.Clean(supplied) != planPath {
+			return "", fmt.Errorf("flow plan path %q does not match plan %q path %q", filepath.Clean(supplied), planID, planPath)
+		}
+	}
+	store, err := planstore.NewStore(planstore.StoreOptions{
+		Root:        s.root,
+		LockTimeout: s.lockTimeout,
+	})
+	if err != nil {
+		return "", err
+	}
+	if !store.HasPlan(planID) {
+		return "", fmt.Errorf("plan %q not found", planID)
+	}
+	if _, err := store.ReadPlan(planID); err != nil {
+		return "", err
+	}
+	return planPath, nil
 }
 
 func (s planstoreSyncer) open() (planPhaseWriter, error) {
