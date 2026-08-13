@@ -140,8 +140,9 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
   phase launch runs in the Flow's isolated worktree. On worktree or bootstrap
   failure the persisted record's launchable phases are blocked with the failure
   noted; existing Flow rendering then labels the worktree-less record
-  `missing-worktree` / `recover-worktree`, and phase launch falls back to the
-  repository root.
+  `missing-worktree` / `recover-worktree`. Phase launch never falls back to the
+  repository root: it creates the missing worktree first, and refuses with a
+  message when it cannot.
 - Config: `default_view` gains frozen numbers 10 (ready), 11 (blocked),
   12 (open), 13 (in-progress), 14 (closed), parallel to the git subviews'
   1–5. Numbers 1–9 keep their existing frozen meanings.
