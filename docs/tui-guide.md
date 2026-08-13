@@ -701,8 +701,9 @@ recorded as ended, and only an orderly exit records that, so an agent whose
 session is never finalized — Approach killed, the machine lost — leaves the
 phase looking permanently busy. Auto mode then waits forever, repair reports no
 obstruction because the phase is still launchable, and reset applies only to
-`running` phases. Launching the phase manually with `g` says so: `Flow phase has
-an unfinished session; press x to release it`.
+`running` phases. Launching the phase manually with `g` says so, and names the
+phase because `g` acts on the Flow while release acts on the selection: `Flow
+phase implementation has an unfinished session; select it and x releases it`.
 
 `x` on that phase releases the session. It reads the phase's launches from both
 the session store and the Flow record, and asks before acting — *Release 1
@@ -727,11 +728,14 @@ provider: one that reuses the session ID rebinds the old record to the new
 launch and a clean exit ends it, while one that mints a fresh ID leaves the
 crashed record live forever.
 
-The footer advertises `x release session` only for a phase that is not
-`running`, where a live session is structurally impossible and so unambiguously
-stale. A `running` phase is recovered the same way — press `x` and it probes —
-it is just not advertised, because on a running phase a live session is the
-normal state and a standing hint beside a healthy agent would read as an
+The footer advertises `x release session` only for a `ready` phase, where a live
+session contradicts the phase's own status and is worth pointing at. Every other
+status is one a live session is unsurprising on: `running` is where a working
+agent belongs, and `completed`, `blocked`, `needs_attention`, and `skipped` are
+all set by the agent itself from inside its own session — the gap between
+`approach flow phase complete` and the agent exiting is ordinary. Those phases
+are recovered the same way — press `x` and it probes — they are just not
+advertised, because a standing hint beside a healthy agent would read as an
 invitation.
 
 A 3 s status message announces auto-launches, `needs_attention`, and

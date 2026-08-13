@@ -602,10 +602,15 @@ type flowPhaseSessionReleasedMsg struct {
 	Released int
 }
 
+// flowPhaseSessionReleaseFailedMsg carries Released for the same reason the
+// success message does: finalization runs once per launch, so a failure on the
+// second of two leaves the first genuinely ended, and reporting only the error
+// would send the user to retry a phase that has already moved.
 type flowPhaseSessionReleaseFailedMsg struct {
 	RepoPath string
 	FlowID   string
 	PhaseID  string
+	Released int
 	Err      string
 }
 
@@ -1885,7 +1890,7 @@ func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Mode
 	return m, nil
 }
 
-// handleFlowPhaseSessionRelease reports what release selected, not what it
+// handleFlowPhaseSessionReleased reports what release selected, not what it
 // wrote: both halves of finalization no-op silently when they match nothing, so
 // a successful call proves nothing was persisted. The surface refresh is what
 // shows the truth.
@@ -1912,6 +1917,13 @@ func (m Model) handleFlowPhaseSessionReleaseFailed(msg flowPhaseSessionReleaseFa
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "failed to release Flow phase session"
+	}
+	if msg.Released > 0 {
+		errText = fmt.Sprintf("Released %d, then %s", msg.Released, errText)
+		// A partial release changed the phase, so the surface has to be refetched
+		// even though the gesture failed.
+		m = m.setStatus(statusOther, errText)
+		return m.startFlowSurfaceFetch()
 	}
 	return m.setStatus(statusOther, errText), nil
 }

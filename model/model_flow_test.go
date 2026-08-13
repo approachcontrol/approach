@@ -2525,9 +2525,11 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 	}
 }
 
-// The advertised case: a phase that is not running cannot legitimately hold a
-// live session, so the footer names the release. Reset never applies there —
-// it requires a running phase — so the two x labels cannot both show.
+// The advertised case: a live session on a ready phase contradicts the phase's
+// own status — nothing has started — so the footer names the release. Every
+// other status can legitimately hold one, which is why the hint stops there.
+// Reset never applies to a ready phase either — it requires a running one — so
+// the two x labels cannot both show.
 func TestModel_StalledFlowPhaseAdvertisesSessionRelease(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	flow.Phases[2].LaunchIDs = []string{"launch-crashed"}

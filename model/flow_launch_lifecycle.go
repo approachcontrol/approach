@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -26,7 +27,17 @@ const noLaunchableFlowPhaseStatus = "No launchable Flow phase"
 // there; naming the condition is what points a stalled user at the release
 // gesture. AutoMode never emits it — its drain short-circuits on the phase
 // mirror long before the read stage — so this is a manual-launch refusal only.
-const flowLaunchPhaseSessionLiveStatus = "Flow phase has an unfinished session; press x to release it"
+//
+// It names the phase because the two gestures are scoped differently: g acts on
+// the Flow and the read stage picks its own candidate, while release acts on the
+// selection. Sending a user to press x without saying where sends them to press
+// it on whatever is selected, which for a collapsed Flow row is nothing at all.
+func flowLaunchPhaseSessionLiveStatus(phaseID string) string {
+	if phaseID = strings.TrimSpace(phaseID); phaseID == "" {
+		return "Flow phase has an unfinished session; select it and x releases it"
+	}
+	return fmt.Sprintf("Flow phase %s has an unfinished session; select it and x releases it", phaseID)
+}
 
 // flowLaunchStage names the two asynchronous hops the lifecycle emits. Handoff
 // results and failure persistence arrive on messages that already exist, so
@@ -425,7 +436,7 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			// The phase itself is launchable — admission and the candidate
 			// lookup both passed — so the refusal has to name the session, not
 			// the phase, and say how to clear it.
-			event.Err = flowLaunchPhaseSessionLiveStatus
+			event.Err = flowLaunchPhaseSessionLiveStatus(phase.PhaseID)
 			return event
 		}
 		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{

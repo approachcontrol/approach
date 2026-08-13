@@ -10,6 +10,7 @@ import (
 
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -80,19 +81,21 @@ func (h *manualLaunchHarness) confirm(m Model) Model {
 	return h.drain(m, cmd, 0)
 }
 
-func TestFlowPhaseSessionReleasable(t *testing.T) {
-	runningEmbedded := func(m Model) Model {
-		m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
-			Number:      1,
-			Scope:       embeddedTerminalScopeFlow,
-			FlowID:      "flow-1",
-			FlowPhaseID: "implementation",
-			LaunchID:    stalledReleaseLaunchID,
-			Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
-		})
-		return m
-	}
+// runningEmbeddedTerminalForPhase attaches the one live agent Approach can
+// always prove: an embedded slot for the stalled phase.
+func runningEmbeddedTerminalForPhase(m Model) Model {
+	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+		Number:      1,
+		Scope:       embeddedTerminalScopeFlow,
+		FlowID:      "flow-1",
+		FlowPhaseID: "implementation",
+		LaunchID:    stalledReleaseLaunchID,
+		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
+	})
+	return m
+}
 
+func TestFlowPhaseSessionReleasable(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(flowstore.FlowRecord) flowstore.FlowRecord
@@ -107,6 +110,44 @@ func TestFlowPhaseSessionReleasable(t *testing.T) {
 			name: "running phase",
 			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
 				record.Phases[0].Status = flowstore.PhaseRunning
+				return record
+			},
+			want: false,
+		},
+		{
+			// The statuses an agent sets from inside its own live session, by
+			// `approach flow phase complete|block|needs-attention` and by
+			// `set skipped`. A live session on any of them is the ordinary gap
+			// between that call and the agent exiting — not an anomaly — so the
+			// hint must not appear beside a working agent that just reported its
+			// own result. x still probes there.
+			name: "completed phase the agent reported from inside its session",
+			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseCompleted
+				return record
+			},
+			want: false,
+		},
+		{
+			name: "blocked phase",
+			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseBlocked
+				return record
+			},
+			want: false,
+		},
+		{
+			name: "needs_attention phase",
+			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseNeedsAttention
+				return record
+			},
+			want: false,
+		},
+		{
+			name: "skipped phase",
+			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseSkipped
 				return record
 			},
 			want: false,
@@ -145,7 +186,7 @@ func TestFlowPhaseSessionReleasable(t *testing.T) {
 			},
 			want: false,
 		},
-		{name: "running embedded terminal for the phase", model: runningEmbedded, want: false},
+		{name: "running embedded terminal for the phase", model: runningEmbeddedTerminalForPhase, want: false},
 		{
 			name: "launch lifecycle holds the Flow",
 			model: func(m Model) Model {
@@ -218,8 +259,9 @@ func TestFlowPhaseSessionReleaseRecoversStalledPhase(t *testing.T) {
 
 			// The refusal that sends a user here in the first place.
 			blocked := h.launch(m)
-			if blocked.status.Text != flowLaunchPhaseSessionLiveStatus {
-				t.Fatalf("stalled launch status = %q, want %q", blocked.status.Text, flowLaunchPhaseSessionLiveStatus)
+			wantBlocked := flowLaunchPhaseSessionLiveStatus("implementation")
+			if blocked.status.Text != wantBlocked {
+				t.Fatalf("stalled launch status = %q, want %q", blocked.status.Text, wantBlocked)
 			}
 			if len(h.launchUpdates) != 0 {
 				t.Fatalf("stalled phase launched anyway: %#v", h.launchUpdates)
@@ -268,10 +310,29 @@ func TestFlowPhaseSessionReleaseProbeGate(t *testing.T) {
 	tests := []struct {
 		name       string
 		mutate     func(flowstore.FlowRecord) flowstore.FlowRecord
+		model      func(Model) Model
 		wantProbe  bool
 		wantStatus string
 	}{
 		{name: "stalled phase probes", wantProbe: true},
+		{
+			// The resume case: a stale launch beside a live one. Naming the
+			// terminal is the whole point — it is what the user has to dismiss.
+			name:       "attached terminal on a stalled phase names itself",
+			model:      runningEmbeddedTerminalForPhase,
+			wantStatus: flowPhaseSessionReleaseTerminalStatus,
+		},
+		{
+			// The same refusal on a running phase, where the terminal is the
+			// healthy state. Saying "dismiss the terminal" beside a working
+			// agent would read as a nudge to kill it.
+			name: "attached terminal on a running phase stays quiet",
+			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseRunning
+				return record
+			},
+			model: runningEmbeddedTerminalForPhase,
+		},
 		{
 			name: "no launch IDs stays silent",
 			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
@@ -292,10 +353,25 @@ func TestFlowPhaseSessionReleaseProbeGate(t *testing.T) {
 			wantProbe: true,
 		},
 		{
-			name: "closed Flow stays silent",
+			// Gated, but the mirror shows the stall the user is reacting to, so
+			// the press is answered rather than dropped.
+			name: "closed Flow names what blocks the release",
 			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
 				closedAt := time.Now()
 				record.Closed = flowstore.Closure{ClosedAt: &closedAt, Reason: "abandoned"}
+				return record
+			},
+			wantStatus: flowPhaseSessionReleaseClosedStatus,
+		},
+		{
+			// Nothing visibly wrong: the probe is the only thing that could
+			// judge this phase and it was never dispatched, so saying anything
+			// would be guessing.
+			name: "closed Flow with a clean mirror stays silent",
+			mutate: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				closedAt := time.Now()
+				record.Closed = flowstore.Closure{ClosedAt: &closedAt, Reason: "abandoned"}
+				record.Phases[0].Sessions = nil
 				return record
 			},
 		},
@@ -309,6 +385,9 @@ func TestFlowPhaseSessionReleaseProbeGate(t *testing.T) {
 			}
 			h := releaseHarness(t, record, stalledReleaseSessionRecords())
 			m := h.selectPhase(h.model(), "implementation")
+			if tc.model != nil {
+				m = tc.model(m)
+			}
 
 			next, cmd := m.handleResetSelectedFlowPhase()
 			m = next.(Model)
@@ -316,12 +395,91 @@ func TestFlowPhaseSessionReleaseProbeGate(t *testing.T) {
 				t.Fatalf("probe dispatched = %v, want %v", cmd != nil, tc.wantProbe)
 			}
 			if cmd == nil {
-				if m.status.Text != "" {
-					t.Fatalf("gated press set status %q, want silence", m.status.Text)
+				if m.status.Text != tc.wantStatus {
+					t.Fatalf("gated press set status %q, want %q", m.status.Text, tc.wantStatus)
 				}
 				if h.sessionListCalls != 0 {
 					t.Fatalf("gated press walked the session store %d times", h.sessionListCalls)
 				}
+			}
+		})
+	}
+}
+
+// A probe is a store walk, so by the time it lands the user may have moved on.
+// Each fence here answers a different way of moving on, and the shared cost of
+// getting one wrong is a confirmation the user never asked for, aimed at
+// sessions they were not looking at.
+func TestFlowPhaseSessionReleaseProbeFences(t *testing.T) {
+	tests := []struct {
+		name  string
+		msg   func(flowPhaseSessionReleaseProbedMsg) flowPhaseSessionReleaseProbedMsg
+		model func(Model) Model
+	}{
+		{
+			// The probe must not clobber a modal the user opened while it ran:
+			// answering that one would release sessions they never asked about.
+			name: "a modal opened while the probe ran",
+			model: func(m Model) Model {
+				m.modal = modal.OpenConfirm("Delete something else?", func() tea.Cmd { return nil })
+				return m
+			},
+		},
+		{
+			name: "the selection moved to another phase",
+			msg: func(msg flowPhaseSessionReleaseProbedMsg) flowPhaseSessionReleaseProbedMsg {
+				msg.PhaseID = "plan"
+				return msg
+			},
+		},
+		{
+			name: "the selection moved to another Flow",
+			msg: func(msg flowPhaseSessionReleaseProbedMsg) flowPhaseSessionReleaseProbedMsg {
+				msg.FlowID = "flow-2"
+				return msg
+			},
+		},
+		{
+			// A headless write in flight can be about to persist a launch ID
+			// this probe never saw.
+			name: "a headless write started while the probe ran",
+			model: func(m Model) Model {
+				m.pendingFlowHeadlessWrites = append(m.pendingFlowHeadlessWrites, pendingFlowHeadlessWrite{
+					flowID:   "flow-1",
+					repoPath: "/dev/alpha",
+					enabled:  true,
+				})
+				return m
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := releaseHarness(t, stalledReleaseFlowRecord(), stalledReleaseSessionRecords())
+			m := h.selectPhase(h.model(), "implementation")
+			if tc.model != nil {
+				m = tc.model(m)
+			}
+			msg := flowPhaseSessionReleaseProbedMsg{
+				RepoPath:  "/dev/alpha",
+				FlowID:    "flow-1",
+				PhaseID:   "implementation",
+				LaunchIDs: []string{stalledReleaseLaunchID},
+			}
+			if tc.msg != nil {
+				msg = tc.msg(msg)
+			}
+			before := m.modal.IsOpen()
+
+			probed, _ := m.handleFlowPhaseSessionReleaseProbed(msg)
+			next := probed.(Model)
+
+			if next.modal.IsOpen() != before {
+				t.Fatal("a fenced probe must not open or replace a modal")
+			}
+			if next.ConfirmPrompt() != m.ConfirmPrompt() {
+				t.Fatalf("confirm prompt = %q, want the untouched %q", next.ConfirmPrompt(), m.ConfirmPrompt())
 			}
 		})
 	}
@@ -533,9 +691,155 @@ func TestFlowPhaseSessionReleaseReportsFinalizeFailure(t *testing.T) {
 	}
 }
 
+// Finalization is one call per launch and the loop stops at the first error, so
+// the launches before it really did end. Reporting the failure alone would send
+// the user to retry against a phase that has already moved.
+func TestFlowPhaseSessionReleaseReportsAPartialRelease(t *testing.T) {
+	record := stalledReleaseFlowRecord()
+	record.Phases[0].LaunchIDs = append(record.Phases[0].LaunchIDs, "launch-crashed-2")
+	record.Phases[0].Sessions = append(record.Phases[0].Sessions, flowstore.Session{
+		Provider: "codex", SessionID: "s-2", LaunchID: "launch-crashed-2", Status: "last_seen",
+	})
+	h := releaseHarness(t, record, stalledReleaseSessionRecords())
+	h.finalizeErrAfter = 1
+	h.finalizeErr = errFinalizeFailed
+	m := h.selectPhase(h.model(), "implementation")
+
+	m = h.confirm(h.pressX(m))
+
+	if len(h.finalizeContexts) != 2 {
+		t.Fatalf("finalize calls = %d, want the failing one to follow a successful one", len(h.finalizeContexts))
+	}
+	if !strings.Contains(m.status.Text, "Released 1") {
+		t.Fatalf("status = %q, want the count that was released before the failure", m.status.Text)
+	}
+	if !strings.Contains(m.status.Text, errFinalizeFailed.Error()) {
+		t.Fatalf("status = %q, want the finalize error", m.status.Text)
+	}
+}
+
+// Release reports what it selected, never what it wrote — both halves of
+// finalization no-op silently when they match nothing — so the refresh is the
+// only thing that shows the user the truth. A release that changed anything
+// therefore has to refetch, including the partial one behind a failure.
+func TestFlowPhaseSessionReleaseRefetchesWhatItChanged(t *testing.T) {
+	// The handlers are called directly: Update also schedules the status
+	// expiry, so a command from there proves nothing about the refresh.
+	tests := []struct {
+		name      string
+		handle    func(Model) (tea.Model, tea.Cmd)
+		wantFetch bool
+	}{
+		{
+			name: "success refetches",
+			handle: func(m Model) (tea.Model, tea.Cmd) {
+				return m.handleFlowPhaseSessionReleased(flowPhaseSessionReleasedMsg{
+					RepoPath: "/dev/alpha", FlowID: "flow-1", PhaseID: "implementation", Released: 1,
+				})
+			},
+			wantFetch: true,
+		},
+		{
+			name: "partial release refetches",
+			handle: func(m Model) (tea.Model, tea.Cmd) {
+				return m.handleFlowPhaseSessionReleaseFailed(flowPhaseSessionReleaseFailedMsg{
+					RepoPath: "/dev/alpha", FlowID: "flow-1", PhaseID: "implementation", Released: 1, Err: "boom",
+				})
+			},
+			wantFetch: true,
+		},
+		{
+			name: "a failure that released nothing has nothing to show",
+			handle: func(m Model) (tea.Model, tea.Cmd) {
+				return m.handleFlowPhaseSessionReleaseFailed(flowPhaseSessionReleaseFailedMsg{
+					RepoPath: "/dev/alpha", FlowID: "flow-1", PhaseID: "implementation", Err: "boom",
+				})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := releaseHarness(t, stalledReleaseFlowRecord(), stalledReleaseSessionRecords())
+			m := h.selectPhase(h.model(), "implementation")
+
+			_, cmd := tc.handle(m)
+
+			if (cmd != nil) != tc.wantFetch {
+				t.Fatalf("surface refetch = %v, want %v", cmd != nil, tc.wantFetch)
+			}
+		})
+	}
+}
+
+// The confirm hop re-checks the model-local guards, and a user who answered a
+// modal is owed an answer: returning silently there is indistinguishable from a
+// dropped keypress. The launch lifecycle taking the Flow between the modal
+// opening and the answer is the reachable case — it is about to persist a
+// launch ID the probe never saw.
+func TestFlowPhaseSessionReleaseRefusesAloudWhenTheFlowIsBusy(t *testing.T) {
+	h := releaseHarness(t, stalledReleaseFlowRecord(), stalledReleaseSessionRecords())
+	m := h.selectPhase(h.model(), "implementation")
+	m = h.pressX(m)
+	if !m.modal.IsOpen() {
+		t.Fatal("expected the confirmation to be open")
+	}
+
+	next, ok := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token:  "token-1",
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: "flow-1",
+	}, flowLaunchStateReading)
+	if !ok {
+		t.Fatal("could not reserve a launch attempt")
+	}
+
+	m = h.confirm(next)
+
+	if len(h.finalizeContexts) != 0 {
+		t.Fatalf("finalize contexts = %#v, want none while the lifecycle holds the Flow", h.finalizeContexts)
+	}
+	if m.status.Text != flowPhaseSessionReleaseBusyStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowPhaseSessionReleaseBusyStatus)
+	}
+}
+
+// The prompt's relaunch clause is wired to the armed drain, not to the record's
+// AutoMode flag — the two differ after every restart — and only an end-to-end
+// press proves which one reached the prompt.
+func TestFlowPhaseSessionReleasePromptNamesAnArmedDrain(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		armed bool
+	}{
+		{name: "drain armed", armed: true},
+		{name: "auto mode on but drain not armed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := stalledReleaseFlowRecord()
+			record.AutoMode = true
+			h := releaseHarness(t, record, stalledReleaseSessionRecords())
+			m := h.selectPhase(h.model(), "implementation")
+			if tc.armed {
+				m = m.armAutoAdvanceDrain(record.FlowID)
+			}
+
+			m = h.pressX(m)
+
+			prompt := m.ConfirmPrompt()
+			if strings.Contains(prompt, "AutoMode") != tc.armed {
+				t.Fatalf("prompt = %q, want AutoMode clause = %v", prompt, tc.armed)
+			}
+		})
+	}
+}
+
 func TestLiveLaunchIDsForPhase(t *testing.T) {
+	// launch-1 appears twice in the phase and again in both halves of the
+	// session read: the result has to name it once, or release would finalize
+	// one launch twice and report a count no phase ever had.
 	phase := flowstore.FlowPhase{
-		LaunchIDs: []string{" launch-1 ", "launch-2", "launch-3", ""},
+		LaunchIDs: []string{" launch-1 ", "launch-2", "launch-3", "", "launch-1"},
 		Sessions: []flowstore.Session{
 			{SessionID: "s-1", LaunchID: "launch-1", Status: "last_seen"},
 			{SessionID: "", LaunchID: "launch-2", Status: "last_seen"},

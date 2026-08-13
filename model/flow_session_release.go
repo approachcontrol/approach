@@ -26,12 +26,21 @@ const (
 	flowPhaseSessionReleaseNoneStatus     = "Flow phase has no unfinished session to release"
 	flowPhaseSessionReleaseTerminalStatus = "Dismiss this phase's Flow terminal before releasing its session"
 	flowPhaseSessionReleaseTmuxStatus     = "Exit this phase's agent in tmux (T attaches) before releasing its session"
+	flowPhaseSessionReleaseClosedStatus   = "Flow is closed; reopen it with C before releasing a session"
+	// Cause-neutral because it covers two of them: a launch the lifecycle is
+	// holding, and a headless mode toggle still being written.
+	flowPhaseSessionReleaseBusyStatus = "Flow has a write in flight; release the session once it settles"
 )
 
-// flowPhaseSessionReleasePromptBudget is what renderConfirmDialog can show.
-// It centres one line without wrapping or truncating it, so a longer prompt is
-// wrapped by the terminal and pushes the status bar out of the frame.
-const flowPhaseSessionReleasePromptBudget = 70
+// flowPhaseSessionReleasePromptBudget is what renderConfirmDialog can show at
+// the narrowest width the renderer assumes. It centres one line without
+// wrapping or truncating it, so a longer prompt is wrapped by the terminal and
+// pushes the status bar out of the frame.
+//
+// ui.Render defaults an unset width to 80, which is the only width floor the
+// renderer states; 76 leaves two columns of padding on each side of a prompt
+// centred in it.
+const flowPhaseSessionReleasePromptBudget = 76
 
 // flowPhaseSessionReleaseLaunchSuffixLen matches the trailing-ID form tmux
 // window names already use, so a launch named in the prompt is recognizable in
@@ -39,15 +48,33 @@ const flowPhaseSessionReleasePromptBudget = 70
 const flowPhaseSessionReleaseLaunchSuffixLen = 8
 
 // flowPhaseSessionReleasable is the footer's half of the gesture, and it is
-// deliberately narrower than the action.
+// deliberately much narrower than the action. The hint is a heuristic, not a
+// proof: nothing cheap can tell a stalled session from a working one outside
+// the embedded backend, so the question it answers is only "is a live session
+// here surprising enough to point at".
 //
-// The running clause is what keeps the hint honest: on a running phase a live
-// session is the normal state, and outside the embedded backend there is no
-// cheap way to tell a working agent from a stalled one, so advertising release
-// there would put "release session" beside every healthy tmux agent. A live
-// session on a non-running phase is structurally inconsistent, which is the
-// anomaly worth advertising. Running-phase stalls are still recoverable — x
-// probes on demand — they are just not advertised.
+// It is answered by status, and `ready` is the only status that answers yes. A
+// live session is unsurprising on every other one:
+//
+//   - running is the state a working agent is supposed to be in.
+//   - completed, blocked, and needs_attention are all set by the agent itself,
+//     from inside its own live session, by `approach flow phase complete`,
+//     `block`, and `needs-attention`. The window between that call and the
+//     agent exiting is ordinary — it is what every Flow phase passes through —
+//     and flow_repair.go says so where it treats a matched live session as
+//     active work whatever the persisted status says.
+//   - skipped is settable the same way through `approach flow phase set`.
+//
+// On a ready phase a live session is at least inconsistent: the phase says
+// nothing has started. Even that is not impossible — a provider whose hook
+// records `ended` per turn can have its phase reset to ready under a still-open
+// agent, and the next turn re-marks the record live — which is why the press
+// path probes tmux and the confirmation calls the sessions unverified rather
+// than trusting this. Advertising is not the guard; it is the invitation, and
+// this keeps it off the states where the invitation would be wrong.
+//
+// Stalls on the other statuses are still recoverable — x probes on demand —
+// they are just not advertised.
 //
 // It is mirror-only, and cheap enough to run per render: an in-memory walk of
 // the phase's sessions and no store I/O. Variant B — a live record the mirror
@@ -56,10 +83,10 @@ const flowPhaseSessionReleaseLaunchSuffixLen = 8
 //
 // "Not resettable today" needs no clause of its own: reset routes through
 // RecoverableRunningPhaseResetReason, which is false unless the phase is
-// running, so on a non-running phase reset is never eligible and the two
-// gestures cannot both apply.
+// running, so on a ready phase reset is never eligible and the two gestures
+// cannot both apply.
 func (m Model) flowPhaseSessionReleasable(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
-	if phase.Status == flowstore.PhaseRunning {
+	if phase.Status != flowstore.PhaseReady {
 		return false
 	}
 	return phaseHasMatchingLiveSession(phase) && m.flowPhaseSessionReleaseAllowed(record, phase)
@@ -69,13 +96,26 @@ func (m Model) flowPhaseSessionReleasable(record flowstore.FlowRecord, phase flo
 // press gate, and both asynchronous hops so a modal is never opened only to be
 // refused one keypress later. Everything in it is model-local and free.
 func (m Model) flowPhaseSessionReleaseAllowed(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
-	return !flowstore.FlowClosed(record) &&
-		!m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, phase.PhaseID) &&
-		// A release must not act while the launch lifecycle holds this Flow, or
-		// while a headless write is in flight: both can be about to persist a
-		// launch ID the probe has not seen.
-		!m.flowLaunchAttemptOccupied(record.FlowID) &&
-		!m.flowHeadlessWritePending(record.FlowID)
+	return m.flowPhaseSessionReleaseRefusal(record, phase) == ""
+}
+
+// flowPhaseSessionReleaseRefusal names the model-local condition that stops a
+// release, or "" when none does. The asynchronous hops re-check it and say what
+// they found: a user who answered a confirmation is owed an answer, and a hop
+// that returned silently there looked exactly like a dropped keypress.
+func (m Model) flowPhaseSessionReleaseRefusal(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+	switch {
+	case m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, phase.PhaseID):
+		return flowPhaseSessionReleaseTerminalStatus
+	case flowstore.FlowClosed(record):
+		return flowPhaseSessionReleaseClosedStatus
+	// A release must not act while the launch lifecycle holds this Flow, or
+	// while a headless write is in flight: both can be about to persist a
+	// launch ID the probe has not seen.
+	case m.flowLaunchAttemptOccupied(record.FlowID), m.flowHeadlessWritePending(record.FlowID):
+		return flowPhaseSessionReleaseBusyStatus
+	}
+	return ""
 }
 
 // flowPhaseSessionReleaseProbeAllowed gates the store walk the key press costs.
@@ -85,6 +125,27 @@ func (m Model) flowPhaseSessionReleaseAllowed(record flowstore.FlowRecord, phase
 // ListFlowSessions lists every record in the store before filtering.
 func (m Model) flowPhaseSessionReleaseProbeAllowed(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
 	return phaseHasLaunchID(phase) && m.flowPhaseSessionReleaseAllowed(record, phase)
+}
+
+// flowPhaseSessionReleasePressRefusal is what a gated press says out loud. A
+// press on a phase nothing is visibly wrong with stays silent, exactly as it did
+// before this gesture existed — only the probe can judge that case, and it has
+// not run. But when the mirror already shows the stall the user is reacting to,
+// silence is the press looking dropped, so the blocker is named instead.
+func (m Model) flowPhaseSessionReleasePressRefusal(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+	if !phaseHasMatchingLiveSession(phase) {
+		return ""
+	}
+	refusal := m.flowPhaseSessionReleaseRefusal(record, phase)
+	// An attached terminal on a running phase is the healthy state, not a
+	// blocker worth naming: "dismiss this phase's Flow terminal" beside a
+	// working agent reads as a nudge to kill it. The refusal still holds — the
+	// worth-announcing case is the resume one, where a stale launch sits beside
+	// a live one on a phase that is no longer running.
+	if refusal == flowPhaseSessionReleaseTerminalStatus && phase.Status == flowstore.PhaseRunning {
+		return ""
+	}
+	return refusal
 }
 
 func phaseHasLaunchID(phase flowstore.FlowPhase) bool {
@@ -102,7 +163,13 @@ func phaseHasLaunchID(phase flowstore.FlowPhase) bool {
 // case, where the probe ran and found nothing.
 func (m Model) handleReleaseSelectedFlowPhaseSession() (tea.Model, tea.Cmd) {
 	record, phase, repoPath, ok := m.selectedFlowPhaseTarget()
-	if !ok || !m.flowPhaseSessionReleaseProbeAllowed(record, phase) {
+	if !ok {
+		return m, nil
+	}
+	if !m.flowPhaseSessionReleaseProbeAllowed(record, phase) {
+		if refusal := m.flowPhaseSessionReleasePressRefusal(record, phase); refusal != "" {
+			return m.setStatus(statusOther, refusal), nil
+		}
 		return m, nil
 	}
 	return m, m.flowPhaseSessionReleaseProbeCmd(repoPath, record.FlowID, phase.PhaseID)
@@ -160,11 +227,8 @@ func (m Model) handleFlowPhaseSessionReleaseProbed(msg flowPhaseSessionReleasePr
 	if strings.TrimSpace(msg.Err) != "" {
 		return m.setStatus(statusOther, msg.Err), nil
 	}
-	if m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, phase.PhaseID) {
-		return m.setStatus(statusOther, flowPhaseSessionReleaseTerminalStatus), nil
-	}
-	if !m.flowPhaseSessionReleaseAllowed(record, phase) {
-		return m, nil
+	if refusal := m.flowPhaseSessionReleaseRefusal(record, phase); refusal != "" {
+		return m.setStatus(statusOther, refusal), nil
 	}
 	if len(msg.LaunchIDs) == 0 {
 		return m.setStatus(statusOther, flowPhaseSessionReleaseNoneStatus), nil
@@ -202,7 +266,10 @@ func flowPhaseSessionReleasePrompt(count int, launchID string, autoRelaunch bool
 	}
 	tail := " Recorded as ended."
 	if autoRelaunch {
-		tail = " AutoMode relaunches it."
+		// The phase, not the session: AutoMode relaunches the phase these
+		// sessions were blocking, and "it" beside a plural count binds to the
+		// wrong noun.
+		tail = " AutoMode relaunches the phase."
 	}
 	return fmt.Sprintf("Release %d unverified %s%s?%s", count, noun, named, tail)
 }
@@ -229,15 +296,12 @@ func (m Model) handleFlowPhaseSessionReleaseConfirmed(msg flowPhaseSessionReleas
 	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
-	if m.hasRunningFlowEmbeddedTerminalForPhase(msg.FlowID, msg.PhaseID) {
-		return m.setStatus(statusOther, flowPhaseSessionReleaseTerminalStatus), nil
-	}
 	record, phase, ok := m.flowPhaseByID(msg.FlowID, msg.PhaseID)
 	if !ok || len(msg.LaunchIDs) == 0 {
 		return m.setStatus(statusOther, flowPhaseSessionReleaseNoneStatus), nil
 	}
-	if !m.flowPhaseSessionReleaseAllowed(record, phase) {
-		return m, nil
+	if refusal := m.flowPhaseSessionReleaseRefusal(record, phase); refusal != "" {
+		return m.setStatus(statusOther, refusal), nil
 	}
 	// Release makes the phase launchable again, so in tmux mode this is where
 	// the live-window probe belongs: it is a subprocess, and it runs once, on a
@@ -258,11 +322,17 @@ func (m Model) releaseFlowPhaseSessionsCmd(msg flowPhaseSessionReleaseConfirmedM
 	finalize := m.finalizeAgentSession
 	confirmed := append([]string(nil), msg.LaunchIDs...)
 	return func() tea.Msg {
+		released := 0
+		// Released rides along on the failure too. Finalization is one call per
+		// launch and the loop stops at the first error, so a partial release is
+		// reachable, and a user told only "failed" would retry against a phase
+		// that has already changed underneath them.
 		fail := func(err error) tea.Msg {
 			return flowPhaseSessionReleaseFailedMsg{
 				RepoPath: msg.RepoPath,
 				FlowID:   msg.FlowID,
 				PhaseID:  msg.PhaseID,
+				Released: released,
 				Err:      fmt.Sprintf("failed to release Flow phase session: %v", err),
 			}
 		}
@@ -274,9 +344,12 @@ func (m Model) releaseFlowPhaseSessionsCmd(msg flowPhaseSessionReleaseConfirmedM
 		for _, launchID := range live {
 			stillLive[launchID] = struct{}{}
 		}
-		released := 0
 		for _, launchID := range confirmed {
-			if _, ok := stillLive[strings.TrimSpace(launchID)]; !ok {
+			// The same trimmed value the intersection matched on. Both halves of
+			// finalization compare trimmed, so this is what makes the ID that is
+			// finalized and the ID that was found live provably the same one.
+			launchID = strings.TrimSpace(launchID)
+			if _, ok := stillLive[launchID]; !ok {
 				continue
 			}
 			if err := finalize(actions.AgentLaunchContext{

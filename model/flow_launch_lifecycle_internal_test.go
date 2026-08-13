@@ -58,6 +58,9 @@ type manualLaunchHarness struct {
 	// that leaves it unset would pass without ever finalizing anything.
 	finalizeContexts []actions.AgentLaunchContext
 	finalizeErr      error
+	// finalizeErrAfter delays finalizeErr until that many calls have succeeded,
+	// which is the only way to reach a partial release.
+	finalizeErrAfter int
 	tmuxWindowLive   bool
 	tmuxWindowProbes [][]string
 
@@ -108,6 +111,9 @@ func (h *manualLaunchHarness) options() Options {
 		},
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			h.finalizeContexts = append(h.finalizeContexts, ctx)
+			if len(h.finalizeContexts) <= h.finalizeErrAfter {
+				return nil
+			}
 			return h.finalizeErr
 		},
 		LaunchRepoTmuxAgent: func(ctx actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error) {
@@ -2082,10 +2088,13 @@ func TestFlowLaunchLiveSessionScope(t *testing.T) {
 			if launched != tc.wantLaunch {
 				t.Fatalf("launch persisted = %v, want %v (status %q)", launched, tc.wantLaunch, m.status.Text)
 			}
-			// Occupancy names itself: "No launchable Flow phase" is false for a
-			// ready phase, and it hides the one gesture that clears the stall.
-			if !tc.wantLaunch && m.status.Text != flowLaunchPhaseSessionLiveStatus {
-				t.Fatalf("status = %q, want %q", m.status.Text, flowLaunchPhaseSessionLiveStatus)
+			// Occupancy names itself, and names the phase: "No launchable Flow
+			// phase" is false for a ready phase, and it hides the one gesture
+			// that clears the stall — which acts on a selection, not on the
+			// Flow g was pressed against.
+			wantStatus := flowLaunchPhaseSessionLiveStatus("implementation")
+			if !tc.wantLaunch && m.status.Text != wantStatus {
+				t.Fatalf("status = %q, want %q", m.status.Text, wantStatus)
 			}
 		})
 	}
