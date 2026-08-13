@@ -3,8 +3,9 @@ package model
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
 // than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase,
-// flowLaunchKindPhaseResume, flowLaunchKindRepair, and
-// flowLaunchKindWorktreeAgent are implemented today and requestFlowLaunch
+// flowLaunchKindPhaseResume, flowLaunchKindRepair, flowLaunchKindAutofix, and
+// flowLaunchKindWorktreeAgent are implemented today. The last one is the
+// generic, phase-untracked Flow-worktree agent.
 // refuses the rest.
 type flowLaunchKind int
 
@@ -14,6 +15,7 @@ const (
 	flowLaunchKindAutoPhase
 	flowLaunchKindPhaseResume
 	flowLaunchKindRepair
+	flowLaunchKindAutofix
 	flowLaunchKindWorktreeAgent
 	flowLaunchKindSavedSessionResume
 )

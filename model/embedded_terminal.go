@@ -71,6 +71,13 @@ const (
 	embeddedTerminalScopeFlow    embeddedTerminalScope = "flow"
 )
 
+type embeddedTerminalDetachPolicy uint8
+
+const (
+	embeddedTerminalDetachAllowed embeddedTerminalDetachPolicy = iota
+	embeddedTerminalDetachNever
+)
+
 type terminalFocus int
 
 const (
@@ -101,6 +108,8 @@ type embeddedTerminalSlot struct {
 	FlowID         string
 	FlowPhaseID    string
 	FlowRepair     bool
+	FlowAgent      bool
+	DetachPolicy   embeddedTerminalDetachPolicy
 	LaunchID       string
 	Terminal       EmbeddedTerminal
 	ID             embeddedTerminalID
@@ -440,6 +449,8 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		FlowID:         flowID,
 		FlowPhaseID:    flowPhaseID,
 		FlowRepair:     ctx.FlowRepair,
+		FlowAgent:      ctx.FlowAgent,
+		DetachPolicy:   flowEmbeddedTerminalDetachPolicy(ctx),
 		LaunchID:       strings.TrimSpace(ctx.LaunchID),
 		Terminal:       term,
 		ID:             id,
@@ -844,6 +855,9 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 	if !ok || slot.Terminal == nil {
 		return m, nil
 	}
+	if slot.DetachPolicy == embeddedTerminalDetachNever {
+		return m.setStatus(statusOther, "Detach unavailable: this Flow terminal must remain attached to preserve occupancy"), nil
+	}
 	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
 	if !ok {
 		return m.setStatus(statusOther, "Detach unavailable: this terminal is not tmux-backed"), nil
@@ -865,6 +879,13 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 		return m.setStatus(statusOther, "Detached embedded terminal, but failed to open terminal: "+err.Error()), nil
 	}
 	return m.setStatus(statusOther, "Detached embedded terminal; opening terminal: "+target), runEmbeddedTerminalDetachHandoff(target, launch)
+}
+
+func flowEmbeddedTerminalDetachPolicy(ctx actions.AgentLaunchContext) embeddedTerminalDetachPolicy {
+	if ctx.FlowAgent {
+		return embeddedTerminalDetachNever
+	}
+	return embeddedTerminalDetachAllowed
 }
 
 func (slot embeddedTerminalSlot) detachHandoffCWD() string {

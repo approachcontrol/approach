@@ -6,14 +6,28 @@ state-root precedence are in `docs/config.md`.
 
 ## Automatic Wiring
 
-CLI agents launched from Approach (worktree `a`/`N`, Flow `g`, or session resume
-`r`) are wired automatically: Approach passes Claude Code or Codex a session-end
+CLI agents launched from Approach (worktree `a`/`N`, Flow `g`/`s`/`R`/`U`, or
+session resume `r`) are wired automatically: Approach passes Claude Code or Codex a session-end
 hook that calls the current Approach binary, and it exports `APPROACH_*` metadata
 so hook records can be associated with the repo, worktree, branch, and launch.
 The exported metadata includes `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
 `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`,
 `APPROACH_COMMIT`, the three `APPROACH_*_STATE_ROOT` roots, and plan or flow
 IDs, paths, and phase fields when available.
+
+The generic Flow-worktree agent started by `s` exports the exact Flow ID but an
+empty Flow phase ID. It is therefore discoverable with the Flow while remaining
+phase-untracked: hook ingestion persists the session record but cannot attach it
+to any phase's launch or session history. Its retained embedded terminal is the
+Flow's in-process owner and cannot be detached; it remains occupancy after the
+agent exits until the slot is dismissed. `U` autofix is a separate prompted
+intent whose headless/tmux routing remains unchanged.
+
+`codex-app` opens via macOS deep link instead; Approach scrubs inherited
+`APPROACH_*` from `open` and includes prompt-only launch metadata with copyable
+`--state-root` command examples. New `codex-app` threads use the repo path for
+Codex App project identity when Approach knows it, while the selected worktree
+remains available in the prompt metadata.
 
 ## Manual Hook Setup
 
@@ -76,8 +90,9 @@ hook event records `last_seen`, which is the status a session keeps until
 something ends it.
 
 An agent Approach launched itself is also finalized when its terminal exits:
-`FinalizeAgentSession` marks the launch ended in the session store and mirrors
-that into the Flow phase. Nothing runs it if Approach is killed first, so the
+`FinalizeAgentSession` marks the launch ended in the session store and, when
+the launch has a phase ID, mirrors that into the Flow phase. Nothing runs it if
+Approach is killed first, so the
 launch's session stays live indefinitely and blocks its Flow phase. `x` on that
 phase in the TUI makes the same call by hand after a confirmation — see
 `docs/tui-guide.md` — which is why a released session is indistinguishable from

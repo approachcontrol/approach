@@ -12,7 +12,7 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 )
 
-// The worktree-agent refusals. Each is new against
+// The autofix refusals. Each is new against
 // noLaunchableFlowPhaseStatus's no-new-strings convention because this launch
 // targets no phase, so "No launchable Flow phase" would be actively false, and
 // because repair's and resume's equivalents each name their own action — reusing
@@ -23,11 +23,12 @@ import (
 // while its agent runs on. The in-flight refusal is separate from it because an
 // attempt still in reading or preparing has no terminal to close.
 const (
-	flowWorktreeAgentTerminalStatus    = "Close or dismiss the existing Flow terminal before running autofix"
-	flowWorktreeAgentInFlightStatus    = "A Flow launch is already in flight"
-	flowWorktreeAgentDriftStatus       = "Flow changed; refresh and try again"
-	flowWorktreeAgentLiveSessionStatus = "Flow already has a running agent session"
-	flowWorktreeAgentCanceledStatus    = "Flow agent launch canceled because a repair terminal is already open for this Flow"
+	flowAutofixTerminalStatus    = "Close or dismiss the existing Flow terminal before running autofix"
+	flowAutofixInFlightStatus    = "A Flow launch is already in flight"
+	flowAutofixCodexAppStatus    = "Flow autofix requires codex or claude; press A to choose one"
+	flowAutofixDriftStatus       = "Flow changed; refresh and try again"
+	flowAutofixLiveSessionStatus = "Flow already has a running agent session"
+	flowAutofixCanceledStatus    = "Flow agent launch canceled because a repair terminal is already open for this Flow"
 )
 
 // autofixPromptForPR composes the bead's literal prompt. Nothing on this path
@@ -96,7 +97,7 @@ func (m Model) handleAutofixSelectedFlowPR() (tea.Model, tea.Cmd) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	next, cmd, _ := m.requestFlowLaunch(flowLaunchIntent{
-		Kind:             flowLaunchKindWorktreeAgent,
+		Kind:             flowLaunchKindAutofix,
 		FlowID:           record.FlowID,
 		Origin:           m.flowLaunchOrigin(),
 		FallbackRepoPath: repoPath,
@@ -104,7 +105,7 @@ func (m Model) handleAutofixSelectedFlowPR() (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
-// admitWorktreeAgentFlowLaunch is this kind's half of the lifecycle's admission.
+// admitAutofixFlowLaunch is this kind's half of the lifecycle's admission.
 // Occupancy lives here rather than in the key handler so requestFlowLaunch stays
 // the lifecycle's only entry point: reserveFlowLaunchAttempt checks the attempt
 // map alone, so an admission that delegated occupancy to its caller would admit
@@ -114,14 +115,14 @@ func (m Model) handleAutofixSelectedFlowPR() (tea.Model, tea.Cmd) {
 // cached record rather than trusting the handler, and refuses that silently
 // exactly as the handler does. The remaining refusals are ordered durable before
 // transient, as repair's are.
-func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
+func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
 	if flowID == "" {
 		return m, nil, false
 	}
 	record, ok := m.cachedFlowRecord(flowID)
-	if !ok || !worktreeAgentFlowEligible(record) {
+	if !ok || !autofixFlowEligible(record) {
 		return m, nil, false
 	}
 	// Repair and phase resume are named before the generic in-flight refusal so
@@ -134,18 +135,23 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 		return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), nil, false
 	}
 	if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
-		return m.setStatus(statusOther, flowWorktreeAgentTerminalStatus), nil, false
+		return m.setStatus(statusOther, flowAutofixTerminalStatus), nil, false
 	}
 	if m.flowLaunchAdmissionOccupied(flowID) {
-		return m.setStatus(statusOther, flowWorktreeAgentInFlightStatus), nil, false
+		return m.setStatus(statusOther, flowAutofixInFlightStatus), nil, false
 	}
 	if m.flowHeadlessWritePending(flowID) {
 		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil, false
 	}
 	command, _, _ := m.flowLaunchAgentSettings()
 	command = agent.Normalize(command)
-	if command == "" {
+	switch {
+	case command == "":
 		return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
+	case command == agent.CommandCodexApp:
+		// A codex-app deep link carries neither a prompt nor approach launch
+		// metadata, so it cannot run autofix at all.
+		return m.setStatus(statusOther, flowAutofixCodexAppStatus), nil, false
 	}
 	if err := agent.Validate(command); err != nil {
 		return m.setStatus(statusOther, err.Error()), nil, false
@@ -177,20 +183,20 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
-// worktreeAgentFlowEligible is the record-shaped half of the eligibility gate,
+// autofixFlowEligible is the record-shaped half of the eligibility gate,
 // the only half a stage without a Model can re-check. Surface visibility and row
 // selection are deliberately not threaded into the read command.
-func worktreeAgentFlowEligible(record flowstore.FlowRecord) bool {
+func autofixFlowEligible(record flowstore.FlowRecord) bool {
 	return strings.TrimSpace(record.FlowID) != "" &&
 		flowManualMergeEligible(record) &&
 		strings.TrimSpace(record.WorktreePath) != ""
 }
 
-// worktreeAgentFlowLaunchReadCmd is the authoritative read. Like resume's it
+// autofixFlowLaunchReadCmd is the authoritative read. Like resume's it
 // skips Preflight entirely: that gates on a launchable phase, renders phase
 // prompt templates, and resolves paths by new-launch rules, none of which apply
 // to a phase-untracked Flow-scoped agent.
-func worktreeAgentFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, token string) tea.Cmd {
+func autofixFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, token string) tea.Cmd {
 	return func() tea.Msg {
 		event := flowLaunchEventMsg{
 			Token:  token,
@@ -206,8 +212,8 @@ func worktreeAgentFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchInte
 		}
 		// PR.Number > 0 is implied by HasPRTarget inside the eligibility gate;
 		// it is re-asserted as belt-and-braces before any prompt is composed.
-		if !worktreeAgentFlowEligible(record) || record.PR.Number <= 0 {
-			event.Err = flowWorktreeAgentDriftStatus
+		if !autofixFlowEligible(record) || record.PR.Number <= 0 {
+			event.Err = flowAutofixDriftStatus
 			return event
 		}
 		records, err := seams.ListFlowSessions(intent.FlowID)
@@ -216,7 +222,7 @@ func worktreeAgentFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchInte
 			return event
 		}
 		if flowRecordHasLivePhaseSession(record, records) {
-			event.Err = flowWorktreeAgentLiveSessionStatus
+			event.Err = flowAutofixLiveSessionStatus
 			return event
 		}
 		repoPath := record.RepoPath
@@ -255,7 +261,7 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 	return false
 }
 
-// worktreeAgentFlowLaunchPrepareCmd takes the cross-process launch/close
+// autofixFlowLaunchPrepareCmd takes the cross-process launch/close
 // reservation and builds the launch context. It never calls AddPhaseLaunchID:
 // the launch is untracked, so it writes no phase state at all, and the closed-
 // Flow race is caught authoritatively by the reservation under the launch/close
@@ -272,7 +278,7 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 //
 // The prompt is composed here from the record prepare validated, so prepare
 // still cannot compose a prompt no stage authorized.
-func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
+func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveTrackedFlowLaunch
 	// Snapshotted at admission, as FlowPhaseLauncher snapshots them, so the route
 	// is still decided against what the attempt was admitted with. Only the
@@ -300,8 +306,8 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		// stage validated. FlowPhaseLauncher.Prepare guards its own refresh the
 		// same way.
 		if !reserved.UpdatedAt.IsZero() {
-			if !worktreeAgentFlowEligible(reserved) || reserved.PR.Number <= 0 {
-				event.Err = flowWorktreeAgentDriftStatus
+			if !autofixFlowEligible(reserved) || reserved.PR.Number <= 0 {
+				event.Err = flowAutofixDriftStatus
 				return event
 			}
 			record = reserved
@@ -336,9 +342,9 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 			PlanPath:         event.PlanPath,
 			FlowID:           record.FlowID,
 			// No FlowPhaseID, no FlowLaunchTracked, no FlowRepair: this is the
-			// generic Flow-worktree agent, and FlowAgent is the explicit signal the
-			// prefill boundary reads rather than inferring it from their absence.
-			FlowAgent:     true,
+			// phase-untracked autofix agent. FlowAutofix is the explicit signal the
+			// prefill boundary reads rather than inferring it from those absences.
+			FlowAutofix:   true,
 			Embedded:      true,
 			Headless:      headless,
 			InitialPrompt: autofixPromptForPR(record.PR.Number),

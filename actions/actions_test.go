@@ -3119,8 +3119,8 @@ func TestAgentLaunchResumeRejectsMissingOrUnsupportedCommand(t *testing.T) {
 	}
 }
 
-func TestShouldPrefillEmbeddedPromptForUntrackedFlowAgent(t *testing.T) {
-	// The Flow-worktree agent the U shortcut starts: Flow-scoped, no phase, not
+func TestShouldPrefillEmbeddedPromptForUntrackedFlowAutofix(t *testing.T) {
+	// The autofix agent the U shortcut starts: Flow-scoped, no phase, not
 	// a repair, and interactive, so its prompt goes to the dock like every other
 	// interactive embedded Flow launch.
 	base := actions.AgentLaunchContext{
@@ -3128,7 +3128,7 @@ func TestShouldPrefillEmbeddedPromptForUntrackedFlowAgent(t *testing.T) {
 		WorktreePath:  "/repo/worktree",
 		WorkingDir:    "/repo/worktree",
 		FlowID:        "flow-1",
-		FlowAgent:     true,
+		FlowAutofix:   true,
 		Embedded:      true,
 		InitialPrompt: "autofix pr #116",
 	}

@@ -569,6 +569,24 @@ func TestIngestHookPersistsUntrackedFlowRepairWithoutAttachingPhase(t *testing.T
 	if record.FlowID != flow.FlowID || record.FlowPhaseID != "" || record.LaunchID != "repair-launch-1" {
 		t.Fatalf("repair session metadata = %#v", record)
 	}
+	generic, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "codex-generic-flow-agent-1",
+		"timestamp": "2026-08-09T18:01:00Z"
+	}`)), sessions.IngestOptions{Env: map[string]string{
+		"APPROACH_LAUNCH_ID":          "generic-flow-agent-launch-1",
+		"APPROACH_REPO_PATH":          "/repo",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_FLOW_ID":            flow.FlowID,
+		"APPROACH_FLOW_PHASE_ID":      "",
+	}})
+	if err != nil {
+		t.Fatalf("IngestHook(generic Flow agent) error = %v", err)
+	}
+	if generic.FlowID != flow.FlowID || generic.FlowPhaseID != "" || generic.LaunchID != "generic-flow-agent-launch-1" {
+		t.Fatalf("generic Flow agent session metadata = %#v", generic)
+	}
 
 	read, err := flowStore.Read(flow.FlowID)
 	if err != nil {
@@ -576,7 +594,7 @@ func TestIngestHookPersistsUntrackedFlowRepairWithoutAttachingPhase(t *testing.T
 	}
 	for _, phase := range read.Phases {
 		if len(phase.LaunchIDs) != 0 || len(phase.Sessions) != 0 {
-			t.Fatalf("repair attached to phase %s: launches=%#v sessions=%#v", phase.PhaseID, phase.LaunchIDs, phase.Sessions)
+			t.Fatalf("untracked Flow session attached to phase %s: launches=%#v sessions=%#v", phase.PhaseID, phase.LaunchIDs, phase.Sessions)
 		}
 	}
 }

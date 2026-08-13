@@ -875,11 +875,14 @@ type AgentLaunchContext struct {
 	// deliberately carry no phase ID so provider hooks retain Flow
 	// discoverability without attaching the session to a phase attempt.
 	FlowRepair bool
-	// FlowAgent marks an untracked Flow-scoped agent session that is neither a
-	// phase launch nor a repair — the Flow-worktree agent the U shortcut starts.
+	// FlowAgent marks the generic untracked Flow-scoped worktree agent started by
+	// s. Its retained terminal is intentionally nondetachable.
 	// Like repair it carries no phase ID, so provider hooks keep Flow
 	// discoverability without attaching the session to a phase attempt.
 	FlowAgent bool
+	// FlowAutofix marks the distinct prompted, PR-gated untracked agent started
+	// by U. It shares prompt delivery mechanics with FlowAgent but not policy.
+	FlowAutofix bool
 	// FlowPhaseTerminal records that the persisted phase kept a terminal
 	// status (completed, skipped) when the launch was recorded, so launch
 	// failures must not regress the phase to needs_attention.
@@ -1111,13 +1114,14 @@ func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
 	// repair", so the boundary stays a predicate on the context rather than an
 	// inference about it.
 	untrackedFlowAgent := ctx.FlowAgent && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked && !ctx.FlowRepair
+	untrackedFlowAutofix := ctx.FlowAutofix && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked && !ctx.FlowRepair
 	return (command == agent.CommandCodex || command == agent.CommandClaude) &&
 		ctx.Embedded &&
 		!ctx.Headless &&
 		ctx.ResumeSessionID == "" &&
 		ctx.InitialPrompt != "" &&
 		ctx.FlowID != "" &&
-		(trackedPhase || untrackedRepair || untrackedFlowAgent)
+		(trackedPhase || untrackedRepair || untrackedFlowAgent || untrackedFlowAutofix)
 }
 
 func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
