@@ -2,6 +2,14 @@ module github.com/approachcontrol/approach
 
 go 1.26.1
 
+// `web/node_modules` lives inside the module tree and some npm packages ship
+// Go files. Filtering them out of `go list ./...` *output* is too late: a Go
+// file importing a package this module does not require makes discovery itself
+// exit nonzero, before any filter can run. `ignore` drops the directory during
+// pattern matching instead. It covers the go command only; `gofmt` does not
+// read go.mod, so `make fmt-check` still needs its own exclusion.
+ignore web/node_modules
+
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0

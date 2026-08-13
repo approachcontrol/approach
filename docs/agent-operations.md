@@ -7,19 +7,28 @@ Build, test, and development workflow for `approach`. `AGENTS.md` links here; ke
 ```bash
 make build          # build bin/approach
 make test           # run all tests
+make fmt-check      # formatting check used by CI
 make run            # build and run the TUI
 go test ./scanner   # run one package
-gofmt -l .          # formatting check used by CI
 ```
 
-CI requires clean `gofmt -l .`, `make test`, and `make build`.
+CI requires `make fmt-check`, `make test`, and `make build`. `web/node_modules`
+is inside the repo tree and can contain Go files from npm packages, so it is
+excluded twice over: the go command skips it via `ignore web/node_modules` in
+`go.mod` (bare `go test ./...` included), while `gofmt` does not read `go.mod`,
+so only `make fmt-check` excludes it — a plain `gofmt -l .` still descends.
+
+The Next.js viewer in `web/` is outside the Go toolchain and has its own CI job
+(`npm ci && npm run lint && npm run typecheck && npm test && npm run build`, run
+from `web/`). Only run it when you change files under `web/`; see
+`web/README.md`.
 
 ## Development Workflow
 
 - TDD by default (red → green → refactor). Tests use real temporary git repositories and command execution, not mocks; `gitquery` also accepts a fake `Runner` for unit-level coverage.
 - Pull latest from main before starting changes, unless a different base is given.
 - Never commit or push directly to main; branch first.
-- Run `gofmt -l .`, `make test`, and `make build` before shipping.
+- Run `make fmt-check`, `make test`, and `make build` before shipping.
 
 ## Beads Task Tracking
 

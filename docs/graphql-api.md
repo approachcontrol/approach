@@ -520,4 +520,9 @@ over a tunnel. That works today with no CORS configuration, and the conditional
 `Host` rule above deliberately keeps it working — a tunnel sends
 `Host: <name>.trycloudflare.com`, which the allowlist would otherwise reject.
 
+`web/` is that consumer: a Next.js app, deployed on Vercel, whose GraphQL calls
+all run in React Server Components so the endpoint and token stay server-side.
+It reaches this API over a tunnel and renders repositories, Flows, and phases.
+Setup, tunnel, and deploy steps are `web/README.md`.
+
 Direct browser access (CORS plus a remote bind) is a follow-up.
