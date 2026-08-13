@@ -421,6 +421,46 @@ func TestStoreMarksLaunchEnded(t *testing.T) {
 	}
 }
 
+// Finalization ends a launch in this store and in the Flow phase mirror as one
+// operation, and ingestion copies APPROACH_LAUNCH_ID into both verbatim. A
+// padded stored ID that matched one half and not the other would leave the
+// launch ended in one place and live in the other — the stall shape that makes
+// a Flow phase unlaunchable.
+func TestStoreMarkLaunchEndedMatchesPaddedLaunchIDs(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	endedAt := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderCodex,
+		SessionID:  "codex-1",
+		LaunchID:   " launch-1 ",
+		Status:     "last_seen",
+		RepoPath:   repoPath,
+		LastSeenAt: endedAt.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+
+	if err := store.MarkLaunchEnded("launch-1", endedAt); err != nil {
+		t.Fatalf("MarkLaunchEnded() error = %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List() returned %d records, want 1", len(records))
+	}
+	if records[0].Status != "ended" {
+		t.Fatalf("padded launch ID was not ended: %#v", records[0])
+	}
+}
+
 func TestStoreMarkLaunchEndedAdvancesResumedLaunch(t *testing.T) {
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
 	if err != nil {

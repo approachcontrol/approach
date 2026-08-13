@@ -54,6 +54,20 @@ type manualLaunchHarness struct {
 	sessionRecords []sessions.SessionRecord
 	sessionsErr    error
 
+	// NewWithOptions defaults FinalizeAgentSession to a no-op, so a release test
+	// that leaves it unset would pass without ever finalizing anything.
+	finalizeContexts []actions.AgentLaunchContext
+	finalizeErr      error
+	// finalizeErrAfter delays finalizeErr until that many calls have succeeded,
+	// which is the only way to reach a partial release.
+	finalizeErrAfter int
+	tmuxWindowLive   bool
+	// tmuxWindowLiveLaunchID answers the probe by its arguments instead of by a
+	// flat bool, which is the only way to tell a guard that checked the right
+	// launches from one that happened to be asked at the right moment.
+	tmuxWindowLiveLaunchID string
+	tmuxWindowProbes       [][]string
+
 	sessionListCalls   int
 	launchReservations int
 	launchReleases     int
@@ -101,6 +115,25 @@ func (h *manualLaunchHarness) options() Options {
 		AgentCommand:        command,
 		LaunchBackend:       h.launchBackend,
 		TmuxLaunchAvailable: func() bool { return h.tmuxAvailable },
+		RepoTmuxLaunchWindowLive: func(_ string, launchIDs ...string) bool {
+			h.tmuxWindowProbes = append(h.tmuxWindowProbes, append([]string(nil), launchIDs...))
+			if h.tmuxWindowLiveLaunchID == "" {
+				return h.tmuxWindowLive
+			}
+			for _, launchID := range launchIDs {
+				if launchID == h.tmuxWindowLiveLaunchID {
+					return true
+				}
+			}
+			return false
+		},
+		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
+			h.finalizeContexts = append(h.finalizeContexts, ctx)
+			if len(h.finalizeContexts) <= h.finalizeErrAfter {
+				return nil
+			}
+			return h.finalizeErr
+		},
 		LaunchRepoTmuxAgent: func(ctx actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error) {
 			h.tmuxContexts = append(h.tmuxContexts, ctx)
 			if h.tmuxLaunchErr != nil {
@@ -2056,6 +2089,20 @@ func TestFlowLaunchLiveSessionScope(t *testing.T) {
 			wantLaunch: false,
 		},
 		{
+			// last_seen is the status a crashed agent actually leaves behind:
+			// statusForPayload writes it for every hook event that is not a
+			// provider's end-of-session, so this is the shape the stall has in
+			// the wild, not the synthetic blank-status one.
+			name:       "never-finalized mirrored session blocks",
+			mirrored:   []flowstore.Session{{SessionID: "s-1", LaunchID: "launch-1", Status: "last_seen"}},
+			wantLaunch: false,
+		},
+		{
+			name:       "never-finalized stored session blocks",
+			stored:     []sessions.SessionRecord{{SessionID: "s-1", LaunchID: "launch-1", FlowID: "flow-1", Status: "last_seen"}},
+			wantLaunch: false,
+		},
+		{
 			name:       "live session for another launch does not block",
 			stored:     []sessions.SessionRecord{{SessionID: "s-2", LaunchID: "launch-stray", FlowID: "flow-1", Status: "running"}},
 			wantLaunch: true,
@@ -2088,9 +2135,13 @@ func TestFlowLaunchLiveSessionScope(t *testing.T) {
 			if launched != tc.wantLaunch {
 				t.Fatalf("launch persisted = %v, want %v (status %q)", launched, tc.wantLaunch, m.status.Text)
 			}
-			// Live-session occupancy preserves the existing launch-refusal text.
-			if !tc.wantLaunch && m.status.Text != noLaunchableFlowPhaseStatus {
-				t.Fatalf("status = %q, want %q", m.status.Text, noLaunchableFlowPhaseStatus)
+			// Occupancy names itself, and names the phase: "No launchable Flow
+			// phase" is false for a ready phase, and it hides the one gesture
+			// that clears the stall — which acts on a selection, not on the
+			// Flow g was pressed against.
+			wantStatus := flowLaunchPhaseSessionLiveStatus("implementation")
+			if !tc.wantLaunch && m.status.Text != wantStatus {
+				t.Fatalf("status = %q, want %q", m.status.Text, wantStatus)
 			}
 		})
 	}

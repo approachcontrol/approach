@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -20,6 +21,24 @@ import (
 // the phase. Occupancy deliberately reuses this text so the migration adds no
 // user-visible strings.
 const noLaunchableFlowPhaseStatus = "No launchable Flow phase"
+
+// flowLaunchPhaseSessionLiveStatus is the one occupancy reason that earns its
+// own string. A phase whose session record never reached "ended" is ready and
+// blocked at once, so "No launchable Flow phase" is both false and unactionable
+// there; naming the condition is what points a stalled user at the release
+// gesture. AutoMode never emits it — its drain short-circuits on the phase
+// mirror long before the read stage — so this is a manual-launch refusal only.
+//
+// It names the phase because the two gestures are scoped differently: g acts on
+// the Flow and the read stage picks its own candidate, while release acts on the
+// selection. Sending a user to press x without saying where sends them to press
+// it on whatever is selected, which for a collapsed Flow row is nothing at all.
+func flowLaunchPhaseSessionLiveStatus(phaseID string) string {
+	if phaseID = strings.TrimSpace(phaseID); phaseID == "" {
+		return "Flow phase has an unfinished session; select it and x releases it"
+	}
+	return fmt.Sprintf("Flow phase %s has an unfinished session; select it and x releases it", phaseID)
+}
 
 // flowLaunchStage names the two asynchronous hops the lifecycle emits. Handoff
 // results and failure persistence arrive on messages that already exist, so
@@ -432,9 +451,10 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			return event
 		}
 		if flowLaunchPhaseSessionOccupied(phase, records) {
-			// A live session on the phase means it is effectively still
-			// running, which is what the existing text already says.
-			event.Err = noLaunchableFlowPhaseStatus
+			// The phase itself is launchable — admission and the candidate
+			// lookup both passed — so the refusal has to name the session, not
+			// the phase, and say how to clear it.
+			event.Err = flowLaunchPhaseSessionLiveStatus(phase.PhaseID)
 			return event
 		}
 		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{
@@ -1097,6 +1117,57 @@ func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []s
 		}
 	}
 	return false
+}
+
+// liveLaunchIDsForPhase enumerates what flowLaunchPhaseSessionOccupied only
+// counts. Session release needs the launch IDs themselves — to name them in a
+// confirmation and to finalize them one by one — and the existing helpers answer
+// bool.
+//
+// It has to reproduce occupancy's skip rules exactly, or the set it returns is
+// not the set that blocks the launch: ID-less sessions skipped, launch IDs
+// trimmed on both sides, and mirror ∪ store, because either half alone can
+// carry the stall. The result is ordered by the phase's own launch list so a
+// prompt naming one launch names the same one on every render.
+func liveLaunchIDsForPhase(phase flowstore.FlowPhase, records []sessions.SessionRecord) []string {
+	launches := make(map[string]struct{}, len(phase.LaunchIDs))
+	ordered := make([]string, 0, len(phase.LaunchIDs))
+	for _, launchID := range phase.LaunchIDs {
+		if launchID = strings.TrimSpace(launchID); launchID == "" {
+			continue
+		}
+		if _, seen := launches[launchID]; seen {
+			continue
+		}
+		launches[launchID] = struct{}{}
+		ordered = append(ordered, launchID)
+	}
+	live := make(map[string]struct{}, len(ordered))
+	mark := func(sessionID, launchID, status string, endedAt time.Time) {
+		if strings.TrimSpace(sessionID) == "" {
+			return
+		}
+		launchID = strings.TrimSpace(launchID)
+		if _, ok := launches[launchID]; !ok {
+			return
+		}
+		if flowSessionLive(status, endedAt) {
+			live[launchID] = struct{}{}
+		}
+	}
+	for _, session := range phase.Sessions {
+		mark(session.SessionID, session.LaunchID, session.Status, session.EndedAt)
+	}
+	for _, record := range records {
+		mark(record.SessionID, record.LaunchID, record.Status, record.EndedAt)
+	}
+	out := make([]string, 0, len(live))
+	for _, launchID := range ordered {
+		if _, ok := live[launchID]; ok {
+			out = append(out, launchID)
+		}
+	}
+	return out
 }
 
 // flowSessionLive is main's liveness half, extracted so the lifecycle and

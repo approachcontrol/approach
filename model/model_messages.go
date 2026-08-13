@@ -573,6 +573,54 @@ type flowPhaseResetFailedMsg struct {
 	Err      string
 }
 
+// flowPhaseSessionReleaseProbedMsg carries the authoritative both-halves answer
+// back to the key press. Err is not optional: ListFlowSessions can fail, and
+// without it a failed probe would be indistinguishable from a phase with
+// nothing to release.
+type flowPhaseSessionReleaseProbedMsg struct {
+	RepoPath  string
+	FlowID    string
+	PhaseID   string
+	LaunchIDs []string
+	Err       string
+}
+
+// flowPhaseSessionReleaseConfirmedMsg carries the probed launch IDs across the
+// confirmation hop, which is what lets the release intersect rather than
+// recompute.
+type flowPhaseSessionReleaseConfirmedMsg struct {
+	RepoPath  string
+	FlowID    string
+	PhaseID   string
+	LaunchIDs []string
+}
+
+type flowPhaseSessionReleasedMsg struct {
+	RepoPath string
+	FlowID   string
+	PhaseID  string
+	Released int
+}
+
+// flowPhaseSessionReleaseFailedMsg carries Released for the same reason the
+// success message does: finalization runs once per launch, so a failure on the
+// second of two leaves the first genuinely ended, and reporting only the error
+// would send the user to retry a phase that has already moved.
+//
+// Finalized covers what Released cannot. One finalize call is itself two writes
+// — the session store, then the phase mirror — so a failure on the second one
+// changed persisted state without advancing Released. Anything that entered
+// finalization is therefore treated as having changed the phase; only a failure
+// before the first call is provably inert.
+type flowPhaseSessionReleaseFailedMsg struct {
+	RepoPath  string
+	FlowID    string
+	PhaseID   string
+	Released  int
+	Finalized bool
+	Err       string
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)
@@ -1847,6 +1895,47 @@ func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Mode
 	}
 	m = m.setStatus(statusOther, errText)
 	return m, nil
+}
+
+// handleFlowPhaseSessionReleased reports what release selected, not what it
+// wrote: both halves of finalization no-op silently when they match nothing, so
+// a successful call proves nothing was persisted. The surface refresh is what
+// shows the truth.
+func (m Model) handleFlowPhaseSessionReleased(msg flowPhaseSessionReleasedMsg) (tea.Model, tea.Cmd) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	phaseID := strings.TrimSpace(msg.PhaseID)
+	if phaseID == "" {
+		phaseID = "phase"
+	}
+	noun := "sessions"
+	if msg.Released == 1 {
+		noun = "session"
+	}
+	m = m.setStatus(statusOther, fmt.Sprintf("Released %d unfinished %s on Flow phase %s", msg.Released, noun, phaseID))
+	return m.startFlowSurfaceFetch()
+}
+
+func (m Model) handleFlowPhaseSessionReleaseFailed(msg flowPhaseSessionReleaseFailedMsg) (tea.Model, tea.Cmd) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to release Flow phase session"
+	}
+	if msg.Released > 0 {
+		errText = fmt.Sprintf("Released %d, then %s", msg.Released, errText)
+	}
+	// A partial release changed the phase, so the surface has to be refetched
+	// even though the gesture failed — and a finalize call that failed part way
+	// through is a partial release too, one Released cannot count.
+	if msg.Released > 0 || msg.Finalized {
+		m = m.setStatus(statusOther, errText)
+		return m.startFlowSurfaceFetch()
+	}
+	return m.setStatus(statusOther, errText), nil
 }
 
 func (m Model) handleFlowDeleteFailed(msg FlowDeleteFailedMsg) (tea.Model, tea.Cmd) {

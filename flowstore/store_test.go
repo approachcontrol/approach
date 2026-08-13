@@ -1690,6 +1690,47 @@ func TestStoreMarkPhaseLaunchEndedUpdatesAttachedFlowSession(t *testing.T) {
 	}
 }
 
+// The mirror half of the same rule the sessions store follows: every reader
+// that decides whether a session still blocks its phase trims, so the write
+// that ends it has to match trimmed too.
+func TestStoreMarkPhaseLaunchEndedMatchesPaddedLaunchIDs(t *testing.T) {
+	root := t.TempDir()
+	endedAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := mustCreateFlow(t, store, "Finalize a padded launch ID")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-1"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{Provider: "codex", SessionID: "session-1", LaunchID: " launch-1 ", Status: "last_seen"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession() error = %v", err)
+	}
+
+	record, err = store.MarkPhaseLaunchEnded(flowstore.PhaseLaunchEndUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "implementation",
+		LaunchID: "launch-1",
+		EndedAt:  endedAt,
+	})
+	if err != nil {
+		t.Fatalf("MarkPhaseLaunchEnded() error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "implementation")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" {
+		t.Fatalf("session = %#v, want the padded launch ended", phase.Sessions)
+	}
+}
+
 func TestStoreMarkPhaseLaunchEndedAdvancesResumedSessionEndTime(t *testing.T) {
 	root := t.TempDir()
 	previousEnd := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)

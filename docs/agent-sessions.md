@@ -77,7 +77,17 @@ Codex hook example:
 
 For Codex hook payloads with `hook_event_name = "Stop"`, Approach records the
 session as ended. Claude hook ingestion also records ended sessions, using the
-payload end time when present and the current time as a fallback.
+payload end time when present and the current time as a fallback. Every other
+hook event records `last_seen`, which is the status a session keeps until
+something ends it.
+
+An agent Approach launched itself is also finalized when its terminal exits:
+`FinalizeAgentSession` marks the launch ended in the session store and mirrors
+that into the Flow phase. Nothing runs it if Approach is killed first, so the
+launch's session stays live indefinitely and blocks its Flow phase. `x` on that
+phase in the TUI makes the same call by hand after a confirmation — see
+`docs/tui-guide.md` — which is why a released session is indistinguishable from
+a cleanly exited one: it is the same write.
 
 `session-hook` loads the normal Approach config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the

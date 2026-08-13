@@ -147,8 +147,9 @@ func TestManualFlowLaunchSkipsEnsureWhenASessionOwnsThePhase(t *testing.T) {
 	if len(h.ensureRecords) != 0 {
 		t.Fatalf("ensure calls = %#v, want none when a live session already owns the phase", h.ensureRecords)
 	}
-	if m.status.Text != noLaunchableFlowPhaseStatus {
-		t.Fatalf("status = %q, want %q", m.status.Text, noLaunchableFlowPhaseStatus)
+	want := flowLaunchPhaseSessionLiveStatus(record.Phases[0].PhaseID)
+	if m.status.Text != want {
+		t.Fatalf("status = %q, want %q", m.status.Text, want)
 	}
 }
 
