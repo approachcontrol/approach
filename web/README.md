@@ -72,14 +72,18 @@ fetching the loopback API on their behalf. That would undo the exact protection
 else.
 
 To reach the dev server from another device, do not drop the flag, and do not
-reuse the `cloudflared` recipe from the section below: those are *public*
-tunnels. That is fine for the API, which checks a bearer token on every request,
-and not fine for this app, which checks nothing — the tunnel would simply publish
-your Flow state at a URL. Forward the port over a channel that authenticates:
+reuse the `cloudflared` or `tailscale funnel` recipes from the section below:
+those are *public* tunnels. That is fine for the API, which checks a bearer
+token on every request, and not fine for this app, which checks nothing — the
+tunnel would simply publish your Flow state at a URL. Use a channel that
+authenticates:
 
 ```bash
 # From the other device. The viewer stays bound to loopback on the host.
 ssh -N -L 3000:127.0.0.1:3000 you@host
+
+# Or, on the host: tailnet-only, gated by your ACLs. Note `serve`, not `funnel`.
+tailscale serve --bg 3000
 ```
 
 An authenticating proxy in front of the tunnel (Cloudflare Access, say) works
@@ -108,8 +112,71 @@ TLS-terminating tunnel in front of it and point `APPROACH_GRAPHQL_URL` at the
 tunnel. Do **not** simply bind `0.0.0.0` and forward a port: that puts the
 token and every Flow record on the wire in the clear.
 
-Set a token whenever the server is reachable off-loopback — `approach serve`
-requires one for any non-loopback bind.
+**Set a token for any tunnel, even though the bind stays loopback.** The
+familiar rule — `approach serve` refuses a non-loopback bind without one — is
+not what forces it here, because the server keeps listening on `127.0.0.1` and
+the tunnel is what reaches the network. The rule that bites is the other one:
+with no token configured the handler falls back to a `Host` allowlist, and a
+tunnel arrives with `Host: <tunnel-host>`, so every request 403s. Configure a
+token and the `Host` check is skipped by design
+(`docs/graphql-api.md`, "Auth posture").
+
+### Tailscale Funnel (recommended)
+
+Funnel publishes one port of a tailnet node at a stable
+`https://<machine>.<tailnet>.ts.net` URL. Vercel itself cannot join a tailnet —
+functions are ephemeral sandboxes with no persistent daemon and no way to hold
+node state across cold starts — so the connection has to be public ingress from
+your machine outward, which is what Funnel is. (`tailscale serve`, the
+tailnet-only sibling, does not help for the same reason.)
+
+Two one-time setup steps in the admin console, or Funnel refuses to start:
+enable **HTTPS Certificates** under DNS, and grant the node the `funnel`
+attribute in the ACL policy.
+
+```json
+"nodeAttrs": [
+  { "target": ["autogroup:member"], "attr": ["funnel"] }
+]
+```
+
+Then:
+
+```bash
+export APPROACH_API_TOKEN="$(openssl rand -hex 32)"
+approach serve --state-root ~/.local/state/approach/sessions/v1
+
+tailscale funnel --bg 8787     # https://<machine>.<tailnet>.ts.net → 127.0.0.1:8787
+tailscale funnel status
+```
+
+`APPROACH_GRAPHQL_URL` becomes
+`https://<machine>.<tailnet>.ts.net/graphql`.
+
+Why this over the cloudflared recipe below:
+
+- **The hostname is stable**, so it survives restarts. A quick tunnel's URL
+  changes every run, and each change means editing the Vercel env var and
+  redeploying.
+- **Tailscale cannot read the traffic.** Funnel relays TLS with SNI passthrough
+  and the certificate is issued to your node, so TLS terminates on the machine
+  running `approach serve`. A cloudflared tunnel terminates TLS at Cloudflare,
+  which puts the bearer token and every Flow record in the clear on their side.
+  With no TLS in `approach serve` itself, that difference is the whole
+  transport story.
+
+Two constraints:
+
+- **Funnel is public. Tailnet ACLs do not apply to it** — that is precisely
+  what separates it from `tailscale serve`. Anyone who knows the hostname
+  reaches `/graphql`, gated only by the token, and `/healthz`, gated by
+  nothing. Treat the token as the sole control, exactly as with a public
+  tunnel.
+- Funnel ingress is limited to ports 443, 8443, and 10000; the local port it
+  proxies to is unrestricted. And the node has to be awake — a sleeping laptop
+  is a 502.
+
+### Cloudflare tunnel
 
 ```bash
 export APPROACH_API_TOKEN="$(openssl rand -hex 32)"
@@ -118,9 +185,9 @@ approach serve --state-root ~/.local/state/approach/sessions/v1
 # Quick tunnel — ephemeral URL, fine for a demo.
 cloudflared tunnel --url http://127.0.0.1:8787
 
-# Named tunnel — stable hostname, recommended, because a quick tunnel's URL
-# changes every run and each change means editing the Vercel env var and
-# redeploying.
+# Named tunnel — prefer this over the quick tunnel above, because a quick
+# tunnel's URL changes every run and each change means editing the Vercel env
+# var and redeploying.
 cloudflared tunnel create approach
 cloudflared tunnel route dns approach approach.example.com
 cloudflared tunnel run --url http://127.0.0.1:8787 approach
@@ -129,6 +196,8 @@ cloudflared tunnel run --url http://127.0.0.1:8787 approach
 Self-hosting `approach serve` behind a reverse proxy (nginx/Caddy with a real
 certificate) works the same way: the app only needs a reachable HTTPS URL that
 proxies to the server, and the token.
+
+### Verify it
 
 Verify the tunnel independently of the app before blaming the app:
 
