@@ -127,10 +127,14 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:   "flow-1",
 		RepoPath: "/dev/alpha",
-		Title:    "Flow with phases",
-		Status:   flowstore.StatusInProgress,
-		Branch:   "flow/with-phases",
-		Headless: true,
+		// An in-progress Flow has a worktree. Leaving it out would send every
+		// launch in this file through the worktree-creation step, which is its
+		// own path with its own tests.
+		WorktreePath: "/dev/alpha-worktrees/flow-with-phases",
+		Title:        "Flow with phases",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/with-phases",
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},

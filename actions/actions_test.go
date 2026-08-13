@@ -844,6 +844,228 @@ func TestCreateFlowWorktree_IncrementsBranchAndPathTogetherOnCollision(t *testin
 	}
 }
 
+func TestAttachFlowWorktree_ChecksOutTheExistingBranch(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err != nil {
+		t.Fatalf("AttachFlowWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feature-login")
+	if result.WorktreePath != expectedPath {
+		t.Fatalf("worktree path = %q, want %q", result.WorktreePath, expectedPath)
+	}
+	if result.Branch != "feature/login" {
+		t.Fatalf("branch = %q, want feature/login", result.Branch)
+	}
+	if got := runOutput(t, result.WorktreePath, "git", "branch", "--show-current"); got != "feature/login" {
+		t.Fatalf("worktree branch = %q, want the recorded branch checked out", got)
+	}
+}
+
+// The sentinel is what lets a caller distinguish "this record names nothing" —
+// where allocating a fresh flow/<slug> is correct — from every other failure.
+func TestAttachFlowWorktree_ReportsMissingBranchAsSentinel(t *testing.T) {
+	repoPath := setupRepo(t)
+
+	_, err := actions.AttachFlowWorktree(repoPath, "never-existed")
+	if !errors.Is(err, actions.ErrFlowBranchMissing) {
+		t.Fatalf("AttachFlowWorktree error = %v, want ErrFlowBranchMissing", err)
+	}
+	if !strings.Contains(err.Error(), "never-existed") {
+		t.Fatalf("AttachFlowWorktree error = %v, want the branch named", err)
+	}
+}
+
+// A branch that is already checked out somewhere is a real failure, not the
+// sentinel: falling back to a fresh branch would strand the recorded one, and
+// adopting the worktree that holds it is how a Flow ends up in the primary
+// checkout.
+func TestAttachFlowWorktree_CheckedOutBranchIsNotTheMissingSentinel(t *testing.T) {
+	repoPath := setupRepo(t)
+	current := runOutput(t, repoPath, "git", "branch", "--show-current")
+
+	_, err := actions.AttachFlowWorktree(repoPath, current)
+	if err == nil {
+		t.Fatal("AttachFlowWorktree error = nil, want the already-checked-out failure")
+	}
+	if errors.Is(err, actions.ErrFlowBranchMissing) {
+		t.Fatalf("AttachFlowWorktree error = %v, want a failure distinct from ErrFlowBranchMissing", err)
+	}
+}
+
+// Git will not check a branch out twice, so a branch that already has a linked
+// worktree is adopted rather than refused: refusing would leave the Flow
+// permanently unlaunchable for the most ordinary reason a record names a branch.
+func TestAttachFlowWorktree_AdoptsAnExistingLinkedWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	existing := filepath.Join(t.TempDir(), "already-here")
+	mustRun(t, repoPath, "git", "worktree", "add", existing, "feature/login")
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err != nil {
+		t.Fatalf("AttachFlowWorktree returned error: %v", err)
+	}
+	// git reports the symlink-free path, which on macOS differs from the one
+	// t.TempDir hands out.
+	wantExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorktreePath != wantExisting {
+		t.Fatalf("worktree path = %q, want the branch's existing worktree %q", result.WorktreePath, wantExisting)
+	}
+	if result.Branch != "feature/login" {
+		t.Fatalf("branch = %q, want feature/login", result.Branch)
+	}
+	conventional := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feature-login")
+	if _, err := os.Stat(conventional); err == nil {
+		t.Fatalf("a second worktree was created at %q, want the existing one adopted", conventional)
+	}
+}
+
+// git keeps listing a worktree whose directory was deleted without a prune, so
+// adoption must not take one: persisting a path that is not there would poison
+// the record permanently, where git's own refusal says to prune.
+func TestAttachFlowWorktree_DoesNotAdoptAPrunedAwayWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	stale := filepath.Join(t.TempDir(), "stale-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", stale, "feature/login")
+	if err := os.RemoveAll(stale); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err == nil {
+		t.Fatalf("AttachFlowWorktree returned %q, want the stale registration refused", result.WorktreePath)
+	}
+	if errors.Is(err, actions.ErrFlowBranchMissing) {
+		t.Fatalf("AttachFlowWorktree error = %v, want a refusal distinct from ErrFlowBranchMissing", err)
+	}
+	if result.WorktreePath != "" {
+		t.Fatalf("worktree path = %q, want nothing adopted", result.WorktreePath)
+	}
+}
+
+// The directory surviving is not proof the registration did: a worktree whose
+// `.git` link alone went missing still lists its branch, and git marks it
+// prunable on the line after. Adopting it would launch an agent into a
+// directory that is not a worktree at all.
+func TestAttachFlowWorktree_DoesNotAdoptAWorktreeWhoseGitLinkIsGone(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	stale := filepath.Join(t.TempDir(), "stale-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", stale, "feature/login")
+	if err := os.Remove(filepath.Join(stale, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err == nil {
+		t.Fatalf("AttachFlowWorktree returned %q, want the prunable registration refused", result.WorktreePath)
+	}
+	if errors.Is(err, actions.ErrFlowBranchMissing) {
+		t.Fatalf("AttachFlowWorktree error = %v, want a refusal distinct from ErrFlowBranchMissing", err)
+	}
+	if result.WorktreePath != "" {
+		t.Fatalf("worktree path = %q, want nothing adopted", result.WorktreePath)
+	}
+}
+
+// A prunable registration must not cost the branch its healthy worktree either:
+// the scan drops that one candidate rather than giving up on the branch.
+func TestAttachFlowWorktree_AdoptsAHealthyWorktreeListedAfterAPrunableOne(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	mustRun(t, repoPath, "git", "branch", "feature/other")
+	stale := filepath.Join(t.TempDir(), "stale-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", stale, "feature/other")
+	if err := os.RemoveAll(stale); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(t.TempDir(), "live-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", live, "feature/login")
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err != nil {
+		t.Fatalf("AttachFlowWorktree returned error: %v", err)
+	}
+	wantLive, err := filepath.EvalSymlinks(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorktreePath != wantLive {
+		t.Fatalf("worktree path = %q, want the branch's live worktree %q", result.WorktreePath, wantLive)
+	}
+}
+
+// The main worktree is the one that is never adopted: running there is the
+// isolation break this whole path exists to prevent, so it refuses instead.
+func TestAttachFlowWorktree_NeverAdoptsTheMainWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	current := runOutput(t, repoPath, "git", "branch", "--show-current")
+
+	result, err := actions.AttachFlowWorktree(repoPath, current)
+	if err == nil {
+		t.Fatalf("AttachFlowWorktree returned %q, want a refusal rather than the primary checkout", result.WorktreePath)
+	}
+	if result.WorktreePath == repoPath {
+		t.Fatal("AttachFlowWorktree adopted the repository root")
+	}
+}
+
+// `git worktree add <path> <tag>` succeeds and leaves a detached HEAD, so a
+// commit-ish that is not a local branch must be refused rather than attached: an
+// agent would otherwise commit onto nothing while the record kept naming a
+// branch that never moved. It is not the missing sentinel either — falling
+// through to a fresh flow/<slug> would silently discard what the user typed.
+func TestAttachFlowWorktree_RefusesARefThatIsNotALocalBranch(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "tag", "v1.0.0")
+
+	_, err := actions.AttachFlowWorktree(repoPath, "v1.0.0")
+	if err == nil {
+		t.Fatal("AttachFlowWorktree error = nil, want a tag refused")
+	}
+	if errors.Is(err, actions.ErrFlowBranchMissing) {
+		t.Fatalf("AttachFlowWorktree error = %v, want a refusal distinct from ErrFlowBranchMissing", err)
+	}
+	if !strings.Contains(err.Error(), "not a local branch") {
+		t.Fatalf("AttachFlowWorktree error = %v, want the reason named", err)
+	}
+}
+
+// Only the path moves on a collision. A directory the user deleted without
+// pruning leaves git holding a registration that a fresh suffix steps past;
+// permanently blocking the phase over it would be a heavy price for a
+// recoverable state.
+func TestAttachFlowWorktree_MovesPastACollidingPath(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	occupied := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feature-login")
+	if err := os.MkdirAll(occupied, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err != nil {
+		t.Fatalf("AttachFlowWorktree returned error: %v", err)
+	}
+	if result.WorktreePath != occupied+"-2" {
+		t.Fatalf("worktree path = %q, want the next free suffix", result.WorktreePath)
+	}
+	if result.Branch != "feature/login" {
+		t.Fatalf("branch = %q, want the recorded branch regardless of the path suffix", result.Branch)
+	}
+	if got := runOutput(t, result.WorktreePath, "git", "branch", "--show-current"); got != "feature/login" {
+		t.Fatalf("worktree branch = %q, want the recorded branch checked out", got)
+	}
+}
+
 func TestCreatePullRequestWorktree_FromNumber(t *testing.T) {
 	localPath, upstreamPath, _ := setupRemoteRepo(t)
 	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "pr change")
