@@ -267,45 +267,29 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 // Flow race is caught authoritatively by the reservation under the launch/close
 // lock.
 //
-// The prompt is composed here from the event's record — the same record the read
-// stage validated and passed through unmodified — so prepare cannot compose a
-// prompt the read did not authorize.
+// Because it writes nothing, the reservation's own record is the only fresh
+// state this launch ever sees, and it is the last read of the Flow before the
+// spawn. Every tracked kind resolves the persisted headless preference from the
+// record its write returns (FlowPhaseLauncher.Prepare); this kind resolves it —
+// and re-checks eligibility — from the reserved record for exactly that reason.
+// Without it a headless toggle landing between the read stage and this
+// reservation would launch in the previous mode, and on the wrong route with it,
+// since a headless launch is never tmux-eligible.
+//
+// The prompt is composed here from the record prepare validated, so prepare
+// still cannot compose a prompt no stage authorized.
 func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveTrackedFlowLaunch
-	ctx := actions.AgentLaunchContext{
-		Command: settings.Command,
-		// The admission token, never a fresh ID: every LaunchID-keyed fence and
-		// the tmux window registry key on it.
-		LaunchID:     msg.Token,
-		RepoPath:     msg.RepoPath,
-		WorktreePath: msg.WorktreePath,
-		// WorkingDir is what actions turns into the agent's cwd, and it is the
-		// worktree by construction: the gate refuses a worktree-less Flow.
-		WorkingDir:       msg.WorktreePath,
-		Branch:           msg.Record.Branch,
-		Commit:           msg.Record.Commit,
-		Model:            settings.Model,
-		ReasoningEffort:  settings.ReasoningEffort,
-		SessionStateRoot: settings.SessionStateRoot,
-		PlanID:           msg.Record.PlanID,
-		PlanPath:         msg.PlanPath,
-		FlowID:           msg.Record.FlowID,
-		// No FlowPhaseID, no FlowLaunchTracked, no FlowRepair: this is the
-		// generic Flow-worktree agent, and FlowAgent is the explicit signal the
-		// prefill boundary reads rather than inferring it from their absence.
-		FlowAgent:     true,
-		Embedded:      true,
-		Headless:      msg.Headless,
-		InitialPrompt: autofixPromptForPR(msg.Record.PR.Number),
-	}
-	// Taken on the Model before the closure runs, as resume does: the route this
-	// launch takes must be the one admission snapshotted.
-	tmuxRoute, tmuxFellBack := m.tmuxLaunchRoute(ctx)
+	// Snapshotted at admission, as FlowPhaseLauncher snapshots them, so the route
+	// is still decided against what the attempt was admitted with. Only the
+	// decision moves into the closure, where Headless is finally resolved.
+	backend := m.launchBackend
+	tmuxAvailable := m.tmuxLaunchAvailable
 	return func() tea.Msg {
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
-		_, release, reserveErr := reserve(msg.FlowID)
+		reserved, release, reserveErr := reserve(msg.FlowID)
 		if reserveErr != nil {
 			event.Err = reserveErr.Error()
 			return event
@@ -314,8 +298,60 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		// advisory launch/close lock; losing it would block every later launch,
 		// close, repair, or resume on this Flow until it timed out.
 		event.Release = release
+		record := msg.Record
+		headless := msg.Headless
+		repoPath := msg.RepoPath
+		// A zero UpdatedAt means no store answered — an injected persistence seam,
+		// or none at all — so it cannot authoritatively replace what the read
+		// stage validated. FlowPhaseLauncher.Prepare guards its own refresh the
+		// same way.
+		if !reserved.UpdatedAt.IsZero() {
+			if !worktreeAgentFlowEligible(reserved) || reserved.PR.Number <= 0 {
+				event.Err = flowWorktreeAgentDriftStatus
+				return event
+			}
+			record = reserved
+			headless = reserved.Headless
+			if reservedRepoPath := strings.TrimSpace(reserved.RepoPath); reservedRepoPath != "" {
+				repoPath = reservedRepoPath
+			}
+			event.Record = record
+			event.Headless = headless
+			event.RepoPath = repoPath
+			event.WorktreePath = record.WorktreePath
+			// The record's plan path verbatim, exactly as the read stage passes it
+			// through: this agent needs no plan body.
+			event.PlanPath = record.PlanPath
+		}
+		ctx := actions.AgentLaunchContext{
+			Command: settings.Command,
+			// The admission token, never a fresh ID: every LaunchID-keyed fence and
+			// the tmux window registry key on it.
+			LaunchID:     msg.Token,
+			RepoPath:     repoPath,
+			WorktreePath: record.WorktreePath,
+			// WorkingDir is what actions turns into the agent's cwd, and it is the
+			// worktree by construction: the gate refuses a worktree-less Flow.
+			WorkingDir:       record.WorktreePath,
+			Branch:           record.Branch,
+			Commit:           record.Commit,
+			Model:            settings.Model,
+			ReasoningEffort:  settings.ReasoningEffort,
+			SessionStateRoot: settings.SessionStateRoot,
+			PlanID:           record.PlanID,
+			PlanPath:         event.PlanPath,
+			FlowID:           record.FlowID,
+			// No FlowPhaseID, no FlowLaunchTracked, no FlowRepair: this is the
+			// generic Flow-worktree agent, and FlowAgent is the explicit signal the
+			// prefill boundary reads rather than inferring it from their absence.
+			FlowAgent:     true,
+			Embedded:      true,
+			Headless:      headless,
+			InitialPrompt: autofixPromptForPR(record.PR.Number),
+		}
 		event.Context = ctx
 		event.Route = flowLaunchRouteEmbedded
+		tmuxRoute, tmuxFellBack := tmuxLaunchRouteFor(backend, tmuxAvailable, ctx)
 		if tmuxRoute {
 			// A tmux window has no dock to prefill and renders its own output,
 			// so clearing Embedded is what sends the prompt to argv instead.

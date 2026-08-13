@@ -651,6 +651,106 @@ func TestWorktreeAgentReadStageIgnoresSessionsOutsideEveryPhase(t *testing.T) {
 	}
 }
 
+// stageWorktreeAgentLaunch presses U and stops between the read stage and
+// prepare, so a test can land a store write in exactly the window the
+// reservation exists to close.
+func (h *manualLaunchHarness) stageWorktreeAgentLaunch(m Model) (Model, tea.Cmd) {
+	h.t.Helper()
+	next, readCmd := m.handleAutofixSelectedFlowPR()
+	m = next.(Model)
+	if readCmd == nil {
+		h.t.Fatal("an admitted press must return the read command")
+	}
+	readMsg, ok := runCommandWithoutWaiting(readCmd)
+	if !ok {
+		h.t.Fatal("the read stage did not settle")
+	}
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
+	if prepareCmd == nil {
+		h.t.Fatal("a successful read must return the prepare command")
+	}
+	return m, prepareCmd
+}
+
+// TestWorktreeAgentPrepareResolvesHeadlessFromTheReservation pins the reason
+// prepare uses the reservation's record rather than the read stage's: this kind
+// writes no phase, so that record is its only fresh read of the Flow before the
+// spawn. A headless toggle landing in between would otherwise launch in the
+// previous mode — and on the wrong route with it, since a headless launch is
+// never tmux-eligible.
+func TestWorktreeAgentPrepareResolvesHeadlessFromTheReservation(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+
+	m, prepareCmd := h.stageWorktreeAgentLaunch(h.model())
+	// h lands while the launch is between stages: the store now says headless.
+	h.record.Headless = true
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("prepare did not settle")
+	}
+	m = h.drainMsg(m, preparedMsg, 0)
+
+	if len(h.tmuxContexts) != 0 {
+		t.Fatalf("a headless launch is not tmux-eligible: %#v", h.tmuxContexts)
+	}
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
+	}
+	if !h.launchContexts[0].Headless {
+		t.Fatalf("ctx = %#v, want the reservation's headless preference", h.launchContexts[0])
+	}
+	if m.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("the installed slot owns the Flow, so the attempt must be released")
+	}
+}
+
+// TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation is the same
+// window as above for eligibility: nothing else re-reads the Flow after the read
+// stage, so a Flow that stops qualifying in it would launch anyway.
+func TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		drift func(*flowstore.FlowRecord)
+	}{
+		{name: "merged", drift: func(r *flowstore.FlowRecord) { r.Status = flowstore.StatusMerged }},
+		{name: "worktree removed", drift: func(r *flowstore.FlowRecord) { r.WorktreePath = "" }},
+		{name: "pr target dropped", drift: func(r *flowstore.FlowRecord) { r.PR = flowstore.PullRequest{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := autofixFlowRecord()
+			h := newManualLaunchHarness(t, record)
+
+			m, prepareCmd := h.stageWorktreeAgentLaunch(h.model())
+			tc.drift(&h.record)
+			preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+			if !ok {
+				t.Fatal("prepare did not settle")
+			}
+			m = h.drainMsg(m, preparedMsg, 0)
+
+			if len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+				t.Fatalf("a drifted Flow must start no agent: %#v %#v", h.launchContexts, h.tmuxContexts)
+			}
+			if got := m.status.Text; got != flowWorktreeAgentDriftStatus {
+				t.Fatalf("status = %q, want %q", got, flowWorktreeAgentDriftStatus)
+			}
+			if len(h.phaseUpdates) != 0 {
+				t.Fatalf("a prepare failure of an untracked launch must persist nothing: %#v", h.phaseUpdates)
+			}
+			if h.launchReleases != 1 {
+				t.Fatalf("launch releases = %d, want the cross-process reservation released", h.launchReleases)
+			}
+			if m.flowLaunchAttemptOccupied(record.FlowID) {
+				t.Fatal("a refused prepare must release the attempt")
+			}
+		})
+	}
+}
+
 func TestWorktreeAgentPrepareRefusesAFlowClosedBetweenReadAndPrepare(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)

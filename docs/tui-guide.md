@@ -709,8 +709,12 @@ On a Flow row or an expanded phase row:
   autofix`, `A Flow launch is already in flight`, `Flow still has an agent running
   in tmux` — and `codex-app` is refused outright with `Flow autofix requires codex
   or claude; press A to choose one`. Like `g`, the fresh record decides: a Flow
-  that loses its PR, its worktree, or its eligibility between the key press and
-  the read is refused with `Flow changed; refresh and try again`, and a live
+  that loses its PR, its worktree, or its eligibility before the agent starts is
+  refused with `Flow changed; refresh and try again` — at the authoritative read,
+  and again at the launch reservation taken immediately before the spawn, which
+  is also where the persisted `h` preference is read for the last time, so a
+  headless toggle made while the launch is in flight still decides how it runs.
+  A live
   session on any non-terminal phase refuses with `Flow already has a running agent
   session`. A stale session on an already-completed phase deliberately does not
   refuse, so one crashed run cannot make `U` permanently dead.
