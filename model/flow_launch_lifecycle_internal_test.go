@@ -79,6 +79,7 @@ type manualLaunchHarness struct {
 	tmuxWindowProbes       [][]string
 
 	sessionListCalls   int
+	readFlowCalls      int
 	launchReservations int
 	launchReleases     int
 	repairReservations int
@@ -186,6 +187,7 @@ func (h *manualLaunchHarness) options() Options {
 			return h.sessionRecords, nil
 		},
 		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			h.readFlowCalls++
 			return h.persistedFlow(strings.TrimSpace(flowID))
 		},
 		// Overridden in every harness model: the default seam runs real git.
@@ -542,6 +544,48 @@ func TestAutoFlowLaunchPreflightFailuresUseTransientAutoStatus(t *testing.T) {
 	}
 }
 
+func TestFlowLaunchAdmissionRejectsRetiredAgentBeforeAllocatingAttempt(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		name := "manual"
+		if auto {
+			name = "auto"
+		}
+		t.Run(name, func(t *testing.T) {
+			record := manualLaunchFlowRecord()
+			record.AutoMode = auto
+			h := newManualLaunchHarness(t, record)
+			m := h.model()
+			// Simulate a retired value reaching the final admission boundary.
+			// Normal construction already maps persisted codex-app to codex.
+			m.agentCommand = "codex-app"
+			launchIDCalls := 0
+			m.launchSeams.NewLaunchID = func() string {
+				launchIDCalls++
+				return "launch-1"
+			}
+
+			if auto {
+				m = h.autoDrain(m, record)
+			} else {
+				m = h.launch(m)
+				if got, want := m.status.Text, `unsupported agent "codex-app"; choose codex or claude`; got != want {
+					t.Fatalf("status = %q, want %q", got, want)
+				}
+			}
+
+			if launchIDCalls != 0 || h.readFlowCalls != 0 {
+				t.Fatalf("rejected launch allocated %d IDs and read %d Flows, want neither", launchIDCalls, h.readFlowCalls)
+			}
+			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+				t.Fatalf("rejected launch persisted state: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("rejected launch retained an in-memory attempt")
+			}
+		})
+	}
+}
+
 func TestAutoFlowLaunchFailureYieldsToDisplayStatus(t *testing.T) {
 	record := autoLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
@@ -640,9 +684,8 @@ func TestAutoFlowLaunchNeverLaunchesAutoreviewRecovery(t *testing.T) {
 // Flow would then be permanently occupied for admission, so AutoMode and manual
 // launch would both refuse it forever with no status and nothing to see in the
 // UI. The manual kind is covered by TestFlowLaunchEmbeddedInstallTransfersOwnership
-// and TestFlowLaunchExternalRouteRetainsOwnershipUntilResult; AutoMode reaches
-// the same two handoffs through a different admission and read stage, so it
-// needs its own pins.
+// while the tmux handoff is covered separately. AutoMode reaches the embedded
+// handoff through a different admission and read stage, so it needs its own pin.
 func TestAutoFlowLaunchSuccessReleasesOwnership(t *testing.T) {
 	t.Run("embedded route hands the Flow to the slot", func(t *testing.T) {
 		record := autoLaunchFlowRecord()
@@ -667,26 +710,6 @@ func TestAutoFlowLaunchSuccessReleasesOwnership(t *testing.T) {
 		}
 	})
 
-	t.Run("external route releases on the agent result", func(t *testing.T) {
-		record := autoLaunchFlowRecord()
-		h := newManualLaunchHarness(t, record)
-		h.agentCommand = "codex-app"
-
-		m := h.autoDrain(h.model(), record)
-
-		if len(h.agentContexts) != 1 {
-			t.Fatalf("external launches = %d, want 1", len(h.agentContexts))
-		}
-		if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
-			t.Fatal("the agent result must release the auto attempt; otherwise the Flow is unlaunchable forever")
-		}
-		if m.flowLaunchAdmissionOccupied(record.FlowID) {
-			t.Fatal("a detached external auto launch leaves nothing owning the Flow")
-		}
-		if h.drainArmed(m, record.FlowID) {
-			t.Fatal("a successful auto launch must leave the drain disarmed")
-		}
-	})
 }
 
 // --- AutoMode lifecycle matrix ---
@@ -1363,28 +1386,6 @@ func TestAutoFlowLaunchDelayedEventsAreIgnored(t *testing.T) {
 	}
 }
 
-func TestAutoFlowLaunchExternalRouteKeepsAutoLaunchContext(t *testing.T) {
-	record := autoLaunchFlowRecord()
-	h := newManualLaunchHarness(t, record)
-	h.agentCommand = "codex-app"
-
-	h.autoDrain(h.model(), record)
-
-	if len(h.agentContexts) != 1 {
-		t.Fatalf("external launches = %d, want 1", len(h.agentContexts))
-	}
-	ctx := h.agentContexts[0]
-	if !ctx.FlowAutoLaunch {
-		t.Fatalf("external auto context = %#v, want FlowAutoLaunch", ctx)
-	}
-	if ctx.Embedded || ctx.FlowLaunchTracked || ctx.Headless {
-		t.Fatalf("external auto context = %#v, want embedded/tracked/headless unset", ctx)
-	}
-	if len(h.launchContexts) != 0 {
-		t.Fatal("the external route must not open an embedded terminal")
-	}
-}
-
 func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 	launchable := manualLaunchFlowRecord()
 	blocked := manualLaunchFlowRecord()
@@ -1506,7 +1507,7 @@ func TestManualFlowLaunchPreservesAdmissionAgentSettings(t *testing.T) {
 
 	// Settings may change while the store read is in flight. This launch must
 	// keep the snapshot that admission validated instead of changing route.
-	m.agentCommand = agent.CommandCodexApp
+	m.agentCommand = agent.CommandClaude
 	readMsg := readCmd()
 	nextModel, prepareCmd := m.Update(readMsg)
 	m = nextModel.(Model)
@@ -2350,37 +2351,6 @@ func TestFlowLaunchCloseBeforeEmbeddedPersistenceStartsNoAgent(t *testing.T) {
 	}
 }
 
-func TestFlowLaunchCloseBeforeExternalPersistenceStartsNoAgent(t *testing.T) {
-	record := manualLaunchFlowRecord()
-	h := newManualLaunchHarness(t, record)
-	h.agentCommand = "codex-app"
-	m := h.model()
-
-	next, readCmd := m.handleLaunchNextFlowPhase()
-	m = next.(Model)
-	readMsg := readCmd()
-	nextModel, prepareCmd := m.Update(readMsg)
-	m = nextModel.(Model)
-	h.reserveLaunchErr = errors.New("flow is closed")
-	preparedMsg := prepareCmd()
-	nextModel, handoffCmd := m.Update(preparedMsg)
-	m = nextModel.(Model)
-	if handoffCmd == nil {
-		t.Fatal("external handoff should return a command that performs final admission")
-	}
-	m = h.drain(m, handoffCmd, 0)
-
-	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
-		t.Fatal("rejected external spawn must release the launch attempt")
-	}
-	if len(h.launchUpdates) != 0 || len(h.agentContexts) != 0 {
-		t.Fatalf("closed Flow external launch state = updates %#v contexts %#v, want none", h.launchUpdates, h.agentContexts)
-	}
-	if got := m.status.Text; !strings.Contains(got, "closed") {
-		t.Fatalf("status = %q, want final-spawn closed rejection", got)
-	}
-}
-
 func TestFlowLaunchEmbeddedInstallTransfersOwnership(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
@@ -2414,71 +2384,6 @@ func TestFlowLaunchEmbeddedInstallTransfersOwnership(t *testing.T) {
 	}
 	if m.ListRequest(ui.ModeFlows) == before {
 		t.Fatal("a successful embedded launch should refresh the visible Flow surface")
-	}
-}
-
-func TestFlowLaunchExternalRouteRetainsOwnershipUntilResult(t *testing.T) {
-	record := manualLaunchFlowRecord()
-	h := newManualLaunchHarness(t, record)
-	h.agentCommand = "codex-app"
-	m := h.model()
-
-	m, cmd := h.press(m)
-	m, cmd = h.step(m, cmd) // read -> preparing
-	m, _ = h.step(m, cmd)   // prepared -> external handoff
-
-	attempt, ok := m.flowLaunchAttempt(record.FlowID)
-	if !ok || attempt.State != flowLaunchStateHandoffPending {
-		t.Fatalf("attempt after external handoff = %#v ok=%v, want handoffPending", attempt, ok)
-	}
-	if len(h.agentContexts) != 1 {
-		t.Fatalf("external launches = %d, want 1", len(h.agentContexts))
-	}
-	ctx := h.agentContexts[0]
-	if ctx.Embedded || ctx.FlowLaunchTracked || ctx.Headless {
-		t.Fatalf("external context = %#v, want embedded/tracked/headless unset", ctx)
-	}
-	if len(h.launchContexts) != 0 {
-		t.Fatal("the external route must not open an embedded terminal")
-	}
-	if ctx.LaunchID != attempt.Token {
-		t.Fatalf("external launch ID %q != attempt token %q", ctx.LaunchID, attempt.Token)
-	}
-
-	stale := ctx
-	stale.LaunchID = "superseded"
-	next, _ := m.handleAgentResultAfterFinalization(AgentResultMsg{LaunchContext: stale, Detached: true}, nil)
-	if _, ok := next.flowLaunchAttempt(record.FlowID); !ok {
-		t.Fatal("a result for a superseded launch ID must not release the attempt")
-	}
-
-	done, _ := m.handleAgentResultAfterFinalization(AgentResultMsg{LaunchContext: ctx, Detached: true}, nil)
-	if _, ok := done.flowLaunchAttempt(record.FlowID); ok {
-		t.Fatal("the matching result must release the attempt")
-	}
-}
-
-func TestFlowLaunchExternalSynchronousErrorReleasesAttempt(t *testing.T) {
-	record := manualLaunchFlowRecord()
-	h := newManualLaunchHarness(t, record)
-	h.agentCommand = "codex-app"
-	h.launchAgentErr = errors.New("agent binary missing")
-
-	m := h.launch(h.model())
-
-	if attempt, ok := m.flowLaunchAttempt(record.FlowID); ok {
-		t.Fatalf("a failed external launch must release the Flow, got %#v", attempt)
-	}
-	if len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
-		t.Fatalf("phase updates = %#v, want one needs_attention update", h.phaseUpdates)
-	}
-	if got := m.status.Text; !strings.Contains(got, "agent binary missing") {
-		t.Fatalf("status = %q, want the launch error", got)
-	}
-	// The Flow must be launchable again.
-	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
-	if _, _, ok := m.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: record.FlowID}); !ok {
-		t.Fatal("the Flow should be launchable again after a released failure")
 	}
 }
 

@@ -728,7 +728,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bottomMode:            bottomMode,
 		contentPane:           contentPane,
 		activeFlowSurface:     activeFlowSurface,
-		agentCommand:          agent.Normalize(opts.AgentCommand),
+		agentCommand:          agent.NormalizeStored(opts.AgentCommand),
 		codexModel:            agent.NormalizeModel(opts.CodexModel),
 		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
 		codexReasoningEffort:  agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
@@ -1025,8 +1025,6 @@ func (m Model) flowModelLabel() string {
 		return modelDisplay(m.ModelFor(command))
 	case agent.CommandClaude:
 		return strings.TrimPrefix(modelDisplay(m.ModelFor(command)), "claude-")
-	case agent.CommandCodexApp:
-		return "app"
 	default:
 		return ""
 	}
@@ -1037,8 +1035,6 @@ func (m Model) flowReasoningEffortLabel() string {
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
 		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
-	case agent.CommandCodexApp:
-		return "effort: app"
 	default:
 		return ""
 	}
@@ -1046,7 +1042,7 @@ func (m Model) flowReasoningEffortLabel() string {
 
 func (m Model) flowAgentShortcutLabel() string {
 	switch command := agent.Normalize(m.agentCommand); command {
-	case agent.CommandCodex, agent.CommandCodexApp, agent.CommandClaude:
+	case agent.CommandCodex, agent.CommandClaude:
 		return command
 	default:
 		return "choose agent"
@@ -2148,10 +2144,7 @@ func (m Model) selectedFlowPhaseResumable() bool {
 	if agent.Validate(provider) != nil {
 		return false
 	}
-	// The codex → codex-app mapping does not change what the validation above
-	// returns — agent.Validate accepts both spellings — and is applied only so
-	// the preview knows which route this phase would actually take.
-	return m.previewPhaseResume(record.FlowID, flowPhaseResumeCommand(provider, m.agentCommand))
+	return m.previewPhaseResume(record.FlowID)
 }
 
 func flowPhaseHasRecoverableRunningSession(phase flowstore.FlowPhase) bool {

@@ -256,8 +256,7 @@ With `backend = "tmux"`:
   `claude --print` buffers all output until it exits, so a self-closing tmux
   window would show nothing. They take the route silently — the fallback note is
   only for launches that wanted tmux and could not have it.
-- Flow repair, the plan launch Flow creation performs, and `codex-app` launches
-  are unchanged.
+- Flow repair and the plan launch Flow creation performs stay embedded.
 
 `docs/tui-guide.md` lists exactly which launches move, what stays put, the
 attach key, and the limitations tmux mode's ownership model carries.
@@ -265,12 +264,12 @@ attach key, and the limitations tmux mode's ownership model carries.
 ### `[agent]`
 
 Stores the selected coding agent for interactive launches. Pressing `A` in Approach
-opens an agent picker for `codex`, `codex-app`, or `claude` and updates this
+opens an agent picker for `codex` or `claude` and updates this
 value immediately, creating the config file if needed.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
+| `command` | string | Supported values: `codex` or `claude`. |
 | `codex_model` | string | Optional Codex CLI model for new launches. Supported values: `default`, `gpt-5.5`, `gpt-5.6-sol`. Empty or `default` omits the Codex override and keeps provider defaults. |
 | `claude_model` | string | Optional Claude Code model for new launches. Supported values: `default`, `claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `minimal`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
@@ -287,8 +286,7 @@ picker. New Codex CLI launches use
 `--model <model>` and `--config
 model_reasoning_effort=<effort>`; new Claude Code launches use
 `--model <model>` and `--effort <effort>`. Session resumes do not receive model
-or effort flags. `codex-app` launches keep app-side/default model and reasoning
-because the current deep-link path cannot carry verified provider settings.
+or effort flags.
 
 These values are also stamped onto every phase of a Flow when it is created, so
 each Flow records the agent, model, and reasoning effort that were in effect at
@@ -419,9 +417,7 @@ start the TUI. Omitted metadata is filled from `APPROACH_AGENT` (provider),
 `APPROACH_LAUNCH_ID`, `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and
 `APPROACH_COMMIT`; for new plans, and for updates that provide a repo or worktree
 location, Approach also resolves best-effort repo, worktree, branch, and commit
-metadata from git. `codex-app` launches do not inherit `APPROACH_*` shell environment variables
-because Approach opens a macOS deep link; they receive prompt-only launch
-metadata instead (see `docs/agent-sessions.md`). The `approach-plan-persist`
+metadata from git. The `approach-plan-persist`
 skill instructs agents on when and how to save plans; its canonical source
 lives in `agent-skills/approach-plan-persist/` for symlinking into user-level
 Codex/Claude skill directories.

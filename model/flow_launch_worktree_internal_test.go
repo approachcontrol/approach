@@ -168,11 +168,6 @@ func TestManualFlowLaunchAnnouncesTheWorktreeOnEveryRoute(t *testing.T) {
 			want:         note,
 		},
 		{
-			name:         "external",
-			agentCommand: "codex-app",
-			want:         "Launched codex-app in a terminal session (" + note + ")",
-		},
-		{
 			name:          "tmux",
 			agentCommand:  "codex",
 			launchBackend: "tmux",

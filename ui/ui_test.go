@@ -3825,11 +3825,11 @@ func TestRender_SelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 		Mode:           1,
 		Overlay:        OverlaySelect,
 		SelectPrompt:   "Choose interactive helper",
-		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "codex-app", Value: "codex-app"}, {Label: "claude", Value: "claude"}},
-		SelectSelected: 2,
+		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
+		SelectSelected: 1,
 	})
 	stripped := ansi.Strip(view)
-	for _, want := range []string{"Choose interactive helper", "codex", "codex-app", "claude"} {
+	for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("select dialog should show %q:\n%s", want, stripped)
 		}

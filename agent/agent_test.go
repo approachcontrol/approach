@@ -7,14 +7,28 @@ import (
 	"github.com/approachcontrol/approach/agent"
 )
 
-func TestNormalizeSupportsCodexApp(t *testing.T) {
-	if got := agent.Normalize("  CoDeX-App  "); got != agent.CommandCodexApp {
-		t.Fatalf("Normalize = %q, want %q", got, agent.CommandCodexApp)
+func TestNormalizeStoredMapsRetiredCommands(t *testing.T) {
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: "  CoDeX-App  ", want: agent.CommandCodex},
+		{command: " CODEX ", want: agent.CommandCodex},
+		{command: " Claude ", want: agent.CommandClaude},
+		{command: " Gemini ", want: "gemini"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			if got := agent.NormalizeStored(tt.command); got != tt.want {
+				t.Fatalf("NormalizeStored(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
 	}
 }
 
-func TestSupportedIncludesCodexApp(t *testing.T) {
-	for _, command := range []string{agent.CommandCodex, agent.CommandCodexApp, agent.CommandClaude} {
+func TestSupportedAgents(t *testing.T) {
+	for _, command := range []string{agent.CommandCodex, agent.CommandClaude} {
 		t.Run(command, func(t *testing.T) {
 			if !agent.Supported(command) {
 				t.Fatalf("expected %q to be supported", command)
@@ -26,15 +40,17 @@ func TestSupportedIncludesCodexApp(t *testing.T) {
 	}
 }
 
-func TestValidateUnsupportedAgentMentionsCodexApp(t *testing.T) {
-	err := agent.Validate("vim")
+func TestValidateRejectsCodexApp(t *testing.T) {
+	if agent.Supported("codex-app") {
+		t.Fatal("retired agent must not be supported")
+	}
+	err := agent.Validate("codex-app")
 	if err == nil {
 		t.Fatal("expected unsupported agent error")
 	}
-	for _, want := range []string{"codex", "codex-app", "claude"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected error %q to mention %q", err.Error(), want)
-		}
+	want := `unsupported agent "codex-app"; choose codex or claude`
+	if err.Error() != want {
+		t.Fatalf("Validate() error = %q, want %q", err, want)
 	}
 }
 
@@ -45,7 +61,6 @@ func TestReasoningEffortChoicesAreProviderSpecific(t *testing.T) {
 	}{
 		{agent.CommandCodex, []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
 		{agent.CommandClaude, []string{"default", "low", "medium", "high", "xhigh", "max"}},
-		{agent.CommandCodexApp, []string{"default"}},
 	}
 
 	for _, tt := range tests {
@@ -83,7 +98,6 @@ func TestModelChoicesAreProviderSpecific(t *testing.T) {
 	}{
 		{agent.CommandCodex, []string{"default", "gpt-5.5", "gpt-5.6-sol"}},
 		{agent.CommandClaude, []string{"default", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5"}},
-		{agent.CommandCodexApp, []string{"default"}},
 	}
 
 	for _, tt := range tests {
@@ -120,8 +134,5 @@ func TestValidateModelRejectsUnsupportedProviderValues(t *testing.T) {
 	}
 	if err := agent.ValidateModel(agent.CommandClaude, " DEFAULT "); err != nil {
 		t.Fatalf("expected default claude model to be accepted, got %v", err)
-	}
-	if err := agent.ValidateModel(agent.CommandCodexApp, "gpt-5.5"); err == nil {
-		t.Fatal("expected codex-app non-default model to be rejected")
 	}
 }

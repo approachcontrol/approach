@@ -103,6 +103,40 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	}
 }
 
+func TestFlowPhaseLauncherPreflightRejectsRetiredAgentBeforeLaunchMutation(t *testing.T) {
+	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+		Phases:       []flowstore.FlowPhase{phase},
+	}
+	launchIDCalls := 0
+	launchUpdates := 0
+	launcher := model.FlowPhaseLauncher{
+		AgentCommand: "codex-app",
+		NewLaunchID: func() string {
+			launchIDCalls++
+			return "launch-1"
+		},
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdates++
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+
+	_, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: phase})
+	if err == nil {
+		t.Fatal("Preflight() error = nil, want retired agent rejection")
+	}
+	if got, want := err.Error(), `unsupported agent "codex-app"; choose codex or claude`; got != want {
+		t.Fatalf("Preflight() error = %q, want %q", got, want)
+	}
+	if launchIDCalls != 0 || launchUpdates != 0 {
+		t.Fatalf("rejected launch generated %d IDs and persisted %d updates, want no mutation", launchIDCalls, launchUpdates)
+	}
+}
+
 func TestFlowPhaseLauncherPrepareRefreshesManualHeadlessPreferenceAfterReservation(t *testing.T) {
 	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
 
@@ -248,7 +282,7 @@ func TestFlowPhaseLauncherStandardTemplateDoesNotReadPlanBody(t *testing.T) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{phase}}, nil
 		},
 		NewLaunchID:     func() string { return "launch-1" },
-		AgentCommand:    "codex-app",
+		AgentCommand:    "codex",
 		PromptTemplates: model.FlowPromptTemplates{Implementation: "Implementation template: {plan_body}"},
 	}
 
@@ -289,7 +323,7 @@ func TestFlowPhaseLauncherGenericTemplateReadsPlanBody(t *testing.T) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{phase}}, nil
 		},
 		NewLaunchID:     func() string { return "launch-1" },
-		AgentCommand:    "codex-app",
+		AgentCommand:    "codex",
 		PromptTemplates: model.FlowPromptTemplates{Generic: "Generic template: {plan_body}"},
 	}
 
@@ -418,21 +452,5 @@ func TestFlowPhaseLauncherPrepareReportsNoFallbackWithoutTmuxMode(t *testing.T) 
 				t.Fatalf("fallback note = %q, want none", result.FallbackNote)
 			}
 		})
-	}
-}
-
-func TestFlowPhaseLauncherPrepareKeepsCodexAppExternalInTmuxMode(t *testing.T) {
-	launcher := tmuxRouteLauncher(t, "tmux", true)
-	launcher.AgentCommand = "codex-app"
-	result, err := launcher.Prepare(tmuxRoutePreparedRequest(t, launcher, false))
-	if err != nil {
-		t.Fatalf("Prepare() error = %v", err)
-	}
-
-	if result.Route != model.FlowPhaseLaunchExternal {
-		t.Fatalf("route = %d, want external", result.Route)
-	}
-	if result.FallbackNote != "" {
-		t.Fatalf("fallback note = %q, want none", result.FallbackNote)
 	}
 }

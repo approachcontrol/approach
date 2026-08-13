@@ -214,7 +214,7 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 	}
 
 	if cfg.Agent.Command != "" {
-		cfg.Agent.Command = agent.Normalize(cfg.Agent.Command)
+		cfg.Agent.Command = agent.NormalizeStored(cfg.Agent.Command)
 		if err := agent.Validate(cfg.Agent.Command); err != nil {
 			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}

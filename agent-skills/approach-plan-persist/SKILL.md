@@ -49,10 +49,7 @@ status; pass `--status` whenever the lifecycle changes.
 When Approach launched a CLI agent it exports `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
 `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and `APPROACH_COMMIT`; the CLI
 fills omitted metadata from those automatically, so you usually only need
-`--title` (and `--plan-id` for edits). `codex-app` launches are different because
-Approach opens a macOS deep link and `APPROACH_*` is not inherited. In that case, use the
-metadata block in the launch prompt: pass the listed `--state-root` to `approach plan`
-commands or export the listed vars before running them.
+`--title` (and `--plan-id` for edits).
 
 ## How to record phases
 

@@ -246,6 +246,9 @@ func (s FlowStarter) promptTemplatesForRequest(req FlowStartRequest) FlowPromptT
 }
 
 func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) {
+	if agent.NormalizeStored(req.AgentCommand) != agent.Normalize(req.AgentCommand) {
+		return FlowStartResult{}, agent.Validate(req.AgentCommand)
+	}
 	flow, err := s.createFlow(flowstore.FlowRecord{
 		Title:        req.Title,
 		Instructions: req.Instructions,

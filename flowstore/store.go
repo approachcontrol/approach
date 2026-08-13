@@ -2865,7 +2865,9 @@ func normalizeRecordBase(record FlowRecord) FlowRecord {
 // readable, and validation belongs to the create boundary.
 func normalizePhaseAgentSettings(phases []FlowPhase) []FlowPhase {
 	for i := range phases {
-		phases[i] = phases[i].withAgentSettings(phases[i].AgentSettings().Normalize())
+		settings := phases[i].AgentSettings().Normalize()
+		settings.Agent = agent.NormalizeStored(settings.Agent)
+		phases[i] = phases[i].withAgentSettings(settings)
 	}
 	return phases
 }

@@ -79,14 +79,6 @@ func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
 	}
 }
 
-func TestRepoTmuxAgentLaunchRejectsNonCLIAgents(t *testing.T) {
-	ctx := tmuxModeContext()
-	ctx.Command = "codex-app"
-	if _, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux")); err == nil {
-		t.Fatal("expected codex-app to be rejected by the tmux route")
-	}
-}
-
 func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	ctx := tmuxModeContext()

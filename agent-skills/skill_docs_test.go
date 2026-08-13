@@ -169,7 +169,6 @@ func TestApproachFlowCreateSkillDocumentsAgentContract(t *testing.T) {
 	})
 	requireContainsAll(t, "independent flow creation", skill, []string{
 		"does not require `APPROACH_FLOW_ID` or `APPROACH_FLOW_PHASE_ID`",
-		"Codex App prompt-only metadata",
 		"ask the user",
 		"absolute",
 	})

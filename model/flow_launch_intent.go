@@ -1,7 +1,5 @@
 package model
 
-import "github.com/approachcontrol/approach/actions"
-
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
 // than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase,
@@ -36,8 +34,7 @@ const (
 type flowLaunchRoute int
 
 const (
-	flowLaunchRouteExternal flowLaunchRoute = iota
-	flowLaunchRouteEmbedded
+	flowLaunchRouteEmbedded flowLaunchRoute = iota + 1
 	// flowLaunchRouteTmux hands the agent to a window in the repo's tmux
 	// session. Ownership is external-style: the window outlives the TUI and
 	// provider hooks own completion.
@@ -47,11 +44,9 @@ const (
 // flowLaunchIntent is what a caller submits. It carries only what the caller
 // knows: everything else — agent settings, prompt templates, phase, headless
 // preference — the lifecycle reads from the Model or the authoritative record.
-// Two fields are exceptions, FallbackRepoPath and ResumeContext, both
-// documented on their fields; each exists because a stage that runs without a
-// Model needs a value only the Model has. ResumeContext is phase resume's
-// alone; FallbackRepoPath is shared by phase resume and repair, which resolve
-// their launch directory against the current repo as a last candidate.
+// FallbackRepoPath exists because a stage that runs without a Model needs the
+// current repo path. Phase resume and repair use it as a last candidate when
+// resolving their launch directory.
 type flowLaunchIntent struct {
 	Kind    flowLaunchKind
 	FlowID  string
@@ -68,9 +63,8 @@ type flowLaunchIntent struct {
 	// persisted ID verbatim — both stores key a session by its raw ID, so
 	// canonicalizing it here would name a session neither store has. Together
 	// they are what the authoritative read re-validates against the fresh
-	// phase. ResumeCommand is the already-resolved agent
-	// command, after the codex → codex-app preference mapping and
-	// agent.Validate. It is deliberately not flowLaunchAgentSettingsSnapshot's
+	// phase. ResumeCommand is the already-validated session provider. It is
+	// deliberately not flowLaunchAgentSettingsSnapshot's
 	// Command: that field carries the agent *setting* a new launch would use,
 	// and a resume follows the session's own provider instead, so the two
 	// genuinely diverge.
@@ -81,12 +75,6 @@ type flowLaunchIntent struct {
 	// because the read command has no Model. The read stage uses the record's
 	// repo path when it has one and this otherwise.
 	FallbackRepoPath string
-	// ResumeContext is the codex-app exception and nothing else. The untracked
-	// navigation command needs a fully built context that no authoritative read
-	// produces, so the resolver hands it over on the intent. The tracked resume
-	// route ignores this field entirely and rebuilds from the record its read
-	// returned.
-	ResumeContext actions.AgentLaunchContext
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way

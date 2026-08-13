@@ -1,6 +1,7 @@
 package flowstore_test
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -7256,6 +7257,11 @@ func TestCreateWithOptionsValidatesPhaseAgentSettings(t *testing.T) {
 			wantErr:  `unsupported agent "gemini"`,
 		},
 		{
+			name:     "retired command",
+			settings: flowstore.PhaseAgentSettings{Agent: "codex-app"},
+			wantErr:  `unsupported agent "codex-app"; choose codex or claude`,
+		},
+		{
 			name:     "unsupported model for command",
 			settings: flowstore.PhaseAgentSettings{Agent: "claude", Model: "gpt-5.5"},
 			wantErr:  `unsupported model "gpt-5.5" for claude`,
@@ -7290,6 +7296,47 @@ func TestCreateWithOptionsValidatesPhaseAgentSettings(t *testing.T) {
 			}, flowstore.CreateOptions{PhaseAgent: tc.settings})
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("CreateWithOptions() error = %v, want error containing %q", err, tc.wantErr)
+			}
+			assertNoSQLiteFlowRows(t, root)
+		})
+	}
+}
+
+func TestCreateWithOptionsRejectsCodexAppAtBothInputBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		record  flowstore.FlowRecord
+		options flowstore.CreateOptions
+	}{
+		{
+			name:    "create default",
+			options: flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{Agent: "codex-app"}},
+		},
+		{
+			name: "declared phase",
+			record: flowstore.FlowRecord{Phases: []flowstore.FlowPhase{{
+				PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan,
+				Status: flowstore.PhasePending, Order: 1, Agent: "codex-app",
+			}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			tc.record.Title = "Rejected legacy command"
+			tc.record.Instructions = "New input must use a supported command."
+			tc.record.RepoPath = filepath.Join(root, "repo")
+			created, err := store.CreateWithOptions(tc.record, tc.options)
+			want := `unsupported agent "codex-app"; choose codex or claude`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("CreateWithOptions() = %#v, %v, want error containing %q", created, err, want)
+			}
+			if created.FlowID != "" {
+				t.Fatalf("CreateWithOptions() returned partial Flow %#v", created)
 			}
 			assertNoSQLiteFlowRows(t, root)
 		})
@@ -7371,6 +7418,81 @@ func TestLegacyFlowRecordWithoutPhaseAgentSettingsStaysClean(t *testing.T) {
 		}
 	}
 	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
+}
+
+func TestStoredCodexAppPhaseAgentNormalizesOnSQLiteReadWithoutRewrite(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title: "Stored legacy agent", Instructions: "Normalize only the read view.",
+		RepoPath: filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record.Phases[0].Agent = "codex-app"
+	if err := writeFlowRecordForTest(root, record); err != nil {
+		t.Fatalf("write legacy SQLite record: %v", err)
+	}
+	before := readSQLiteRecordForTest(t, root, record.FlowID)
+	if !bytes.Contains(before, []byte(`"agent": "codex-app"`)) {
+		t.Fatalf("fixture does not contain retired spelling:\n%s", before)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := read.Phases[0].Agent; got != "codex" {
+		t.Fatalf("Read() phase agent = %q, want codex", got)
+	}
+	listed, err := store.List(flowstore.FlowFilter{RepoPath: record.RepoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].Phases[0].Agent != "codex" {
+		t.Fatalf("List() = %#v, want one Flow normalized to codex", listed)
+	}
+	after := readSQLiteRecordForTest(t, root, record.FlowID)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("Read/List rewrote stored bytes:\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
+func TestStoredCodexAppPhaseAgentNormalizesDuringLegacyImportWithoutRewritingSource(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260813T120000Z-legacy-codex-app"
+	writeRawFlowMeta(t, root, flowID, `
+  "merge": {"status": "pending"},
+  "phases": [
+    {"phase_id": "plan", "title": "Plan", "kind": "plan", "agent": "codex-app", "depends_on": [], "status": "running", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+	legacyPath := filepath.Join(root, "flows", flowID, "meta.json")
+	before, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := read.Phases[0].Agent; got != "codex" {
+		t.Fatalf("Read() phase agent = %q, want codex", got)
+	}
+	after, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("legacy import rewrote source bytes:\nbefore: %s\nafter: %s", before, after)
+	}
 }
 
 func TestMetadataOnlyUpdatePreservesPhaseAgentSettingsOnUnresolvedGraph(t *testing.T) {
@@ -7606,17 +7728,10 @@ func TestPhaseAgentSettingsNormalizeValidateAndIsZero(t *testing.T) {
 			want:     flowstore.PhaseAgentSettings{Agent: "codex"},
 		},
 		{
-			// codex-app carries no provider selection, so an agent-only triple
-			// is the most it can ever capture.
-			name:     "codex-app is a supported agent",
+			name:     "retired agent is rejected without normalization",
 			settings: flowstore.PhaseAgentSettings{Agent: "codex-app"},
 			want:     flowstore.PhaseAgentSettings{Agent: "codex-app"},
-		},
-		{
-			name:     "codex-app rejects a concrete model",
-			settings: flowstore.PhaseAgentSettings{Agent: "codex-app", Model: "gpt-5.5"},
-			want:     flowstore.PhaseAgentSettings{Agent: "codex-app", Model: "gpt-5.5"},
-			wantErr:  `unsupported model "gpt-5.5" for codex-app`,
+			wantErr:  `unsupported agent "codex-app"; choose codex or claude`,
 		},
 		{
 			name:     "default is stored verbatim",
