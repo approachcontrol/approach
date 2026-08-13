@@ -711,8 +711,10 @@ unverified session (…1a2b3c4d)? Recorded as ended.* — because Approach canno
 prove those agents are gone: outside the embedded terminal and tmux there is
 nothing to probe. Confirming records each launch as ended, exactly as a clean
 exit would have, and the phase becomes launchable again. When that Flow's auto
-mode drain is armed in the running process, the prompt says so instead: the next
-poll starts a new agent within a second.
+mode drain is armed in the running process, the prompt says so instead —
+*AutoMode may launch a phase.* — because the next poll starts an agent within a
+second. It stays that vague on purpose: the drain picks its own candidate when
+it runs, which need not be the phase whose session you released.
 
 Release refuses whole while an agent is provably live on the phase — a running
 embedded terminal, or a live tmux window for any of its launches — rather than

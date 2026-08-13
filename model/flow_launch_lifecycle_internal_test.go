@@ -62,7 +62,11 @@ type manualLaunchHarness struct {
 	// which is the only way to reach a partial release.
 	finalizeErrAfter int
 	tmuxWindowLive   bool
-	tmuxWindowProbes [][]string
+	// tmuxWindowLiveLaunchID answers the probe by its arguments instead of by a
+	// flat bool, which is the only way to tell a guard that checked the right
+	// launches from one that happened to be asked at the right moment.
+	tmuxWindowLiveLaunchID string
+	tmuxWindowProbes       [][]string
 
 	sessionListCalls   int
 	launchReservations int
@@ -107,7 +111,15 @@ func (h *manualLaunchHarness) options() Options {
 		TmuxLaunchAvailable: func() bool { return h.tmuxAvailable },
 		RepoTmuxLaunchWindowLive: func(_ string, launchIDs ...string) bool {
 			h.tmuxWindowProbes = append(h.tmuxWindowProbes, append([]string(nil), launchIDs...))
-			return h.tmuxWindowLive
+			if h.tmuxWindowLiveLaunchID == "" {
+				return h.tmuxWindowLive
+			}
+			for _, launchID := range launchIDs {
+				if launchID == h.tmuxWindowLiveLaunchID {
+					return true
+				}
+			}
+			return false
 		},
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			h.finalizeContexts = append(h.finalizeContexts, ctx)

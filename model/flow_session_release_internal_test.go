@@ -606,6 +606,35 @@ func TestFlowPhaseSessionReleaseRefusesWhileAnAgentIsLive(t *testing.T) {
 		}
 	})
 
+	// The pane refreshes on a timer, so the resume can land in the store after
+	// the last fetch. The probe's read carries that launch into the confirmed
+	// set, which means release can finalize it — so the tmux guard has to be
+	// asked about it too, not only about the launches the pane happens to know.
+	t.Run("live tmux window on a launch the pane has not seen", func(t *testing.T) {
+		h := releaseHarness(t, stalledReleaseFlowRecord(), stalledReleaseSessionRecords())
+		h.persistedFlows = []flowstore.FlowRecord{resumedRecord()}
+		h.sessionRecords = append(h.sessionRecords, sessions.SessionRecord{
+			SessionID: "s-2", LaunchID: resumedLaunchID, FlowID: "flow-1", FlowPhaseID: "implementation", Status: "running",
+		})
+		h.launchBackend = config.LaunchBackendTmux
+		h.tmuxAvailable = true
+		h.tmuxWindowLiveLaunchID = resumedLaunchID
+		m := h.selectPhase(h.model(), "implementation")
+
+		m = h.pressX(m)
+		if m.Overlay() != ui.OverlayConfirm {
+			t.Fatalf("overlay = %d, want the confirmation before the tmux probe runs", m.Overlay())
+		}
+		m = h.confirm(m)
+
+		if len(h.finalizeContexts) != 0 {
+			t.Fatalf("release finalized past a live tmux window: %#v", h.finalizeContexts)
+		}
+		if m.status.Text != flowPhaseSessionReleaseTmuxStatus {
+			t.Fatalf("status = %q, want %q", m.status.Text, flowPhaseSessionReleaseTmuxStatus)
+		}
+	})
+
 	t.Run("no probe can see it", func(t *testing.T) {
 		h := releaseHarness(t, resumedRecord(), stalledReleaseSessionRecords())
 		m := h.selectPhase(h.model(), "implementation")

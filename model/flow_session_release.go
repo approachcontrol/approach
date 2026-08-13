@@ -264,6 +264,11 @@ func (m Model) handleFlowPhaseSessionReleaseProbed(msg flowPhaseSessionReleasePr
 // armed for this Flow, not on the record's AutoMode flag, because the drain is
 // disarmed in every case but the one where release really does hand the phase
 // straight back to the next poll.
+//
+// Armed is still Flow-wide: the drain picks its own candidate when it runs, and
+// on a phase that was not blocking one — x on a completed phase whose successor
+// the drain is already queued for — the launch that follows is not this phase's.
+// So the clause claims neither the phase nor the certainty.
 func flowPhaseSessionReleasePrompt(count int, launchID string, autoRelaunch bool) string {
 	noun := "sessions"
 	if count == 1 {
@@ -275,10 +280,10 @@ func flowPhaseSessionReleasePrompt(count int, launchID string, autoRelaunch bool
 	}
 	tail := " Recorded as ended."
 	if autoRelaunch {
-		// The phase, not the session: AutoMode relaunches the phase these
-		// sessions were blocking, and "it" beside a plural count binds to the
-		// wrong noun.
-		tail = " AutoMode relaunches the phase."
+		// A phase, not the session: the drain launches whichever phase it finds
+		// launchable, and "it" beside a plural count binds to the wrong noun
+		// anyway.
+		tail = " AutoMode may launch a phase."
 	}
 	return fmt.Sprintf("Release %d unverified %s%s?%s", count, noun, named, tail)
 }
@@ -315,10 +320,41 @@ func (m Model) handleFlowPhaseSessionReleaseConfirmed(msg flowPhaseSessionReleas
 	// Release makes the phase launchable again, so in tmux mode this is where
 	// the live-window probe belongs: it is a subprocess, and it runs once, on a
 	// confirmation, never in a render-path predicate.
-	if m.tmuxPhaseAgentStillRunning(record, phase, msg.RepoPath) {
+	if m.tmuxPhaseAgentStillRunning(record, releaseTmuxProbePhase(phase, msg.LaunchIDs), msg.RepoPath) {
 		return m.setStatus(statusOther, flowPhaseSessionReleaseTmuxStatus), nil
 	}
 	return m, m.releaseFlowPhaseSessionsCmd(msg)
+}
+
+// releaseTmuxProbePhase widens the tmux probe to cover every launch release
+// could finalize. The confirmed set came from the probe's store read; the phase
+// comes from the pane, which can be a refresh behind it, so probing the pane's
+// launch IDs alone would let a launch that landed in between be finalized
+// without its window ever being checked — the working agent the phase-wide
+// refusal exists to protect.
+//
+// It is a union rather than a replacement because the pane half carries launches
+// the probe deliberately dropped: a launch whose session records say ended can
+// still own a live window, and one list-windows answers for all of them.
+func releaseTmuxProbePhase(phase flowstore.FlowPhase, confirmed []string) flowstore.FlowPhase {
+	seen := make(map[string]struct{}, len(phase.LaunchIDs)+len(confirmed))
+	launchIDs := make([]string, 0, len(phase.LaunchIDs)+len(confirmed))
+	add := func(values []string) {
+		for _, launchID := range values {
+			if launchID = strings.TrimSpace(launchID); launchID == "" {
+				continue
+			}
+			if _, ok := seen[launchID]; ok {
+				continue
+			}
+			seen[launchID] = struct{}{}
+			launchIDs = append(launchIDs, launchID)
+		}
+	}
+	add(phase.LaunchIDs)
+	add(confirmed)
+	phase.LaunchIDs = launchIDs
+	return phase
 }
 
 // releaseFlowPhaseSessionsCmd intersects the confirmed set with what is still
