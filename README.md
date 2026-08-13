@@ -157,13 +157,13 @@ release any held launch reservation. Outside an owned Ready selection, `F`
 retains its normal pull behavior.
 
 Lowercase `f` produces the same parked Flow as the Flows-pane `n` form, so `g`
-on its first phase launches the agent inside the isolated worktree. If the
-initial store write fails, no Flow exists. If worktree creation fails, the Flow
-record remains persisted with its launchable phases blocked and the error is
-shown. A start-metadata failure retains the Flow and reports the created Flow ID
-even though the new worktree could not be recorded; bootstrap failure retains
-the recorded worktree and blocked phases. Reservation, launch-bookkeeping, and
-agent-spawn failures likewise retain the Flow for recovery and release their
+on its first phase launches the agent inside the isolated worktree. For either
+Ready shortcut, an initial store failure leaves no Flow; worktree failure keeps
+the persisted Flow with its launchable phases blocked; start-metadata failure
+keeps the Flow and reports its ID even though the new worktree could not be
+recorded; and bootstrap failure keeps the recorded worktree with blocked
+phases. For uppercase `F`, later reservation, launch-bookkeeping, and
+agent-spawn failures also keep the Flow for recovery and release their
 reservation. A Flow that
 has no worktree at all — one created through `approach flow create` without
 `--worktree-path`, for example — gets one created on its first phase launch

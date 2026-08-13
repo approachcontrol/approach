@@ -343,6 +343,9 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 	createCalls := 0
 	var createdRequest model.FlowStartRequest
 	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		AgentCommand:          "claude",
+		ClaudeModel:           "claude-opus-5",
+		ClaudeReasoningEffort: "high",
 		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
 			readyCalls++
 			if repoPath != "/dev/alpha" {
@@ -414,12 +417,12 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 		t.Fatalf("Flow instructions = %q, want %q", createdRequest.Instructions, wantInstructions)
 	}
 	if createdRequest.RepoPath != "/dev/alpha" || createdRequest.BaseRef != "" ||
-		createdRequest.AgentCommand != "" || createdRequest.Model != "" || createdRequest.ReasoningEffort != "" ||
+		createdRequest.AgentCommand != "claude" || createdRequest.Model != "claude-opus-5" || createdRequest.ReasoningEffort != "high" ||
 		createdRequest.SessionStateRoot != "" || createdRequest.FlowPromptTemplates != (model.FlowPromptTemplates{}) ||
 		createdRequest.FlowPromptTemplatesProvided ||
 		createdRequest.PlanPhaseID != "" || createdRequest.PlanPhaseTitle != "" || createdRequest.PlanPhaseStatus != "" ||
 		createdRequest.Headless != nil {
-		t.Fatalf("Ready create request carried launch metadata: %#v", createdRequest)
+		t.Fatalf("Ready create request did not preserve phase settings without launch-only metadata: %#v", createdRequest)
 	}
 	if got := m.TransientError(); got != "Created flow: bd-selected: Selected work" {
 		t.Fatalf("status = %q", got)
@@ -540,12 +543,12 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 
 	t.Run("failure releases request", func(t *testing.T) {
 		m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{}, errors.New("flow store unavailable")
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-persisted"}}, errors.New("worktree unavailable")
 		})
 		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 		failed := cmd().(model.ReadyBeadFlowCreateFailedMsg)
 		m, _ = update(m, failed)
-		if got := m.TransientError(); got != "flow store unavailable" {
+		if got := m.TransientError(); got != "Flow flow-persisted was created, but preparation failed: worktree unavailable" {
 			t.Fatalf("failure status = %q", got)
 		}
 		_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -613,6 +616,43 @@ func TestBeadsReadyStartKeyOwnershipConsumesUnavailableAndEarlyInput(t *testing.
 			}
 		})
 	}
+
+	t.Run("focused embedded terminal", func(t *testing.T) {
+		fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+		startCalls := 0
+		m := inBeadsPane(newTestModel(testRepos(), model.Options{
+			AgentCommand: "codex",
+			ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+				return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+			},
+			ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+			StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+				startCalls++
+				return model.FlowStartResult{}, nil
+			},
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				return fakeTerm, nil
+			},
+		}))
+		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 30})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+		m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, readyCmd())
+		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			Command: "codex", FlowID: "flow-existing", FlowPhaseID: "implementation",
+		}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+		if cmd != nil || startCalls != 0 {
+			t.Fatalf("terminal-focused F returned %T and started %d Ready flows", cmd, startCalls)
+		}
+		if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "F" {
+			t.Fatalf("terminal-focused F writes = %#v, want forwarded input", fakeTerm.writes)
+		}
+	})
 }
 
 func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.T) {
@@ -877,9 +917,12 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 		},
 	}
 	m, repoPath := setupModelRepoWithOptions(t, model.Options{
-		SessionStateRoot: root,
-		FlowPresets:      []flowstore.Preset{preset},
-		FlowPreset:       &preset,
+		SessionStateRoot:      root,
+		AgentCommand:          "claude",
+		ClaudeModel:           "claude-opus-5",
+		ClaudeReasoningEffort: "high",
+		FlowPresets:           []flowstore.Preset{preset},
+		FlowPreset:            &preset,
 		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 		},
@@ -938,11 +981,96 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 			!equalStrings(phase.DependsOn, spec.DependsOn) {
 			t.Fatalf("phase %d = %#v, want spec %#v status %q", i, phase, spec, wantStatus)
 		}
+		wantAgent := (flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"})
+		if got := phase.AgentSettings(); got != wantAgent {
+			t.Fatalf("phase %d agent settings = %#v, want %#v", i, got, wantAgent)
+		}
 		if len(phase.LaunchIDs) != 0 || len(phase.Sessions) != 0 || phase.Status == flowstore.PhaseRunning ||
 			phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked {
 			t.Fatalf("phase %d has launch/session/startup-failure state: %#v", i, phase)
 		}
 	}
+}
+
+func TestBeadsReadyStartFlowProductionWiringLaunchesFirstActionablePhase(t *testing.T) {
+	root := t.TempDir()
+	preset := flowstore.Preset{
+		Name: "ready-bead-start",
+		Phases: []flowstore.PhaseSpec{
+			{ID: "research", Title: "Research", Kind: flowstore.KindPlan},
+			{ID: "execute", Title: "Execute", Kind: flowstore.KindImplementation, DependsOn: []string{"research"}},
+		},
+	}
+	newStore := func() *flowstore.Store {
+		t.Helper()
+		store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: []flowstore.Preset{preset}})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		return store
+	}
+	m, repoPath := setupModelRepoWithOptions(t, model.Options{
+		SessionStateRoot:     root,
+		AgentCommand:         "codex",
+		CodexModel:           "gpt-5.5",
+		CodexReasoningEffort: "high",
+		FlowPresets:          []flowstore.Preset{preset},
+		FlowPreset:           &preset,
+		FlowPromptTemplates:  model.FlowPromptTemplates{Plan: "Ready plan {flow_id}: {instructions}"},
+		ListReadyBeads:       func(string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil },
+		ListOpenBeads:        func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			return newStore().ReserveAgentLaunch(flowID)
+		},
+	})
+	m = inBeadsPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, readyCmd())
+	_, startCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if startCmd == nil {
+		t.Fatal("Ready F returned nil start command")
+	}
+	raw := startCmd()
+	handoff, ok := raw.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("Ready F returned %T, want FlowEmbeddedLaunchRequestedMsg", raw)
+	}
+	if handoff.LaunchRelease == nil {
+		t.Fatal("production Ready F did not carry its launch reservation")
+	}
+	ctx := handoff.LaunchContext
+	if handoff.ReadyBeadRequest == 0 || handoff.Request != 0 ||
+		ctx.RepoPath != repoPath || ctx.FlowPhaseID != "research" || ctx.PlanPhaseID != "research" ||
+		ctx.FlowPhaseKind != flowstore.KindPlan || !ctx.Embedded || !ctx.FlowLaunchTracked {
+		t.Fatalf("production Ready F handoff = %#v", handoff)
+	}
+	if ctx.Command != "codex" || ctx.Model != "gpt-5.5" || ctx.ReasoningEffort != "high" || !ctx.Headless {
+		t.Fatalf("production Ready F launch settings = %#v", ctx)
+	}
+	if !strings.Contains(ctx.InitialPrompt, "Ready plan "+ctx.FlowID) || !strings.Contains(ctx.InitialPrompt, "bd-1") {
+		t.Fatalf("production Ready F prompt = %q", ctx.InitialPrompt)
+	}
+	record, err := newStore().Read(ctx.FlowID)
+	if err != nil {
+		t.Fatalf("Read(%q) error = %v", ctx.FlowID, err)
+	}
+	phase := phaseByID(record, "research")
+	if phase.Status != flowstore.PhaseRunning || len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != ctx.LaunchID {
+		t.Fatalf("production Ready F phase = %#v", phase)
+	}
+	wantAgent := flowstore.PhaseAgentSettings{Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "high"}
+	if got := phase.AgentSettings(); got != wantAgent {
+		t.Fatalf("production Ready F phase agent settings = %#v, want %#v", got, wantAgent)
+	}
+
+	handoff.LaunchRelease()
+	_, releaseAgain, err := newStore().ReserveAgentLaunch(ctx.FlowID)
+	if err != nil {
+		t.Fatalf("Ready F reservation was not released: %v", err)
+	}
+	releaseAgain()
 }
 
 func equalStrings(left, right []string) bool {
@@ -1136,5 +1264,96 @@ func TestBeadsReadyStartFlowHandoffTransfersAdmissionAndRejectsStaleRepo(t *test
 				}
 			}
 		})
+	}
+}
+
+func TestBeadsReadyStartFlowRejectsDualRequestIdentityWithoutClearingAdmission(t *testing.T) {
+	releases := 0
+	starts := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{
+				Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title},
+				LaunchContext: actions.AgentLaunchContext{
+					Command: "codex", LaunchID: "launch-1", RepoPath: req.RepoPath,
+					WorktreePath: "/dev/alpha-worktrees/flow-1", FlowID: "flow-1", FlowPhaseID: "plan", Headless: true,
+				},
+				LaunchRelease: func() { releases++ },
+			}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, readyCmd())
+	m, startCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	handoff := startCmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	handoff.Request = handoff.ReadyBeadRequest
+	m, _ = update(m, handoff)
+	if releases != 1 || starts != 0 {
+		t.Fatalf("dual-identity handoff released %d times and started %d agents", releases, starts)
+	}
+	_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if retry != nil {
+		t.Fatalf("malformed handoff cleared active Ready admission: %T", retry)
+	}
+}
+
+func TestBeadsReadyStartFlowLateLaunchFailureDoesNotClearNewerRequest(t *testing.T) {
+	releases := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-newer", RepoPath: req.RepoPath, Title: req.Title}}, nil
+		},
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{
+				Flow: flowstore.FlowRecord{FlowID: "flow-started", RepoPath: req.RepoPath, Title: req.Title},
+				LaunchContext: actions.AgentLaunchContext{
+					Command: "codex", LaunchID: "launch-old", RepoPath: req.RepoPath,
+					WorktreePath: "/dev/alpha-worktrees/flow-started", FlowID: "flow-started",
+					FlowPhaseID: "plan", FlowPhaseKind: flowstore.KindPlan, Headless: true,
+				},
+				LaunchRelease: func() { releases++ },
+			}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return nil, errors.New("embedded open failed")
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, readyCmd())
+	m, startCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	handoff := startCmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	m, failureCmd := update(m, handoff)
+	if failureCmd == nil || releases != 1 {
+		t.Fatalf("failed launch returned %T and released reservation %d times", failureCmd, releases)
+	}
+	m, newerCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if newerCmd == nil {
+		t.Fatal("accepted handoff did not allow a newer Ready request")
+	}
+	m, _ = update(m, failureCmd())
+	_, duplicate := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if duplicate != nil {
+		t.Fatalf("late launch failure cleared newer Ready admission: %T", duplicate)
 	}
 }

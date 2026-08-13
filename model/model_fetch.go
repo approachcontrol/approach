@@ -657,12 +657,16 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 }
 
 func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64, intent readyBeadFlowIntent) tea.Cmd {
+	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	if intent == readyBeadFlowCreateOnly {
 		return func() tea.Msg {
 			result, err := m.createFlow(FlowStartRequest{
-				RepoPath:     repoPath,
-				Title:        title,
-				Instructions: instructions,
+				RepoPath:        repoPath,
+				Title:           title,
+				Instructions:    instructions,
+				AgentCommand:    command,
+				Model:           launchModel,
+				ReasoningEffort: reasoningEffort,
 			})
 			if err != nil {
 				return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
@@ -670,7 +674,6 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
 		}
 	}
-	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
 			RepoPath:                    repoPath,

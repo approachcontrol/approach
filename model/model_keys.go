@@ -1965,7 +1965,7 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 		errText = "Unable to create flow"
 	}
 	if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
-		errText = fmt.Sprintf("Flow %s was created, but start failed: %s", flowID, errText)
+		errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
 	}
 	m = m.setStatus(statusOther, errText)
 	if m.flowRefreshSurfaceVisible() {
