@@ -2448,8 +2448,20 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	}
 	// A resumed agent lands in the same worktree a phase-untracked worktree agent
 	// is working in, and no phase records that one, so it needs the Flow-scoped
-	// half too. Same codex-app exemption: that route opens no tmux window.
-	if intent.ResumeCommand != agent.CommandCodexApp && m.tmuxWorktreeAgentStillRunning(record, record.WorktreePath) {
+	// half too.
+	//
+	// No codex-app exemption here, unlike the phase probe above. That one is
+	// exempt because a codex-app resume opens no tmux window of its own; this one
+	// asks the opposite question — whether an autofix window is *already* open —
+	// and the answer does not depend on the route the resume takes. It is also
+	// the case that most needs asking: admitPhaseResumeFlowLaunch returns the
+	// codex-app navigation command before its occupancy check, so nothing else
+	// stands between `r` and a worktree the autofix agent is still editing.
+	//
+	// The subprocess stays off the common path regardless:
+	// tmuxWorktreeAgentStillRunning reads the registry first and only shells out
+	// for a Flow that actually launched a worktree agent in this process.
+	if m.tmuxWorktreeAgentStillRunning(record, record.WorktreePath) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	intent.Origin = m.flowLaunchOrigin()

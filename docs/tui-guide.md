@@ -661,7 +661,11 @@ On a Flow row or an expanded phase row:
   existing Flow terminal before resuming this phase`; `r` is withdrawn from the
   footer for exactly that case. Any competing lifecycle launch — including a
   repair — or an open repair terminal refuses silently, and `codex-app` resumes
-  bypass occupancy entirely. A different live session on the same phase refuses
+  bypass occupancy entirely — with one exception: a live `U` autofix window in
+  tmux mode refuses every resume, `codex-app` included, with `Flow still has an
+  agent running in tmux`. That probe asks whether an autofix agent is already in
+  the worktree, which does not depend on how the resume itself launches, and
+  occupancy would otherwise let a `codex-app` resume in beside it. A different live session on the same phase refuses
   with `Flow phase already has a running session`; the session being resumed does
   not count against itself, which is what keeps `r` open for a phase whose
   agent died without recording an end. That exemption is keyed on the store's
