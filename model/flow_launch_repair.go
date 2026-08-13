@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,12 +43,33 @@ const (
 // only one of them would hand the user a command that fails. The phase in
 // particular cannot be inferred — repair's rule is Flow-scoped, so the phase
 // holding the live session is usually not the one the user pressed R to unblock.
-// docs/tui-guide.md covers the case where the phase has since moved off running
-// and reset needs a `phase set` first.
-func flowRepairLiveSessionStatus(flowID, phaseID string) string {
-	return fmt.Sprintf(
-		"Flow phase %s already has a running session; if its agent is gone, clear it with approach flow phase reset --flow-id %s --phase-id %s",
-		phaseID, flowID, phaseID)
+//
+// The remedy is also branched on the phase's status, because reset alone is only
+// correct for one of the three cases. The occupancy rule deliberately does not
+// filter by status, so this message is raised for phases that have already moved
+// off running, and flowstore.ResetRecoverableRunningPhase refuses every one of
+// them with `flow phase reset requires running recoverable phase`. Where the
+// transition table can still reach running the message prepends the `phase set`
+// that makes reset legal; where it cannot — pending, which is where a reset that
+// left an older launch's live session behind lands the phase — no command
+// clears it, and claiming otherwise would be the same broken remedy one step
+// further along. docs/tui-guide.md covers all three.
+func flowRepairLiveSessionStatus(flowID string, phase flowstore.FlowPhase) string {
+	reset := fmt.Sprintf("approach flow phase reset --flow-id %s --phase-id %s", flowID, phase.PhaseID)
+	switch {
+	case phase.Status == flowstore.PhaseRunning:
+		return fmt.Sprintf(
+			"Flow phase %s already has a running session; if its agent is gone, clear it with %s",
+			phase.PhaseID, reset)
+	case slices.Contains(flowstore.AllowedNextPhaseStatuses(phase.Status), flowstore.PhaseRunning):
+		return fmt.Sprintf(
+			"Flow phase %s already has a running session and is %s; if its agent is gone, clear it with approach flow phase set --flow-id %s --phase-id %s --status running, then %s",
+			phase.PhaseID, phase.Status, flowID, phase.PhaseID, reset)
+	default:
+		return fmt.Sprintf(
+			"Flow phase %s already has a running session and is %s; reset needs a running phase, so this phase's session metadata has to be corrected directly",
+			phase.PhaseID, phase.Status)
+	}
 }
 
 // repairFlowLaunchIntent is what the R key submits. An empty Flow ID is the
@@ -218,11 +240,11 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 			event.Err = err.Error()
 			return event
 		}
-		if phaseID, occupied := flowRepairPhaseSessionOccupied(record, records); occupied {
+		if phase, occupied := flowRepairPhaseSessionOccupied(record, records); occupied {
 			// The intent's Flow ID, not the record's: admission stamped it, the
 			// read resolved this record from it, and it is the exact string
 			// `approach flow read --flow-id` already takes.
-			event.Err = flowRepairLiveSessionStatus(intent.FlowID, phaseID)
+			event.Err = flowRepairLiveSessionStatus(intent.FlowID, phase)
 			return event
 		}
 		repoPath, worktreePath, ok := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, intent.FallbackRepoPath)
@@ -283,17 +305,18 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 // likewise excluded, so a never-finalized repair session cannot permanently
 // block future repairs.
 //
-// The matching phase ID is returned, not just the fact of a match: the refusal
-// names it, because the CLI escape is per phase. Iteration follows the record's
-// own phase order so a Flow with two occupied phases reports the same one every
-// press.
-func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessions.SessionRecord) (string, bool) {
+// The matching phase is returned, not just the fact of a match: the refusal
+// names its ID, because the CLI escape is per phase, and branches on its status,
+// because which CLI escape is even legal depends on it. Iteration follows the
+// record's own phase order so a Flow with two occupied phases reports the same
+// one every press.
+func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessions.SessionRecord) (flowstore.FlowPhase, bool) {
 	for _, phase := range flowstore.OrderedPhases(record.Phases) {
 		if flowLaunchPhaseSessionOccupied(phase, records) {
-			return phase.PhaseID, true
+			return phase, true
 		}
 	}
-	return "", false
+	return flowstore.FlowPhase{}, false
 }
 
 // repairFlowLaunchPrepareCmd takes the cross-process repair reservation and

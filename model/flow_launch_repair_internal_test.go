@@ -176,7 +176,11 @@ func TestFlowRepairLaunchReadRefusals(t *testing.T) {
 				return record
 			},
 			sessions: []sessions.SessionRecord{liveRepairSessionRecord("flow-1", "launch-1")},
-			wantErr:  flowRepairLiveSessionStatus("flow-1", "implementation"),
+			// The fixture phase is blocked, so the remedy is the two-step one.
+			wantErr: flowRepairLiveSessionStatus("flow-1", flowstore.FlowPhase{
+				PhaseID: "implementation",
+				Status:  flowstore.PhaseBlocked,
+			}),
 		},
 		{
 			// The named trap, asserted as intended behaviour. A running phase
@@ -190,7 +194,10 @@ func TestFlowRepairLaunchReadRefusals(t *testing.T) {
 				return awaitingPhase(record)
 			},
 			sessions: []sessions.SessionRecord{liveRepairSessionRecord("flow-1", "launch-1")},
-			wantErr:  flowRepairLiveSessionStatus("flow-1", "implementation"),
+			wantErr: flowRepairLiveSessionStatus("flow-1", flowstore.FlowPhase{
+				PhaseID: "implementation",
+				Status:  flowstore.PhaseRunning,
+			}),
 		},
 		{
 			// An ended store record is not occupancy, so the same stale launch
@@ -305,7 +312,7 @@ func TestFlowRepairRefusesWhenAnyPhaseHasALiveSession(t *testing.T) {
 	// The refusal names the phase the live session belongs to, not the gated
 	// phase the user is trying to unblock, because `approach flow phase reset`
 	// takes that phase ID.
-	if want := flowRepairLiveSessionStatus(record.FlowID, "implementation"); m.status.Text != want {
+	if want := flowRepairLiveSessionStatus(record.FlowID, record.Phases[0]); m.status.Text != want {
 		t.Fatalf("status = %q, want %q", m.status.Text, want)
 	}
 	// Runnability is the point of the remedy, and `approach flow phase reset`
@@ -320,6 +327,57 @@ func TestFlowRepairRefusesWhenAnyPhaseHasALiveSession(t *testing.T) {
 	// refuses. Pinned because the docs describe this exact asymmetry.
 	if !m.selectedFlowRepairReady() {
 		t.Fatal("the footer answers from the cached record; a session-store refusal cannot withdraw R")
+	}
+}
+
+// The remedy has to be legal for the status it is printed against, which is the
+// whole reason this refusal names a command at all. The occupancy rule does not
+// filter by status, so all three branches are reachable, and the literal strings
+// are pinned rather than round-tripped through the formatter: the bug this
+// guards against was a runnable-looking command that flowstore always refuses.
+func TestFlowRepairLiveSessionRemedyMatchesPhaseStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{
+			// ResetRecoverableRunningPhase accepts only running, so this is the
+			// one status where reset alone is the whole remedy.
+			name:   "running resets directly",
+			status: flowstore.PhaseRunning,
+			want:   "Flow phase implementation already has a running session; if its agent is gone, clear it with approach flow phase reset --flow-id flow-1 --phase-id implementation",
+		},
+		{
+			// The agent moved the phase off running before it died. Reset would
+			// refuse with `flow phase reset requires running recoverable phase`,
+			// so the message has to carry the transition back first.
+			name:   "blocked returns to running first",
+			status: flowstore.PhaseBlocked,
+			want:   "Flow phase implementation already has a running session and is blocked; if its agent is gone, clear it with approach flow phase set --flow-id flow-1 --phase-id implementation --status running, then approach flow phase reset --flow-id flow-1 --phase-id implementation",
+		},
+		{
+			name:   "needs attention returns to running first",
+			status: flowstore.PhaseNeedsAttention,
+			want:   "Flow phase implementation already has a running session and is needs_attention; if its agent is gone, clear it with approach flow phase set --flow-id flow-1 --phase-id implementation --status running, then approach flow phase reset --flow-id flow-1 --phase-id implementation",
+		},
+		{
+			// Where a reset that stranded an older launch's live session lands
+			// the phase. pending -> running is not in the transition table, so
+			// there is no command to print and the message must not invent one.
+			name:   "pending has no command remedy",
+			status: flowstore.PhasePending,
+			want:   "Flow phase implementation already has a running session and is pending; reset needs a running phase, so this phase's session metadata has to be corrected directly",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			phase := flowstore.FlowPhase{PhaseID: "implementation", Status: tc.status}
+			if got := flowRepairLiveSessionStatus("flow-1", phase); got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

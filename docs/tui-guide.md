@@ -675,7 +675,12 @@ any of the Flow's phase launches, with `Flow phase <phase-id> already has a
 running session; if its agent is gone, clear it with approach flow phase reset
 --flow-id <flow-id> --phase-id <phase-id>`. The message carries its own remedy,
 spelled out so it runs as printed, because unlike the identically-caused resume
-refusal repair has no in-app move left — see the trap below. It names the phase
+refusal repair has no in-app move left — see the trap below. Since the rule
+ignores phase status, the remedy is written for the status the phase is actually
+in: a phase that has moved off `running` reports `... and is <status>` and
+prepends the `approach flow phase set ... --status running` that makes reset
+legal, and a `pending` phase — where reset cannot help at all — says so instead
+of naming a command. The trap below covers all three. It names the phase
 because the rule is Flow-scoped while the CLI escape is per phase: the phase
 reported is the one holding the live session, which is usually not the gated
 phase you pressed `R` to unblock. It is wider
@@ -749,11 +754,12 @@ this rule is evaluated against the session store during the launch's
 authoritative read, which is one asynchronous hop past the footer. Advertised
 and refused is the honest reading here — the footer cannot see the blocker.
 
-The route out is the CLI, and which command depends on the phase's status. When
-the phase is still `running`, `approach flow phase reset` clears the stale
-launch on its own. When the agent moved the phase off `running` before it died —
-to `blocked` or `needs_attention`, say — reset refuses with `flow phase reset
-requires running recoverable phase`, and clearing it takes two steps: `approach
+The route out is the CLI, and which command depends on the phase's status — so
+the refusal prints the one that matches. When the phase is still `running`,
+`approach flow phase reset` clears the stale launch on its own. When the agent
+moved the phase off `running` before it died — to `blocked` or
+`needs_attention`, say — reset alone refuses with `flow phase reset requires
+running recoverable phase`, so the refusal prints two steps instead: `approach
 flow phase set` back to `running`, then `approach flow phase reset`. If the
 phase also carries session metadata that disagrees with its launch IDs, reset
 refuses again with `flow phase reset requires attached sessions to match phase
@@ -764,7 +770,9 @@ live session against every launch the phase has recorded. A phase that
 accumulated more than one launch, where the stranded live record belongs to an
 older one, therefore stays blocked after a reset that reported success — and `g`
 refuses on the same evidence, so there is no in-app move left either. Correcting
-that phase's session metadata directly is the only way out.
+that phase's session metadata directly is the only way out. That reset leaves
+the phase `pending`, which cannot transition back to `running`, so the refusal
+stops naming a command there and says the metadata has to be corrected directly.
 
 The occupancy rule deliberately does not filter by phase status, because a live
 session on a phase that has already been marked blocked is still an agent that
