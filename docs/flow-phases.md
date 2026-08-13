@@ -90,6 +90,27 @@ Additional rules:
   session launch mismatches, and unsatisfied predecessor gates are rejected.
   The TUI reset is unavailable while a running or starting embedded Flow
   terminal is attached to the same Flow phase.
+- The TUI can release an unfinished session on a selected phase, which is what
+  recovers a phase blocked by a session that never reached `ended`. `x` runs the
+  reset above when the phase is resettable and otherwise probes the session
+  store and the phase mirror for launches that still look live; a confirmation
+  then records each of them as ended, exactly as a clean exit would. It is
+  TUI-only — `approach flow phase reset` has no release counterpart yet — and it
+  changes no phase status, outcome, or note. It refuses while any agent is
+  provably live on the phase (a running embedded Flow terminal, or a live tmux
+  window for any of the phase's launches), including when a resume started a
+  second agent beside the crashed one: dismiss the terminal, or attach with `T`
+  and exit the agent in its tmux window, before releasing. Outside those two
+  backends nothing can be probed, so the confirmation names the sessions as
+  unverified and the user's answer is the guard.
+- **Limitation.** A `running` phase that also carries a session launch mismatch
+  does not fully recover. Release ends the stale launch and the mismatch then
+  surfaces as a repair obstruction, but `R` is not a route out of it either:
+  `ResetRecoverableRunningPhase` is the only operation that removes sessions and
+  it rejects a mismatch first, `approach flow phase restart` requires
+  `needs_attention` or `blocked` and never touches sessions, and a repair agent
+  is forbidden from editing Flow artifact JSON. This is a pre-existing gap that
+  release makes visible rather than one it creates.
 
 ## Derived readiness
 

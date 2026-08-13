@@ -106,7 +106,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
 | `C` | Close the selected Flow with a required reason, or reopen it after confirmation if it is already closed (flows and active flows views) |
-| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected recoverable Flow phase after confirmation |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or recover a selected Flow phase after confirmation — reset it to ready when it is recoverable, otherwise release an unfinished session that is blocking it |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
@@ -696,18 +696,43 @@ flight, and while a session recorded against the phase it would launch has not
 ended. Each of those defers the launch silently and it resumes on a
 later poll.
 
-That last one has no recovery path today. A session is treated as live until it
-is recorded as ended, and only an orderly exit records that, so an agent whose
+That last one is what `x` recovers. A session is treated as live until it is
+recorded as ended, and only an orderly exit records that, so an agent whose
 session is never finalized — Approach killed, the machine lost — leaves the
-phase looking permanently busy. Auto mode then waits forever, and the other
-routes out are all closed: launching the phase manually with `g` is refused with
-`No launchable Flow phase` even though the phase is ready, repair reports no
+phase looking permanently busy. Auto mode then waits forever, repair reports no
 obstruction because the phase is still launchable, and reset applies only to
-`running` phases. Resuming the stalled session with `r` is the one route back
-into the work — resume deliberately does not count the session it is
-reattaching to as occupancy — but it is not a fix: reattaching does not record
-the old session as ended, so auto mode stays blocked. Clearing the stall means
-editing the Flow record's session metadata by hand.
+`running` phases. Launching the phase manually with `g` says so: `Flow phase has
+an unfinished session; press x to release it`.
+
+`x` on that phase releases the session. It reads the phase's launches from both
+the session store and the Flow record, and asks before acting — *Release 1
+unverified session (…1a2b3c4d)? Recorded as ended.* — because Approach cannot
+prove those agents are gone: outside the embedded terminal and tmux there is
+nothing to probe. Confirming records each launch as ended, exactly as a clean
+exit would have, and the phase becomes launchable again. When that Flow's auto
+mode drain is armed in the running process, the prompt says so instead: the next
+poll starts a new agent within a second.
+
+Release refuses whole while an agent is provably live on the phase — a running
+embedded terminal, or a live tmux window for any of its launches — rather than
+releasing the stale launch beside it. That case is reachable after `r`, which
+starts a second agent on the same phase and persists a second launch ID:
+dismiss the embedded terminal, or attach with `T` and exit the agent in its tmux
+window, then press `x`.
+
+Resuming the stalled session with `r` still works and still gets you back into
+the work — resume deliberately does not count the session it is reattaching to
+as occupancy — but it is not a fix. Whether it clears the stall depends on the
+provider: one that reuses the session ID rebinds the old record to the new
+launch and a clean exit ends it, while one that mints a fresh ID leaves the
+crashed record live forever.
+
+The footer advertises `x release session` only for a phase that is not
+`running`, where a live session is structurally impossible and so unambiguously
+stale. A `running` phase is recovered the same way — press `x` and it probes —
+it is just not advertised, because on a running phase a live session is the
+normal state and a standing hint beside a healthy agent would read as an
+invitation.
 
 A 3 s status message announces auto-launches, `needs_attention`, and
 merge-ready transitions. Any status from elsewhere in the app blocks all of

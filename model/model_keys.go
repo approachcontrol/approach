@@ -2153,10 +2153,14 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
+// handleResetSelectedFlowPhase owns x on a selected Flow phase. Reset keeps
+// first refusal; a phase reset cannot recover falls through to session release,
+// which is the other half of "recover the selected phase" and applies exactly
+// where reset does not.
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
 	record, phase, repoPath, ok := m.selectedFlowPhaseResetTarget()
 	if !ok {
-		return m, nil
+		return m.handleReleaseSelectedFlowPhaseSession()
 	}
 	m.modal = modal.OpenConfirm(fmt.Sprintf("Reset Flow phase %s to ready?", phase.PhaseID), func() tea.Cmd {
 		return func() tea.Msg {
@@ -2170,7 +2174,11 @@ func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.FlowPhase, string, bool) {
+// selectedFlowPhaseTarget resolves what x acts on, without deciding which
+// action applies. Both recoveries need the record, the phase, and a repo path,
+// so eligibility is kept out of it: collapsing an ineligible phase into a bare
+// false here would discard the target the other recovery still wants.
+func (m Model) selectedFlowPhaseTarget() (flowstore.FlowRecord, flowstore.FlowPhase, string, bool) {
 	record, ok := m.selectedFlow()
 	if !ok {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, "", false
@@ -2183,7 +2191,15 @@ func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.F
 	if repoPath == "" {
 		repoPath, _ = m.currentRepoPath()
 	}
-	if repoPath == "" || !m.flowPhaseResettable(record, phase) {
+	if repoPath == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, "", false
+	}
+	return record, phase, repoPath, true
+}
+
+func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.FlowPhase, string, bool) {
+	record, phase, repoPath, ok := m.selectedFlowPhaseTarget()
+	if !ok || !m.flowPhaseResettable(record, phase) {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, "", false
 	}
 	return record, phase, repoPath, true

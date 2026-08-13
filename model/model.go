@@ -1218,6 +1218,7 @@ func (m Model) View() string {
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
 		FlowCloseActionSelected:      m.selectedFlowCloseActionHint(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
+		FlowPhaseReleaseSelected:     m.selectedFlowPhaseSessionReleasable(),
 		FlowPhaseResumableSelected:   m.selectedFlowPhaseResumable(),
 		OverlayText:                  modalView.Text,
 		TransientError:               m.visibleStatusText(),
@@ -1741,6 +1742,14 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowPhaseReset(msg)
 	case flowPhaseResetFailedMsg:
 		return m.handleFlowPhaseResetFailed(msg)
+	case flowPhaseSessionReleaseProbedMsg:
+		return m.handleFlowPhaseSessionReleaseProbed(msg)
+	case flowPhaseSessionReleaseConfirmedMsg:
+		return m.handleFlowPhaseSessionReleaseConfirmed(msg)
+	case flowPhaseSessionReleasedMsg:
+		return m.handleFlowPhaseSessionReleased(msg)
+	case flowPhaseSessionReleaseFailedMsg:
+		return m.handleFlowPhaseSessionReleaseFailed(msg)
 	case FlowDeletedMsg:
 		return m.handleFlowDeleted(msg)
 	case FlowDeleteFailedMsg:
@@ -2155,6 +2164,15 @@ func (m Model) selectedFlowPhaseResettable() bool {
 	}
 	phase, ok := m.selectedFlowPhase()
 	return ok && m.flowPhaseResettable(record, phase)
+}
+
+func (m Model) selectedFlowPhaseSessionReleasable() bool {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return false
+	}
+	phase, ok := m.selectedFlowPhase()
+	return ok && m.flowPhaseSessionReleasable(record, phase)
 }
 
 func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flowstore.FlowPhase, bool) {

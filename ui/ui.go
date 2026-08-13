@@ -449,6 +449,7 @@ type RenderParams struct {
 	FlowManualMergeReadySelected bool
 	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
+	FlowPhaseReleaseSelected     bool
 	FlowPhaseResumableSelected   bool
 	OverlayText                  string
 	TransientError               string
@@ -747,6 +748,7 @@ func renderApplication(p RenderParams) string {
 		FlowManualMergeReadySelected: p.FlowManualMergeReadySelected && flowSelected && !flowPhaseSelected,
 		FlowCloseActionSelected:      p.FlowCloseActionSelected,
 		FlowPhaseResetReadySelected:  p.FlowPhaseResetReadySelected,
+		FlowPhaseReleaseSelected:     p.FlowPhaseReleaseSelected,
 		FlowPhaseResumableSelected:   p.FlowPhaseResumableSelected,
 		TmuxAttachAvailable:          p.TmuxAttachAvailable,
 		TransientError:               p.TransientError,
@@ -1506,6 +1508,7 @@ type statusBarParams struct {
 	FlowManualMergeReadySelected bool
 	FlowCloseActionSelected      FlowCloseAction
 	FlowPhaseResetReadySelected  bool
+	FlowPhaseReleaseSelected     bool
 	FlowPhaseResumableSelected   bool
 	TmuxAttachAvailable          bool
 	TransientError               string
@@ -2048,6 +2051,12 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			}
 			if sp.FlowPhaseSelected && sp.FlowPhaseResetReadySelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
+			}
+			// Never both: release applies only where reset does not, so x is
+			// unambiguous. The labels still differ, because the confirmation is
+			// otherwise the only thing telling the two apart at press time.
+			if sp.FlowPhaseSelected && sp.FlowPhaseReleaseSelected {
+				actions = append(actions, shortcutHint{Key: "x", Label: "release session"})
 			}
 			if !sp.FlowPhaseSelected && sp.FlowPlanLinked {
 				actions = append(actions, shortcutHint{Key: "o", Label: "open"})

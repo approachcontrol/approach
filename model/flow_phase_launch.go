@@ -497,6 +497,19 @@ func (m Model) armAutoAdvanceDrain(flowID string) Model {
 	return m
 }
 
+// autoAdvanceDrainArmed reports whether this process would relaunch the Flow's
+// next phase on its own. It is not record.AutoMode: the drain arms on a
+// newly-completed phase edge, so a Flow with AutoMode on is usually not armed —
+// after a restart it never is — and the two must not be confused where the
+// difference is what a user is being warned about.
+func (m Model) autoAdvanceDrainArmed(flowID string) bool {
+	if len(m.autoAdvanceDrainFlows) == 0 {
+		return false
+	}
+	_, ok := m.autoAdvanceDrainFlows[strings.TrimSpace(flowID)]
+	return ok
+}
+
 func (m Model) disarmAutoAdvanceDrain(flowID string) Model {
 	if len(m.autoAdvanceDrainFlows) == 0 {
 		return m

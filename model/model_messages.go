@@ -573,6 +573,42 @@ type flowPhaseResetFailedMsg struct {
 	Err      string
 }
 
+// flowPhaseSessionReleaseProbedMsg carries the authoritative both-halves answer
+// back to the key press. Err is not optional: ListFlowSessions can fail, and
+// without it a failed probe would be indistinguishable from a phase with
+// nothing to release.
+type flowPhaseSessionReleaseProbedMsg struct {
+	RepoPath  string
+	FlowID    string
+	PhaseID   string
+	LaunchIDs []string
+	Err       string
+}
+
+// flowPhaseSessionReleaseConfirmedMsg carries the probed launch IDs across the
+// confirmation hop, which is what lets the release intersect rather than
+// recompute.
+type flowPhaseSessionReleaseConfirmedMsg struct {
+	RepoPath  string
+	FlowID    string
+	PhaseID   string
+	LaunchIDs []string
+}
+
+type flowPhaseSessionReleasedMsg struct {
+	RepoPath string
+	FlowID   string
+	PhaseID  string
+	Released int
+}
+
+type flowPhaseSessionReleaseFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	PhaseID  string
+	Err      string
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)
@@ -1847,6 +1883,37 @@ func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Mode
 	}
 	m = m.setStatus(statusOther, errText)
 	return m, nil
+}
+
+// handleFlowPhaseSessionRelease reports what release selected, not what it
+// wrote: both halves of finalization no-op silently when they match nothing, so
+// a successful call proves nothing was persisted. The surface refresh is what
+// shows the truth.
+func (m Model) handleFlowPhaseSessionReleased(msg flowPhaseSessionReleasedMsg) (tea.Model, tea.Cmd) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	phaseID := strings.TrimSpace(msg.PhaseID)
+	if phaseID == "" {
+		phaseID = "phase"
+	}
+	noun := "sessions"
+	if msg.Released == 1 {
+		noun = "session"
+	}
+	m = m.setStatus(statusOther, fmt.Sprintf("Released %d unfinished %s on Flow phase %s", msg.Released, noun, phaseID))
+	return m.startFlowSurfaceFetch()
+}
+
+func (m Model) handleFlowPhaseSessionReleaseFailed(msg flowPhaseSessionReleaseFailedMsg) (tea.Model, tea.Cmd) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to release Flow phase session"
+	}
+	return m.setStatus(statusOther, errText), nil
 }
 
 func (m Model) handleFlowDeleteFailed(msg FlowDeleteFailedMsg) (tea.Model, tea.Cmd) {
