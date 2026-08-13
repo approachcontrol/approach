@@ -131,36 +131,34 @@ func embeddedFlowSlots(m Model, flowID string) int {
 	return count
 }
 
-func TestCodexAppFlowPhaseResumeClearsFlowIdentityAndSkipsPhaseWrite(t *testing.T) {
+func TestStoredCodexAppPreferenceResumesCodexSessionThroughTrackedBackend(t *testing.T) {
 	record := resumeLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
-	h.agentCommand = agent.CommandCodexApp
+	h.agentCommand = "codex-app"
 
-	m := h.resume(h.resumeModel())
+	m := h.resumeModel()
+	if got := m.AgentCommand(); got != agent.CommandCodex {
+		t.Fatalf("stored preference = %q, want codex", got)
+	}
+	m = h.resume(m)
 
-	if len(h.agentContexts) != 1 {
-		t.Fatalf("codex-app resume launches = %#v, want exactly one navigation", h.agentContexts)
+	if len(h.launchUpdates) != 1 || !h.launchUpdates[0].Resume {
+		t.Fatalf("resume writes = %#v, want one tracked resume", h.launchUpdates)
 	}
-	ctx := h.agentContexts[0]
-	if ctx.Command != agent.CommandCodexApp || ctx.ResumeSessionID != "codex-session" {
-		t.Fatalf("codex-app resume context = %#v, want the resumed session", ctx)
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
 	}
-	if ctx.LaunchID != "" || ctx.FlowID != "" || ctx.FlowPhaseID != "" ||
-		ctx.FlowLaunchTracked || ctx.Embedded {
-		t.Fatalf("codex-app resume context = %#v, want Flow identity cleared", ctx)
+	ctx := h.launchContexts[0]
+	if ctx.Command != agent.CommandCodex || ctx.ResumeSessionID != "codex-session" ||
+		ctx.FlowID != record.FlowID || ctx.FlowPhaseID != "implementation" ||
+		!ctx.FlowLaunchTracked || !ctx.Embedded {
+		t.Fatalf("tracked codex resume context = %#v", ctx)
 	}
-	if len(h.launchUpdates) != 0 {
-		t.Fatalf("codex-app resume wrote the phase: %#v", h.launchUpdates)
+	if len(h.agentContexts) != 0 {
+		t.Fatalf("stored preference used external launch: %#v", h.agentContexts)
 	}
-	if len(h.launchContexts) != 0 {
-		t.Fatalf("codex-app resume opened an embedded terminal: %#v", h.launchContexts)
-	}
-	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
-		t.Fatal("codex-app resume must not hold the Flow")
-	}
-	if h.launchReservations != 1 || h.launchReleases != 1 {
-		t.Fatalf("codex-app reservations = %d, releases = %d, want one held then released",
-			h.launchReservations, h.launchReleases)
+	if got := embeddedFlowSlots(m, record.FlowID); got != 1 {
+		t.Fatalf("embedded Flow slots = %d, want 1", got)
 	}
 }
 
@@ -821,13 +819,10 @@ func TestPhaseResumeOccupancyRefusals(t *testing.T) {
 	}
 }
 
-// codex-app bypasses occupancy entirely, so withdrawing the key for it would
-// manufacture the advertisement/admission disagreement the preview exists to
-// prevent.
-func TestPhaseResumeFooterKeepsAdvertisingCodexAppOverARetainedTerminal(t *testing.T) {
+func TestStoredCodexAppPreferenceRespectsRetainedTerminalOccupancy(t *testing.T) {
 	record := resumeLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
-	h.agentCommand = agent.CommandCodexApp
+	h.agentCommand = "codex-app"
 	m := h.resumeModel()
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
 		Scope:    embeddedTerminalScopeFlow,
@@ -835,30 +830,15 @@ func TestPhaseResumeFooterKeepsAdvertisingCodexAppOverARetainedTerminal(t *testi
 		Terminal: flowPhaseLaunchTestTerminal{state: "exited"},
 	})
 
-	if !m.selectedFlowPhaseResumable() {
-		t.Fatal("codex-app resume is exempt from occupancy, so the footer must keep advertising r")
+	if m.selectedFlowPhaseResumable() {
+		t.Fatal("normalized codex resume must not be advertised over a retained terminal")
 	}
 	next, cmd := m.handleResumeFlowPhaseSession()
-	if cmd == nil {
-		t.Fatal("codex-app resume should still navigate over a retained Flow terminal")
+	if cmd != nil {
+		t.Fatal("occupied resume must not start work")
 	}
-	if got := next.(Model).status.Text; got != "" {
-		t.Fatalf("status = %q, want no refusal", got)
-	}
-}
-
-func TestCodexAppPhaseResumeReportsAReservationFailure(t *testing.T) {
-	h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
-	h.agentCommand = agent.CommandCodexApp
-	h.reserveLaunchErr = errors.New("flow is closed")
-
-	m := h.resume(h.resumeModel())
-
-	if len(h.agentContexts) != 0 {
-		t.Fatalf("a failed reservation navigated anyway: %#v", h.agentContexts)
-	}
-	if got := m.status.Text; got != "Resume Flow phase session: flow is closed" {
-		t.Fatalf("status = %q, want the reservation failure", got)
+	if got := next.(Model).status.Text; got != flowPhaseResumeTerminalStatus {
+		t.Fatalf("status = %q, want %q", got, flowPhaseResumeTerminalStatus)
 	}
 }
 
@@ -1031,9 +1011,7 @@ func TestFlowLaunchCancelReleasesWithoutWritingATerminalPhase(t *testing.T) {
 // The snapshot resolver refuses before any read, so these cases never reach the
 // store. They are the refusals TestPhaseResumeReadStageRefusals cannot reach:
 // the read stage re-runs the phase-shaped rules, but provider validation and
-// the worktree gate live at the key press. The other key-press-only rule, the
-// codex → codex-app mapping, is covered by the codex-app tests, which have to
-// assert on the route taken rather than on a refusal.
+// the worktree gate live at the key press.
 func TestPhaseResumeSnapshotRefusals(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1054,7 +1032,7 @@ func TestPhaseResumeSnapshotRefusals(t *testing.T) {
 			snapshot: func(record *flowstore.FlowRecord) {
 				record.Phases[0].Sessions[0].Provider = "gemini"
 			},
-			wantErr: `unsupported agent "gemini"; choose codex, codex-app, or claude`,
+			wantErr: `unsupported agent "gemini"; choose codex or claude`,
 		},
 		{
 			name: "snapshot has no worktree to resume from",
@@ -1090,25 +1068,20 @@ func TestPhaseResumeSnapshotRefusals(t *testing.T) {
 	}
 }
 
-// codex-app resume navigates to an app thread rather than a working directory,
-// so it is the one command the worktree gate must not refuse. A regression here
-// would be silent: the status line would name a worktree the user never needed.
-func TestCodexAppPhaseResumeIgnoresTheWorktreeGate(t *testing.T) {
+func TestStoredCodexAppPreferenceRequiresAWorktreeForResume(t *testing.T) {
 	record := resumeLaunchFlowRecord()
 	record.WorktreePath = ""
 	h := newManualLaunchHarness(t, record)
-	h.agentCommand = agent.CommandCodexApp
+	h.agentCommand = "codex-app"
 
 	m := h.resume(h.resumeModel())
 
-	if m.status.Text == flowPhaseResumeNoWorktreeStatus {
-		t.Fatalf("status = %q, want codex-app exempt from the worktree gate", m.status.Text)
+	if m.status.Text != flowPhaseResumeNoWorktreeStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowPhaseResumeNoWorktreeStatus)
 	}
-	if len(h.agentContexts) != 1 {
-		t.Fatalf("codex-app resume launches = %#v, want exactly one navigation", h.agentContexts)
-	}
-	if ctx := h.agentContexts[0]; ctx.WorkingDir != "" || ctx.ResumeSessionID != "codex-session" {
-		t.Fatalf("codex-app resume context = %#v, want no working dir and the resumed session", ctx)
+	if len(h.agentContexts) != 0 || len(h.launchContexts) != 0 || len(h.launchUpdates) != 0 {
+		t.Fatalf("worktree-less resume did work: external=%#v embedded=%#v writes=%#v",
+			h.agentContexts, h.launchContexts, h.launchUpdates)
 	}
 }
 

@@ -917,9 +917,6 @@ func agentLaunchWithOptions(ctx AgentLaunchContext, goos string, getenv getenvFu
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	if command == agent.CommandCodexApp {
-		return codexAppLaunch(ctx, goos)
-	}
 
 	cmd, _, err := agentCommandSpec(ctx)
 	if err != nil {
@@ -1128,9 +1125,6 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if err := agent.Validate(command); err != nil {
 		return nil, nil, err
 	}
-	if command == agent.CommandCodexApp {
-		return nil, nil, fmt.Errorf("codex-app launches are URL-based; use AgentLaunch")
-	}
 	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
 	if err != nil {
 		return nil, nil, err
@@ -1194,30 +1188,6 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	return cmd, overrides, nil
 }
 
-func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
-	if err := validateCodexAppModel(ctx); err != nil {
-		return TerminalLaunchSpec{}, err
-	}
-	if goos != "darwin" {
-		return TerminalLaunchSpec{}, fmt.Errorf("codex-app launch is only supported on macOS")
-	}
-	launchURL, err := codexAppLaunchURL(ctx)
-	if err != nil {
-		return TerminalLaunchSpec{}, err
-	}
-	cmd := exec.Command("open", launchURL)
-	cmd.Env = envWithoutPrefix("APPROACH_")
-	return TerminalLaunchSpec{Cmd: cmd}, nil
-}
-
-func validateCodexAppModel(ctx AgentLaunchContext) error {
-	model := agent.NormalizeModel(ctx.Model)
-	if model != "" && model != agent.ModelDefault {
-		return fmt.Errorf("model cannot be set for codex-app launch")
-	}
-	return nil
-}
-
 // resumeSessionIDForLaunch trims a resume session ID and rejects resume
 // requests whose session ID is blank, so a launch can never silently start a
 // fresh session (or run `--resume ""`) when the caller asked for a resume.
@@ -1227,121 +1197,6 @@ func resumeSessionIDForLaunch(raw string) (string, error) {
 		return "", fmt.Errorf("resume requires a non-blank session ID")
 	}
 	return trimmed, nil
-}
-
-func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
-	if err := validateCodexAppModel(ctx); err != nil {
-		return "", err
-	}
-	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
-	if err != nil {
-		return "", err
-	}
-	if resumeSessionID != "" {
-		return "codex://threads/" + url.PathEscape(resumeSessionID), nil
-	}
-
-	path := ctx.RepoPath
-	if path == "" {
-		path = ctx.WorkingDir
-	}
-	if path == "" {
-		path = ctx.WorktreePath
-	}
-	if path == "" {
-		return "", fmt.Errorf("codex-app launch requires a repo path, working directory, or worktree path")
-	}
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("codex-app launch path must be absolute: %s", path)
-	}
-
-	values := []string{"path=" + codexAppQueryEscape(path)}
-	if prompt := codexAppLaunchPrompt(ctx); prompt != "" {
-		values = append(values, "prompt="+codexAppQueryEscape(prompt))
-	}
-	return "codex://threads/new?" + strings.Join(values, "&"), nil
-}
-
-func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
-	metadata := codexAppLaunchMetadata(ctx)
-	if metadata == "" {
-		return ctx.InitialPrompt
-	}
-	if ctx.InitialPrompt == "" {
-		return metadata
-	}
-	return ctx.InitialPrompt + "\n\n" + metadata
-}
-
-func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
-	if ctx.LaunchID == "" &&
-		ctx.WorktreePath == "" &&
-		ctx.SessionStateRoot == "" &&
-		ctx.PlanID == "" &&
-		ctx.PlanPath == "" &&
-		ctx.PlanPhaseID == "" &&
-		ctx.FlowID == "" &&
-		ctx.FlowPhaseID == "" {
-		return ""
-	}
-
-	items := []envVar{
-		{key: "APPROACH_LAUNCH_ID", value: ctx.LaunchID},
-		{key: "APPROACH_WORKTREE_PATH", value: ctx.WorktreePath},
-		{key: "APPROACH_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "APPROACH_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "APPROACH_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "APPROACH_PLAN_ID", value: ctx.PlanID},
-		{key: "APPROACH_PLAN_PATH", value: ctx.PlanPath},
-		{key: "APPROACH_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
-		{key: "APPROACH_FLOW_ID", value: ctx.FlowID},
-		{key: "APPROACH_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
-	}
-
-	var kept []envVar
-	for _, item := range items {
-		if item.value != "" {
-			kept = append(kept, item)
-		}
-	}
-	if len(kept) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.WriteString("approach launch metadata:")
-	b.WriteString("\nThese APPROACH_* values are launch metadata included in this prompt only.")
-	b.WriteString("\nCodex App does not receive them as shell environment variables.")
-	for _, item := range kept {
-		b.WriteString("\n- ")
-		b.WriteString(item.key)
-		b.WriteString(": ")
-		b.WriteString(shellQuote(item.value))
-	}
-	if ctx.SessionStateRoot != "" {
-		b.WriteString("\nCopyable state-root command examples:")
-		b.WriteString("\n- approach plan list --json --state-root ")
-		b.WriteString(shellQuote(ctx.SessionStateRoot))
-		b.WriteString("\n- approach flow list --json --state-root ")
-		b.WriteString(shellQuote(ctx.SessionStateRoot))
-	}
-	return b.String()
-}
-
-func codexAppQueryEscape(value string) string {
-	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
-}
-
-func envWithoutPrefix(prefix string) []string {
-	env := make([]string, 0, len(os.Environ()))
-	for _, entry := range os.Environ() {
-		key, _, ok := strings.Cut(entry, "=")
-		if ok && strings.HasPrefix(key, prefix) {
-			continue
-		}
-		env = append(env, entry)
-	}
-	return env
 }
 
 func envWithoutKeys(env []string, keys ...string) []string {

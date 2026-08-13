@@ -3256,10 +3256,10 @@ func TestModel_NewWithOptionsStoresAgent(t *testing.T) {
 	}
 }
 
-func TestModel_NewWithOptionsStoresCodexAppAgent(t *testing.T) {
+func TestModel_NewWithOptionsNormalizesStoredCodexAppAgent(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{AgentCommand: " CoDeX-App "})
-	if m.AgentCommand() != "codex-app" {
-		t.Fatalf("expected configured agent codex-app, got %q", m.AgentCommand())
+	if m.AgentCommand() != "codex" {
+		t.Fatalf("expected stored legacy agent to normalize to codex, got %q", m.AgentCommand())
 	}
 }
 
@@ -3278,10 +3278,13 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
-			for _, want := range []string{"Choose interactive helper", "codex", "codex-app", "claude"} {
+			for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected agent select view to contain %q", want)
 				}
+			}
+			if strings.Contains(view, "codex-app") {
+				t.Fatalf("agent select view contains retired choice:\n%s", view)
 			}
 			assertRenderedSelectPanel(t, view, "Choose interactive helper", 32, 6, 24, 8)
 			if cmd != nil {
@@ -3299,7 +3302,7 @@ func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
 	}{
 		{name: "unset", wantSelected: "codex"},
 		{name: "invalid", agent: "unsupported", wantSelected: "codex"},
-		{name: "codex-app", agent: "codex-app", wantSelected: "codex-app"},
+		{name: "stored legacy", agent: "codex-app", wantSelected: "codex"},
 		{name: "claude", agent: "claude", wantSelected: "claude"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3425,7 +3428,6 @@ func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
@@ -3433,29 +3435,6 @@ func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	m, _ = update(m, cmd())
 	if m.AgentCommand() != "claude" {
 		t.Fatalf("expected session agent claude, got %q", m.AgentCommand())
-	}
-}
-
-func TestModel_AgentSelectDownSavesAndSetsCodexApp(t *testing.T) {
-	var saved string
-	m := newTestModel(testRepos(), model.Options{
-		SaveAgentCommand: func(command string) error {
-			saved = command
-			return nil
-		},
-	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected save-agent command")
-	}
-	m, _ = update(m, cmd())
-	if saved != "codex-app" {
-		t.Fatalf("expected saved codex-app, got %q", saved)
-	}
-	if m.AgentCommand() != "codex-app" {
-		t.Fatalf("expected session agent codex-app, got %q", m.AgentCommand())
 	}
 }
 
@@ -3894,14 +3873,6 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			notWant:    []string{"M      compatible", "M      model: claude-compatible"},
 		},
 		{
-			name:       "codex app",
-			options:    model.Options{AgentCommand: "codex-app"},
-			wantAgent:  "A      codex-app",
-			wantModel:  "M      app",
-			wantEffort: "E      effort: app",
-			notWant:    []string{"M      model: app", "M      app default", "E      app default", "E      codex-app default"},
-		},
-		{
 			name:       "claude",
 			options:    model.Options{AgentCommand: "claude", ClaudeModel: "claude-fable-5", ClaudeReasoningEffort: "max"},
 			wantAgent:  "A      claude",
@@ -4057,42 +4028,6 @@ func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
 	}
 }
 
-func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex-app"})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
-	if cmd == nil {
-		t.Fatal("expected status expiry command for codex-app effort")
-	}
-	if m.Overlay() != ui.OverlayNone {
-		t.Fatalf("expected no overlay for codex-app effort, got %d", m.Overlay())
-	}
-	if got := m.TransientError(); !strings.Contains(got, "Codex App uses app default") {
-		t.Fatalf("status = %q, want app default message", got)
-	}
-}
-
-func TestModel_FlowModelPickerReportsCodexAppDefault(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex-app"})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
-	if cmd == nil {
-		t.Fatal("expected status expiry command for codex-app model")
-	}
-	if m.Overlay() != ui.OverlayNone {
-		t.Fatalf("expected no overlay for codex-app model, got %d", m.Overlay())
-	}
-	if got := m.TransientError(); !strings.Contains(got, "Codex App uses app default model") {
-		t.Fatalf("status = %q, want app default model message", got)
-	}
-}
-
 func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	var gotPath, gotCommand, gotModel, gotEffort string
 	m := newTestModel(testRepos(), model.Options{
@@ -4125,33 +4060,6 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	}
 	if gotEffort != "high" {
 		t.Fatalf("expected codex launch effort high, got %q", gotEffort)
-	}
-}
-
-func TestModel_AKeyLaunchesCodexAppFromWorktree(t *testing.T) {
-	var got actions.AgentLaunchContext
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex-app",
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			got = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
-		{Path: "/dev/alpha", BranchName: "main", Commit: "abc123", IsMain: true},
-	}, ListRequest: m.ListRequest(ui.ModeWorktrees)})
-
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	if cmd == nil {
-		t.Fatal("expected agent launch command")
-	}
-	if got.Command != "codex-app" ||
-		got.RepoPath != "/dev/alpha" ||
-		got.WorktreePath != "/dev/alpha" ||
-		got.Branch != "main" ||
-		got.Commit != "abc123" {
-		t.Fatalf("unexpected codex-app launch context: %#v", got)
 	}
 }
 
@@ -5909,33 +5817,32 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 	}
 }
 
-func TestModel_RKeyUsesCodexAppPreferenceForCodexSessionResume(t *testing.T) {
+func TestModel_RKeyNormalizesStoredCodexAppPreferenceForCodexSessionResume(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+			return &fakeEmbeddedTerminal{}, nil
 		},
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
-		{Provider: sessions.ProviderCodex, SessionID: "9a0c8d4e-1111-2222-3333-abcdefabcdef", RepoPath: "/dev/alpha"},
+		{Provider: sessions.ProviderCodex, SessionID: "9a0c8d4e-1111-2222-3333-abcdefabcdef", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/legacy"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
-		t.Fatal("expected codex-app resume command")
+		t.Fatal("expected embedded codex resume repaint command")
 	}
-	_ = cmd()
 
-	if got.Command != "codex-app" ||
+	if got.Command != "codex" ||
 		got.ResumeSessionID != "9a0c8d4e-1111-2222-3333-abcdefabcdef" ||
-		got.WorktreePath != "" ||
-		got.WorkingDir != "" {
-		t.Fatalf("unexpected codex-app resume context: %#v", got)
+		got.WorktreePath != "/dev/alpha-worktrees/legacy" ||
+		got.WorkingDir != "/dev/alpha-worktrees/legacy" || !got.Embedded {
+		t.Fatalf("unexpected normalized codex resume context: %#v", got)
 	}
 }
 

@@ -6,10 +6,13 @@ import (
 )
 
 const (
-	CommandCodex    = "codex"
-	CommandCodexApp = "codex-app"
-	CommandClaude   = "claude"
+	CommandCodex  = "codex"
+	CommandClaude = "claude"
 )
+
+// legacyCommandCodexApp is the retired macOS deep-link spelling. It is
+// unexported so no other package can branch on it.
+const legacyCommandCodexApp = "codex-app"
 
 const (
 	ReasoningEffortDefault = "default"
@@ -35,9 +38,21 @@ func Normalize(command string) string {
 	return strings.ToLower(strings.TrimSpace(command))
 }
 
+// NormalizeStored normalizes a command from persisted state, mapping retired
+// spellings onto their supported replacement. Adopt its result only on reads;
+// an input boundary may compare it with Normalize to detect and reject a
+// retired spelling, but must not accept the mapped result as new input.
+func NormalizeStored(command string) string {
+	command = Normalize(command)
+	if command == legacyCommandCodexApp {
+		return CommandCodex
+	}
+	return command
+}
+
 func Supported(command string) bool {
 	switch Normalize(command) {
-	case CommandCodex, CommandCodexApp, CommandClaude:
+	case CommandCodex, CommandClaude:
 		return true
 	default:
 		return false
@@ -49,7 +64,7 @@ func Validate(command string) error {
 		return fmt.Errorf("agent is not set")
 	}
 	if !Supported(command) {
-		return fmt.Errorf("unsupported agent %q; choose codex, codex-app, or claude", command)
+		return fmt.Errorf("unsupported agent %q; choose codex or claude", command)
 	}
 	return nil
 }
@@ -68,8 +83,6 @@ func ReasoningEffortChoices(command string) []string {
 		return []string{ReasoningEffortDefault, ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh}
 	case CommandClaude:
 		return []string{ReasoningEffortDefault, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax}
-	case CommandCodexApp:
-		return []string{ReasoningEffortDefault}
 	default:
 		return nil
 	}
@@ -81,8 +94,6 @@ func ModelChoices(command string) []string {
 		return []string{ModelDefault, ModelGPT55, ModelGPT56Sol}
 	case CommandClaude:
 		return []string{ModelDefault, ModelClaudeOpus48, ModelClaudeOpus5, ModelClaudeSonnet5, ModelClaudeFable5}
-	case CommandCodexApp:
-		return []string{ModelDefault}
 	default:
 		return nil
 	}

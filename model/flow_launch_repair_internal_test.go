@@ -1110,12 +1110,6 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 			wantFooter: true,
 		},
 		{
-			name:       "codex app",
-			agent:      "codex-app",
-			wantStatus: "Flow repair requires an embedded CLI agent; press A to choose codex or claude",
-			wantFooter: true,
-		},
-		{
 			name:       "unsupported agent",
 			agent:      "not a provider",
 			wantStatus: `Flow repair does not support agent "not a provider"; press A to choose codex or claude`,

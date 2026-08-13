@@ -77,8 +77,7 @@ Additional rules:
   attached CLI provider session of a `completed` or `skipped` phase records the
   launch ID (so the resumed session can re-link) without reopening the phase,
   and a failed resume launch never regresses such a phase to `needs_attention`.
-  `codex-app` resume deep links are untracked app navigation because they cannot
-  carry approach launch metadata. Reopening a finished phase deliberately remains
+  Reopening a finished phase deliberately remains
   `approach flow phase restart`.
 - The TUI and `approach flow phase reset` can recover selected stale `running`
   phases after confirmation or command invocation. `await-session` means the

@@ -37,10 +37,8 @@ const (
 )
 
 // flowPhaseResumeRequest turns the selected phase into an intent, or into the
-// refusal the snapshot already justifies. It cannot be a free function:
-// resolving codex → codex-app reads the agent preference, the repo fallback
-// reads the current repo, and the codex-app route needs a fully built launch
-// context that no authoritative read produces.
+// refusal the snapshot already justifies. It cannot be a free function because
+// the repo fallback reads the current repo.
 //
 // The returned status is empty when the refusal is silent; today every snapshot
 // refusal here has text, and the empty case exists so the caller does not have
@@ -54,7 +52,7 @@ func (m Model) flowPhaseResumeRequest(record flowstore.FlowRecord, phase flowsto
 	if provider == "" {
 		return flowLaunchIntent{}, flowPhaseResumeNoProviderStatus, false
 	}
-	command := flowPhaseResumeCommand(provider, m.agentCommand)
+	command := provider
 	if err := agent.Validate(command); err != nil {
 		return flowLaunchIntent{}, err.Error(), false
 	}
@@ -67,15 +65,10 @@ func (m Model) flowPhaseResumeRequest(record flowstore.FlowRecord, phase flowsto
 	}
 	sessionID := session.SessionID
 	fallbackRepoPath, _ := m.currentRepoPath()
-	repoPath := record.RepoPath
-	if repoPath == "" {
-		repoPath = fallbackRepoPath
-	}
-	workingDir := record.WorktreePath
-	if workingDir == "" && command != agent.CommandCodexApp {
+	if record.WorktreePath == "" {
 		return flowLaunchIntent{}, flowPhaseResumeNoWorktreeStatus, false
 	}
-	intent := flowLaunchIntent{
+	return flowLaunchIntent{
 		Kind:              flowLaunchKindPhaseResume,
 		FlowID:            record.FlowID,
 		PhaseID:           phase.PhaseID,
@@ -83,34 +76,7 @@ func (m Model) flowPhaseResumeRequest(record flowstore.FlowRecord, phase flowsto
 		ProviderSessionID: sessionID,
 		ResumeCommand:     command,
 		FallbackRepoPath:  fallbackRepoPath,
-		ResumeContext: actions.AgentLaunchContext{
-			Command:           command,
-			RepoPath:          repoPath,
-			WorktreePath:      record.WorktreePath,
-			WorkingDir:        workingDir,
-			Branch:            record.Branch,
-			Commit:            record.Commit,
-			SessionStateRoot:  m.sessionStateRoot,
-			ResumeSessionID:   sessionID,
-			PlanID:            record.PlanID,
-			PlanPath:          record.PlanPath,
-			FlowID:            record.FlowID,
-			FlowPhaseID:       phase.PhaseID,
-			FlowPhaseKind:     flowstore.SemanticKind(phase),
-			FlowPhaseTerminal: flowstore.PhaseStatusTerminal(phase.Status),
-		},
-	}
-	return intent, "", true
-}
-
-// flowPhaseResumeCommand applies the one preference that can move a resume off
-// the session's own provider. Everything downstream reads the result, never the
-// provider, so this mapping happens exactly once.
-func flowPhaseResumeCommand(provider, agentCommand string) string {
-	if provider == agent.CommandCodex && agent.Normalize(agentCommand) == agent.CommandCodexApp {
-		return agent.CommandCodexApp
-	}
-	return provider
+	}, "", true
 }
 
 // resumableFlowPhaseSession applies the phase-shaped resumability rules and
@@ -155,13 +121,6 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	intent.FlowID = flowID
 	if flowID == "" {
 		return m, nil, false
-	}
-	if intent.ResumeCommand == agent.CommandCodexApp {
-		// Codex App resume deep links cannot carry approach launch metadata, so
-		// they stay app navigation rather than a tracked launch: no attempt, no
-		// read, no phase write. admitted stays false because nothing holds the
-		// Flow, and the caller returns the command regardless.
-		return m, m.untrackedCodexAppFlowPhaseResumeCmd(intent.ResumeContext), false
 	}
 	if m.flowLaunchAdmissionOccupied(flowID) {
 		// The two predicates overlap rather than nest: the broad one requires a
@@ -209,17 +168,7 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 // withdrawing the key for them would be a behavior change this bead does not
 // make. It gates on the retained-slot conjunction only, which is the case
 // resume newly refuses out loud.
-//
-// It takes the resolved command rather than only the Flow ID because the
-// codex-app bypass depends on the selected phase's session provider combined
-// with the agent preference, which is not a function of the Flow.
-func (m Model) previewPhaseResume(flowID, command string) bool {
-	if agent.Normalize(command) == agent.CommandCodexApp {
-		// codex-app is exempt from occupancy entirely, so withdrawing the key
-		// would manufacture the advertisement/admission disagreement this
-		// predicate exists to prevent.
-		return true
-	}
+func (m Model) previewPhaseResume(flowID string) bool {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {
 		return true
@@ -274,9 +223,7 @@ func phaseResumeFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent
 		}
 		// Paths resolve the way resume does, not the way Preflight does: no
 		// worktree fallback to the repo path, and no PlanMarkdownPath
-		// resolution. The worktree re-check is unconditional here, unlike the
-		// resolver's, which is gated on the command — codex-app short-circuits
-		// at admission and never reaches this stage.
+		// resolution. The worktree re-check is unconditional here.
 		if record.WorktreePath == "" {
 			event.Err = flowPhaseResumeNoWorktreeStatus
 			return event

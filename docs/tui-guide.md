@@ -62,7 +62,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `↑`/`k` | Select previous repo |
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
-| `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
+| `A` | Choose and persist the coding agent from a picker (`codex` or `claude`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -96,7 +96,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree (flows and active flows views) |
-| `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
+| `A` | Choose and persist the coding agent from a picker (`codex` or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
@@ -175,7 +175,7 @@ indicators, and the worktree path:
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `A` to choose `codex`, `codex-app`, or `claude` from a picker; Approach
+Press `A` to choose `codex` or `claude` from a picker; Approach
 persists the choice to config. Press `a` to launch the selected agent in the
 current non-stale worktree, or `N` to create a worktree and launch the agent
 there immediately. Press `n` to create a worktree without launching an agent.
@@ -366,7 +366,6 @@ What does not change:
   discard it.
 - **The plan launch that Flow creation performs** stays embedded. It shares its
   spawn path with repair, which must stay in the dock.
-- **`codex-app`** launches remain external deep links.
 
 Lifecycle and ownership:
 
@@ -649,9 +648,8 @@ On a Flow row or an expanded phase row:
   browser, when that metadata exists.
 - `c` copies the selected Flow ID; `y` copies the selected Flow worktree path.
 - `r` on an expanded phase row with an attached provider session resumes that
-  session. CLI resumes are recorded as a fresh Flow phase launch attempt;
-  `codex-app` resumes navigate to the existing app thread without extra launch
-  tracking. Like `g`, the key press only submits an intent: the launch
+  session and records it as a fresh Flow phase launch attempt. Like `g`, the key
+  press only submits an intent: the launch
   lifecycle re-reads the persisted Flow and re-checks the phase and its latest
   resumable session, so a resume the list advertised can still be refused with
   `Flow phase changed; refresh and try again` once the fresh record names a
@@ -660,12 +658,10 @@ On a Flow row or an expanded phase row:
   including a terminal on another phase — with `Close, detach, or dismiss the
   existing Flow terminal before resuming this phase`; `r` is withdrawn from the
   footer for exactly that case. Any competing lifecycle launch — including a
-  repair — or an open repair terminal refuses silently, and `codex-app` resumes
-  bypass occupancy entirely — with one exception: a live `U` autofix window in
-  tmux mode refuses every resume, `codex-app` included, with `Flow still has an
-  agent running in tmux`. That probe asks whether an autofix agent is already in
-  the worktree, which does not depend on how the resume itself launches, and
-  occupancy would otherwise let a `codex-app` resume in beside it. A different live session on the same phase refuses
+  repair — or an open repair terminal refuses silently. A live `U` autofix
+  window in tmux mode refuses the resume with `Flow still has an agent running
+  in tmux`, and a live tmux window for the phase itself is also probed before
+  launch. A different live session on the same phase refuses
   with `Flow phase already has a running session`; the session being resumed does
   not count against itself, which is what keeps `r` open for a phase whose
   agent died without recording an end. That exemption is keyed on the store's
@@ -716,8 +712,7 @@ On a Flow row or an expanded phase row:
   or a headless write holds the Flow, `U` withdraws and `m` stays. Refusals name
   the obstacle — `Close or dismiss the existing Flow terminal before running
   autofix`, `A Flow launch is already in flight`, `Flow still has an agent running
-  in tmux` — and `codex-app` is refused outright with `Flow autofix requires codex
-  or claude; press A to choose one`. Like `g`, the fresh record decides: a Flow
+  in tmux`. Like `g`, the fresh record decides: a Flow
   that loses its PR, its worktree, or its eligibility before the agent starts is
   refused with `Flow changed; refresh and try again` — at the authoritative read,
   and again at the launch reservation taken immediately before the spawn, which
@@ -797,8 +792,8 @@ it is decided against the session store during the authoritative read, so `R`
 stays advertised and the press reports the refusal.
 
 Repair is an embedded CLI operation and accepts only `codex` or `claude`.
-`codex-app`, an unset agent, or another configured command produces guidance
-instead of opening an external app or changing Flow state. The launch reuses
+An unset or unsupported configured command produces guidance instead of
+launching an agent or changing Flow state. The launch reuses
 the selected provider's current model and reasoning effort plus that Flow's
 persisted `h` headless setting. The fresh pre-launch record read is
 authoritative, so a recently changed preference overrides a stale list row.
@@ -978,8 +973,7 @@ Press `M` to choose the selected CLI agent's model and `E` to choose its
 reasoning effort; the shortcut pane shows the current values. Codex CLI
 launches use `--model <model>` and `--config model_reasoning_effort=<effort>`;
 Claude launches use `--model <model>` and `--effort <effort>`. Session resumes
-do not receive model or effort flags. `codex-app` always uses the external
-deep-link route and keeps app-side/default model and reasoning.
+do not receive model or effort flags.
 
 Embedded headless output is readable terminal text, not raw JSON events:
 `codex exec` streams its progress directly, while `claude --print` runs with

@@ -248,7 +248,7 @@ func TestFlowPhaseLauncherStandardTemplateDoesNotReadPlanBody(t *testing.T) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{phase}}, nil
 		},
 		NewLaunchID:     func() string { return "launch-1" },
-		AgentCommand:    "codex-app",
+		AgentCommand:    "codex",
 		PromptTemplates: model.FlowPromptTemplates{Implementation: "Implementation template: {plan_body}"},
 	}
 
@@ -289,7 +289,7 @@ func TestFlowPhaseLauncherGenericTemplateReadsPlanBody(t *testing.T) {
 			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{phase}}, nil
 		},
 		NewLaunchID:     func() string { return "launch-1" },
-		AgentCommand:    "codex-app",
+		AgentCommand:    "codex",
 		PromptTemplates: model.FlowPromptTemplates{Generic: "Generic template: {plan_body}"},
 	}
 
@@ -418,21 +418,5 @@ func TestFlowPhaseLauncherPrepareReportsNoFallbackWithoutTmuxMode(t *testing.T) 
 				t.Fatalf("fallback note = %q, want none", result.FallbackNote)
 			}
 		})
-	}
-}
-
-func TestFlowPhaseLauncherPrepareKeepsCodexAppExternalInTmuxMode(t *testing.T) {
-	launcher := tmuxRouteLauncher(t, "tmux", true)
-	launcher.AgentCommand = "codex-app"
-	result, err := launcher.Prepare(tmuxRoutePreparedRequest(t, launcher, false))
-	if err != nil {
-		t.Fatalf("Prepare() error = %v", err)
-	}
-
-	if result.Route != model.FlowPhaseLaunchExternal {
-		t.Fatalf("route = %d, want external", result.Route)
-	}
-	if result.FallbackNote != "" {
-		t.Fatalf("fallback note = %q, want none", result.FallbackNote)
 	}
 }

@@ -165,9 +165,9 @@ Agents run in Approach's embedded terminal by default. Setting
 `[launch].backend = "tmux"` opts into tmux mode, where each repo gets one tmux
 session on your default tmux server and most interactive CLI agent launches
 become windows in it — visible to your own `tmux ls`, reattachable with `T` or
-`tmux attach`, and outliving the TUI. Headless launches, Flow repair, and
-`codex-app` keep their existing routes, and Approach falls back to the embedded
-terminal when tmux is not installed. See
+`tmux attach`, and outliving the TUI. Headless launches, Flow repair, and the
+plan launch performed during Flow creation keep their embedded routes, and
+Approach falls back to the embedded terminal when tmux is not installed. See
 [docs/config.md](docs/config.md) and [docs/tui-guide.md](docs/tui-guide.md).
 
 Agents persist plans and Flow progress through the `approach plan` and

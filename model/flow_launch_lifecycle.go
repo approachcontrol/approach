@@ -174,12 +174,6 @@ func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher FlowPhaseLauncher
 // admission verdict: AutoMode needs it synchronously to decide whether to
 // disarm its drain, and a refusal's text never has to reach a caller because
 // any status it produces is already applied to the returned Model.
-//
-// One kind breaks that shape. A codex-app phase resume returns the untracked
-// navigation command with admitted = false, because no attempt holds the Flow:
-// the command is not a read command, and a caller that batches only on
-// admitted — as AutoMode's drain does — would drop it. Only phaseResume
-// submits it, and its caller returns the command regardless of the verdict.
 func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	switch intent.Kind {
 	case flowLaunchKindManualPhase:

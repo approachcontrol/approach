@@ -21,8 +21,6 @@ unless a future CLI implements it.
 Build reusable state-root arguments before running commands. `approach flow` reads
 `APPROACH_FLOW_STATE_ROOT`, and `approach plan` reads `APPROACH_PLAN_STATE_ROOT`, but passing
 the same explicit root keeps created flows and imported plans together.
-Codex App prompt-only metadata is used instead of inherited shell
-environment, so copy the provided `--state-root` value manually when needed.
 
 ```bash
 APPROACH_ARTIFACT_ROOT="${APPROACH_FLOW_STATE_ROOT:-${APPROACH_PLAN_STATE_ROOT:-${APPROACH_SESSION_STATE_ROOT:-}}}"

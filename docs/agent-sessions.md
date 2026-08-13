@@ -15,12 +15,6 @@ The exported metadata includes `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
 `APPROACH_COMMIT`, the three `APPROACH_*_STATE_ROOT` roots, and plan or flow
 IDs, paths, and phase fields when available.
 
-`codex-app` opens via macOS deep link instead; Approach scrubs inherited
-`APPROACH_*` from `open` and includes prompt-only launch metadata with copyable
-`--state-root` command examples. New `codex-app` threads use the repo path for
-Codex App project identity when Approach knows it, while the selected worktree
-remains available in the prompt metadata.
-
 ## Manual Hook Setup
 
 For agent sessions that are not launched by Approach, configure Claude Code or
@@ -132,9 +126,7 @@ wiring as fresh launches. Resume session IDs are trimmed and whitespace-only
 IDs are rejected, so a resume command never carries a blank ID. Approach runs the
 resume command from the recorded session `cwd` when present, falling back to
 the captured worktree path, while preserving the stored worktree metadata for
-subsequent hooks.
-`codex-app` resumes use the existing macOS deep-link path rather than an
-embedded terminal. Sessions missing a provider session ID cannot be resumed;
+subsequent hooks. Sessions missing a provider session ID cannot be resumed;
 Approach reports this in the status line instead of starting a fresh provider
 session.
 
@@ -147,4 +139,4 @@ Flow-scoped for CLI resumes and matches every other launch kind: a non-repair
 embedded terminal on that Flow — on any phase and in any state — refuses the
 resume out loud until it is closed, detached, or dismissed, while a repair
 terminal and another lifecycle attempt — a manual launch, an auto launch, or a
-repair — refuse it silently. `codex-app` navigation is exempt from all of it.
+repair — refuse it silently.
