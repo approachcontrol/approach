@@ -212,8 +212,17 @@ func liveFlowPhaseLaunchIDs(seams flowLaunchSeams, flowID, phaseID string) ([]st
 // will not. The staleness fence is the one handleEmbeddedSessionPickerLoaded
 // already establishes for a read that ends in a modal: a probe is a store walk,
 // and by the time it lands the user may have navigated to another phase or
-// opened another modal.
+// opened another modal, or left the Flow surface altogether.
+//
+// That last one needs its own clause. selectedFlowPhaseTarget reads the
+// retained Flow pane, which keeps resolving the old selection after the user
+// switches the stored mode away from Flows, so the target check alone would
+// still match and open a release confirmation over an unrelated view. The
+// press is gated on flowSurfaceVisible; its result has to land there too.
 func (m Model) handleFlowPhaseSessionReleaseProbed(msg flowPhaseSessionReleaseProbedMsg) (tea.Model, tea.Cmd) {
+	if !m.flowSurfaceVisible() {
+		return m, nil
+	}
 	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}

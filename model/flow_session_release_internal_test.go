@@ -440,6 +440,17 @@ func TestFlowPhaseSessionReleaseProbeFences(t *testing.T) {
 			},
 		},
 		{
+			// x is only pressable on the Flow surface, and the retained Flow
+			// pane keeps resolving the old selection after the user switches
+			// modes, so nothing else here would stop a landing probe from
+			// confirming a release over the view they moved to.
+			name: "the user left the Flow surface while the probe ran",
+			model: func(m Model) Model {
+				m.bottomMode = ui.ModeSessions
+				return m
+			},
+		},
+		{
 			// A headless write in flight can be about to persist a launch ID
 			// this probe never saw.
 			name: "a headless write started while the probe ran",
