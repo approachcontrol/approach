@@ -45,10 +45,11 @@ func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) (Model, flowL
 		Kind:   flowLaunchKindRepair,
 		FlowID: ctx.FlowID,
 		State:  flowLaunchStatePreparing,
-		// handleFlowLaunchEvent marks every successful prepared hop, repair
-		// included. What keeps a failed repair off the phase is the empty
-		// FlowPhaseID, not this flag, which is exactly what these tests pin.
-		MutatedPhase: true,
+		// handleFlowLaunchEvent deliberately never marks a repair attempt: repair
+		// runs no AddPhaseLaunchID, so there is no persisted phase for a failure
+		// to correct. Leaving this false is what production produces, and
+		// failFlowLaunch's repair branch does not read it either way.
+		MutatedPhase: false,
 	}
 	m, _ = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
 	return m, attempt

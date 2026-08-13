@@ -266,9 +266,11 @@ func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.
 
 // nextAutoLaunchPhase is what flowLaunchCandidatePhase computes for an AutoMode
 // intent with no named candidate. It survives as its own name because repair's
-// marker consumption still calls it and routing repair through the lifecycle is
-// a later bead; do not collapse the two until it is, or repair inherits the
-// lifecycle's candidate rules by accident.
+// auto-drain marker consumption still calls it, and that call is not a launch
+// admission — it asks whether a detached repair has exposed work AutoMode could
+// launch. Do not collapse the two: flowLaunchCandidatePhase carries the
+// lifecycle's launch-time candidate rules, and the marker has no business
+// inheriting them.
 func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
 	phase, _, ok := flowstore.FirstLaunchablePhase(record)
 	return phase, ok

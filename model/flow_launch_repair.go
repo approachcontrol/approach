@@ -12,16 +12,14 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 )
 
-// The repair refusals. They are constants for the same reason resume's are:
-// admission decides on the display cache, the authoritative read and the
-// prepare stage re-decide against fresh records, and a user who presses R twice
-// must not see one condition worded two ways.
-//
-// Only flowRepairLiveSessionStatus is new, and its text is deliberately
-// identical to flowPhaseResumeLiveSessionStatus: repair now rejects a live
-// session held in the session store, which is the same condition resume already
-// names, so the app's user-visible string vocabulary does not grow. It stays a
-// separate constant so repair's refusals read in one file.
+// The repair refusals. Two of these are shared for the same load-bearing
+// reason: a user who presses R twice must not see one condition worded two
+// ways. flowRepairNotRepairableStatus is raised by both the authoritative read
+// and the post-reservation revalidation, and flowRepairTerminalStatus by both
+// the admission rung below and the install-stage backstop
+// (flowLaunchEmbeddedBackstop), which are the same condition observed one
+// asynchronous hop apart. The rest have a single emission site each and are
+// constants only so repair's refusals read in one place.
 const (
 	flowRepairPendingStatus       = "A repair launch is already pending for this Flow"
 	flowRepairResumePendingStatus = "A phase resume is already pending for this Flow"
@@ -29,8 +27,28 @@ const (
 	flowRepairNotRepairableStatus = "Flow is no longer repairable"
 	flowRepairNoDirectoryStatus   = "Cannot find a usable worktree or repository directory for this Flow repair"
 	flowRepairNoPlanPathStatus    = "Cannot determine linked plan path for this Flow repair"
-	flowRepairLiveSessionStatus   = "Flow phase already has a running session"
 )
+
+// flowRepairLiveSessionStatus names the phase whose launch the live session
+// belongs to. It deliberately does not reuse flowPhaseResumeLiveSessionStatus's
+// wording even though the underlying condition is the same, because the two are
+// not the same situation for the user: resume exempts the session it is
+// reattaching to, so a stalled phase still has a working key, while repair has
+// no in-app move left at all.
+//
+// The remedy is therefore part of the message, and it is spelled out in full:
+// `approach flow phase reset` requires both --flow-id and --phase-id and reads
+// neither from the environment (cmd/approach/flow.go), so a message that named
+// only one of them would hand the user a command that fails. The phase in
+// particular cannot be inferred — repair's rule is Flow-scoped, so the phase
+// holding the live session is usually not the one the user pressed R to unblock.
+// docs/tui-guide.md covers the case where the phase has since moved off running
+// and reset needs a `phase set` first.
+func flowRepairLiveSessionStatus(flowID, phaseID string) string {
+	return fmt.Sprintf(
+		"Flow phase %s already has a running session; if its agent is gone, clear it with approach flow phase reset --flow-id %s --phase-id %s",
+		phaseID, flowID, phaseID)
+}
 
 // repairFlowLaunchIntent is what the R key submits. An empty Flow ID is the
 // normal case and is deliberate: cachedFlowRecord("") falls back to
@@ -57,31 +75,35 @@ func (m Model) repairFlowLaunchIntent(flowID string) flowLaunchIntent {
 // has always had. The surface gate is load-bearing — neither cachedFlowRecord
 // nor selectedFlow has one, so dropping it would arm R from panes that show no
 // Flow.
-func (m Model) cachedRepairTarget(intent flowLaunchIntent) (flowstore.FlowRecord, flowRepairObstruction, bool) {
+//
+// The classified obstruction is deliberately not returned. Nothing cached ever
+// reaches the prompt: the prompt is rendered in the prepare stage from the
+// record the reservation returned, so a preview-stage obstruction could only be
+// a stale duplicate of it.
+func (m Model) cachedRepairTarget(intent flowLaunchIntent) (flowstore.FlowRecord, bool) {
 	if !m.flowSurfaceVisible() {
-		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
+		return flowstore.FlowRecord{}, false
 	}
 	record, ok := m.cachedFlowRecord(intent.FlowID)
 	if !ok || strings.TrimSpace(record.FlowID) == "" {
-		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
+		return flowstore.FlowRecord{}, false
 	}
-	obstruction, ok := flowRepairObstructionForRecord(record)
-	if !ok {
-		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
+	if _, repairable := flowRepairObstructionForRecord(record); !repairable {
+		return flowstore.FlowRecord{}, false
 	}
-	return record, obstruction, true
+	return record, true
 }
 
 // previewRepairLaunch is cachedRepairTarget conjoined with occupancy, mirroring
 // previewFlowLaunch over cachedFlowLaunchTarget. Admission needs the two halves
 // separately so it can name whichever one is blocking; the footer only needs
 // their conjunction.
-func (m Model) previewRepairLaunch(intent flowLaunchIntent) (flowstore.FlowRecord, flowRepairObstruction, bool) {
-	record, obstruction, ok := m.cachedRepairTarget(intent)
+func (m Model) previewRepairLaunch(intent flowLaunchIntent) (flowstore.FlowRecord, bool) {
+	record, ok := m.cachedRepairTarget(intent)
 	if !ok || m.flowLaunchAdmissionOccupied(record.FlowID) {
-		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
+		return flowstore.FlowRecord{}, false
 	}
-	return record, obstruction, true
+	return record, true
 }
 
 // admitRepairFlowLaunch is repair's half of the lifecycle's admission. The
@@ -89,7 +111,7 @@ func (m Model) previewRepairLaunch(intent flowLaunchIntent) (flowstore.FlowRecor
 // same order: durable obstacles before the transient one, because a headless
 // write clears on its own and an open terminal does not.
 func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
-	record, _, ok := m.cachedRepairTarget(intent)
+	record, ok := m.cachedRepairTarget(intent)
 	if !ok {
 		// Nothing repairable is selected. Silent, exactly as before.
 		return m, nil, false
@@ -112,6 +134,11 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
+		// Silent, unlike admitManualFlowLaunch's noLaunchableFlowPhaseStatus on
+		// the same condition: repair has no equivalent generic refusal text, and
+		// the seam falls back to newLaunchID, so this is unreachable in
+		// production. Do not "fix" it by borrowing manual's string — it names a
+		// phase, and repair has none.
 		return m, nil, false
 	}
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
@@ -191,8 +218,11 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 			event.Err = err.Error()
 			return event
 		}
-		if flowRepairPhaseSessionOccupied(record, records) {
-			event.Err = flowRepairLiveSessionStatus
+		if phaseID, occupied := flowRepairPhaseSessionOccupied(record, records); occupied {
+			// The intent's Flow ID, not the record's: admission stamped it, the
+			// read resolved this record from it, and it is the exact string
+			// `approach flow read --flow-id` already takes.
+			event.Err = flowRepairLiveSessionStatus(intent.FlowID, phaseID)
 			return event
 		}
 		repoPath, worktreePath, ok := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, intent.FallbackRepoPath)
@@ -202,9 +232,14 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 		}
 		planPath := strings.TrimSpace(record.PlanPath)
 		if record.PlanID != "" && planPath == "" {
-			// The guard is not defensive dressing: planMarkdownPath is defaulted
-			// non-nil in NewWithOptions, but a zero-value Model has a nil seam
-			// and several repair tests build their models that way.
+			// This one seam is guarded and its neighbours are not, because this
+			// is the only one whose absence has a meaningful answer. Every seam
+			// here is defaulted non-nil in NewWithOptions, so none of them is
+			// nil in production; a hand-assembled seams value that omits
+			// ReadFlow or ListFlowSessions has no repair to describe and would
+			// only panic, while one that omits the plan lookup has a specific
+			// refusal to report — and reporting it is what the pre-lifecycle
+			// path did for a nil m.planMarkdownPath.
 			if seams.PlanMarkdownPath == nil {
 				event.Err = flowRepairNoPlanPathStatus
 				return event
@@ -247,13 +282,18 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 // case. Untracked sessions carry a Flow ID but no phase launch ID and are
 // likewise excluded, so a never-finalized repair session cannot permanently
 // block future repairs.
-func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessions.SessionRecord) bool {
-	for _, phase := range record.Phases {
+//
+// The matching phase ID is returned, not just the fact of a match: the refusal
+// names it, because the CLI escape is per phase. Iteration follows the record's
+// own phase order so a Flow with two occupied phases reports the same one every
+// press.
+func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessions.SessionRecord) (string, bool) {
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
 		if flowLaunchPhaseSessionOccupied(phase, records) {
-			return true
+			return phase.PhaseID, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // repairFlowLaunchPrepareCmd takes the cross-process repair reservation and
@@ -264,12 +304,26 @@ func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessi
 // launch for" vs "launch an agent for") and that text reaches the user. The
 // wrapper prefix is preserved verbatim for the same reason.
 //
-// There is no phase write here and no second session listing. Repair never
-// calls AddPhaseLaunchID, so there is no residual race for a re-listing to
-// close; the reservation makes close and repair mutually exclusive, and it was
-// never a session fence.
+// There is no phase write here and no second session listing. What a re-listing
+// would close is not the self-inflicted race the tracked kinds have — repair
+// never calls AddPhaseLaunchID, so it publishes no launch ID of its own to race
+// against. What stays open is a peer approach process starting a phase session
+// between the read stage's listing and this reservation, and a second listing
+// would only narrow that window, not close it: the reservation excludes
+// CloseFlow and other repairs, and was never a session fence. Resume accepts
+// the same window for the same reason.
 func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveFlowRepairLaunch
+	if reserve == nil {
+		// The same guard reserveTrackedFlowLaunch has, for the same reason:
+		// NewWithOptions defaults this seam, so only a hand-assembled Model
+		// reaches here, and such a Model should refuse rather than panic in the
+		// command goroutine. The zero record it yields is caught by the identity
+		// check below and reported as a refusal.
+		reserve = func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, func() {}, nil
+		}
+	}
 	return func() tea.Msg {
 		event := msg
 		event.Stage = flowLaunchStagePrepared
@@ -282,6 +336,15 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// Handed over before the revalidation below can refuse, so the handler
 		// drops the advisory launch/close lock on every path out of here.
 		event.Release = release
+		if strings.TrimSpace(current.FlowID) != msg.FlowID {
+			// The reservation is supposed to return the Flow it locked. A seam
+			// that returns a zero or foreign record would otherwise reach
+			// refreshFlowRepairLaunchContext, which rebuilds branch, commit,
+			// plan, and the prompt from whatever it is handed — producing a
+			// repair agent pointed at the wrong record, or at none.
+			event.Err = flowRepairNotRepairableStatus
+			return event
+		}
 		if _, repairable := flowRepairObstructionForRecord(current); !repairable {
 			event.Err = flowRepairNotRepairableStatus
 			return event

@@ -4932,11 +4932,9 @@ func TestModel_GWithNoLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	}
 }
 
-// repairableFlowForShortcut names the selected repo as its own so a
-// prepare-stage refusal, which reaches the user through the repo-gated
-// ActionFailedMsg, is visible in these tests the way it is to a user looking at
-// the Flow they pressed R on. The worktree is a real directory because repair
-// resolves its launch paths through os.Stat.
+// repairableFlowForShortcut names the selected repo as its own, the way a user
+// pressing R on a Flow row is looking at it. The worktree is a real directory
+// because repair resolves its launch paths through os.Stat.
 func repairableFlowForShortcut() flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:       "flow-repair",
@@ -5079,6 +5077,13 @@ func TestModel_RIsAvailableAgainAfterAFailedRepair(t *testing.T) {
 		AgentCommand: "codex",
 		ReadFlow: func(string) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, errors.New("read failed")
+		},
+		// A refused repair refreshes the Flow surface, so the retry below is
+		// pressed against whatever that refresh returns. The store still has
+		// the Flow after a failed read; a fake without this would empty the
+		// pane and withdraw R for a reason this test is not about.
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{record}, nil
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})

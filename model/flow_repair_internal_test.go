@@ -332,8 +332,17 @@ func TestFlowPhaseResumeDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 	}
 }
 
+// The resume test above covers the kind whose backstop message is its own; this
+// covers the shared one. Auto and manual launches route through the lifecycle,
+// so the refusal is exercised where they actually reach it — the install stage —
+// rather than through launchTrackedFlowEmbedded, whose only production caller is
+// Plan Now and which never sees an auto launch.
 func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
-	const flowID = "flow-1"
+	const (
+		flowID   = "flow-1"
+		phaseID  = "implementation"
+		launchID = "auto-launch"
+	)
 	starts := 0
 	var failureUpdate flowstore.PhaseUpdate
 	m := Model{
@@ -352,27 +361,50 @@ func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 			return flowstore.FlowRecord{}, nil
 		},
 	}
-	ctx := actions.AgentLaunchContext{
-		Command:           "codex",
-		LaunchID:          "auto-launch",
-		FlowID:            flowID,
-		FlowPhaseID:       "implementation",
-		FlowPhaseKind:     flowstore.KindImplementation,
-		FlowLaunchTracked: true,
-		FlowAutoLaunch:    true,
-		Embedded:          true,
-		Headless:          true,
+	m.launchSeams.SetPhase = m.setFlowPhase
+	attempt := flowLaunchAttempt{
+		Token:        launchID,
+		Kind:         flowLaunchKindAutoPhase,
+		FlowID:       flowID,
+		PhaseID:      phaseID,
+		State:        flowLaunchStatePreparing,
+		MutatedPhase: true,
 	}
-
-	next, cmd := m.launchFlowEmbeddedWithContext(ctx)
+	m, ok := m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	if !ok {
+		t.Fatal("reservation should succeed on a free Flow")
+	}
+	released := 0
+	next, cmd := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+		Token:   launchID,
+		Kind:    flowLaunchKindAutoPhase,
+		FlowID:  flowID,
+		PhaseID: phaseID,
+		Context: actions.AgentLaunchContext{
+			Command:           "codex",
+			LaunchID:          launchID,
+			FlowID:            flowID,
+			FlowPhaseID:       phaseID,
+			FlowPhaseKind:     flowstore.KindImplementation,
+			FlowLaunchTracked: true,
+			FlowAutoLaunch:    true,
+			Embedded:          true,
+			Headless:          true,
+		},
+		Release: func() { released++ },
+	})
 	if starts != 0 || len(next.embeddedTerminals) != 1 {
 		t.Fatalf("auto launch opened alongside repair: starts=%d terminals=%d", starts, len(next.embeddedTerminals))
+	}
+	if released != 1 {
+		t.Fatalf("cross-process reservation releases = %d, want exactly one", released)
 	}
 	if cmd == nil {
 		t.Fatal("occupied auto launch should persist launch-failure state")
 	}
 	_ = cmd()
-	if failureUpdate.Status != flowstore.PhaseNeedsAttention || !strings.Contains(failureUpdate.Notes, "repair terminal") {
+	if failureUpdate.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(failureUpdate.Notes, "Flow phase launch canceled because a repair terminal is already open") {
 		t.Fatalf("failure update = %#v, want repair-terminal needs_attention guidance", failureUpdate)
 	}
 }

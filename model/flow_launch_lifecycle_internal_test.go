@@ -66,6 +66,10 @@ type manualLaunchHarness struct {
 	launchReleases     int
 	repairReservations int
 	repairReleases     int
+	// flowListCalls counts Flow surface fetches. A refused repair refreshes the
+	// pane because it decided against a record fresher than the rendered one,
+	// so this is a behavioural property rather than bookkeeping.
+	flowListCalls int
 
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
@@ -121,6 +125,7 @@ func (h *manualLaunchHarness) options() Options {
 			}, nil
 		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			h.flowListCalls++
 			return []flowstore.FlowRecord{h.record}, nil
 		},
 		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {

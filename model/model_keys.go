@@ -2713,10 +2713,6 @@ func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Mo
 	return m.launchTrackedFlowEmbedded(msg.LaunchContext, msg.LaunchRelease != nil)
 }
 
-func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
-	return m.launchTrackedFlowEmbedded(ctx, false)
-}
-
 // launchTrackedFlowEmbedded opens a tracked embedded Flow launch. It is what is
 // left of the pre-lifecycle embedded opener now that repair routes through the
 // lifecycle; Plan Now is its only production caller.

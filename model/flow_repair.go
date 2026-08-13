@@ -148,7 +148,7 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 // that must not inherit one. Dropping it here would re-advertise R during an
 // in-flight headless write, which admission still refuses.
 func (m Model) selectedFlowRepairReady() bool {
-	record, _, ok := m.previewRepairLaunch(m.repairFlowLaunchIntent(""))
+	record, ok := m.previewRepairLaunch(m.repairFlowLaunchIntent(""))
 	return ok && !m.flowHeadlessWritePending(record.FlowID)
 }
 
@@ -168,7 +168,7 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	// previewRepairLaunch, not cachedRepairTarget: an occupied Flow is refused by
 	// admission with the name of what holds it, and probing first would answer a
 	// different question with a worse message.
-	if record, _, ok := m.previewRepairLaunch(intent); ok && m.tmuxFlowAgentStillRunning(record, intent.FallbackRepoPath) {
+	if record, ok := m.previewRepairLaunch(intent); ok && m.tmuxFlowAgentStillRunning(record, intent.FallbackRepoPath) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	next, cmd, _ := m.requestFlowLaunch(intent)

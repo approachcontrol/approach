@@ -44,9 +44,10 @@ func repairLaunchFlowRecord(t *testing.T) flowstore.FlowRecord {
 	}
 }
 
-// repairModel selects the record's own repo. Every prepare-stage refusal now
-// reaches the user through the repo-gated ActionFailedMsg, so a harness whose
-// selected repo did not match would assert against a status no user sees.
+// repairModel selects the record's own repo, which is what a user pressing R on
+// a Flow row is looking at. Repair's refusals are not repo-gated — see
+// TestFlowRepairFailuresAreReportedForAnUnselectedRepo — so this is realism,
+// not a precondition for seeing a status.
 func (h *manualLaunchHarness) repairModel() Model {
 	h.t.Helper()
 	return h.modelWith([]scanner.Repo{{Path: h.record.RepoPath, DisplayName: "alpha"}}, h.options())
@@ -175,7 +176,7 @@ func TestFlowRepairLaunchReadRefusals(t *testing.T) {
 				return record
 			},
 			sessions: []sessions.SessionRecord{liveRepairSessionRecord("flow-1", "launch-1")},
-			wantErr:  flowRepairLiveSessionStatus,
+			wantErr:  flowRepairLiveSessionStatus("flow-1", "implementation"),
 		},
 		{
 			// The named trap, asserted as intended behaviour. A running phase
@@ -189,7 +190,7 @@ func TestFlowRepairLaunchReadRefusals(t *testing.T) {
 				return awaitingPhase(record)
 			},
 			sessions: []sessions.SessionRecord{liveRepairSessionRecord("flow-1", "launch-1")},
-			wantErr:  flowRepairLiveSessionStatus,
+			wantErr:  flowRepairLiveSessionStatus("flow-1", "implementation"),
 		},
 		{
 			// An ended store record is not occupancy, so the same stale launch
@@ -301,8 +302,24 @@ func TestFlowRepairRefusesWhenAnyPhaseHasALiveSession(t *testing.T) {
 	if len(h.launchContexts) != 0 {
 		t.Fatalf("repair started alongside a live phase session: %#v", h.launchContexts)
 	}
-	if got := m.status.Text; got != flowRepairLiveSessionStatus {
-		t.Fatalf("status = %q, want %q", got, flowRepairLiveSessionStatus)
+	// The refusal names the phase the live session belongs to, not the gated
+	// phase the user is trying to unblock, because `approach flow phase reset`
+	// takes that phase ID.
+	if want := flowRepairLiveSessionStatus(record.FlowID, "implementation"); m.status.Text != want {
+		t.Fatalf("status = %q, want %q", m.status.Text, want)
+	}
+	// Runnability is the point of the remedy, and `approach flow phase reset`
+	// requires both flags and reads neither from the environment, so both are
+	// asserted with their values rather than as bare flag names.
+	if !strings.Contains(m.status.Text, "--flow-id "+record.FlowID+" --phase-id implementation") {
+		t.Fatalf("status = %q, want a remedy that runs as printed", m.status.Text)
+	}
+	// This is the one repair refusal the footer cannot anticipate: the preview
+	// answers from the cached record, and the evidence lives in the session
+	// store one asynchronous hop later. R stays advertised and every press
+	// refuses. Pinned because the docs describe this exact asymmetry.
+	if !m.selectedFlowRepairReady() {
+		t.Fatal("the footer answers from the cached record; a session-store refusal cannot withdraw R")
 	}
 }
 
@@ -349,6 +366,83 @@ func TestFlowRepairReadResolvesLinkedPlanPath(t *testing.T) {
 			t.Fatalf("event.Err = %q, want %q", event.Err, flowRepairNoPlanPathStatus)
 		}
 	})
+
+	t.Run("lookup error", func(t *testing.T) {
+		record := repairLaunchFlowRecord(t)
+		record.PlanID = "plan-1"
+		h := newManualLaunchHarness(t, record)
+		opts := h.options()
+		opts.PlanMarkdownPath = func(string) (string, error) {
+			return "", errors.New("plan store unreadable")
+		}
+		m := h.modelWith([]scanner.Repo{{Path: record.RepoPath}}, opts)
+
+		m = h.repair(m)
+
+		if len(h.launchContexts) != 0 {
+			t.Fatalf("a repair with an unresolvable plan started %#v", h.launchContexts)
+		}
+		if got := m.status.Text; got != "plan store unreadable" {
+			t.Fatalf("status = %q, want the plan lookup error", got)
+		}
+		if h.repairReservations != 0 {
+			t.Fatalf("a read-stage refusal took %d repair reservations, want zero", h.repairReservations)
+		}
+	})
+}
+
+// The session listing is what the whole live-session rule is decided from, so a
+// failed listing must refuse rather than fall through to an empty slice. An
+// implementation that swallowed the error would silently disable the rule and
+// every other repair test would still pass.
+func TestFlowRepairRefusesWhenTheSessionListingFails(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	h.sessionsErr = errors.New("session store unreadable")
+
+	m := h.repair(h.repairModel())
+
+	if len(h.launchContexts) != 0 {
+		t.Fatalf("a repair with an unreadable session store started %#v", h.launchContexts)
+	}
+	if got := m.status.Text; got != "session store unreadable" {
+		t.Fatalf("status = %q, want the session listing error", got)
+	}
+	if _, held := m.flowLaunchAttempt(record.FlowID); held {
+		t.Fatal("a refused repair stranded its attempt")
+	}
+	if h.repairReservations != 0 {
+		t.Fatalf("a read-stage refusal took %d repair reservations, want zero", h.repairReservations)
+	}
+}
+
+// The substitution this migration made in flowAutoAdvanceOccupied: the pending
+// repair map was deleted and the lifecycle attempt now stands in for it. The
+// attempt is taken at the key press and held until the slot is installed, so
+// AutoMode must defer for a repair that has not reached its terminal yet — the
+// window the deleted map used to cover.
+func TestFlowRepairAttemptDefersTheAutoAdvanceDrain(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	record.AutoMode = true
+	h := newManualLaunchHarness(t, record)
+	m := h.repairModel()
+
+	next, _, admitted := m.requestFlowLaunch(m.repairFlowLaunchIntent(""))
+	if !admitted {
+		t.Fatal("repair was not admitted; the rest of this test asserts nothing")
+	}
+	m = next
+	attempt, held := m.flowLaunchAttempt(record.FlowID)
+	if !held {
+		t.Fatal("admission must hold the attempt from the key press onward")
+	}
+
+	if !m.flowAutoAdvanceOccupied(record) {
+		t.Fatal("an in-flight repair attempt must defer the auto-advance drain")
+	}
+	if m.releaseFlowLaunchAttempt(record.FlowID, attempt.Token).flowAutoAdvanceOccupied(record) {
+		t.Fatal("occupancy must be the attempt itself, not some other property of this record")
+	}
 }
 
 // The fallback the intent carries is the current repo, snapshotted at the key
@@ -378,6 +472,164 @@ func TestFlowRepairFallsBackToCurrentRepoWhenRecordedPathsAreMissing(t *testing.
 	}
 }
 
+// Every refusal decided against the authoritative record refreshes the Flow
+// surface, because the row the user is looking at is the stale one that
+// advertised R in the first place — "Flow is no longer repairable" is exactly
+// that case. Both stages that read it owe the refresh, which is why the read
+// stage takes failFlowLaunch's exit rather than the generic release-and-status
+// one. An admission refusal is decided against the cached record itself, so it
+// owes nothing and must not fetch.
+func TestFlowRepairRefusalRefreshesTheFlowSurface(t *testing.T) {
+	notRepairable := func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		record.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+		record.Phases[0].Status = flowstore.PhaseReady
+		return record
+	}
+	for _, tt := range []struct {
+		name      string
+		occupy    func(Model, flowstore.FlowRecord) Model
+		setup     func(*manualLaunchHarness, flowstore.FlowRecord)
+		wantFetch bool
+	}{
+		{
+			name: "read stage",
+			setup: func(h *manualLaunchHarness, record flowstore.FlowRecord) {
+				h.persistedFlows = []flowstore.FlowRecord{notRepairable(record)}
+			},
+			wantFetch: true,
+		},
+		{
+			// The read stage passes and only the reserved record disagrees, so
+			// the same refusal lands one stage later.
+			name: "prepare stage",
+			setup: func(h *manualLaunchHarness, record flowstore.FlowRecord) {
+				h.repairReserved = notRepairable(record)
+				h.repairReservedOK = true
+			},
+			wantFetch: true,
+		},
+		{
+			name: "admission",
+			occupy: func(m Model, record flowstore.FlowRecord) Model {
+				return m.markFlowHeadlessWritePending(pendingFlowHeadlessWrite{
+					flowID:   record.FlowID,
+					repoPath: record.RepoPath,
+				})
+			},
+			wantFetch: false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := repairLaunchFlowRecord(t)
+			h := newManualLaunchHarness(t, record)
+			if tt.setup != nil {
+				tt.setup(h, record)
+			}
+			m := h.repairModel()
+			if tt.occupy != nil {
+				m = tt.occupy(m, record)
+			}
+			// Model construction and pane seeding both list; only what the
+			// refusal itself adds is the behaviour under test.
+			before := h.flowListCalls
+
+			m = h.repair(m)
+
+			if len(h.launchContexts) != 0 {
+				t.Fatalf("a refused repair started %#v", h.launchContexts)
+			}
+			if m.status.Text == "" {
+				t.Fatal("a refused repair must report a status")
+			}
+			if fetched := h.flowListCalls > before; fetched != tt.wantFetch {
+				t.Fatalf("Flow surface fetched = %v, want %v (list calls %d -> %d)",
+					fetched, tt.wantFetch, before, h.flowListCalls)
+			}
+			if _, held := m.flowLaunchAttempt(record.FlowID); held {
+				t.Fatal("a refused repair stranded its attempt")
+			}
+		})
+	}
+}
+
+// flowRepairLaunchPaths is the one piece of repair that touches the filesystem,
+// and both stages run it: the read stage with the intent's current-repo
+// fallback, the refresh with the already-resolved context paths. The
+// end-to-end tests above cover the case where every recorded path is gone; this
+// covers the rest of the ladder directly, in particular the recorded repo
+// standing in as the worktree, which no lifecycle test reaches.
+func TestFlowRepairLaunchPathsFallbackLadder(t *testing.T) {
+	usable := t.TempDir()
+	other := t.TempDir()
+	missing := "/dev/null/deleted"
+
+	for _, tt := range []struct {
+		name         string
+		repoPath     string
+		worktreePath string
+		fallbacks    []string
+		wantRepo     string
+		wantWorktree string
+		wantResolved bool
+	}{
+		{
+			name:         "recorded worktree wins and the repo is left alone",
+			repoPath:     usable,
+			worktreePath: other,
+			fallbacks:    []string{missing},
+			wantRepo:     usable,
+			wantWorktree: other,
+			wantResolved: true,
+		},
+		{
+			// The branch the deleted pre-lifecycle test owned: the worktree is
+			// gone but the recorded repo is not, so the repo becomes both.
+			name:         "recorded repo stands in for a missing worktree",
+			repoPath:     usable,
+			worktreePath: missing,
+			fallbacks:    nil,
+			wantRepo:     usable,
+			wantWorktree: usable,
+			wantResolved: true,
+		},
+		{
+			// Repo unusable too, so the fallback supplies the worktree and is
+			// also promoted into the repo slot — an unusable RepoPath must not
+			// survive onto the launch context.
+			name:         "fallback supplies both when the recorded paths are gone",
+			repoPath:     missing,
+			worktreePath: missing,
+			fallbacks:    []string{"", missing, usable},
+			wantRepo:     usable,
+			wantWorktree: usable,
+			wantResolved: true,
+		},
+		{
+			// Nothing usable anywhere: the recorded paths are returned unchanged
+			// so the caller can report its own refusal rather than launch into a
+			// directory it invented.
+			name:         "no candidate resolves",
+			repoPath:     missing,
+			worktreePath: missing,
+			fallbacks:    []string{missing},
+			wantRepo:     missing,
+			wantWorktree: missing,
+			wantResolved: false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath, worktreePath, ok := flowRepairLaunchPaths(tt.repoPath, tt.worktreePath, tt.fallbacks...)
+			if ok != tt.wantResolved {
+				t.Fatalf("flowRepairLaunchPaths() resolved = %v, want %v", ok, tt.wantResolved)
+			}
+			if repoPath != tt.wantRepo || worktreePath != tt.wantWorktree {
+				t.Fatalf("flowRepairLaunchPaths() = repo %q worktree %q, want repo %q worktree %q",
+					repoPath, worktreePath, tt.wantRepo, tt.wantWorktree)
+			}
+		})
+	}
+}
+
 // Prompt, headless preference, worktree, and branch all come from the reserved
 // record, not from the cached snapshot the key press saw.
 func TestFlowRepairContextIsRefreshedFromTheReservedRecord(t *testing.T) {
@@ -396,7 +648,11 @@ func TestFlowRepairContextIsRefreshedFromTheReservedRecord(t *testing.T) {
 			reserved.Headless = tt.authoritative
 			reserved.Branch = "flow/reserved"
 			reserved.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
-			reserved.Phases[0].Notes = "reserved obstruction wording"
+			// The prompt renders the obstruction phase's title, and only the
+			// reserved record carries this one. Asserting on the shared blocked
+			// status instead would pass whichever record the prompt came from,
+			// which is the one thing this test exists to distinguish.
+			reserved.Phases[0].Title = "Reserved phase heading"
 			h := newManualLaunchHarness(t, record)
 			h.repairReserved = reserved
 			h.repairReservedOK = true
@@ -412,6 +668,9 @@ func TestFlowRepairContextIsRefreshedFromTheReservedRecord(t *testing.T) {
 			}
 			if ctx.Branch != reserved.Branch {
 				t.Fatalf("repair branch = %q, want the reserved record's %q", ctx.Branch, reserved.Branch)
+			}
+			if !strings.Contains(ctx.InitialPrompt, reserved.Phases[0].Title) {
+				t.Fatalf("repair prompt was rendered from the cached record, not the reserved one:\n%s", ctx.InitialPrompt)
 			}
 			if !strings.Contains(ctx.InitialPrompt, "is blocked") {
 				t.Fatalf("repair prompt does not describe the reserved obstruction:\n%s", ctx.InitialPrompt)
@@ -472,21 +731,170 @@ func TestFlowRepairReservationFailureRefusesWithoutMutatingThePhase(t *testing.T
 	}
 }
 
-// The prepare-stage refusal reaches the user through ActionFailedMsg, which is
-// repo-gated. A user who changes the selected repo while the reservation is in
-// flight, with Active Flows closed, now sees nothing — the same trade the
-// tracked resume migration accepted.
-func TestFlowRepairReservationFailureStatusIsRepoGated(t *testing.T) {
+// Repair failures are never repo-gated. The tracked kinds report a
+// nothing-persisted failure through ActionFailedMsg, which main shows only when
+// the failing repo is selected or Active Flows is open; repair reports with a
+// bare status instead, exactly as the pre-lifecycle path did. A user who moves
+// the repos-pane selection during the asynchronous reservation hop must still
+// be told why the R they pressed did nothing.
+//
+// Both stages that can refuse after admission are covered, because they take
+// different branches of failFlowLaunch: prepare is the one that used to be
+// gated, install is the backstop.
+func TestFlowRepairFailuresAreReportedForAnUnselectedRepo(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		setUp            func(h *manualLaunchHarness)
+		occupy           func(Model) Model
+		want             string
+		wantReservations int
+	}{
+		{
+			name: "reservation error",
+			setUp: func(h *manualLaunchHarness) {
+				h.reserveRepairErr = errors.New("cannot reserve repair because flow is closed")
+			},
+			want: "Reserve persisted Flow for repair: cannot reserve repair because flow is closed",
+		},
+		{
+			// The post-reservation revalidation, which is repair's last check
+			// and the one that closes the read → reserve race. The reserved
+			// record's phase is launchable again, so the classifier withdraws
+			// repairability after the read stage already allowed it.
+			name: "post-reservation revalidation",
+			setUp: func(h *manualLaunchHarness) {
+				reserved := h.record
+				reserved.Phases = append([]flowstore.FlowPhase(nil), h.record.Phases...)
+				reserved.Phases[0].Status = flowstore.PhaseReady
+				h.repairReserved, h.repairReservedOK = reserved, true
+			},
+			want:             flowRepairNotRepairableStatus,
+			wantReservations: 1,
+		},
+		{
+			// A reservation that answers with a record for some other Flow is
+			// refused rather than launched against, because the prepare stage
+			// rebuilds the whole context from it.
+			name: "reservation returns a foreign record",
+			setUp: func(h *manualLaunchHarness) {
+				reserved := h.record
+				reserved.FlowID = "flow-other"
+				h.repairReserved, h.repairReservedOK = reserved, true
+			},
+			want:             flowRepairNotRepairableStatus,
+			wantReservations: 1,
+		},
+		{
+			// The install stage. Capacity is the one install-stage refusal
+			// reachable end to end — the backstop beside it is unreachable by
+			// admission — and it lands after the reservation has been taken and
+			// released, which is the furthest a repair can get and still refuse.
+			name: "capacity at the install stage",
+			occupy: func(m Model) Model {
+				for i := 1; i <= 9; i++ {
+					m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+						Number:   i,
+						Scope:    embeddedTerminalScopeSession,
+						Terminal: flowPhaseLaunchTestTerminal{state: "running"},
+					})
+				}
+				return m
+			},
+			want:             "Maximum embedded terminals reached",
+			wantReservations: 1,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := repairLaunchFlowRecord(t)
+			h := newManualLaunchHarness(t, record)
+			if tt.setUp != nil {
+				tt.setUp(h)
+			}
+			// The record's own repo is present but not selected, and Active
+			// Flows is closed, so ActionFailedMsg would show nothing here.
+			m := h.modelWith([]scanner.Repo{{Path: "/dev/elsewhere"}, {Path: record.RepoPath}}, h.options())
+			if tt.occupy != nil {
+				m = tt.occupy(m)
+			}
+
+			m = h.repair(m)
+
+			if m.status.Text != tt.want {
+				t.Fatalf("status = %q, want %q", m.status.Text, tt.want)
+			}
+			if len(h.launchContexts) != 0 {
+				t.Fatalf("a refused repair opened %#v", h.launchContexts)
+			}
+			if len(h.phaseUpdates) != 0 || len(h.launchUpdates) != 0 {
+				t.Fatalf("a refused repair persisted phases=%#v launches=%#v", h.phaseUpdates, h.launchUpdates)
+			}
+			if _, held := m.flowLaunchAttempt(record.FlowID); held {
+				t.Fatal("a refused repair stranded its attempt")
+			}
+			if h.repairReservations != tt.wantReservations || h.repairReleases != tt.wantReservations {
+				t.Fatalf("repair reservations = %d, releases = %d, want %d held then released",
+					h.repairReservations, h.repairReleases, tt.wantReservations)
+			}
+		})
+	}
+}
+
+// The install-stage backstop, which admission makes unreachable in production.
+// Repair's rung is broader than every other kind's: it refuses a non-repair
+// Flow terminal too, because repair is Flow-scoped and any terminal on the Flow
+// is a competing owner of the same record. That breadth is what the pre-
+// lifecycle consume step checked immediately before allocating, so losing it
+// here would narrow repair's last line of defense against a future unguarded
+// launch source.
+func TestFlowRepairInstallBackstopRefusesAnyFlowTerminal(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		slot embeddedTerminalSlot
+	}{
+		{
+			name: "repair terminal",
+			slot: embeddedTerminalSlot{FlowRepair: true},
+		},
+		{
+			// The broad half. hasFlowRepairEmbeddedTerminalForFlow does not
+			// match this slot, so only the added disjunct refuses it.
+			name: "phase terminal",
+			slot: embeddedTerminalSlot{FlowPhaseID: "implementation"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := repairLaunchFlowRecord(t)
+			slot := tt.slot
+			slot.Scope = embeddedTerminalScopeFlow
+			slot.FlowID = record.FlowID
+			slot.Terminal = flowPhaseLaunchTestTerminal{state: "running"}
+
+			attempt := flowLaunchAttempt{Token: "token-1", Kind: flowLaunchKindRepair, FlowID: record.FlowID}
+			m := Model{embeddedTerminals: []embeddedTerminalSlot{slot}}
+
+			canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, record.FlowID)
+			if !blocked {
+				t.Fatal("a repair must never install beside another terminal on the same Flow")
+			}
+			if canceled != flowRepairTerminalStatus {
+				t.Fatalf("backstop refusal = %q, want repair's own terminal wording %q", canceled, flowRepairTerminalStatus)
+			}
+		})
+	}
+
+	// The other kinds keep their narrower rung: a non-repair Flow terminal is
+	// their ordinary one-per-Flow case, refused at admission, not here.
 	record := repairLaunchFlowRecord(t)
-	h := newManualLaunchHarness(t, record)
-	h.reserveRepairErr = errors.New("cannot reserve repair because flow is closed")
-	m := h.modelWith([]scanner.Repo{{Path: "/dev/elsewhere"}, {Path: record.RepoPath}}, h.options())
-	m.status.Text = "keep this"
-
-	m = h.repair(m)
-
-	if m.status.Text != "keep this" {
-		t.Fatalf("status = %q, want the failure suppressed for an unselected repo", m.status.Text)
+	m := Model{embeddedTerminals: []embeddedTerminalSlot{{
+		Scope:       embeddedTerminalScopeFlow,
+		FlowID:      record.FlowID,
+		FlowPhaseID: "implementation",
+		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
+	}}}
+	for _, kind := range []flowLaunchKind{flowLaunchKindManualPhase, flowLaunchKindAutoPhase, flowLaunchKindPhaseResume} {
+		if _, blocked := m.flowLaunchEmbeddedBackstop(kind, record.FlowID); blocked {
+			t.Fatalf("kind %v must not inherit repair's broad backstop", kind)
+		}
 	}
 }
 
@@ -751,10 +1159,12 @@ func TestFlowRepairTerminalRemovalRelaunchesThroughAutoPhaseIntent(t *testing.T)
 	}
 }
 
-// The footer's predicate and admission agree on every occupancy signal, and the
-// two terms admission cannot carry — the headless write and the surface gate —
-// stay outside the preview boundary on purpose.
-func TestSelectedFlowRepairReadyMatchesAdmission(t *testing.T) {
+// The surface gate is the term neither cachedFlowRecord nor selectedFlow
+// carries, so dropping it would arm R from panes that show no Flow. The wider
+// invariant — that the footer and admission agree on every occupancy signal —
+// is pinned by the wantFooter column of TestFlowRepairAdmissionRefusals, which
+// exercises both predicates against the same Model.
+func TestSelectedFlowRepairReadyRequiresAVisibleFlowSurface(t *testing.T) {
 	record := repairLaunchFlowRecord(t)
 	h := newManualLaunchHarness(t, record)
 	base := h.repairModel()
