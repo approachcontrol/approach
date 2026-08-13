@@ -1028,6 +1028,27 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	allRepositories := m.activeFlowSurfaceVisible()
+	// The other half of the fence admission holds. Admission refuses a launch
+	// while a headless write is outstanding; this refuses the toggle once the
+	// launch is past admission, which is the only ordering the launch side
+	// cannot see coming.
+	//
+	// It covers the two phase-untracked kinds, and only those: each resolves
+	// headless in its prepare stage from a record read under the launch/close
+	// lock — the worktree agent from ReserveAgentLaunch, repair from
+	// ReserveRepairLaunch by way of refreshFlowRepairLaunchContext. SetHeadless
+	// writes under the Flow store's own lock and so is ordered against neither,
+	// leaving both free to observe either value; for the worktree agent the
+	// route turns on it too, since a headless launch is never tmux-eligible.
+	//
+	// Every tracked kind is deliberately left free to toggle: it resolves
+	// headless from the record its own phase write returns, and that write
+	// contends with SetHeadless on the store's write lock, so whichever lands
+	// second wins and the launcher sees a consistent record either way.
+	switch m.flowLaunchAttemptKind(record.FlowID) {
+	case flowLaunchKindWorktreeAgent, flowLaunchKindRepair:
+		return m.setStatus(statusOther, flowHeadlessLaunchInFlightStatus), nil
+	}
 	// A write is already outstanding for this Flow. Commands run concurrently, so
 	// starting a second one would let the two values reach the store in either
 	// order. Record the new intent instead and let the in-flight completion
@@ -1048,6 +1069,12 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 // flowHeadlessWritePendingStatus explains why a launch waits for an in-flight
 // headless toggle instead of starting in the previous mode.
 const flowHeadlessWritePendingStatus = "Applying headless mode change; retry the launch in a moment"
+
+// flowHeadlessLaunchInFlightStatus is that refusal in the other direction: the
+// toggle is the thing that waits, because the launch it would race has already
+// been admitted. It names the launch rather than the key so the wording holds
+// wherever the toggle was pressed from.
+const flowHeadlessLaunchInFlightStatus = "A Flow launch is in flight; retry the headless change in a moment"
 
 // pendingFlowHeadlessWrite fences launches for one Flow while a headless write
 // is outstanding and carries the value the user last asked for, along with the

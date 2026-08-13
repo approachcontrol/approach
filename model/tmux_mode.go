@@ -1,6 +1,7 @@
 package model
 
 import (
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -228,7 +229,7 @@ func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, comma
 }
 
 // tmuxFlowAgentStillRunning is tmuxPhaseAgentStillRunning for a whole record,
-// plus this Flow's newest worktree-agent window. Repair needs it because a
+// plus every worktree-agent window this Flow opened. Repair needs it because a
 // Flow-level obstruction names no phase, and a repair agent must not start while
 // any of the Flow's phases still has a live window.
 //
@@ -248,10 +249,7 @@ func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, comma
 // function, because flowAutoAdvanceOccupied answers from the Model alone — a
 // poll on a timer must not shell out.
 func (m Model) tmuxFlowAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
-	launchIDs := flowRecordPhaseLaunchIDs(record)
-	if launchID := m.flowWorktreeAgentTmuxLaunchID(record.FlowID); launchID != "" {
-		launchIDs = append(launchIDs, launchID)
-	}
+	launchIDs := append(flowRecordPhaseLaunchIDs(record), m.flowWorktreeAgentTmuxLaunchIDs(record.FlowID)...)
 	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
 }
 
@@ -269,17 +267,22 @@ func (m Model) tmuxFlowAgentStillRunning(record flowstore.FlowRecord, fallbackRe
 // The registry lookup runs first so the common case costs no subprocess: only a
 // Flow that actually launched a worktree agent in this process ever probes.
 func (m Model) tmuxWorktreeAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
-	launchID := m.flowWorktreeAgentTmuxLaunchID(record.FlowID)
-	if launchID == "" {
+	launchIDs := m.flowWorktreeAgentTmuxLaunchIDs(record.FlowID)
+	if len(launchIDs) == 0 {
 		return false
 	}
-	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), []string{launchID})
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
 }
 
-// flowWorktreeAgentTmuxLaunchID reports this Flow's newest worktree-agent tmux
-// launch, or "" when it has none in this process.
-func (m Model) flowWorktreeAgentTmuxLaunchID(flowID string) string {
-	return strings.TrimSpace(m.flowWorktreeAgentTmuxLaunches[strings.TrimSpace(flowID)])
+// flowWorktreeAgentTmuxLaunchIDs reports every worktree-agent tmux launch this
+// Flow made in this process, oldest first, or nil when it made none. They are
+// probed together for the reason a phase probes all of its own LaunchIDs: any
+// one of those windows still being open means an agent still owns the worktree.
+//
+// The result never aliases the registry's backing array, so a caller may append
+// to it without writing into the Model's map.
+func (m Model) flowWorktreeAgentTmuxLaunchIDs(flowID string) []string {
+	return slices.Clone(m.flowWorktreeAgentTmuxLaunches[strings.TrimSpace(flowID)])
 }
 
 // flowRecordPhaseLaunchIDs collects every launch a phase of this record made.

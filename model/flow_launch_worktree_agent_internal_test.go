@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1143,22 +1144,37 @@ func TestWithFlowWorktreeAgentTmuxLaunchClonesTheRegistry(t *testing.T) {
 	if _, ok := first.flowWorktreeAgentTmuxLaunches["flow-2"]; ok {
 		t.Fatalf("the first copy saw the second write: %#v", first.flowWorktreeAgentTmuxLaunches)
 	}
-	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; got != "launch-1" {
-		t.Fatalf("flow-1 entry = %q, want the earlier write carried forward", got)
+	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1"}) {
+		t.Fatalf("flow-1 entry = %#v, want the earlier write carried forward", got)
 	}
-	// Overwriting is the documented behaviour: one entry per Flow, newest wins.
+	// Retention, not replacement: a second launch is appended, and the copy taken
+	// before it must still see only the first — an append through a shared
+	// backing array would reach back into it.
 	third := second.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-3")
-	if got := third.flowWorktreeAgentTmuxLaunches["flow-1"]; got != "launch-3" {
-		t.Fatalf("flow-1 entry = %q, want the newest launch", got)
+	if got := third.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
+		t.Fatalf("flow-1 entry = %#v, want both launches retained oldest first", got)
 	}
-	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; got != "launch-1" {
-		t.Fatalf("the overwrite reached an older copy: %q", got)
+	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1"}) {
+		t.Fatalf("the append reached an older copy: %#v", got)
+	}
+	// A launch already retained adds nothing: the same token can reach a handoff
+	// twice, and a duplicate would only widen the probe's argument list.
+	if got := third.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-3").
+		flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
+		t.Fatalf("flow-1 entry = %#v, want a duplicate launch ignored", got)
 	}
 	if next := third.withFlowWorktreeAgentTmuxLaunch("", "launch-4"); len(next.flowWorktreeAgentTmuxLaunches) != 2 {
 		t.Fatalf("an empty Flow ID must record nothing: %#v", next.flowWorktreeAgentTmuxLaunches)
 	}
 	if next := third.withFlowWorktreeAgentTmuxLaunch("flow-4", " "); len(next.flowWorktreeAgentTmuxLaunches) != 2 {
 		t.Fatalf("a blank launch ID must record nothing: %#v", next.flowWorktreeAgentTmuxLaunches)
+	}
+	// The accessor must not hand out the registry's own array either: the Flow-wide
+	// probe appends the worktree-agent IDs onto the phase ones.
+	ids := third.flowWorktreeAgentTmuxLaunchIDs("flow-1")
+	ids[0] = "launch-5"
+	if got := third.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
+		t.Fatalf("writing to the accessor's result reached the registry: %#v", got)
 	}
 }
 
@@ -1231,5 +1247,147 @@ func TestAutofixHintReachesTheRenderedView(t *testing.T) {
 	})
 	if strings.Contains(occupied.View(), "autofix PR") {
 		t.Fatalf("an occupied Flow must not render the autofix hint:\n%s", occupied.View())
+	}
+}
+
+// TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID pins why the registry keeps
+// every launch a Flow made rather than the newest alone. The probe is advisory
+// in one direction only — a timed-out `list-windows` answers false for a window
+// that is still open — so a second U press is admitted while the first agent
+// runs. Dropping the older ID there would leave that agent unprobed the moment
+// the newer window exits, and the next U, g, r, or R would put a third agent in
+// a worktree two are already editing.
+func TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+
+	tokens := []string{"launch-1", "launch-2"}
+	issued := 0
+	m := h.model()
+	m.launchSeams.NewLaunchID = func() string {
+		token := tokens[issued]
+		issued++
+		return token
+	}
+	// False for both presses: the first because nothing has launched yet, the
+	// second as the transient probe failure this retention exists to survive.
+	h.windowLive = func(string, []string) bool { return false }
+
+	m = h.autofix(m)
+	m = h.autofix(m)
+
+	if len(h.tmuxContexts) != 2 {
+		t.Fatalf("tmux launches = %d, want both presses admitted", len(h.tmuxContexts))
+	}
+
+	var probed []string
+	h.windowLive = func(_ string, launchIDs []string) bool {
+		probed = append(probed, launchIDs...)
+		return false
+	}
+	if m.tmuxWorktreeAgentStillRunning(record, "") {
+		t.Fatal("the probe answered false, so nothing must read as live")
+	}
+	for _, want := range tokens {
+		if !slices.Contains(probed, want) {
+			t.Fatalf("probed = %#v, want %q retained", probed, want)
+		}
+	}
+
+	// The Flow-wide probe unions the registry with every phase launch, so it has
+	// to carry the same retained set.
+	probed = nil
+	if m.tmuxFlowAgentStillRunning(record, "") {
+		t.Fatal("the probe answered false, so nothing must read as live")
+	}
+	for _, want := range tokens {
+		if !slices.Contains(probed, want) {
+			t.Fatalf("Flow-wide probed = %#v, want %q retained", probed, want)
+		}
+	}
+}
+
+// TestToggleFlowHeadlessRefusedWhileWorktreeAgentAttemptHoldsTheFlow pins the
+// half of the headless fence admission cannot cover. Admission refuses U while a
+// headless write is outstanding, but the user can press h after the attempt is
+// already reading. This kind resolves headless from ReserveAgentLaunch's record,
+// read under the launch/close lock, while SetHeadless writes under the Flow
+// store's own — the two are not serialized, so a toggle started here would leave
+// the reservation free to read either value, and a headless launch is never
+// tmux-eligible. Refuse the toggle for as long as the attempt holds the Flow.
+func TestToggleFlowHeadlessRefusedWhileWorktreeAgentAttemptHoldsTheFlow(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+
+	m, prepareCmd := h.stageWorktreeAgentLaunch(h.model())
+	if prepareCmd == nil {
+		t.Fatal("the staged press must have produced the prepare command")
+	}
+	if _, ok := h.attempt(m, record.FlowID); !ok {
+		t.Fatal("the staged press must still hold the Flow")
+	}
+
+	next, cmd := m.handleToggleFlowHeadless()
+	toggled := next.(Model)
+
+	if cmd != nil {
+		t.Fatal("the toggle must not start a write that races the reservation's read")
+	}
+	if got := toggled.status.Text; got != flowHeadlessLaunchInFlightStatus {
+		t.Fatalf("status = %q, want %q", got, flowHeadlessLaunchInFlightStatus)
+	}
+	if toggled.flowHeadlessWritePending(record.FlowID) {
+		t.Fatal("a refused toggle must leave no pending write")
+	}
+}
+
+// TestToggleFlowHeadlessRefusedWhilePendingRepairHoldsTheFlow covers repair's
+// half of the same fence. A repair takes its lifecycle attempt at the key press
+// and only reads the Flow later, in prepare, through ReserveRepairLaunch — the
+// same launch/close lock, and the same lack of ordering against SetHeadless —
+// before refreshFlowRepairLaunchContext resolves ctx.Headless from that record.
+// So the toggle has to stand off for a repair attempt exactly as it does for a
+// worktree agent, or the repair runs interactively or headlessly depending on
+// which command finished first.
+func TestToggleFlowHeadlessRefusedWhilePendingRepairHoldsTheFlow(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	record.Phases[0].Status = flowstore.PhaseNeedsAttention
+	// Repair resolves its launch directory by stat, so the fixture needs a real
+	// one or admission stops before it ever marks the Flow pending.
+	dir := t.TempDir()
+	record.RepoPath = dir
+	record.WorktreePath = dir
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.activeFlowSurface = false
+	if !m.selectedFlowRepairReady() {
+		t.Fatal("fixture should be repairable before anything holds the Flow")
+	}
+
+	next, repairCmd := m.handleRepairSelectedFlow()
+	repairing := next.(Model)
+	if repairCmd == nil {
+		t.Fatal("an admitted repair must return the read command")
+	}
+	// The read and prepare stages are deliberately left unrun: this is the
+	// window between admission taking the attempt and prepare's reservation
+	// reading the record it resolves headless from.
+	if got := repairing.flowLaunchAttemptKind(record.FlowID); got != flowLaunchKindRepair {
+		t.Fatalf("attempt kind = %v, want the admitted repair holding the Flow", got)
+	}
+
+	toggled, cmd := repairing.handleToggleFlowHeadless()
+	toggledModel := toggled.(Model)
+
+	if cmd != nil {
+		t.Fatal("the toggle must not start a write that races the repair's read")
+	}
+	if got := toggledModel.status.Text; got != flowHeadlessLaunchInFlightStatus {
+		t.Fatalf("status = %q, want %q", got, flowHeadlessLaunchInFlightStatus)
+	}
+	if toggledModel.flowHeadlessWritePending(record.FlowID) {
+		t.Fatal("a refused toggle must leave no pending write")
 	}
 }
