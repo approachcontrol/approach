@@ -183,6 +183,8 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 		return m.admitAutoFlowLaunch(intent)
 	case flowLaunchKindPhaseResume:
 		return m.admitPhaseResumeFlowLaunch(intent)
+	case flowLaunchKindRepair:
+		return m.admitRepairFlowLaunch(intent)
 	default:
 		// Later beads route the remaining kinds; nothing submits them yet.
 		return m, nil, false
@@ -313,8 +315,7 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	}
 	return m.flowLaunchAttemptOccupied(flowID) ||
 		m.hasFlowEmbeddedTerminalForFlow(flowID) ||
-		m.hasFlowRepairEmbeddedTerminalForFlow(flowID) ||
-		m.hasPendingFlowRepairLaunch(flowID)
+		m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
 }
 
 func (m Model) cachedFlowRecord(flowID string) (flowstore.FlowRecord, bool) {
@@ -417,10 +418,14 @@ func (m Model) flowLaunchLauncher(token string) FlowPhaseLauncher {
 
 func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	seams := m.launchSeams
-	// Resume dispatches before the launcher is built: it never runs Preflight,
-	// whose new-launch rules would reject the very phases resume exists for.
+	// Resume and repair dispatch before the launcher is built: neither runs
+	// Preflight, whose new-launch rules would reject the very phases they exist
+	// for.
 	if intent.Kind == flowLaunchKindPhaseResume {
 		return phaseResumeFlowLaunchReadCmd(seams, intent, token)
+	}
+	if intent.Kind == flowLaunchKindRepair {
+		return repairFlowLaunchReadCmd(seams, intent, token)
 	}
 	launcher := settings.apply(m.flowLaunchLauncher(token))
 	if intent.Kind == flowLaunchKindAutoPhase {
@@ -590,10 +595,14 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 }
 
 func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
-	// Resume dispatches before the candidate lookup below, whose failure path
-	// emits noLaunchableFlowPhaseStatus — a string a resume may never show.
+	// Resume and repair dispatch before the candidate lookup below, whose
+	// failure path emits noLaunchableFlowPhaseStatus — a string neither may
+	// ever show.
 	if msg.Kind == flowLaunchKindPhaseResume {
 		return m.phaseResumeFlowLaunchPrepareCmd(msg, settings)
+	}
+	if msg.Kind == flowLaunchKindRepair {
+		return m.repairFlowLaunchPrepareCmd(msg, settings)
 	}
 	launcher := settings.apply(m.flowLaunchLauncher(msg.Token))
 	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
@@ -674,6 +683,16 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m.handleAutoFlowLaunchRead(attempt, msg)
 		}
 		if msg.Err != "" {
+			if msg.Kind == flowLaunchKindRepair {
+				// Repair's read-stage refusals are decided against the same
+				// authoritative record its prepare-stage ones are — this is in
+				// fact where flowRepairNotRepairableStatus is usually raised —
+				// so they take the same exit and get the same Flow surface
+				// refetch. failFlowLaunch's repair branch is release plus status
+				// plus that refetch, and it reads neither the context nor the
+				// repo path, both of which are still zero here.
+				return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
+			}
 			// No launch bookkeeping exists and no context does either, so the
 			// attempt simply goes away with a status. The ensure step is the one
 			// refusal that can still have persisted something — the worktree it
@@ -701,8 +720,17 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
 		}
-		m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
-		attempt.MutatedPhase = true
+		if msg.Kind != flowLaunchKindRepair {
+			// Repair's prepare stage persists nothing — it never calls
+			// AddPhaseLaunchID — so marking it would make the field assert a
+			// write that did not happen. This is a truthfulness invariant on the
+			// attempt record, not a guard: failFlowLaunch short-circuits on the
+			// repair kind before reading MutatedPhase, and flowLaunchFailureUpdate
+			// refuses on the empty FlowPhaseID besides. Both of those are pinned;
+			// this is here so a future reader can trust the field.
+			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
+			attempt.MutatedPhase = true
+		}
 		switch msg.Route {
 		case flowLaunchRouteEmbedded:
 			return m.installFlowLaunchEmbedded(attempt, msg)
@@ -835,16 +863,13 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	defer releaseFlowLaunchReservation(msg.Release)
 	ctx := msg.Context
 	ctx.Embedded = true
-	ctx.FlowLaunchTracked = true
-	if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
-		// Admission makes this unreachable, but dropping the backstop would be
-		// a regression against a future unguarded source. The wording comes
-		// from the attempt's own kind, never from the prefill-failure
-		// re-reservation, which labels every source manualPhase.
-		canceled := "Flow phase launch canceled because a repair terminal is already open for this Flow"
-		if attempt.Kind == flowLaunchKindPhaseResume {
-			canceled = "Flow phase resume canceled because a repair terminal is already open for this Flow"
-		}
+	// A repair is Flow-scoped and phase-untracked: it names no phase and must
+	// never be stamped tracked, or its failures would look for a phase to
+	// regress.
+	if attempt.Kind != flowLaunchKindRepair {
+		ctx.FlowLaunchTracked = true
+	}
+	if canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, ctx.FlowID); blocked {
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, canceled)
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
@@ -915,6 +940,44 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 	return m, batchNonNil(fetchCmd, launchCmd)
 }
 
+// flowLaunchEmbeddedBackstop is the last occupancy check before a slot is
+// allocated, and it is deliberately per kind. Admission makes every branch here
+// unreachable, but dropping the backstop would be a regression against a future
+// unguarded source.
+//
+// Every kind refuses an open repair terminal. Repair alone also refuses a
+// non-repair Flow terminal, because repair is Flow-scoped rather than phase-
+// scoped: any terminal on the Flow is a competing owner of the same record.
+// That broad disjunct is where consumePendingFlowRepairLaunch's pre-allocation
+// recheck went, and keeping it here is what stops the migration from quietly
+// narrowing repair's last line of defense.
+//
+// It is a superset of that recheck, not a transcription of it: the old one
+// tested hasFlowEmbeddedTerminalForFlow alone, so a repair slot with no live
+// terminal got past it. The two predicates overlap rather than nest — one
+// requires a live terminal, the other a repair slot — so repair needs both, and
+// adding the second is a fix. The same tightening reaches the footer through
+// flowLaunchAdmissionOccupied, which now withdraws R for a terminal-less repair
+// slot that previously left it advertised.
+//
+// The wording comes from the attempt's own kind, never from the prefill-failure
+// re-reservation, which labels every source manualPhase.
+func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (string, bool) {
+	if kind == flowLaunchKindRepair {
+		if m.hasFlowRepairEmbeddedTerminalForFlow(flowID) || m.hasFlowEmbeddedTerminalForFlow(flowID) {
+			return flowRepairTerminalStatus, true
+		}
+		return "", false
+	}
+	if !m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
+		return "", false
+	}
+	if kind == flowLaunchKindPhaseResume {
+		return "Flow phase resume canceled because a repair terminal is already open for this Flow", true
+	}
+	return "Flow phase launch canceled because a repair terminal is already open for this Flow", true
+}
+
 // handoffFlowLaunchExternal calls launchAgent directly rather than through
 // launchAgentWithContext: that helper swallows a synchronous launch error
 // without ever emitting an AgentResultMsg. Splitting the call lets the error
@@ -957,6 +1020,30 @@ func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaun
 // persistable produces no flowLaunchFailurePersistedMsg, so entering
 // failurePersisting first would strand the attempt and block the Flow forever.
 func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunchContext, repoPath, errText string) (Model, tea.Cmd) {
+	if attempt.Kind == flowLaunchKindRepair {
+		// Repair reports with a bare status on every stage. It writes no phase,
+		// so the MutatedPhase ladder below has nothing to classify, and routing
+		// it through ActionFailedMsg would put its refusals behind main's repo
+		// gate — invisible to a user who moved the repos-pane selection during
+		// the reservation hop, with Active Flows closed. The pre-lifecycle path
+		// used an unconditional setStatus, and the install stage already does;
+		// this keeps every stage agreeing.
+		//
+		// The refetch is the other half of what ActionFailedMsg carried: every
+		// refusal that lands here was decided against a record fresher than the
+		// one the pane is rendering, and "Flow is no longer repairable" is
+		// precisely the case where the stale row is what the user is looking at.
+		// That is why the read stage routes its own refusals here rather than
+		// taking the generic release-and-status exit: it reads the same
+		// authoritative record, so it owes the user the same refresh.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, errText)
+		if !m.flowSurfaceVisible() {
+			return m, nil
+		}
+		var fetchCmd tea.Cmd
+		m, fetchCmd = m.startFlowSurfaceFetch()
+		return m, fetchCmd
+	}
 	if !attempt.MutatedPhase {
 		// Nothing was written, so the phase must stay as it is. ActionFailedMsg
 		// keeps main's repo gate and Flow surface refresh; a bare status drops

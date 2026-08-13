@@ -4,9 +4,9 @@ import "github.com/approachcontrol/approach/actions"
 
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
-// than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase, and
-// flowLaunchKindPhaseResume are implemented today and requestFlowLaunch refuses
-// the rest.
+// than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase,
+// flowLaunchKindPhaseResume, and flowLaunchKindRepair are implemented today and
+// requestFlowLaunch refuses the rest.
 type flowLaunchKind int
 
 const (
@@ -46,9 +46,11 @@ const (
 // flowLaunchIntent is what a caller submits. It carries only what the caller
 // knows: everything else — agent settings, prompt templates, phase, headless
 // preference — the lifecycle reads from the Model or the authoritative record.
-// Phase resume carries two exceptions, FallbackRepoPath and ResumeContext, both
+// Two fields are exceptions, FallbackRepoPath and ResumeContext, both
 // documented on their fields; each exists because a stage that runs without a
-// Model needs a value only the Model has.
+// Model needs a value only the Model has. ResumeContext is phase resume's
+// alone; FallbackRepoPath is shared by phase resume and repair, which resolve
+// their launch directory against the current repo as a last candidate.
 type flowLaunchIntent struct {
 	Kind    flowLaunchKind
 	FlowID  string

@@ -204,10 +204,10 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 }
 
 // previewPhaseResume is the footer's half of D1, and it is deliberately
-// narrower than flowLaunchAdmissionOccupied: a manual attempt, a pending
-// repair, and an open repair terminal all refuse a resume silently by design,
-// and withdrawing the key for them would be a behavior change this bead does
-// not make. It gates on the retained-slot conjunction only, which is the case
+// narrower than flowLaunchAdmissionOccupied: a competing lifecycle attempt and
+// an open repair terminal both refuse a resume silently by design, and
+// withdrawing the key for them would be a behavior change this bead does not
+// make. It gates on the retained-slot conjunction only, which is the case
 // resume newly refuses out loud.
 //
 // It takes the resolved command rather than only the Flow ID because the

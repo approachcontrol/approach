@@ -177,7 +177,6 @@ type Model struct {
 	autoAdvanceDrainFlows     map[string]struct{}
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
-	pendingFlowRepairLaunchIDs    map[string]string
 	flowLaunchAttempts            map[string]flowLaunchAttempt
 	launchSeams                   flowLaunchSeams
 
