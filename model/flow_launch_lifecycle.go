@@ -758,6 +758,21 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
 		}
+		if msg.Kind == flowLaunchKindWorktreeAgent {
+			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
+			command = agent.Normalize(command)
+			if command != attempt.Settings.Command || (command != agent.CommandCodex && command != agent.CommandClaude) {
+				releaseFlowLaunchReservation(msg.Release)
+				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+					setStatus(statusOther, flowWorktreeAgentChangedStatus), nil
+			}
+			// This is the final synchronous acceptance boundary before the slot
+			// is installed. Settings may change while the protected preparation
+			// command is pending, so do not launch with the earlier snapshot.
+			msg.Context.Command = command
+			msg.Context.Model = modelName
+			msg.Context.ReasoningEffort = reasoningEffort
+		}
 		// No phase-untracked kind persists a launch ID in prepare — none calls
 		// AddPhaseLaunchID — so marking one would make the field assert
 		// a write that did not happen.

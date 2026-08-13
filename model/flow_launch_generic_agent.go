@@ -51,7 +51,7 @@ func (m Model) hasKnownActiveFlowSession(flowID string) bool {
 	}
 	for _, records := range [][]sessions.SessionRecord{m.sessions.Items(), m.worktreeSessions.Items()} {
 		for _, record := range records {
-			if record.FlowID == flowID && flowSessionLive(record.Status, record.EndedAt) {
+			if strings.TrimSpace(record.FlowID) == flowID && flowSessionLive(record.Status, record.EndedAt) {
 				return true
 			}
 		}

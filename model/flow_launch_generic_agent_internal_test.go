@@ -47,6 +47,11 @@ func TestGenericWorktreeAgentHintUsesCachedReadiness(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "start agent") {
 		t.Fatalf("eligible Flow did not render the generic shortcut:\n%s", view)
 	}
+	m.sessions = m.sessions.SetItems([]sessions.SessionRecord{{FlowID: "  " + record.FlowID + "  ", Status: "active"}})
+	if m.selectedFlowWorktreeAgentReady() {
+		t.Fatal("canonical exact-Flow active session should withdraw generic agent readiness")
+	}
+	m.sessions = m.sessions.SetItems(nil)
 
 	record.Phases[0].Status = flowstore.PhaseRunning
 	h = newManualLaunchHarness(t, record)
@@ -273,11 +278,11 @@ func TestGenericWorktreeAgentUsesFinalMetadataAndPreparationSettings(t *testing.
 	final.PlanID = "plan-final"
 	final.PlanPath = ""
 	h.record = final
-	m.codexModel = "gpt-final"
-	m.codexReasoningEffort = "high"
 
 	next, prepareCmd := m.Update(readMsg)
 	m = next.(Model)
+	m.codexModel = "gpt-final"
+	m.codexReasoningEffort = "high"
 	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
 	if !ok {
 		t.Fatal("protected preparation did not settle")
@@ -318,6 +323,37 @@ func TestGenericWorktreeAgentCancelsWhenCommandChangesBeforePreparation(t *testi
 	}
 	if m.status.Text != flowWorktreeAgentChangedStatus || m.flowLaunchAttemptOccupied(record.FlowID) {
 		t.Fatalf("changed-command refusal = %q, attempt occupied=%v", m.status.Text, m.flowLaunchAttemptOccupied(record.FlowID))
+	}
+}
+
+func TestGenericWorktreeAgentCancelsWhenCommandChangesAfterReadIsAccepted(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	next, readCmd := m.handleStartSelectedFlowWorktreeAgent()
+	m = next.(Model)
+	readMsg, ok := runCommandWithoutWaiting(readCmd)
+	if !ok {
+		t.Fatal("authoritative read did not settle")
+	}
+
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
+	m.agentCommand = agent.CommandClaude
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("protected preparation did not settle")
+	}
+	m = h.drainMsg(m, preparedMsg, 0)
+
+	if len(h.launchContexts) != 0 {
+		t.Fatal("changed command reached terminal installation")
+	}
+	if m.status.Text != flowWorktreeAgentChangedStatus || m.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatalf("changed-command refusal = %q, attempt occupied=%v", m.status.Text, m.flowLaunchAttemptOccupied(record.FlowID))
+	}
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservation/release = %d/%d", h.launchReservations, h.launchReleases)
 	}
 }
 
