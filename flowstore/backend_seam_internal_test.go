@@ -14,11 +14,25 @@ import (
 )
 
 var (
-	_ backend         = (*sqliteBackend)(nil)
-	_ flowSession     = sqliteSession{}
-	_ planPhaseSyncer = planstoreSyncer{}
-	_ planPhaseWriter = planstorePhaseWriter{}
+	_ backend          = (*sqliteBackend)(nil)
+	_ flowSession      = sqliteSession{}
+	_ planLinkResolver = planstoreSyncer{}
+	_ planPhaseSyncer  = planstoreSyncer{}
+	_ planPhaseWriter  = planstorePhaseWriter{}
 )
+
+type fakePlanLinkResolver struct {
+	path  string
+	err   error
+	calls [][2]string
+}
+
+func (f *fakePlanLinkResolver) resolvePlanLink(planID, suppliedPath string) (string, error) {
+	f.calls = append(f.calls, [2]string{planID, suppliedPath})
+	return f.path, f.err
+}
+
+var _ planLinkResolver = (*fakePlanLinkResolver)(nil)
 
 // fakePlanSyncer replaces the planstore collaborator so the sync boundary can
 // be driven without a real plan artifact.
@@ -27,6 +41,190 @@ type fakePlanSyncer struct {
 	writeErr error
 	opens    int
 	calls    []string
+}
+
+func TestSetPlanLinkUsesInjectedResolverWithoutPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	resolver := &fakePlanLinkResolver{path: filepath.Join(root, "plans", "seam-plan", "plan.md")}
+	store.planLink = resolver
+	record, err := store.Create(FlowRecord{
+		Title:        "Plan link seam",
+		Instructions: "Resolve a plan through the injected collaborator.",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got, err := store.SetPlanLink(PlanLinkUpdate{
+		FlowID:   record.FlowID,
+		PlanID:   " seam-plan ",
+		PlanPath: " supplied plan path ",
+	})
+	if err != nil {
+		t.Fatalf("SetPlanLink() error = %v", err)
+	}
+	if got.PlanID != "seam-plan" || got.PlanPath != resolver.path {
+		t.Fatalf("linked plan = (%q, %q), want seam-plan and %q", got.PlanID, got.PlanPath, resolver.path)
+	}
+	if want := [][2]string{{"seam-plan", " supplied plan path "}}; !reflect.DeepEqual(resolver.calls, want) {
+		t.Fatalf("resolver calls = %#v, want %#v", resolver.calls, want)
+	}
+	persisted, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if !reflect.DeepEqual(persisted, got) {
+		t.Fatalf("persisted record = %#v, want %#v", persisted, got)
+	}
+}
+
+func TestSetPlanLinkValidatesFlowAndPlanIDsBeforeResolver(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	resolver := &fakePlanLinkResolver{path: "/unused/plan.md"}
+	store.planLink = resolver
+
+	for _, tc := range []struct {
+		name   string
+		update PlanLinkUpdate
+		want   string
+	}{
+		{
+			name:   "invalid flow id",
+			update: PlanLinkUpdate{FlowID: "../bad", PlanID: "plan-1"},
+			want:   `invalid flow id "../bad"`,
+		},
+		{
+			name:   "blank plan id",
+			update: PlanLinkUpdate{FlowID: "missing-flow", PlanID: " \t\n "},
+			want:   "plan id is required",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := store.SetPlanLink(tc.update)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("SetPlanLink() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if len(resolver.calls) != 0 {
+		t.Fatalf("resolver calls = %#v, want none for pre-resolver validation failures", resolver.calls)
+	}
+}
+
+func TestSetPlanLinkReturnsResolverFailureWithoutMutatingFlow(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(FlowRecord{
+		Title:        "Resolver failure",
+		Instructions: "Keep the complete Flow record unchanged.",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	wantErr := errors.New("plan resolver exploded")
+	resolver := &fakePlanLinkResolver{err: wantErr}
+	store.planLink = resolver
+
+	got, err := store.SetPlanLink(PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != wantErr {
+		t.Fatalf("SetPlanLink() error = %v, want exact resolver error %v", err, wantErr)
+	}
+	if !reflect.DeepEqual(got, FlowRecord{}) {
+		t.Fatalf("SetPlanLink() record = %#v, want zero record beside resolver error", got)
+	}
+	persisted, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if !reflect.DeepEqual(persisted, record) {
+		t.Fatalf("record changed after resolver failure:\n got: %#v\nwant: %#v", persisted, record)
+	}
+}
+
+func TestSetPlanLinkResolvesBeforeReportingMissingFlow(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	resolver := &fakePlanLinkResolver{path: "/configured/plans/plan-1/plan.md"}
+	store.planLink = resolver
+
+	_, err = store.SetPlanLink(PlanLinkUpdate{FlowID: "missing-flow", PlanID: "plan-1"})
+	if !errors.Is(err, ErrFlowNotFound) {
+		t.Fatalf("SetPlanLink() error = %v, want ErrFlowNotFound", err)
+	}
+	if want := [][2]string{{"plan-1", ""}}; !reflect.DeepEqual(resolver.calls, want) {
+		t.Fatalf("resolver calls = %#v, want %#v before the missing-Flow result", resolver.calls, want)
+	}
+}
+
+func TestSetPlanLinkRevalidatesIdenticalLinkWithoutTimestampChurn(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	store, err := NewStore(StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	resolver := &fakePlanLinkResolver{path: filepath.Join(root, "plans", "plan-1", "plan.md")}
+	store.planLink = resolver
+	record, err := store.Create(FlowRecord{
+		Title:        "Repeat plan link",
+		Instructions: "Revalidate every attempt.",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	now = now.Add(time.Minute)
+	linked, err := store.SetPlanLink(PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != nil {
+		t.Fatalf("first SetPlanLink() error = %v", err)
+	}
+
+	wantErr := errors.New("linked artifact disappeared")
+	resolver.err = wantErr
+	now = now.Add(time.Minute)
+	if _, err := store.SetPlanLink(PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"}); err != wantErr {
+		t.Fatalf("failed relink error = %v, want exact resolver error %v", err, wantErr)
+	}
+	afterFailure, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() after failed relink error = %v", err)
+	}
+	if !reflect.DeepEqual(afterFailure, linked) {
+		t.Fatalf("record changed after failed relink:\n got: %#v\nwant: %#v", afterFailure, linked)
+	}
+
+	resolver.err = nil
+	now = now.Add(time.Minute)
+	relinked, err := store.SetPlanLink(PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != nil {
+		t.Fatalf("successful relink error = %v", err)
+	}
+	if !reflect.DeepEqual(relinked, linked) {
+		t.Fatalf("idempotent relink changed record:\n got: %#v\nwant: %#v", relinked, linked)
+	}
+	if len(resolver.calls) != 3 {
+		t.Fatalf("resolver calls = %#v, want one call for every link attempt", resolver.calls)
+	}
+}
+
+func TestStoreDoesNotRetainConfiguredRoot(t *testing.T) {
+	if _, ok := reflect.TypeOf(Store{}).FieldByName("root"); ok {
+		t.Fatal("Store still contains obsolete configured root field")
+	}
 }
 
 func (f *fakePlanSyncer) open() (planPhaseWriter, error) {

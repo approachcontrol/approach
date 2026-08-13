@@ -18,7 +18,6 @@ import (
 
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/internal/artifacts"
-	"github.com/approachcontrol/approach/planstore"
 )
 
 const schemaVersion = 1
@@ -96,28 +95,14 @@ const (
 // Store reads and writes Flow rows in the artifact root's approach.db.
 type Store struct {
 	backend  backend
+	planLink planLinkResolver
 	planSync planPhaseSyncer
 	// canonicalRoot and lockTimeout back the short cross-process repair-launch
 	// reservation shared with CloseFlow. The advisory lock orders the final
 	// closed-state read and terminal start without persisting transient launch
 	// metadata that a crash could strand.
-	canonicalRoot string
-	lockTimeout   time.Duration
-	// root outlives the storage seam because the plan side is only half behind
-	// it: SetPhase syncs through planSync (which captures root itself), but
-	// SetPlanLink still resolves plan paths and constructs a planstore.Store
-	// inline. Finishing that extraction is follow-up work, not part of the
-	// storage seam.
-	//
-	// This is the CONFIGURED root, deliberately not the symlink-resolved one the
-	// SQLite bootstrap canonicalizes for the database, lease, and reserved child
-	// paths. Plan paths are user-facing strings: SetPlanLink derives one from
-	// this root and requires an exact match against any --plan-path the caller
-	// supplies, and it persists that string in the record. Resolving here would
-	// reject the paths launchers build from the configured root, and rewrite
-	// every stored plan_path, on any root with a symlink component — which the
-	// file backend accepted and this cutover keeps accepting.
-	root                      string
+	canonicalRoot             string
+	lockTimeout               time.Duration
 	now                       func() time.Time
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
 }
@@ -541,10 +526,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	planAdapter := planstoreSyncer{root: root, lockTimeout: lockTimeout}
 	return &Store{
 		backend:       store,
-		planSync:      planstoreSyncer{root: root, lockTimeout: lockTimeout},
-		root:          root,
+		planLink:      planAdapter,
+		planSync:      planAdapter,
 		canonicalRoot: store.root,
 		lockTimeout:   lockTimeout,
 		now:           now,
@@ -1216,26 +1202,8 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	if planID == "" {
 		return FlowRecord{}, fmt.Errorf("plan id is required")
 	}
-	planPath, err := planstore.MarkdownPath(s.root, planID)
+	planPath, err := s.planLink.resolvePlanLink(planID, update.PlanPath)
 	if err != nil {
-		return FlowRecord{}, err
-	}
-	if supplied := strings.TrimSpace(update.PlanPath); supplied != "" {
-		if !filepath.IsAbs(supplied) {
-			return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", supplied)
-		}
-		if filepath.Clean(supplied) != planPath {
-			return FlowRecord{}, fmt.Errorf("flow plan path %q does not match plan %q path %q", filepath.Clean(supplied), planID, planPath)
-		}
-	}
-	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: s.root})
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	if !planStore.HasPlan(planID) {
-		return FlowRecord{}, fmt.Errorf("plan %q not found", planID)
-	}
-	if _, err := planStore.ReadPlan(planID); err != nil {
 		return FlowRecord{}, err
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
