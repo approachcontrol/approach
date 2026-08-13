@@ -325,6 +325,70 @@ func TestAutoFlowLaunchBlocksPlanReviewWithTheBlockedOutcome(t *testing.T) {
 	}
 }
 
+// The reservation is held across a bootstrap hook whose budget is 120 s by
+// default, against the store's 5 s lock timeout, so the launch that loses it is
+// usually waiting on another one provisioning this very Flow. Blocking the
+// phase for losing that wait would answer a wait with a stop — and nothing was
+// created, so there is no orphan to argue against coming back.
+func TestAutoFlowLaunchRetriesAContendedReservationInsteadOfBlocking(t *testing.T) {
+	record := autoWorktreelessFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.ensureErr = fmt.Errorf("%w: %w", ErrFlowWorktreeUnreserved, errors.New("acquire launch/close reservation for flow \"flow-one\": timeout"))
+
+	m := h.autoDrain(h.model(), record)
+
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want a contended reservation to write nothing", h.phaseUpdates)
+	}
+	if !h.drainArmed(m, record.FlowID) {
+		t.Fatal("a contended reservation must re-arm the drain so the launch resumes")
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("a retried launch must release its attempt")
+	}
+}
+
+// A Flow closed while this launch was reading has no candidate left: nothing to
+// retry and nothing to write about it.
+func TestAutoFlowLaunchTreatsAClosedFlowReservationAsStale(t *testing.T) {
+	record := autoWorktreelessFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.ensureErr = fmt.Errorf("%w: %w", ErrFlowWorktreeUnreserved,
+		fmt.Errorf("cannot launch an agent for flow %q because it is closed: %w", record.FlowID, flowstore.ErrFlowClosed))
+
+	m := h.autoDrain(h.model(), record)
+
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want a closed Flow to block nothing", h.phaseUpdates)
+	}
+	if h.drainArmed(m, record.FlowID) {
+		t.Fatal("a closed Flow must not re-arm the drain")
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("a stale launch must release its attempt")
+	}
+}
+
+// The manual route has a user to read the reason, so it reports the wait rather
+// than reporting it as a creation that failed.
+func TestManualFlowLaunchReportsAContendedReservationAsAWait(t *testing.T) {
+	record := worktreelessFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.ensureErr = fmt.Errorf("%w: %w", ErrFlowWorktreeUnreserved, errors.New("lock timeout"))
+
+	m := h.launch(h.model())
+
+	if !strings.HasPrefix(m.status.Text, "Another launch is setting up this Flow's worktree: ") {
+		t.Fatalf("status = %q, want the wait named rather than a creation failure", m.status.Text)
+	}
+	if len(h.phaseUpdates) != 0 || len(h.launchUpdates) != 0 {
+		t.Fatalf("a refused manual launch persisted something: phases=%#v launches=%#v", h.phaseUpdates, h.launchUpdates)
+	}
+	if len(h.agentContexts) != 0 {
+		t.Fatal("a refused manual launch must not start an agent")
+	}
+}
+
 func TestAutoFlowLaunchSkipsEnsureWhenASessionOwnsThePhase(t *testing.T) {
 	record := autoWorktreelessFlowRecord()
 	record.Phases[0].LaunchIDs = []string{"launch-live"}

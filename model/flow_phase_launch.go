@@ -66,6 +66,15 @@ func (err FlowPhaseLaunchValidationError) Error() string {
 // lifecycle's outcome enum exists for the same reason.
 type FlowPhaseLaunchWorktreeError struct {
 	Message string
+	// Transient marks the refusals that clear without the user. AutoMode must
+	// not block a phase on one of these: the reservation the ensure seam waits
+	// for is most often held by another launch provisioning this same Flow, and
+	// blocking the phase for losing that wait would turn a wait into a stop.
+	Transient bool
+	// Stale marks a refusal that outlived its candidate — the Flow was closed
+	// while this launch was reading. Nothing should retry it and nothing should
+	// be written about it.
+	Stale bool
 }
 
 func (err FlowPhaseLaunchWorktreeError) Error() string {
@@ -84,6 +93,10 @@ const (
 	// flowPhaseLaunchWorktreeUnrecorded is the third case: the directory exists
 	// but no record names it, so neither of the other two headlines is true.
 	flowPhaseLaunchWorktreeUnrecorded = "Worktree could not be recorded: "
+	// flowPhaseLaunchWorktreeBusy is the fourth, and the only one that created
+	// nothing: another launch holds this Flow's reservation. Naming the wait is
+	// what tells the user a second `g` is worth pressing.
+	flowPhaseLaunchWorktreeBusy = "Another launch is setting up this Flow's worktree: "
 )
 
 type FlowPhaseLauncher struct {
@@ -207,6 +220,16 @@ func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedReque
 		switch {
 		case created:
 			return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnusable + err.Error()}
+		case errors.Is(err, ErrFlowWorktreeUnreserved):
+			// Nothing was created, so nothing is orphaned by coming back. A Flow
+			// closed out from under this read is the one unreserved case that
+			// will never clear, and it is stale rather than transient: its
+			// candidate is gone, so neither a retry nor a write applies.
+			return req, FlowPhaseLaunchWorktreeError{
+				Message:   flowPhaseLaunchWorktreeBusy + err.Error(),
+				Transient: !flowstore.IsFlowClosed(err),
+				Stale:     flowstore.IsFlowClosed(err),
+			}
 		case errors.Is(err, ErrFlowWorktreeUnrecorded):
 			// The seam made a directory it could not persist, so it hands back
 			// the pre-ensure record and `created` is false. Creation is the one

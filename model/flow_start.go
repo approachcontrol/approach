@@ -18,6 +18,12 @@ const flowPlanPhaseID = "plan"
 // the one claim that is not true.
 var ErrFlowWorktreeUnrecorded = errors.New("worktree not recorded")
 
+// ErrFlowWorktreeUnreserved reports that EnsureWorktree could not take the
+// Flow's launch reservation, so it created nothing at all. It is a sentinel
+// because it is the one ensure refusal that clears on its own: the usual cause
+// is another launch holding the reservation while it provisions this very Flow.
+var ErrFlowWorktreeUnreserved = errors.New("launch reservation unavailable")
+
 // FlowStartRequest contains the user operation inputs needed to create a Flow
 // and optionally prepare the initial plan-phase agent launch.
 type FlowStartRequest struct {
@@ -314,7 +320,13 @@ func (s FlowStarter) EnsureWorktree(record flowstore.FlowRecord) (flowstore.Flow
 	// closes the window and supplies the re-read in one step.
 	fresh, release, err := s.reserveLaunch(record.FlowID)
 	if err != nil {
-		return record, err
+		// Wrapped, not returned bare: the reservation is held across the
+		// bootstrap hook, whose budget is 120 s by default against the store's
+		// 5 s lock timeout, so a Flow another process is provisioning right now
+		// is the ordinary reason this fails. The sentinel is what stops the
+		// caller from reading that as a permanent refusal — nothing was created
+		// here, so there is nothing to clean up and every reason to come back.
+		return record, fmt.Errorf("%w: %w", ErrFlowWorktreeUnreserved, err)
 	}
 	defer releaseFlowLaunchReservation(release)
 	// The store is authoritative under the lock: whoever went first has already

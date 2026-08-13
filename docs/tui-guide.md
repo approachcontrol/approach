@@ -560,17 +560,20 @@ whose branch resolves to nothing — or that names none — is given a fresh
 `flow/<slug>` pair from the recorded base ref, or from the repository's current
 HEAD when no base ref was recorded.
 
-Creating the worktree and recording it both happen under the Flow's launch
-reservation, so two Approach processes launching the same worktree-less Flow
-serialize: the second one adopts the worktree the first recorded instead of
-allocating a second pair beside it.
+Creating the worktree, recording it, and running the bootstrap hook all happen
+under the Flow's launch reservation, so two Approach processes launching the
+same worktree-less Flow serialize: the second one adopts the fully provisioned
+worktree the first recorded instead of allocating a second pair beside it. That
+reservation is held longer than its own lock timeout allows for, so a launch
+that arrives mid-provisioning is refused for now rather than for good — the
+status line says another launch is setting the worktree up, and AutoMode simply
+retries on its next poll. A Flow closed while the launch was reading is dropped
+without a status, the same as any other stale candidate.
 
 A manual launch is refused with the reason, and AutoMode blocks the phase with
 that reason in its notes rather than retrying every second, when:
 
 - the Flow records no repository of its own;
-- the launch reservation cannot be taken, because the Flow was closed or
-  another process holds it past the lock timeout;
 - the recorded branch exists but is not a local branch — a tag, a
   remote-tracking ref, or a raw commit — since checking one out would detach
   HEAD under a record that keeps naming a branch;

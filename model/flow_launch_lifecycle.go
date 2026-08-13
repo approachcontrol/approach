@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -53,7 +54,10 @@ const (
 	// clear on their own and are blocked anyway: a bootstrap-hook failure, since
 	// a Flow whose bootstrap did not run is not one to hand an agent
 	// unannounced, and a contended store write, since re-arming that one leaves
-	// an orphan worktree behind on every poll it loses.
+	// an orphan worktree behind on every poll it loses. The line between those
+	// and the ensure step's contended reservation is what each one costs to
+	// repeat: the reservation is taken before anything is created, so a poll
+	// that loses it leaves nothing behind and retries instead.
 	flowLaunchOutcomeBlocked
 )
 
@@ -536,9 +540,22 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 		event.PhaseID = phase.PhaseID
 		event.Record = prepared.Record
 		if err != nil {
-			// Permanent, so it classifies blocked rather than failed. The write
-			// itself is the handler's, behind the attempt fence.
+			// Permanent by default, so it classifies blocked rather than failed;
+			// the write itself is the handler's, behind the attempt fence. The
+			// two exceptions created nothing to orphan: a reservation another
+			// launch holds while it provisions this same Flow clears on its own
+			// and re-arms, and a Flow closed mid-read has no candidate left to
+			// block. Blocking either would answer a wait with a stop.
 			event.Outcome = flowLaunchOutcomeBlocked
+			var worktreeErr FlowPhaseLaunchWorktreeError
+			if errors.As(err, &worktreeErr) {
+				switch {
+				case worktreeErr.Stale:
+					event.Outcome = flowLaunchOutcomeStale
+				case worktreeErr.Transient:
+					event.Outcome = flowLaunchOutcomeRetry
+				}
+			}
 			event.Err = err.Error()
 			return event
 		}
