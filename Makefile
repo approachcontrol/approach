@@ -44,6 +44,11 @@ test:
 # through `xargs -0`, which hands each name to the next program as one argument
 # without a shell ever parsing it.
 #
+# `--` then stops `gofmt` from reading those names as options. A leading `-` is
+# legal in a Git path, and `-cpuprofile=x.go` is both a valid filename and a
+# documented `gofmt` flag: without the terminator the gate writes a CPU profile
+# to `x.go`, reports nothing, and passes green with the real file unchecked.
+#
 # The list is also filtered to paths that still exist. `git ls-files -c` reports
 # the index, which still holds a file you deleted in the worktree but have not
 # staged — the ordinary middle of removing one. Passing that path to `gofmt`
@@ -59,7 +64,7 @@ fmt-check:
 	}; \
 	unformatted=$$($(GO_FILES_CMD) \
 		| xargs -0 sh -c 'for file in "$$@"; do if [ -f "$$file" ]; then printf "%s\0" "$$file"; fi; done' sh \
-		| xargs -0 gofmt -l) || exit 1; \
+		| xargs -0 gofmt -l --) || exit 1; \
 	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; exit 1; fi
 
 run: build
