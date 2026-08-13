@@ -34,8 +34,7 @@ const (
 type flowLaunchRoute int
 
 const (
-	flowLaunchRouteExternal flowLaunchRoute = iota
-	flowLaunchRouteEmbedded
+	flowLaunchRouteEmbedded flowLaunchRoute = iota + 1
 	// flowLaunchRouteTmux hands the agent to a window in the repo's tmux
 	// session. Ownership is external-style: the window outlives the TUI and
 	// provider hooks own completion.

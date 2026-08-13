@@ -207,8 +207,13 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
-	if command, _, _ := m.flowLaunchAgentSettings(); agent.Normalize(command) == "" {
+	command, _, _ := m.flowLaunchAgentSettings()
+	command = agent.Normalize(command)
+	if command == "" {
 		return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
+	}
+	if err := agent.Validate(command); err != nil {
+		return m.setStatus(statusOther, err.Error()), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
@@ -242,14 +247,19 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 // repainted every second over whatever the user is actually looking at. It also
 // skips previewFlowLaunch: that resolves through the display caches, which the
 // poll's Flows are frequently absent from, so launchability is left entirely to
-// the authoritative read. No agent-command check happens here either — with no
-// admission-time announcement to withhold, an unconfigured agent simply fails
-// Preflight in the read stage and produces today's transient status.
+// the authoritative read. An empty agent still fails Preflight in the read
+// stage and produces today's transient status; a non-empty unsupported value is
+// rejected here before allocating an attempt.
 func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
 	if flowID == "" || m.flowLaunchAdmissionOccupied(flowID) {
 		return m, nil, false
+	}
+	if command, _, _ := m.flowLaunchAgentSettings(); agent.Normalize(command) != "" {
+		if err := agent.Validate(command); err != nil {
+			return m, nil, false
+		}
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
@@ -666,7 +676,7 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 		case FlowPhaseLaunchTmux:
 			event.Route = flowLaunchRouteTmux
 		default:
-			event.Route = flowLaunchRouteExternal
+			event.Err = fmt.Sprintf("unsupported flow phase launch route %d", result.Route)
 		}
 		return event
 	}
@@ -750,8 +760,11 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m.installFlowLaunchEmbedded(attempt, msg)
 		case flowLaunchRouteTmux:
 			return m.handoffFlowLaunchTmux(attempt, msg)
+		default:
+			releaseFlowLaunchReservation(msg.Release)
+			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath,
+				fmt.Sprintf("unsupported flow launch route %d", msg.Route))
 		}
-		return m.handoffFlowLaunchExternal(attempt, msg)
 	}
 	return m, nil
 }
@@ -921,9 +934,9 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	return m, batchNonNil(prefillCmd, tickCmd, fetchCmd)
 }
 
-// handoffFlowLaunchTmux is handoffFlowLaunchExternal for the tmux route: the
-// window it opens is not an embedded slot, so the attempt is released at
-// handoff, the result is detached, and provider hooks own completion.
+// handoffFlowLaunchTmux opens a window rather than an embedded slot, so the
+// attempt is released at handoff, the result is detached, and provider hooks
+// own completion.
 //
 // Releasing here means the window stops counting as Flow occupancy, which an
 // embedded slot would have provided until its process exited. What still covers
@@ -1007,44 +1020,6 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 		return flowWorktreeAgentCanceledStatus, true
 	}
 	return "Flow phase launch canceled because a repair terminal is already open for this Flow", true
-}
-
-// handoffFlowLaunchExternal calls launchAgent directly rather than through
-// launchAgentWithContext: that helper swallows a synchronous launch error
-// without ever emitting an AgentResultMsg. Splitting the call lets the error
-// reach failFlowLaunch instead of stranding the attempt in preparing, which is
-// where it would sit with no message left to move it.
-func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
-	ctx := msg.Context
-	launch, err := m.launchAgent(ctx)
-	if err != nil {
-		releaseFlowLaunchReservation(msg.Release)
-		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
-	}
-	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {
-		m = next
-	} else {
-		// The attempt moved on between prepare and handoff. The agent is already
-		// launched so there is nothing to undo, but leaving the attempt behind
-		// would strand it: no AgentResultMsg fence matches any other state.
-		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
-	}
-	// Composed onto the confirmation rather than replacing it: on the detached
-	// route an empty status is what lets AgentResultMsg fill in that same
-	// generic text, so passing the bare note would delete it. The interactive
-	// route sets whatever it is given before the TTY handover and otherwise
-	// announces nothing, which is why the empty default is preserved there too —
-	// only a created worktree is worth a line the route never had.
-	launchedStatus := ""
-	if strings.TrimSpace(msg.WorktreeNote) != "" {
-		launchedStatus = withFallbackNote(agentLaunchedStatus(ctx.Command), msg.WorktreeNote)
-	}
-	m, launchCmd := m.runAgentLaunchWithStatus(ctx, launch, msg.Release, launchedStatus)
-	var fetchCmd tea.Cmd
-	if ctx.FlowID != "" && m.flowSurfaceVisible() {
-		m, fetchCmd = m.startFlowSurfaceFetch()
-	}
-	return m, batchNonNil(fetchCmd, launchCmd)
 }
 
 // failFlowLaunch classifies before it transitions. A failure with nothing

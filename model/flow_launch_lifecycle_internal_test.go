@@ -79,6 +79,7 @@ type manualLaunchHarness struct {
 	tmuxWindowProbes       [][]string
 
 	sessionListCalls   int
+	readFlowCalls      int
 	launchReservations int
 	launchReleases     int
 	repairReservations int
@@ -186,6 +187,7 @@ func (h *manualLaunchHarness) options() Options {
 			return h.sessionRecords, nil
 		},
 		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			h.readFlowCalls++
 			return h.persistedFlow(strings.TrimSpace(flowID))
 		},
 		// Overridden in every harness model: the default seam runs real git.
@@ -542,6 +544,48 @@ func TestAutoFlowLaunchPreflightFailuresUseTransientAutoStatus(t *testing.T) {
 	}
 }
 
+func TestFlowLaunchAdmissionRejectsRetiredAgentBeforeAllocatingAttempt(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		name := "manual"
+		if auto {
+			name = "auto"
+		}
+		t.Run(name, func(t *testing.T) {
+			record := manualLaunchFlowRecord()
+			record.AutoMode = auto
+			h := newManualLaunchHarness(t, record)
+			m := h.model()
+			// Simulate a retired value reaching the final admission boundary.
+			// Normal construction already maps persisted codex-app to codex.
+			m.agentCommand = "codex-app"
+			launchIDCalls := 0
+			m.launchSeams.NewLaunchID = func() string {
+				launchIDCalls++
+				return "launch-1"
+			}
+
+			if auto {
+				m = h.autoDrain(m, record)
+			} else {
+				m = h.launch(m)
+				if got, want := m.status.Text, `unsupported agent "codex-app"; choose codex or claude`; got != want {
+					t.Fatalf("status = %q, want %q", got, want)
+				}
+			}
+
+			if launchIDCalls != 0 || h.readFlowCalls != 0 {
+				t.Fatalf("rejected launch allocated %d IDs and read %d Flows, want neither", launchIDCalls, h.readFlowCalls)
+			}
+			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+				t.Fatalf("rejected launch persisted state: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("rejected launch retained an in-memory attempt")
+			}
+		})
+	}
+}
+
 func TestAutoFlowLaunchFailureYieldsToDisplayStatus(t *testing.T) {
 	record := autoLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
@@ -640,9 +684,8 @@ func TestAutoFlowLaunchNeverLaunchesAutoreviewRecovery(t *testing.T) {
 // Flow would then be permanently occupied for admission, so AutoMode and manual
 // launch would both refuse it forever with no status and nothing to see in the
 // UI. The manual kind is covered by TestFlowLaunchEmbeddedInstallTransfersOwnership
-// and TestFlowLaunchExternalRouteRetainsOwnershipUntilResult; AutoMode reaches
-// the same two handoffs through a different admission and read stage, so it
-// needs its own pins.
+// while the tmux handoff is covered separately. AutoMode reaches the embedded
+// handoff through a different admission and read stage, so it needs its own pin.
 func TestAutoFlowLaunchSuccessReleasesOwnership(t *testing.T) {
 	t.Run("embedded route hands the Flow to the slot", func(t *testing.T) {
 		record := autoLaunchFlowRecord()
