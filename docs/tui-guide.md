@@ -551,18 +551,26 @@ agent.
 
 A record that already names a local branch gets a worktree for that branch, so
 the name prompts render as the push target keeps meaning what it said. If that
-branch already has a linked worktree, the Flow adopts it rather than failing
-over a checkout git will not repeat — the bootstrap hook then runs against a
-directory that already exists, so a hook that scaffolds rather than installs
-sees a populated worktree. Only a record whose branch resolves to
-nothing — or that names none — is given a fresh `flow/<slug>` pair from the
-recorded base ref, or from the repository's current HEAD when no base ref was
-recorded.
+branch already has a healthy linked worktree, the Flow adopts it rather than
+failing over a checkout git will not repeat — the bootstrap hook then runs
+against a directory that already exists, so a hook that scaffolds rather than
+installs sees a populated worktree. A registration git marks prunable is never
+adopted, whether the directory is gone or only its `.git` link is. Only a record
+whose branch resolves to nothing — or that names none — is given a fresh
+`flow/<slug>` pair from the recorded base ref, or from the repository's current
+HEAD when no base ref was recorded.
+
+Creating the worktree and recording it both happen under the Flow's launch
+reservation, so two Approach processes launching the same worktree-less Flow
+serialize: the second one adopts the worktree the first recorded instead of
+allocating a second pair beside it.
 
 A manual launch is refused with the reason, and AutoMode blocks the phase with
 that reason in its notes rather than retrying every second, when:
 
 - the Flow records no repository of its own;
+- the launch reservation cannot be taken, because the Flow was closed or
+  another process holds it past the lock timeout;
 - the recorded branch exists but is not a local branch — a tag, a
   remote-tracking ref, or a raw commit — since checking one out would detach
   HEAD under a record that keeps naming a branch;

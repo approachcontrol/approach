@@ -304,6 +304,25 @@ func (s FlowStarter) EnsureWorktree(record flowstore.FlowRecord) (flowstore.Flow
 	if strings.TrimSpace(record.RepoPath) == "" {
 		return record, fmt.Errorf("flow has no repository of its own")
 	}
+	// Everything below creates a branch and a directory and then persists them,
+	// and the launch reservation is not taken until the spawn, several hops
+	// later. Without a fence here two readers of the same worktree-less Flow —
+	// two Approach processes, or one whose reading attempt was released mid
+	// ensure — each allocate a pair and race the metadata write, leaving the
+	// loser's agent in a worktree no record names. The reservation is the
+	// existing per-Flow lock and it answers with the authoritative record, so it
+	// closes the window and supplies the re-read in one step.
+	fresh, release, err := s.reserveLaunch(record.FlowID)
+	if err != nil {
+		return record, err
+	}
+	defer releaseFlowLaunchReservation(release)
+	// The store is authoritative under the lock: whoever went first has already
+	// recorded a worktree, and this launch belongs in that one rather than in a
+	// second pair of its own.
+	if strings.TrimSpace(fresh.WorktreePath) != "" {
+		return fresh, nil
+	}
 	worktree, err := s.ensureWorktreeFor(record)
 	if err != nil {
 		return record, err

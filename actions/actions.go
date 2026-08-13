@@ -481,30 +481,43 @@ func linkedWorktreeForBranch(repoPath, branch string) string {
 	want := "branch refs/heads/" + branch
 	mainPath := ""
 	current := ""
+	// The match is not answered at the branch line: git emits `prunable` after
+	// it, so a candidate has to survive to the end of its own record before it
+	// can be adopted.
+	candidate := ""
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			if candidate != "" {
+				return candidate
+			}
 			current = path
 			if mainPath == "" {
 				mainPath = path
 			}
 			continue
 		}
+		if candidate != "" && (line == "prunable" || strings.HasPrefix(line, "prunable ")) {
+			// git keeps listing a worktree whose gitdir link is gone — a
+			// directory the user deleted, or one whose `.git` file alone went
+			// missing — and marks the registration prunable. Adopting either
+			// would hand an agent a directory that is not a worktree; dropping
+			// the candidate instead reaches git's own already-used-by refusal,
+			// which is the one that says to prune.
+			candidate = ""
+			continue
+		}
 		if line == want {
 			if current == "" || current == mainPath {
 				return ""
 			}
-			// git keeps listing a worktree whose directory the user deleted,
-			// marking it prunable. Adopting that path would persist a worktree
-			// that is not there; falling through instead reaches git's own
-			// already-used-by refusal, which is the one that says to prune.
 			if info, err := os.Stat(current); err != nil || !info.IsDir() {
 				return ""
 			}
-			return current
+			candidate = current
 		}
 	}
-	return ""
+	return candidate
 }
 
 func flowBranchOrPathExists(repoPath, branch, worktreePath string) bool {

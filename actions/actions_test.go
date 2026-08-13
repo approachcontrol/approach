@@ -951,6 +951,58 @@ func TestAttachFlowWorktree_DoesNotAdoptAPrunedAwayWorktree(t *testing.T) {
 	}
 }
 
+// The directory surviving is not proof the registration did: a worktree whose
+// `.git` link alone went missing still lists its branch, and git marks it
+// prunable on the line after. Adopting it would launch an agent into a
+// directory that is not a worktree at all.
+func TestAttachFlowWorktree_DoesNotAdoptAWorktreeWhoseGitLinkIsGone(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	stale := filepath.Join(t.TempDir(), "stale-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", stale, "feature/login")
+	if err := os.Remove(filepath.Join(stale, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err == nil {
+		t.Fatalf("AttachFlowWorktree returned %q, want the prunable registration refused", result.WorktreePath)
+	}
+	if errors.Is(err, actions.ErrFlowBranchMissing) {
+		t.Fatalf("AttachFlowWorktree error = %v, want a refusal distinct from ErrFlowBranchMissing", err)
+	}
+	if result.WorktreePath != "" {
+		t.Fatalf("worktree path = %q, want nothing adopted", result.WorktreePath)
+	}
+}
+
+// A prunable registration must not cost the branch its healthy worktree either:
+// the scan drops that one candidate rather than giving up on the branch.
+func TestAttachFlowWorktree_AdoptsAHealthyWorktreeListedAfterAPrunableOne(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/login")
+	mustRun(t, repoPath, "git", "branch", "feature/other")
+	stale := filepath.Join(t.TempDir(), "stale-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", stale, "feature/other")
+	if err := os.RemoveAll(stale); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(t.TempDir(), "live-wt")
+	mustRun(t, repoPath, "git", "worktree", "add", live, "feature/login")
+
+	result, err := actions.AttachFlowWorktree(repoPath, "feature/login")
+	if err != nil {
+		t.Fatalf("AttachFlowWorktree returned error: %v", err)
+	}
+	wantLive, err := filepath.EvalSymlinks(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorktreePath != wantLive {
+		t.Fatalf("worktree path = %q, want the branch's live worktree %q", result.WorktreePath, wantLive)
+	}
+}
+
 // The main worktree is the one that is never adopted: running there is the
 // isolation break this whole path exists to prevent, so it refuses instead.
 func TestAttachFlowWorktree_NeverAdoptsTheMainWorktree(t *testing.T) {

@@ -129,6 +129,106 @@ func TestFlowStarterEnsureWorktreePassesThroughWhenWorktreeExists(t *testing.T) 
 	}
 }
 
+// The launch reservation is not taken until the spawn, several hops after this,
+// so the creation and the metadata write have to hold it themselves. Two
+// readers of the same worktree-less Flow would otherwise each allocate a pair
+// and race the write, leaving the loser's agent in a worktree no record names.
+func TestFlowStarterEnsureWorktreeHoldsTheLaunchReservationAcrossItsWrites(t *testing.T) {
+	var calls []string
+	record := ensureWorktreeFlowRecord()
+	persisted := record
+	persisted.WorktreePath = "/dev/alpha-worktrees/flow-add-flow-mode"
+	persisted.Branch = "flow/add-flow-mode"
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != "flow-1" {
+				t.Fatalf("ReserveLaunch(%q)", flowID)
+			}
+			calls = append(calls, "reserve")
+			return record, func() { calls = append(calls, "release") }, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			calls = append(calls, "create-worktree")
+			return actions.FlowWorktreeCreateResult{
+				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
+				Branch:       "flow/add-flow-mode",
+			}, nil
+		},
+		SetStartMetadata: func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "set-start")
+			return persisted, nil
+		},
+	})
+
+	if _, err := starter.EnsureWorktree(record); err != nil {
+		t.Fatalf("EnsureWorktree() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "reserve,create-worktree,set-start,release" {
+		t.Fatalf("call order = %#v, want the reservation held across creation and the write", calls)
+	}
+}
+
+// The reservation answers with the authoritative record, which is what makes it
+// a fence rather than a lock: a launch that lost the race adopts the worktree
+// the winner recorded instead of allocating a second pair beside it.
+func TestFlowStarterEnsureWorktreeAdoptsAWorktreeRecordedWhileItWaited(t *testing.T) {
+	record := ensureWorktreeFlowRecord()
+	winner := record
+	winner.WorktreePath = "/dev/alpha-worktrees/flow-add-flow-mode"
+	winner.Branch = "flow/add-flow-mode"
+
+	released := false
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return winner, func() { released = true }, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			t.Fatal("EnsureWorktree() must not create a second worktree beside the recorded one")
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+		SetStartMetadata: func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("EnsureWorktree() must not overwrite the winner's start metadata")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	got, err := starter.EnsureWorktree(record)
+	if err != nil {
+		t.Fatalf("EnsureWorktree() error = %v", err)
+	}
+	if got.WorktreePath != winner.WorktreePath || got.Branch != winner.Branch {
+		t.Fatalf("ensured record = %#v, want the worktree recorded under the fence", got)
+	}
+	if !released {
+		t.Fatal("EnsureWorktree() kept the launch reservation after returning")
+	}
+}
+
+// A reservation that cannot be taken — a contended lock, or a Flow closed out
+// from under this launch — refuses before anything is created, so the refusal
+// costs no orphan worktree.
+func TestFlowStarterEnsureWorktreeRefusesWhenTheReservationFails(t *testing.T) {
+	record := ensureWorktreeFlowRecord()
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, errors.New("flow is closed")
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			t.Fatal("EnsureWorktree() must not create a worktree it could not reserve")
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+	})
+
+	got, err := starter.EnsureWorktree(record)
+	if err == nil || !strings.Contains(err.Error(), "flow is closed") {
+		t.Fatalf("EnsureWorktree() error = %v, want the reservation failure", err)
+	}
+	if got.WorktreePath != "" {
+		t.Fatalf("ensured record = %#v, want the record returned unchanged", got)
+	}
+}
+
 // Blocking phases is the lifecycle's job, behind its attempt fence. EnsureWorktree
 // only reports.
 func TestFlowStarterEnsureWorktreeReportsFailuresWithoutBlockingPhases(t *testing.T) {
