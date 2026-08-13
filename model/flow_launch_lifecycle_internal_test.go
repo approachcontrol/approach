@@ -36,6 +36,9 @@ type manualLaunchHarness struct {
 	launchBackend string
 	tmuxAvailable bool
 	tmuxLaunchErr error
+	// windowLive answers the tmux live-window probe. Nil means no window is
+	// live, which is what every test that does not care about the probe wants.
+	windowLive func(repoPath string, launchIDs []string) bool
 	// tmuxLaunchCleanups counts Cleanup calls. Cleanup deletes the self-deleting
 	// launch script, so a successful detached launch must never call it: the tmux
 	// window runs that script after the spawning command has already returned.
@@ -128,8 +131,13 @@ func (h *manualLaunchHarness) options() Options {
 		AgentCommand:        command,
 		LaunchBackend:       h.launchBackend,
 		TmuxLaunchAvailable: func() bool { return h.tmuxAvailable },
-		RepoTmuxLaunchWindowLive: func(_ string, launchIDs ...string) bool {
+		RepoTmuxLaunchWindowLive: func(repoPath string, launchIDs ...string) bool {
 			h.tmuxWindowProbes = append(h.tmuxWindowProbes, append([]string(nil), launchIDs...))
+			// windowLive is the whole-argument-list hook; the launch-ID and
+			// boolean fields below are the narrower ways to answer the same probe.
+			if h.windowLive != nil {
+				return h.windowLive(repoPath, launchIDs)
+			}
 			if h.tmuxWindowLiveLaunchID == "" {
 				return h.tmuxWindowLive
 			}

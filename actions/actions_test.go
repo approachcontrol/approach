@@ -3120,3 +3120,51 @@ func TestAgentLaunchResumeRejectsMissingOrUnsupportedCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldPrefillEmbeddedPromptForUntrackedFlowAgent(t *testing.T) {
+	// The Flow-worktree agent the U shortcut starts: Flow-scoped, no phase, not
+	// a repair, and interactive, so its prompt goes to the dock like every other
+	// interactive embedded Flow launch.
+	base := actions.AgentLaunchContext{
+		Command:       "codex",
+		WorktreePath:  "/repo/worktree",
+		WorkingDir:    "/repo/worktree",
+		FlowID:        "flow-1",
+		FlowAgent:     true,
+		Embedded:      true,
+		InitialPrompt: "autofix pr #116",
+	}
+	if !actions.ShouldPrefillEmbeddedPrompt(base) {
+		t.Fatalf("ShouldPrefillEmbeddedPrompt(%#v) = false, want an interactive Flow agent prefill", base)
+	}
+	cmd, err := actions.AgentCommand(base)
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	if slices.Contains(cmd.Args, base.InitialPrompt) {
+		t.Fatalf("a prefilled prompt must not also reach argv, got %#v", cmd.Args)
+	}
+	if cmd.Dir != base.WorkingDir {
+		t.Fatalf("cmd.Dir = %q, want the Flow worktree", cmd.Dir)
+	}
+
+	// Both non-prefill routes deliver the same prompt through argv instead.
+	headless := base
+	headless.Headless = true
+	tmux := base
+	tmux.Embedded = false
+	for name, ctx := range map[string]actions.AgentLaunchContext{"headless": headless, "tmux": tmux} {
+		t.Run(name, func(t *testing.T) {
+			if actions.ShouldPrefillEmbeddedPrompt(ctx) {
+				t.Fatalf("ShouldPrefillEmbeddedPrompt(%#v) = true, want argv delivery", ctx)
+			}
+			cmd, err := actions.AgentCommand(ctx)
+			if err != nil {
+				t.Fatalf("AgentCommand returned error: %v", err)
+			}
+			if !slices.Contains(cmd.Args, ctx.InitialPrompt) {
+				t.Fatalf("prompt must reach argv, got %#v", cmd.Args)
+			}
+		})
+	}
+}

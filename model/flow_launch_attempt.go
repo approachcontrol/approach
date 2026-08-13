@@ -62,9 +62,11 @@ func (m Model) flowLaunchAttemptOccupied(flowID string) bool {
 	return ok
 }
 
-// flowLaunchAttemptKind names what is holding this Flow, for the one caller
-// that has to tell launch sources apart rather than just detect occupancy. It
-// returns the zero kind when nothing holds it.
+// flowLaunchAttemptKind names what is holding this Flow, for the callers that
+// have to tell launch sources apart rather than just detect occupancy: an
+// admission that refuses one competing kind, and the headless toggle, which
+// fences only the kind whose headless read it could race. It returns the zero
+// kind when nothing holds it.
 func (m Model) flowLaunchAttemptKind(flowID string) flowLaunchKind {
 	attempt, ok := m.flowLaunchAttempt(flowID)
 	if !ok {

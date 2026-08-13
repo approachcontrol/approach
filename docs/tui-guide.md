@@ -95,6 +95,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
+| `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
@@ -660,7 +661,11 @@ On a Flow row or an expanded phase row:
   existing Flow terminal before resuming this phase`; `r` is withdrawn from the
   footer for exactly that case. Any competing lifecycle launch — including a
   repair — or an open repair terminal refuses silently, and `codex-app` resumes
-  bypass occupancy entirely. A different live session on the same phase refuses
+  bypass occupancy entirely — with one exception: a live `U` autofix window in
+  tmux mode refuses every resume, `codex-app` included, with `Flow still has an
+  agent running in tmux`. That probe asks whether an autofix agent is already in
+  the worktree, which does not depend on how the resume itself launches, and
+  occupancy would otherwise let a `codex-app` resume in beside it. A different live session on the same phase refuses
   with `Flow phase already has a running session`; the session being resumed does
   not count against itself, which is what keeps `r` open for a phase whose
   agent died without recording an end. That exemption is keyed on the store's
@@ -679,6 +684,52 @@ On a Flow row or an expanded phase row:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
   lists without launching a Merge phase agent.
+- `U` on an eligible Flow row launches an agent in that Flow's worktree with the
+  prompt `autofix pr #<num>`, where `<num>` is the Flow's PR number. Its gate is
+  `m`'s — a non-closed, unmerged Flow with a PR target whose Merge phase is ready
+  (or completed at a pending/merged Merge boundary) — plus a non-empty worktree
+  path: with no worktree the shortcut is simply unavailable rather than running
+  the agent in the repository root. The launch goes through the same lifecycle as
+  `g`, so occupancy, the persisted `h` headless preference, tmux mode, and the
+  current agent/model/effort all apply, and interactive embedded launches prefill
+  the dock for you to send.
+
+  It is deliberately **phase-untracked**: it writes no phase state, marks no
+  phase running, and attaches its session to no phase history, so an autofix run
+  cannot make the Merge phase someone else's responsibility. Ownership is
+  therefore the embedded slot on the embedded route, or — on the tmux route,
+  where no slot and no running phase exist — an in-process record of every
+  worktree-agent window the Flow has opened, which a second `U`, a phase launch
+  (`g`), a phase resume (`r`), and a repair (`R`) all probe before launching,
+  because every one of them would land a second agent in the same worktree.
+  Every window is retained rather than the newest alone, because the tmux probe
+  reports "not live" for a probe it could not run: a press that slipped through
+  a transient failure would otherwise erase the still-running window it failed
+  to see. That record is not restart-durable, cannot see a *detached*
+  embedded terminal, and is not consulted by auto mode, whose poll answers
+  without shelling out — so close or dismiss an autofix terminal rather than
+  detaching it, and prefer not to leave auto mode advancing a Flow you are
+  running autofix on.
+
+  Because occupancy is part of `U`'s footer predicate and not `m`'s, the two are
+  not advertised identically: while a launch, a resume, a repair, a Flow terminal,
+  or a headless write holds the Flow, `U` withdraws and `m` stays. Refusals name
+  the obstacle — `Close or dismiss the existing Flow terminal before running
+  autofix`, `A Flow launch is already in flight`, `Flow still has an agent running
+  in tmux` — and `codex-app` is refused outright with `Flow autofix requires codex
+  or claude; press A to choose one`. Like `g`, the fresh record decides: a Flow
+  that loses its PR, its worktree, or its eligibility before the agent starts is
+  refused with `Flow changed; refresh and try again` — at the authoritative read,
+  and again at the launch reservation taken immediately before the spawn, which
+  is also where the persisted `h` preference is read for the last time. That
+  last read is taken under the launch/close lock rather than the Flow store's
+  write lock, so it is not ordered against a concurrent `h`; the toggle is
+  refused for as long as a `U` attempt holds the Flow, with `A Flow launch is in
+  flight; retry the headless change in a moment`, and the launch keeps the mode
+  it was admitted with. A live
+  session on any non-terminal phase refuses with `Flow already has a running agent
+  session`. A stale session on an already-completed phase deliberately does not
+  refuse, so one crashed run cannot make `U` permanently dead.
 - `C` on an open Flow row opens an input modal demanding a reason, and refuses
   to submit an empty one. Closing records that reason plus a close timestamp,
   renders the row as `closed` with `(closed: <reason>)` after the title, and
@@ -911,6 +962,17 @@ before the field existed read as headless-on without being rewritten solely by
 a read. Manual phase and repair launches use the target Flow's value. Auto-mode
 CLI launches are always headless, independent of it; session resume behavior is
 unchanged.
+
+The toggle and launches fence each other in both directions. A launch started
+while a headless write is still settling is refused with `Applying headless mode
+change; retry the launch in a moment`. In the other direction the `U` worktree
+agent and an `R` repair block the toggle — they are the two phase-untracked
+kinds, and each resolves the preference in its prepare stage from a record taken
+under the launch/close lock, which is not ordered against the write — so
+pressing `h` while either attempt holds the Flow is refused with `A Flow launch
+is in flight; retry the headless change in a moment`. Tracked phase launches are
+not fenced: they read headless from the record their own phase write returns,
+which is ordered against the toggle.
 
 Press `M` to choose the selected CLI agent's model and `E` to choose its
 reasoning effort; the shortcut pane shows the current values. Codex CLI

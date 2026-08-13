@@ -1,6 +1,7 @@
 package model
 
 import (
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -227,15 +228,72 @@ func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, comma
 	return m.tmuxLaunchWindowLive(repoPath, []string{record.LaunchID})
 }
 
-// tmuxFlowAgentStillRunning is tmuxPhaseAgentStillRunning for a whole record.
-// Repair needs it because a Flow-level obstruction names no phase, and a repair
-// agent must not start while any of the Flow's phases still has a live window.
+// tmuxFlowAgentStillRunning is tmuxPhaseAgentStillRunning for a whole record,
+// plus every worktree-agent window this Flow opened. Repair needs it because a
+// Flow-level obstruction names no phase, and a repair agent must not start while
+// any of the Flow's phases still has a live window.
+//
+// The phase half is blind to a worktree-agent launch, whose ID lands in no
+// phase's LaunchIDs: on the embedded route the retained slot covers that, and on
+// the tmux route the registry is the only thing that does. It is unioned in here
+// rather than in a second probe next to this one, so that every caller asking
+// the same Flow-wide question gets the same answer — a repair started while an
+// autofix window is live would put a second agent in that worktree just as
+// surely as a second U press would.
+//
+// Its limits are real and deliberately not papered over: the registry is
+// in-process only, so the gap reopens for a window that outlives a TUI restart;
+// the probe is point-in-time, so a window opening between it and the handoff is
+// not caught; a detached embedded terminal lives in its own worktree-keyed
+// session, so it is not probeable here at all; and AutoMode never reaches this
+// function, because flowAutoAdvanceOccupied answers from the Model alone — a
+// poll on a timer must not shell out.
 func (m Model) tmuxFlowAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
+	launchIDs := append(flowRecordPhaseLaunchIDs(record), m.flowWorktreeAgentTmuxLaunchIDs(record.FlowID)...)
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+}
+
+// tmuxWorktreeAgentStillRunning is the registry half of the probe above on its
+// own, for the callers whose own obstruction rule already covers every phase.
+// A phase launch and a phase resume are held off a busy phase by that phase's
+// own state and window; widening them to every phase of the record would newly
+// refuse `g` for a finished agent whose window the user merely left open.
+//
+// They still need this half. A worktree agent writes no phase at all, so on the
+// tmux route nothing in the record, the attempt map, or the terminal dock says
+// the Flow's worktree is occupied — and a phase agent started into it would be
+// the second agent editing that worktree, exactly as a second `U` would be.
+//
+// The registry lookup runs first so the common case costs no subprocess: only a
+// Flow that actually launched a worktree agent in this process ever probes.
+func (m Model) tmuxWorktreeAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
+	launchIDs := m.flowWorktreeAgentTmuxLaunchIDs(record.FlowID)
+	if len(launchIDs) == 0 {
+		return false
+	}
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+}
+
+// flowWorktreeAgentTmuxLaunchIDs reports every worktree-agent tmux launch this
+// Flow made in this process, oldest first, or nil when it made none. They are
+// probed together for the reason a phase probes all of its own LaunchIDs: any
+// one of those windows still being open means an agent still owns the worktree.
+//
+// The result never aliases the registry's backing array, so a caller may append
+// to it without writing into the Model's map.
+func (m Model) flowWorktreeAgentTmuxLaunchIDs(flowID string) []string {
+	return slices.Clone(m.flowWorktreeAgentTmuxLaunches[strings.TrimSpace(flowID)])
+}
+
+// flowRecordPhaseLaunchIDs collects every launch a phase of this record made.
+// The result never aliases a phase's own LaunchIDs backing array, so a caller
+// may append to it without writing into the record.
+func flowRecordPhaseLaunchIDs(record flowstore.FlowRecord) []string {
 	var launchIDs []string
 	for _, phase := range record.Phases {
 		launchIDs = append(launchIDs, phase.LaunchIDs...)
 	}
-	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+	return launchIDs
 }
 
 // tmuxProbeRepoPath resolves which repo's session to probe. It has to agree with

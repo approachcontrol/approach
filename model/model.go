@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -177,6 +178,22 @@ type Model struct {
 	autoAdvanceDrainFlows     map[string]struct{}
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
+	// flowWorktreeAgentTmuxLaunches maps a Flow ID to every worktree-agent tmux
+	// launch it made in this process. A phase-untracked launch writes no phase,
+	// so on the tmux route this is the only in-process record that the Flow
+	// already has an agent window open.
+	//
+	// Every launch is retained rather than the newest alone, exactly as a phase
+	// keeps every ID in its LaunchIDs. The probe is advisory in one direction
+	// only — a `list-windows` that times out answers false for a window that is
+	// still open — so a second press is admitted while the first agent runs, and
+	// keeping only the newer ID would leave the older agent unprobed as soon as
+	// its window outlived the newer one.
+	//
+	// It needs no expiry: the probe asks whether those windows are still live,
+	// so closed ones re-enable the shortcut on their own, and the slice is
+	// bounded by how many times one Flow was launched in one TUI session.
+	flowWorktreeAgentTmuxLaunches map[string][]string
 	flowLaunchAttempts            map[string]flowLaunchAttempt
 	launchSeams                   flowLaunchSeams
 
@@ -1230,6 +1247,7 @@ func (m Model) View() string {
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
 		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
+		FlowAutofixReadySelected:     m.selectedFlowAutofixReady(),
 		FlowCloseActionSelected:      m.selectedFlowCloseActionHint(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
 		FlowPhaseReleaseSelected:     m.selectedFlowPhaseSessionReleasable(),
@@ -2164,6 +2182,33 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 		FlowID: record.FlowID,
 	})
 	return ok
+}
+
+// withFlowWorktreeAgentTmuxLaunch appends a worktree-agent tmux launch to the
+// ones already retained for a Flow. It clones the map and the Flow's own slice
+// rather than mutating either, like every other per-Flow map on the value-typed
+// Model, so a copy taken before the write is unaffected — appending in place
+// could otherwise write through a shared backing array into an older copy.
+//
+// A launch already retained is not appended twice: the same token can reach a
+// handoff more than once, and a duplicate would only widen the probe's argument
+// list without changing its answer.
+func (m Model) withFlowWorktreeAgentTmuxLaunch(flowID, launchID string) Model {
+	flowID = strings.TrimSpace(flowID)
+	launchID = strings.TrimSpace(launchID)
+	if flowID == "" || launchID == "" {
+		return m
+	}
+	if slices.Contains(m.flowWorktreeAgentTmuxLaunches[flowID], launchID) {
+		return m
+	}
+	launches := make(map[string][]string, len(m.flowWorktreeAgentTmuxLaunches)+1)
+	for existingFlowID, existingLaunchIDs := range m.flowWorktreeAgentTmuxLaunches {
+		launches[existingFlowID] = existingLaunchIDs
+	}
+	launches[flowID] = append(slices.Clone(launches[flowID]), launchID)
+	m.flowWorktreeAgentTmuxLaunches = launches
+	return m
 }
 
 func (m Model) selectedFlowManualMergeReady() bool {
