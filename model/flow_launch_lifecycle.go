@@ -46,6 +46,15 @@ const (
 	flowLaunchOutcomeRetry
 	flowLaunchOutcomeStale
 	flowLaunchOutcomeFailed
+	// flowLaunchOutcomeBlocked is a refusal AutoMode will not retry on its own:
+	// unlike failed, it does not re-arm the drain. Most of what it classifies
+	// cannot clear without the user, and re-arming those would repeat the
+	// refusal — and its filesystem work — on every 1 Hz poll. Two of them could
+	// clear on their own and are blocked anyway: a bootstrap-hook failure, since
+	// a Flow whose bootstrap did not run is not one to hand an agent
+	// unannounced, and a contended store write, since re-arming that one leaves
+	// an orphan worktree behind on every poll it loses.
+	flowLaunchOutcomeBlocked
 )
 
 // flowLaunchEventMsg carries one asynchronous hop back into Update. Token,
@@ -65,6 +74,11 @@ type flowLaunchEventMsg struct {
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.
 	FallbackNote string
+	// WorktreeNote is set only when the read stage created this Flow's worktree.
+	// Every route reports it: a new branch and directory appearing because the
+	// user pressed a key is the silent side effect this lifecycle step exists to
+	// remove, so it may not be dropped for the non-embedded agents.
+	WorktreeNote string
 	// Outcome is read-stage-only and autoPhase-only; every dispatch on it is
 	// gated on Stage for that reason.
 	Outcome flowLaunchOutcome
@@ -428,12 +442,24 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			event.Err = err.Error()
 			return event
 		}
+		// Last, because it is the only step that touches the filesystem: every
+		// cheap refusal above, and the session check, must get to say no first.
+		prepared, err = launcher.EnsureLaunchWorktree(prepared)
+		if err != nil {
+			event.Err = err.Error()
+			return event
+		}
 		event.PhaseID = phase.PhaseID
-		event.Record = record
+		// The ensured record, not the pre-ensure one: prepare looks the phase up
+		// in it and builds the launch context from its branch and commit.
+		event.Record = prepared.Record
 		event.Headless = record.Headless
 		event.RepoPath = prepared.RepoPath
 		event.WorktreePath = prepared.WorktreePath
 		event.PlanPath = prepared.PlanPath
+		if prepared.CreatedWorktree {
+			event.WorktreeNote = createdFlowWorktreeNote(prepared.Record)
+		}
 		return event
 	}
 }
@@ -501,11 +527,27 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}
+		// Last, and behind the session check, so a phase a live session already
+		// owns never costs a `git worktree add`.
+		prepared, err = launcher.EnsureLaunchWorktree(prepared)
+		// The identity fields are set before the branch returns either way: the
+		// blocked handler writes against msg.PhaseID, and the intent still carries
+		// the spelling an earlier poll captured rather than the record's own.
 		event.PhaseID = phase.PhaseID
-		event.Record = record
+		event.Record = prepared.Record
+		if err != nil {
+			// Permanent, so it classifies blocked rather than failed. The write
+			// itself is the handler's, behind the attempt fence.
+			event.Outcome = flowLaunchOutcomeBlocked
+			event.Err = err.Error()
+			return event
+		}
 		event.RepoPath = prepared.RepoPath
 		event.WorktreePath = prepared.WorktreePath
 		event.PlanPath = prepared.PlanPath
+		if prepared.CreatedWorktree {
+			event.WorktreeNote = createdFlowWorktreeNote(prepared.Record)
+		}
 		return event
 	}
 }
@@ -595,9 +637,17 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m.handleAutoFlowLaunchRead(attempt, msg)
 		}
 		if msg.Err != "" {
-			// Nothing has been persisted at this point and no context exists,
-			// so the attempt simply goes away with a status.
-			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, msg.Err), nil
+			// No launch bookkeeping exists and no context does either, so the
+			// attempt simply goes away with a status. The ensure step is the one
+			// refusal that can still have persisted something — the worktree it
+			// created before the bootstrap hook failed — so the surface is
+			// refreshed rather than left rendering missing-worktree until the
+			// next periodic tick.
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, msg.Err)
+			if msg.FlowID != "" && m.flowSurfaceVisible() {
+				return m.startFlowSurfaceFetch()
+			}
+			return m, nil
 		}
 		next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStateReading, flowLaunchStatePreparing)
 		if !ok {
@@ -631,6 +681,14 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 // type has to survive the string-only Err hop. Every branch here is forbidden
 // from calling setStatus(statusOther, …): the poll runs at 1 Hz, so a sticky
 // status would be re-set every second over whatever the user is looking at.
+//
+// The blocked branch is the one exception, and only at one remove: the sticky
+// status comes from handleFlowLaunchFailurePersisted, a hop later. It cannot
+// repeat on the poll, because admission itself disarms the drain and this is
+// a branch that never arms it again — so only a fresh arm edge, such as
+// another phase completing, can bring the Flow back. Blocking the phase makes
+// it unlaunchable too, but that is the weaker guarantee of the two: it depends
+// on the write landing, and the disarm holds even when it does not.
 func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	switch msg.Outcome {
 	case flowLaunchOutcomeOK:
@@ -644,6 +702,8 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 		// transition it would otherwise overwrite will not.
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID)
 		return m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + msg.Err)
+	case flowLaunchOutcomeBlocked:
+		return m.blockAutoFlowLaunchPhase(attempt, msg)
 	case flowLaunchOutcomeRetry:
 		// The blocker clears on its own, so re-arming is what makes the launch
 		// resume without waiting for another completion edge.
@@ -671,6 +731,52 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 		m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + autoAdvancePhaseLabel(msg.PhaseID) + " queued")
 	}
 	return m, batchNonNil(statusCmd, prepareCmd)
+}
+
+// blockAutoFlowLaunchPhase records a permanent AutoMode refusal on the phase.
+// It reuses FlowStarter's blocked-phase precedent rather than
+// flowLaunchFailureUpdate, which would stamp needs_attention on every kind, and
+// it does not re-arm the drain: nothing about this refusal clears on its own.
+//
+// The synthesized launch context is load-bearing, not decoration.
+// handleFlowLaunchFailurePersisted releases the attempt by matching on the
+// context's Flow and launch IDs, and a zero context would leave the attempt in
+// failurePersisting forever — the Flow would never launch, auto-advance, or
+// repair again.
+func (m Model) blockAutoFlowLaunchPhase(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
+	if !ok {
+		phase = flowstore.FlowPhase{PhaseID: msg.PhaseID}
+	}
+	next, advanced := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStateReading, flowLaunchStateFailurePersisting)
+	if !advanced {
+		return m, nil
+	}
+	update := blockedPhaseUpdate(attempt.FlowID, phase, "Auto-advance blocked: "+msg.Err)
+	ctx := actions.AgentLaunchContext{
+		FlowID:      attempt.FlowID,
+		LaunchID:    attempt.Token,
+		FlowPhaseID: msg.PhaseID,
+	}
+	return next, flowLaunchFailurePersistCmd(next.launchSeams.SetPhase, update, ctx, msg.Err)
+}
+
+// createdFlowWorktreeNote names the worktree a launch gave the Flow on the
+// user's behalf. "Set up" rather than "Created" because the seam may have
+// adopted a worktree the recorded branch already had, which the record it
+// returns cannot be told apart from a fresh one; the bootstrap hook ran either
+// way. The branch clause is omitted rather than left blank when the ensure seam
+// returned no branch.
+func createdFlowWorktreeNote(record flowstore.FlowRecord) string {
+	worktreePath := strings.TrimSpace(record.WorktreePath)
+	if worktreePath == "" {
+		return ""
+	}
+	note := "Set up worktree " + worktreePath
+	if branch := strings.TrimSpace(record.Branch); branch != "" {
+		note += " on branch " + branch
+	}
+	return note + " for this Flow"
 }
 
 func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
@@ -726,10 +832,12 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		m, fetchCmd = m.startFlowSurfaceFetch()
 	}
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
-	// Only a successful install reports the fallback. A failed one has already
-	// returned above with its own message, which is the more useful one.
-	if strings.TrimSpace(msg.FallbackNote) != "" {
-		m = m.setStatus(statusOther, msg.FallbackNote)
+	// Only a successful install reports these. A failed one has already returned
+	// above with its own message, which is the more useful one. The two compose
+	// rather than race for the slot: the worktree creation is the headline and
+	// the tmux fallback is the parenthetical.
+	if status := withFallbackNote(msg.WorktreeNote, msg.FallbackNote); strings.TrimSpace(status) != "" {
+		m = m.setStatus(statusOther, status)
 	}
 	return m, batchNonNil(prefillCmd, tickCmd, fetchCmd)
 }
@@ -762,7 +870,7 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		// matches any other state and the attempt would be stranded.
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	}
-	m, launchCmd := m.runAgentLaunchWithStatus(ctx, spec.Launch, msg.Release, tmuxLaunchStatus(spec))
+	m, launchCmd := m.runAgentLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
 	var fetchCmd tea.Cmd
 	if ctx.FlowID != "" && m.flowSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()
@@ -790,7 +898,17 @@ func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaun
 		// would strand it: no AgentResultMsg fence matches any other state.
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	}
-	m, launchCmd := m.runAgentLaunchWithReservation(ctx, launch, msg.Release)
+	// Composed onto the confirmation rather than replacing it: on the detached
+	// route an empty status is what lets AgentResultMsg fill in that same
+	// generic text, so passing the bare note would delete it. The interactive
+	// route sets whatever it is given before the TTY handover and otherwise
+	// announces nothing, which is why the empty default is preserved there too —
+	// only a created worktree is worth a line the route never had.
+	launchedStatus := ""
+	if strings.TrimSpace(msg.WorktreeNote) != "" {
+		launchedStatus = withFallbackNote(agentLaunchedStatus(ctx.Command), msg.WorktreeNote)
+	}
+	m, launchCmd := m.runAgentLaunchWithStatus(ctx, launch, msg.Release, launchedStatus)
 	var fetchCmd tea.Cmd
 	if ctx.FlowID != "" && m.flowSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()

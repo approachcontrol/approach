@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -36,6 +37,10 @@ type FlowPhaseLaunchPreparedRequest struct {
 	WorktreePath string
 	PlanPath     string
 	LaunchID     string
+	// CreatedWorktree records that EnsureLaunchWorktree created this Flow's
+	// worktree for this launch. Creating a branch and a directory because the
+	// user pressed a key is announced rather than silent.
+	CreatedWorktree bool
 }
 
 type FlowPhaseLaunchResult struct {
@@ -56,6 +61,31 @@ func (err FlowPhaseLaunchValidationError) Error() string {
 	return err.Message
 }
 
+// FlowPhaseLaunchWorktreeError is what EnsureLaunchWorktree refuses with. It is
+// its own type so callers classify by step rather than by error text; the
+// lifecycle's outcome enum exists for the same reason.
+type FlowPhaseLaunchWorktreeError struct {
+	Message string
+}
+
+func (err FlowPhaseLaunchWorktreeError) Error() string {
+	return err.Message
+}
+
+const (
+	flowPhaseLaunchNoRepoStatus     = "Flow has no worktree and no repository of its own"
+	flowPhaseLaunchNoWorktreeStatus = "Flow has no worktree and none can be created"
+	flowPhaseLaunchWorktreeFailed   = "Worktree creation failed: "
+	// flowPhaseLaunchWorktreeUnusable covers the failures that happen after the
+	// worktree exists and is persisted — the bootstrap hook is the one the
+	// ensure seam produces. Reporting those as a creation failure would send the
+	// user looking for a directory that is already there.
+	flowPhaseLaunchWorktreeUnusable = "Worktree created but the launch was refused: "
+	// flowPhaseLaunchWorktreeUnrecorded is the third case: the directory exists
+	// but no record names it, so neither of the other two headlines is true.
+	flowPhaseLaunchWorktreeUnrecorded = "Worktree could not be recorded: "
+)
+
 type FlowPhaseLauncher struct {
 	CurrentRepoPath      func() (string, bool)
 	PlanMarkdownPath     func(string) (string, error)
@@ -71,6 +101,10 @@ type FlowPhaseLauncher struct {
 	Backend string
 	// TmuxAvailable probes for tmux. Nil means "probe the real PATH".
 	TmuxAvailable func() bool
+	// EnsureWorktree creates and persists the Flow's worktree when the record
+	// has none, returning the updated record. Nil means "refuse worktree-less
+	// launches" — it never means "fall back to the repository root".
+	EnsureWorktree func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 }
 
 func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
@@ -88,6 +122,7 @@ func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 		Model:                model,
 		ReasoningEffort:      reasoningEffort,
 		PromptTemplates:      m.flowPromptTemplates,
+		EnsureWorktree:       m.ensureFlowWorktree,
 	}
 }
 
@@ -101,11 +136,12 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 	if repoPath == "" && l.CurrentRepoPath != nil {
 		repoPath, _ = l.CurrentRepoPath()
 	}
+	// A worktree-less Flow deliberately leaves this empty rather than falling
+	// back to repoPath: running the agent in the user's primary checkout is the
+	// silent isolation break this step exists to prevent. Resolution is deferred
+	// to EnsureLaunchWorktree, which is allowed to touch the filesystem.
 	worktreePath := req.Record.WorktreePath
-	if worktreePath == "" {
-		worktreePath = repoPath
-	}
-	if worktreePath == "" {
+	if worktreePath == "" && repoPath == "" {
 		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: "Cannot determine launch path for this flow"}
 	}
 	planPath := req.Record.PlanPath
@@ -135,7 +171,63 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 	}, nil
 }
 
+// EnsureLaunchWorktree resolves a prepared request whose WorktreePath is still
+// empty. It is the only part of launch preparation that mutates the filesystem,
+// so callers must run it last: after every cheap refusal Preflight makes and
+// after the session-occupancy check, or a launch that is about to be refused
+// leaves an orphan branch and directory behind.
+func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchPreparedRequest, error) {
+	if req.WorktreePath != "" {
+		return req, nil
+	}
+	// Record.RepoPath, never req.RepoPath: the latter has already fallen back to
+	// CurrentRepoPath, and creating a worktree there would put the Flow in
+	// whatever repository the user happens to have selected.
+	if req.Record.RepoPath == "" {
+		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoRepoStatus}
+	}
+	if l.EnsureWorktree == nil {
+		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoWorktreeStatus}
+	}
+	updated, err := l.EnsureWorktree(req.Record)
+	// A seam that persisted a worktree and then failed — the bootstrap hook is
+	// that case — is carried forward even though the launch is still refused.
+	// Dropping it would leave the caller holding a record the store has already
+	// moved past, and would report a directory that exists as one that does not.
+	created := updated.WorktreePath != ""
+	if created {
+		// The updated record is carried, not just its path: Prepare builds the
+		// launch context from Record.Branch and Record.Commit and renders the
+		// phase prompt from the same record.
+		req.Record = updated
+		req.WorktreePath = updated.WorktreePath
+		req.CreatedWorktree = true
+	}
+	if err != nil {
+		switch {
+		case created:
+			return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnusable + err.Error()}
+		case errors.Is(err, ErrFlowWorktreeUnrecorded):
+			// The seam made a directory it could not persist, so it hands back
+			// the pre-ensure record and `created` is false. Creation is the one
+			// thing that did not fail, and the wrapped error names the path.
+			return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnrecorded + err.Error()}
+		}
+		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + err.Error()}
+	}
+	if !created {
+		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + "no worktree path was recorded"}
+	}
+	return req, nil
+}
+
 func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchResult, error) {
+	// Structural rather than topological: an empty WorktreePath becomes an empty
+	// cmd.Dir, which makes the agent inherit Approach's own working directory.
+	// Refusing here means a caller that forgets to ensure cannot express the bug.
+	if req.WorktreePath == "" {
+		return FlowPhaseLaunchResult{}, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoWorktreeStatus}
+	}
 	planBody := ""
 	if req.Record.PlanID != "" && flowPhasePromptNeedsPlanBody(req.Phase) {
 		body, err := l.readPlan(req.Record.PlanID)

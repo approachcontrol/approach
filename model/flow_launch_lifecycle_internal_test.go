@@ -58,6 +58,12 @@ type manualLaunchHarness struct {
 	launchReservations int
 	launchReleases     int
 
+	// ensureRecords counts what the worktree-creation seam was asked to create,
+	// so "the git work never happened" is assertable rather than inferred.
+	ensureRecords []flowstore.FlowRecord
+	ensureErr     error
+	ensured       flowstore.FlowRecord
+
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
 }
@@ -126,6 +132,23 @@ func (h *manualLaunchHarness) options() Options {
 		},
 		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
 			return h.persistedFlow(strings.TrimSpace(flowID))
+		},
+		// Overridden in every harness model: the default seam runs real git.
+		EnsureFlowWorktree: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			h.ensureRecords = append(h.ensureRecords, record)
+			if h.ensureErr != nil {
+				// The two compose, because the real seam's bootstrap-hook
+				// failure does: it persists the worktree and then reports.
+				return h.ensured, h.ensureErr
+			}
+			if h.ensured.FlowID != "" {
+				return h.ensured, nil
+			}
+			ensured := record
+			ensured.WorktreePath = "/dev/alpha-worktrees/flow-one"
+			ensured.Branch = "flow/flow-one"
+			ensured.Commit = "abc123"
+			return ensured, nil
 		},
 		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			if h.reserveLaunchErr != nil {
@@ -1221,6 +1244,18 @@ func TestAutoFlowLaunchDelayedEventsAreIgnored(t *testing.T) {
 				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
 				FlowID: record.FlowID, Stage: flowLaunchStageRead,
 				Outcome: flowLaunchOutcomeRetry, FlowTitle: "Flow one",
+			},
+		},
+		{
+			// Blocked is the only read outcome that writes, so a superseded one
+			// could otherwise block a phase a newer attempt is launching.
+			name:  "blocked from a superseded attempt",
+			model: live,
+			event: flowLaunchEventMsg{
+				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
+				FlowID: record.FlowID, PhaseID: record.Phases[0].PhaseID, Stage: flowLaunchStageRead,
+				Record: record, Outcome: flowLaunchOutcomeBlocked, FlowTitle: "Flow one",
+				Err: "Worktree creation failed: branch already checked out",
 			},
 		},
 		{

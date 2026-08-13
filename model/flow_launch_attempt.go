@@ -183,8 +183,15 @@ func (m Model) suppressUnpersistedAutoFlowLaunchRetry(flowID string) Model {
 	}
 	switch attempt.State {
 	case flowLaunchStateReading:
-		// The read command is side-effect free, so its eventual event can be
-		// invalidated by releasing the attempt.
+		// The read command persists nothing about this launch, so its eventual
+		// event can be invalidated by releasing the attempt. It is no longer
+		// side-effect free: a stop edge landing inside the ensure window leaves
+		// the worktree it created and the start metadata it persisted behind.
+		// Once that write lands nothing needs cleaning up — the next launch
+		// takes EnsureWorktree's no-op passthrough and reuses both. Released
+		// before it lands, a launch started in the meantime reads the record as
+		// still worktree-less and ensures a second time; the store settles on
+		// whichever write is last and the extra pair is inert.
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	case flowLaunchStatePreparing:
 		// Prepare may be blocked before or after its phase write. Keep ownership

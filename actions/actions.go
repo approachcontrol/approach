@@ -397,6 +397,116 @@ func CreateFlowWorktree(repoPath, title, baseRef string) (FlowWorktreeCreateResu
 	return FlowWorktreeCreateResult{}, fmt.Errorf("could not allocate a unique flow worktree for %q after %d attempts", title, 999)
 }
 
+// ErrFlowBranchMissing reports that the branch a Flow record names does not
+// exist in its repository, so there is nothing to attach a worktree to. It is a
+// sentinel rather than a message because the caller's next move — allocate a
+// fresh flow/<slug> pair instead — depends on this case and no other.
+var ErrFlowBranchMissing = errors.New("branch does not exist")
+
+// AttachFlowWorktree gives an existing local branch a worktree at the
+// conventional sibling path. It is the counterpart to CreateFlowWorktree for a
+// Flow that already records the branch it means to run on: inventing a second
+// branch there would strand the recorded one.
+func AttachFlowWorktree(repoPath, branch string) (FlowWorktreeCreateResult, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return FlowWorktreeCreateResult{}, fmt.Errorf("branch cannot be empty")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return FlowWorktreeCreateResult{}, fmt.Errorf("branch cannot start with -: %q", branch)
+	}
+	// A local branch, not any commit-ish: `git worktree add <path> v1.0.0`
+	// succeeds on a tag, a remote-tracking ref, or a raw SHA and leaves a
+	// detached HEAD, which would let an agent commit onto nothing while the
+	// record kept naming a branch that never moved.
+	if !localBranchExists(repoPath, branch) {
+		if refExists(repoPath, branch) {
+			return FlowWorktreeCreateResult{}, fmt.Errorf("%s is not a local branch", branch)
+		}
+		return FlowWorktreeCreateResult{}, fmt.Errorf("%s: %w", branch, ErrFlowBranchMissing)
+	}
+	// A branch that already has a worktree of its own is where the Flow belongs.
+	// Git will not check it out twice, so refusing here would leave the Flow
+	// permanently unlaunchable for the most ordinary reason a record names a
+	// branch. The main worktree is never adopted — running there is the
+	// isolation break this whole path exists to prevent — so it falls through to
+	// the loud refusal `git worktree add` produces on its own.
+	if existing := linkedWorktreeForBranch(repoPath, branch); existing != "" {
+		return FlowWorktreeCreateResult{WorktreePath: existing, Branch: branch}, nil
+	}
+	basePath := DefaultWorktreePath(repoPath, branch)
+	for i := 1; i < 1000; i++ {
+		worktreePath := basePath
+		if i > 1 {
+			worktreePath = fmt.Sprintf("%s-%d", basePath, i)
+		}
+		if _, err := os.Stat(worktreePath); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			return FlowWorktreeCreateResult{}, err
+		}
+		out, err := exec.Command("git", "-C", repoPath, "worktree", "add", worktreePath, branch).CombinedOutput()
+		if err == nil {
+			return FlowWorktreeCreateResult{WorktreePath: worktreePath, Branch: branch}, nil
+		}
+		msg := strings.TrimSpace(string(out))
+		// Only the path may move. A branch already checked out somewhere else
+		// fails loudly instead: adopting that worktree is how a Flow ends up
+		// running in the primary checkout, which is the whole bug being fixed.
+		if isFlowWorktreePathCollisionError(msg) {
+			continue
+		}
+		if msg == "" {
+			return FlowWorktreeCreateResult{}, err
+		}
+		return FlowWorktreeCreateResult{}, fmt.Errorf("%s: %w", msg, err)
+	}
+	return FlowWorktreeCreateResult{}, fmt.Errorf("could not allocate a worktree for branch %q after %d attempts", branch, 999)
+}
+
+func localBranchExists(repoPath, branch string) bool {
+	return exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+}
+
+// linkedWorktreeForBranch returns the linked worktree that already has branch
+// checked out, or "" when there is none. Git lists the main worktree first, and
+// a match there answers "" precisely so the caller does not adopt the user's
+// primary checkout.
+func linkedWorktreeForBranch(repoPath, branch string) string {
+	out, err := exec.Command("git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return ""
+	}
+	want := "branch refs/heads/" + branch
+	mainPath := ""
+	current := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			current = path
+			if mainPath == "" {
+				mainPath = path
+			}
+			continue
+		}
+		if line == want {
+			if current == "" || current == mainPath {
+				return ""
+			}
+			// git keeps listing a worktree whose directory the user deleted,
+			// marking it prunable. Adopting that path would persist a worktree
+			// that is not there; falling through instead reaches git's own
+			// already-used-by refusal, which is the one that says to prune.
+			if info, err := os.Stat(current); err != nil || !info.IsDir() {
+				return ""
+			}
+			return current
+		}
+	}
+	return ""
+}
+
 func flowBranchOrPathExists(repoPath, branch, worktreePath string) bool {
 	if refExists(repoPath, branch) {
 		return true
@@ -408,9 +518,19 @@ func flowBranchOrPathExists(repoPath, branch, worktreePath string) bool {
 }
 
 func isFlowWorktreeCollisionError(msg string) bool {
+	return isFlowWorktreePathCollisionError(msg) ||
+		strings.Contains(strings.ToLower(msg), "is already checked out")
+}
+
+// isFlowWorktreePathCollisionError separates the collisions a different path
+// resolves from the ones only a different branch would. For CreateFlowWorktree
+// that includes a directory the user deleted without pruning, since the branch
+// moves with the path; for AttachFlowWorktree the branch is fixed, so a stale
+// registration reappears at the next suffix as an already-used-by refusal that
+// only `git worktree prune` clears.
+func isFlowWorktreePathCollisionError(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "already exists") ||
-		strings.Contains(msg, "is already checked out") ||
 		strings.Contains(msg, "missing but already registered")
 }
 

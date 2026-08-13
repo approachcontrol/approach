@@ -536,11 +536,48 @@ and discards the pending result.
 
 The result is the same parked Flow a successful `n` form submission produces,
 so `g` on its first phase launches the agent inside the Flow's isolated
-worktree. If worktree creation or the bootstrap hook fails, the persisted Flow
-record keeps its launchable phases blocked with the failure noted, the Flows
-pane renders the worktree-less record with the `missing-worktree` branch label
-and a `recover-worktree` phase state, and the error is reported in the status
-line.
+worktree. If worktree creation fails, the persisted Flow record keeps its
+launchable phases blocked with the failure noted, the Flows pane renders the
+worktree-less record with the `missing-worktree` branch label and a
+`recover-worktree` phase state, and the error is reported in the status line. A
+bootstrap-hook failure comes after the start metadata is persisted, so that
+record does have a worktree; only its launchable phases are blocked.
+
+A Flow that has no worktree at all — one created by `approach flow create`
+without `--worktree-path`, or left behind by a failure before the start metadata
+was written — never launches in the repository root. Pressing `g` creates the
+worktree first, announcing it in the status line, and only then starts the
+agent.
+
+A record that already names a local branch gets a worktree for that branch, so
+the name prompts render as the push target keeps meaning what it said. If that
+branch already has a linked worktree, the Flow adopts it rather than failing
+over a checkout git will not repeat — the bootstrap hook then runs against a
+directory that already exists, so a hook that scaffolds rather than installs
+sees a populated worktree. Only a record whose branch resolves to
+nothing — or that names none — is given a fresh `flow/<slug>` pair from the
+recorded base ref, or from the repository's current HEAD when no base ref was
+recorded.
+
+A manual launch is refused with the reason, and AutoMode blocks the phase with
+that reason in its notes rather than retrying every second, when:
+
+- the Flow records no repository of its own;
+- the recorded branch exists but is not a local branch — a tag, a
+  remote-tracking ref, or a raw commit — since checking one out would detach
+  HEAD under a record that keeps naming a branch;
+- the recorded branch is checked out in the repository's own working tree,
+  which is the launch this whole path exists to prevent;
+- `git worktree add` fails for any other reason, including a registration left
+  behind by a directory deleted without `git worktree prune`.
+
+Most of those refusals write nothing, but two happen after `git worktree add`
+has already run. A store that will not record the new worktree leaves a branch
+and directory on disk that no record names; the status line names the path. A
+bootstrap-hook failure comes after the start metadata is persisted, so the Flow
+does keep the worktree it just gained, and its status says so — note that a
+second `g` then takes the worktree as given and launches the agent into it even
+though the hook never completed.
 
 After the active subview settles, `enter` on its visible selected row
 asynchronously loads the raw human-readable output of
@@ -786,7 +823,7 @@ ordinary empty or pending work:
 
 | Label | Meaning |
 |-------|---------|
-| `recover-worktree` | Saved Flow with no branch/worktree metadata |
+| `recover-worktree` | Saved Flow with no branch/worktree metadata; a phase launch creates the missing worktree, and is refused with a message when it cannot |
 | `await-session` | Running phase with a recorded launch but no attached session yet |
 | `session-mismatch` | Attached session whose launch ID does not match the phase's launch attempts |
 | `ended-session` | Running phase whose latest attached session has ended |

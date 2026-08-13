@@ -146,7 +146,11 @@ launch an agent, or invoke `bd`; the Bead remains untouched.
 The result is the same parked Flow the Flows-pane `n` form creates, so `g` on
 its first phase launches the agent inside the Flow's isolated worktree. If the
 worktree cannot be created, the Flow record is still persisted with its
-launchable phases blocked and the error is shown in the status line.
+launchable phases blocked and the error is shown in the status line. A Flow that
+has no worktree at all — one created through `approach flow create` without
+`--worktree-path`, for example — gets one created on its first phase launch
+rather than running the agent in the repository root; when that creation is
+impossible the launch is refused with the reason.
 
 ## Agents, Plans, and Flows
 
