@@ -2149,6 +2149,14 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
+	// A worktree agent (U) writes no phase, so in tmux mode nothing admission can
+	// see reports that its agent is still working in this Flow's worktree. The
+	// probe goes here rather than in admission for repair's reason — it shells
+	// out — and it asks only about that agent: a phase's own live window is
+	// already the business of the phase state admission reads.
+	if m.tmuxWorktreeAgentStillRunning(record, "") {
+		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
+	}
 	// Manual launch surfaces the refusal through the returned Model's status,
 	// so the admission verdict itself is only AutoMode's concern.
 	next, cmd, _ := m.requestFlowLaunch(flowLaunchIntent{
@@ -2410,6 +2418,12 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	// subprocess.
 	if intent.ResumeCommand != agent.CommandCodexApp && m.tmuxPhaseAgentStillRunning(record, phase, record.WorktreePath) {
 		return m.setStatus(statusOther, tmuxPhaseLiveWindowRefusal), nil
+	}
+	// A resumed agent lands in the same worktree a phase-untracked worktree agent
+	// is working in, and no phase records that one, so it needs the Flow-scoped
+	// half too. Same codex-app exemption: that route opens no tmux window.
+	if intent.ResumeCommand != agent.CommandCodexApp && m.tmuxWorktreeAgentStillRunning(record, record.WorktreePath) {
+		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	intent.Origin = m.flowLaunchOrigin()
 	next, cmd, _ := m.requestFlowLaunch(intent)

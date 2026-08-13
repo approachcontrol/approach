@@ -249,10 +249,37 @@ func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, comma
 // poll on a timer must not shell out.
 func (m Model) tmuxFlowAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
 	launchIDs := flowRecordPhaseLaunchIDs(record)
-	if launchID := strings.TrimSpace(m.flowWorktreeAgentTmuxLaunches[strings.TrimSpace(record.FlowID)]); launchID != "" {
+	if launchID := m.flowWorktreeAgentTmuxLaunchID(record.FlowID); launchID != "" {
 		launchIDs = append(launchIDs, launchID)
 	}
 	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), launchIDs)
+}
+
+// tmuxWorktreeAgentStillRunning is the registry half of the probe above on its
+// own, for the callers whose own obstruction rule already covers every phase.
+// A phase launch and a phase resume are held off a busy phase by that phase's
+// own state and window; widening them to every phase of the record would newly
+// refuse `g` for a finished agent whose window the user merely left open.
+//
+// They still need this half. A worktree agent writes no phase at all, so on the
+// tmux route nothing in the record, the attempt map, or the terminal dock says
+// the Flow's worktree is occupied — and a phase agent started into it would be
+// the second agent editing that worktree, exactly as a second `U` would be.
+//
+// The registry lookup runs first so the common case costs no subprocess: only a
+// Flow that actually launched a worktree agent in this process ever probes.
+func (m Model) tmuxWorktreeAgentStillRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool {
+	launchID := m.flowWorktreeAgentTmuxLaunchID(record.FlowID)
+	if launchID == "" {
+		return false
+	}
+	return m.tmuxLaunchWindowLive(m.tmuxProbeRepoPath(record, fallbackRepoPath), []string{launchID})
+}
+
+// flowWorktreeAgentTmuxLaunchID reports this Flow's newest worktree-agent tmux
+// launch, or "" when it has none in this process.
+func (m Model) flowWorktreeAgentTmuxLaunchID(flowID string) string {
+	return strings.TrimSpace(m.flowWorktreeAgentTmuxLaunches[strings.TrimSpace(flowID)])
 }
 
 // flowRecordPhaseLaunchIDs collects every launch a phase of this record made.

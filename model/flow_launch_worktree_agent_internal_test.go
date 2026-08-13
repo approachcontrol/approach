@@ -971,6 +971,78 @@ func TestWorktreeAgentTmuxWindowBlocksRepairToo(t *testing.T) {
 	}
 }
 
+// TestWorktreeAgentTmuxWindowBlocksThePhaseLaunchToo covers the other half of
+// the same hazard: the autofix agent holds the worktree but no phase, and the
+// Flow's merge phase stays ready, so without the probe g would put a second
+// agent into the worktree the first is mid-run in.
+func TestWorktreeAgentTmuxWindowBlocksThePhaseLaunchToo(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+
+	m := h.autofix(h.model())
+	if len(h.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %#v, want exactly one", h.tmuxContexts)
+	}
+
+	var probed []string
+	h.windowLive = func(repoPath string, launchIDs []string) bool {
+		probed = append([]string{}, launchIDs...)
+		return true
+	}
+	next, cmd := m.handleLaunchNextFlowPhase()
+	blocked := next.(Model)
+	if cmd != nil {
+		t.Fatal("a refused press must start no work")
+	}
+	if got := blocked.status.Text; got != tmuxFlowLiveWindowRefusal {
+		t.Fatalf("status = %q, want %q", got, tmuxFlowLiveWindowRefusal)
+	}
+	// Only the worktree agent's own launch is asked about. Probing every phase's
+	// launch ID here would refuse g for a finished agent whose window was left
+	// open, which is not this rule's business.
+	if len(probed) != 1 || probed[0] != h.tmuxContexts[0].LaunchID {
+		t.Fatalf("probed launch IDs = %#v, want the worktree agent's own launch", probed)
+	}
+	if len(h.tmuxContexts) != 1 || len(h.launchUpdates) != 0 {
+		t.Fatalf("a refused phase launch must persist and spawn nothing: %#v %#v", h.tmuxContexts, h.launchUpdates)
+	}
+
+	// The refusal lasts exactly as long as the window does.
+	h.windowLive = func(string, []string) bool { return false }
+	next, cmd = m.handleLaunchNextFlowPhase()
+	h.drain(next.(Model), cmd, 0)
+	if len(h.tmuxContexts) != 2 {
+		t.Fatalf("tmux launches = %d, want the phase launch once the window closed", len(h.tmuxContexts))
+	}
+}
+
+// TestWorktreeAgentProbeIgnoresPhaseWindows pins the split between the two
+// probes: the Flow-wide one repair uses covers every phase, and the one the
+// phase launch and resume use covers only the worktree agent, whose window no
+// phase knows about.
+func TestWorktreeAgentProbeIgnoresPhaseWindows(t *testing.T) {
+	record := autofixFlowRecord()
+	for i := range record.Phases {
+		if record.Phases[i].PhaseID == "implementation" {
+			record.Phases[i].LaunchIDs = []string{"phase-launch"}
+		}
+	}
+	h := newManualLaunchHarness(t, record)
+	h.launchBackend = config.LaunchBackendTmux
+	h.tmuxAvailable = true
+	m := h.model()
+	h.windowLive = func(string, []string) bool { return true }
+
+	if m.tmuxWorktreeAgentStillRunning(record, record.RepoPath) {
+		t.Fatal("a Flow with no worktree agent must not probe, let alone refuse")
+	}
+	if !m.tmuxFlowAgentStillRunning(record, record.RepoPath) {
+		t.Fatal("the Flow-wide probe still covers a phase's own live window")
+	}
+}
+
 // TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux pins the probe's gate: an
 // already-owned Flow is refused by admission, which names the obstacle, instead
 // of by the live-window probe, which would name the wrong one and fork tmux to
