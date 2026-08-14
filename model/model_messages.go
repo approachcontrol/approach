@@ -279,11 +279,13 @@ type PlanResultMsg struct {
 type FlowResultMsg struct {
 	RepoPath    string
 	Flows       []flowstore.FlowRecord
+	Degradation *flowstore.PartialListError
 	ListRequest uint64
 }
 
 type ActiveFlowResultMsg struct {
 	Flows       []flowstore.FlowRecord
+	Degradation *flowstore.PartialListError
 	ListRequest uint64
 }
 
@@ -1552,9 +1554,12 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	m = m.setFlowDegradation(ui.ModeFlows, msg.RepoPath, msg.Degradation)
 	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
 	m = m.pruneAcknowledgedFlowMutations()
-	m = m.seedAutoAdvanceSnapshot(flows)
+	if msg.Degradation == nil {
+		m = m.seedAutoAdvanceSnapshot(flows)
+	}
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1582,9 +1587,12 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
+	m = m.setFlowDegradation(ui.ModeActiveFlows, "", msg.Degradation)
 	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
 	m = m.pruneAcknowledgedFlowMutations()
-	m = m.seedAutoAdvanceSnapshot(flows)
+	if msg.Degradation == nil {
+		m = m.seedAutoAdvanceSnapshot(flows)
+	}
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()

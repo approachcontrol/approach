@@ -522,8 +522,41 @@ Migration failure modes:
 > and the wrong move at any later point. The migration notice says so where it
 > offers it; nothing else in Approach will ever suggest it.
 
-The database carries `PRAGMA user_version`, so a database written by a newer
-Approach is reported as needing an upgrade rather than as corruption.
+The database and its records have separate compatibility gates:
+
+- `PRAGMA user_version` covers the database as a whole. A value newer than this
+  build supports prevents the store from opening and reports that Approach must
+  be upgraded. This is not corruption and is never downgraded to a partial
+  result.
+- Each JSON record carries its own `schema_version`. A malformed record or a
+  record written with a newer per-record version does not prevent healthy rows
+  from being listed. List operations skip only rows that SQLite scanned
+  successfully but Approach could not decode, preserve the normal
+  `updated_at DESC, flow_id ASC` order for healthy rows, and report every
+  skipped Flow ID. Query, scan, iteration, and close failures remain fatal.
+
+Point reads stay strict: `approach flow read --flow-id ID` returns the damaged
+row's decode or version error and never reports it as not found. By contrast,
+`approach flow list --json` writes the healthy subset as a valid JSON array to
+stdout, writes the skipped-row diagnostic to stderr, and exits successfully.
+`--repo-path` scopes both the returned rows and the diagnostic. If every
+matching row is unreadable, stdout is still `[]` and stderr carries the
+diagnostic. Any non-partial storage failure exits unsuccessfully instead.
+
+The Repository Flows and Active Flows panes show skipped rows as a persistent
+degraded-data warning, separate from the existing cached-data refresh warning;
+the banner remains visible even when no healthy rows remain. Repository and
+Active Flows own independent warnings. AutoMode never launches from a partial
+corpus and retains its last complete comparison snapshot until a clean list
+succeeds.
+
+Approach deliberately does not quarantine, delete, repair, or rewrite an
+unreadable authoritative row automatically. It also does not roll back the
+database or re-migrate from the frozen legacy `flows/` snapshot: either action
+could discard newer data or destroy a record that only a newer build can read.
+Inspect the stderr/server log diagnostic, upgrade first when a version is newer,
+and make any manual recovery decision against a preserved copy of
+`approach.db`.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and

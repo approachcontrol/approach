@@ -1146,6 +1146,58 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 	}
 }
 
+func TestRender_FlowDegradationWarningReservesRowWithNoHealthyFlows(t *testing.T) {
+	warning := "Skipped 4 unreadable Flows (id1, id2, id3, …); run approach flow list --json"
+	view := Render(RenderParams{
+		Width:                  180,
+		Height:                 26,
+		Repos:                  []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:               0,
+		Mode:                   ModeFlows,
+		TopMode:                ModeWorktrees,
+		BottomMode:             ModeFlows,
+		ContentPane:            PaneBottom,
+		ActivePane:             PaneBottom,
+		FlowDegradationWarning: warning,
+		RightEmptyMessage:      "No flows",
+	})
+	plain := ansi.Strip(view)
+	for _, want := range []string{warning, "No flows"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("degraded empty Flow pane missing %q:\n%s", want, plain)
+		}
+	}
+	if !strings.Contains(view, aheadBehindStyle.Render(" "+warning)) {
+		t.Fatalf("degradation warning did not use warning style:\n%q", view)
+	}
+}
+
+func TestRender_FlowDegradationAndCachedRefreshWarningsAreDistinct(t *testing.T) {
+	degraded := "Skipped 1 unreadable Flows (bad); run approach flow list --json"
+	view := Render(RenderParams{
+		Width:                  180,
+		Height:                 26,
+		Repos:                  []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:               0,
+		Mode:                   ModeFlows,
+		TopMode:                ModeWorktrees,
+		BottomMode:             ModeFlows,
+		ContentPane:            PaneBottom,
+		ActivePane:             PaneBottom,
+		Flows:                  []flowstore.FlowRecord{{FlowID: "healthy", Title: "Healthy"}},
+		FlowSelected:           0,
+		BottomListError:        "database unavailable",
+		FlowDegradationWarning: degraded,
+	})
+	if !strings.Contains(view, aheadBehindStyle.Render(" "+degraded)) {
+		t.Fatalf("view missing styled degradation warning:\n%q", view)
+	}
+	cached := " Could not refresh flows; showing cached data"
+	if !strings.Contains(view, dirtyRedStyle.Render(cached)) {
+		t.Fatalf("view missing distinct styled cached warning:\n%q", view)
+	}
+}
+
 func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},

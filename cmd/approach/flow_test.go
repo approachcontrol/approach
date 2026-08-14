@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -472,6 +473,88 @@ func TestRunFlowListJSONFiltersByRepo(t *testing.T) {
 	}
 }
 
+func TestRunFlowListJSONReportsPartialResultAndSucceeds(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	healthy := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Healthy", "--instructions", "healthy", "--repo-path", repoPath, "--json", "--state-root", root})
+	malformed := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Malformed", "--instructions", "bad", "--repo-path", repoPath, "--json", "--state-root", root})
+	future := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Future", "--instructions", "future", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE flows SET record = ? WHERE flow_id = ?", []byte("{"), malformed.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	futureJSON := fmt.Sprintf(`{"schema_version":99,"flow_id":%q}`, future.FlowID)
+	if _, err := db.Exec("UPDATE flows SET record = ? WHERE flow_id = ?", []byte(futureJSON), future.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = run([]string{"approach", "flow", "list", "--repo-path", repoPath, "--json", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr}))
+	if err != nil {
+		t.Fatalf("run returned partial-list error: %v", err)
+	}
+	var records []flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &records); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if len(records) != 1 || records[0].FlowID != healthy.FlowID {
+		t.Fatalf("stdout records = %#v, want only healthy Flow %q", records, healthy.FlowID)
+	}
+	wantStderr := fmt.Sprintf("skipped 2 unreadable Flows: %s: flow %q has unsupported schema version 99; %s: decode flow %q record: unexpected end of JSON input\n",
+		future.FlowID, future.FlowID, malformed.FlowID, malformed.FlowID)
+	if stderr.String() != wantStderr {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), wantStderr)
+	}
+}
+
+func TestRunFlowListFatalFailureEmitsNoJSON(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Healthy", "--instructions", "healthy", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 999"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{"approach", "flow", "list", "--json", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &bytes.Buffer{}}))
+	if err == nil || !strings.Contains(err.Error(), "newer version of approach") {
+		t.Fatalf("run error = %v, want fatal database-version error", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no JSON beside fatal list failure", stdout.String())
+	}
+}
+
+func TestRunFlowListJSONWriterFailureRemainsFatal(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Healthy", "--instructions", "healthy", "--repo-path", repoPath, "--json", "--state-root", root})
+	wantErr := errors.New("stdout unavailable")
+
+	err := run([]string{"approach", "flow", "list", "--json", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: failingWriter{err: wantErr}, stderr: &bytes.Buffer{}}))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("run error = %v, want JSON writer failure", err)
+	}
+}
+
 func TestRunFlowListRequiresJSON(t *testing.T) {
 	err := run([]string{"approach", "flow", "list", "--state-root", t.TempDir()},
 		noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
@@ -482,6 +565,10 @@ func TestRunFlowListRequiresJSON(t *testing.T) {
 		t.Fatalf("expected --json requirement error, got %q", err)
 	}
 }
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func TestRunFlowReadPrintsJSONRecord(t *testing.T) {
 	root := t.TempDir()

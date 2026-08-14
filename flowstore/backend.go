@@ -29,7 +29,9 @@ type backend interface {
 	get(flowID string) (storedFlow, bool, error)
 
 	// list applies the filter and returns records ordered by updated_at DESC,
-	// flow_id ASC. Any malformed authoritative row fails the whole call.
+	// flow_id ASC. A decodeStoredFlow failure after a successful row scan omits
+	// only that row and returns the healthy rows with a *PartialListError. Query,
+	// scan, iteration, and close failures are fatal and return no usable rows.
 	list(filter FlowFilter) ([]storedFlow, error)
 
 	// delete removes the record, serialized against update by whatever mechanism
