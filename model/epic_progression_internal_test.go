@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func TestRejectEpicProgressionCandidateOrdersTerminalAndPreparationClasses(t *testing.T) {
@@ -120,4 +123,73 @@ func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testin
 	if got := next.epicProgressionBaselines[key]; got.FlowID != baseline.FlowID {
 		t.Fatalf("confirmed-active disable replaced baseline with %#v", got)
 	}
+}
+
+func TestStaleEpicProgressionToggleReconcilesNewerSelectionOfSameEpic(t *testing.T) {
+	stale := beadExpansionTarget{token: 1, repoPath: "/repo", mode: ui.ModeBeadsOpen, epicID: "epic"}
+	current := stale
+	current.token = 2
+	reads := 0
+	m := Model{
+		beadExpansion:            beadExpansionSnapshot{target: current},
+		flowPreparationAdmission: true,
+		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			reads++
+			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
+		},
+	}
+	next, cmd := m.handleEpicProgressionToggleResult(epicProgressionToggleResultMsg{
+		target: stale, known: true, enabled: true,
+	})
+	messages := epicProgressionTestCommandMessages(cmd)
+	if reads != 1 || len(messages) != 1 {
+		t.Fatalf("stale same-epic reconciliation = %d reads, %d messages; want 1/1", reads, len(messages))
+	}
+	msg, ok := messages[0].(beadProgressionResultMsg)
+	if !ok || msg.target != current || !msg.found || !msg.progression.Enabled {
+		t.Fatalf("stale same-epic reconciliation message = %#v", messages[0])
+	}
+	if next.flowPreparationAdmission {
+		t.Fatal("stale toggle retained preparation admission")
+	}
+}
+
+func TestStaleEpicProgressionToggleRefreshesVisibleFlowSurface(t *testing.T) {
+	listCalls := 0
+	m := Model{
+		activeFlowSurface:        true,
+		flowPreparationAdmission: true,
+		beadExpansion:            beadExpansionSnapshot{target: beadExpansionTarget{token: 2, repoPath: "/other", epicID: "other"}},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listCalls++
+			return nil, nil
+		},
+	}
+	next, cmd := m.handleEpicProgressionToggleResult(epicProgressionToggleResultMsg{
+		target: beadExpansionTarget{token: 1, repoPath: "/repo", epicID: "epic"},
+		flow:   flowstore.FlowRecord{FlowID: "prepared-flow"},
+	})
+	_ = epicProgressionTestCommandMessages(cmd)
+	if listCalls != 1 {
+		t.Fatalf("stale toggle Flow refresh calls = %d, want 1", listCalls)
+	}
+	if next.flowPreparationAdmission {
+		t.Fatal("stale toggle retained preparation admission")
+	}
+}
+
+func epicProgressionTestCommandMessages(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var messages []tea.Msg
+	for _, nested := range batch {
+		messages = append(messages, epicProgressionTestCommandMessages(nested)...)
+	}
+	return messages
 }

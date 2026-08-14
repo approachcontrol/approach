@@ -378,11 +378,12 @@ func TestEpicAutoProgressionEnableWriteReconciliation(t *testing.T) {
 			commitError: true,
 		},
 		{
-			name: "deterministic refusal ignores unrelated active row",
+			name: "ordinary error reconciles concurrently active row",
 			readBack: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 				return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
 			},
-			wantKnown: true,
+			wantEnabled: true,
+			wantKnown:   true,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

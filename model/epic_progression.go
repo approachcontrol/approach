@@ -189,30 +189,23 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
 				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, enabledFlow.FlowID)}
 		}
-		if !flowstore.IsPreparedEpicProgressionCommitUnknown(err) {
-			return epicProgressionToggleResultMsg{target: target, flow: authoritative, known: true, release: release,
-				baselineDisposition: epicProgressionBaselineRemove,
-				status:              fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", authoritative.FlowID, err)}
-		}
-		if strings.TrimSpace(enabledFlow.FlowID) == "" {
-			return epicProgressionToggleResultMsg{target: target, flow: authoritative, release: release,
-				baselineDisposition: epicProgressionBaselineRemove,
-				status:              fmt.Sprintf("Could not confirm auto-progression state for epic %s: atomic enable returned no authoritative Flow", target.epicID)}
+		resultFlow := enabledFlow
+		if strings.TrimSpace(resultFlow.FlowID) == "" {
+			resultFlow = authoritative
 		}
 		confirmed, found, readErr := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
 		if readErr != nil {
-			return epicProgressionToggleResultMsg{target: target, flow: enabledFlow, release: release,
-				baselineDisposition: epicProgressionBaselineRemove,
-				status:              fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
+			return epicProgressionToggleResultMsg{target: target, flow: resultFlow, release: release,
+				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
 		}
 		if found && confirmed.Enabled {
-			return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: enabledFlow,
+			return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
-				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, enabledFlow.FlowID)}
+				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, resultFlow.FlowID)}
 		}
-		return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: enabledFlow,
+		return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 			baselineDisposition: epicProgressionBaselineRemove, known: true, release: release,
-			status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", enabledFlow.FlowID, err)}
+			status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err)}
 	}
 }
 
@@ -254,8 +247,17 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 		msg.release()
 	}
 	m.flowPreparationAdmission = false
+	var flowRefreshCmd tea.Cmd
+	if m.flowRefreshSurfaceVisible() && msg.flow.FlowID != "" {
+		m, flowRefreshCmd = m.startFlowSurfaceFetch()
+	}
 	if msg.target != m.beadExpansion.target {
-		return m, nil
+		var progressionRefreshCmd tea.Cmd
+		current := m.beadExpansion.target
+		if current.token != 0 && current.repoPath == msg.target.repoPath && current.epicID == msg.target.epicID {
+			progressionRefreshCmd = m.readEpicProgressionCmd(current)
+		}
+		return m, batchNonNil(flowRefreshCmd, progressionRefreshCmd)
 	}
 	projection := cloneBeadExpansion(m.beadExpansion.projection)
 	projection.ProgressionKnown = msg.known
@@ -268,10 +270,15 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 	m.beadExpansion.projection = projection
 	m = m.reflowBeadExpansionPane()
 	m = m.setStatus(statusOther, msg.status)
-	if m.flowRefreshSurfaceVisible() && msg.flow.FlowID != "" {
-		return m.startFlowSurfaceFetch()
+	return m, flowRefreshCmd
+}
+
+func (m Model) readEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
+	readProgression := m.readEpicProgression
+	return func() tea.Msg {
+		progression, found, err := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
+		return beadProgressionResultMsg{target: target, progression: progression, found: found, err: err}
 	}
-	return m, nil
 }
 
 func epicProgressionBaselineKey(repoPath, epicID string) string {
