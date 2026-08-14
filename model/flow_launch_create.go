@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -130,6 +131,10 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		if msg.Record.FlowID != msg.FlowID {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.finishCreateAfterWrite(attempt, fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID))
+		}
+		if createFlowReservedRecordClaimed(msg.CreatedRecord, msg.Record) {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "reserve launch: flow was claimed by another launch before tracked reservation")
 		}
 		roots := launchablePhases(msg.Record)
 		attempt.StartupRoots = append([]flowstore.FlowPhase(nil), roots...)
@@ -353,6 +358,7 @@ func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, 
 func createFlowLaunchReserveCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, prior flowLaunchEventMsg) tea.Cmd {
 	return func() tea.Msg {
 		event := createFlowLaunchEvent(attempt, flowLaunchStageCreateReserved, flowLaunchStateCreateReserving)
+		event.CreatedRecord = prior.Record
 		if seams.ReserveLaunch == nil {
 			event.Err = "Flow launch lifecycle is missing launch reservation"
 			return event
@@ -364,6 +370,38 @@ func createFlowLaunchReserveCmd(seams flowLaunchSeams, attempt flowLaunchAttempt
 		}
 		return event
 	}
+}
+
+func createFlowReservedRecordClaimed(created, reserved flowstore.FlowRecord) bool {
+	if created.FlowID == "" || reserved.FlowID != created.FlowID || flowstore.FlowClosed(reserved) || reserved.Status != created.Status {
+		return true
+	}
+	for _, pair := range [][2]string{
+		{created.WorktreePath, reserved.WorktreePath},
+		{created.Branch, reserved.Branch},
+		{created.Commit, reserved.Commit},
+		{created.PlanID, reserved.PlanID},
+		{created.PlanPath, reserved.PlanPath},
+	} {
+		if strings.TrimSpace(pair[0]) != strings.TrimSpace(pair[1]) {
+			return true
+		}
+	}
+	if len(created.Phases) != len(reserved.Phases) {
+		return true
+	}
+	createdPhases := make(map[string]flowstore.FlowPhase, len(created.Phases))
+	for _, phase := range created.Phases {
+		createdPhases[phase.PhaseID] = phase
+	}
+	for _, phase := range reserved.Phases {
+		initial, ok := createdPhases[phase.PhaseID]
+		if !ok || phase.Status != initial.Status ||
+			!slices.Equal(phase.LaunchIDs, initial.LaunchIDs) || !slices.Equal(phase.Sessions, initial.Sessions) {
+			return true
+		}
+	}
+	return false
 }
 
 func createFlowLaunchWorktreeCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, prior flowLaunchEventMsg) tea.Cmd {
@@ -583,6 +621,10 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
 	case flowLaunchStageCreateReserved:
 		if msg.Err != "" || msg.Record.FlowID != msg.FlowID {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
+		}
+		if createFlowReservedRecordClaimed(msg.CreatedRecord, msg.Record) {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
 		}

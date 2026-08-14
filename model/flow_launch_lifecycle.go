@@ -108,9 +108,12 @@ type flowLaunchEventMsg struct {
 	Record     flowstore.FlowRecord
 	Session    sessions.SessionRecord
 	SessionKey flowLaunchSavedSessionKey
-	Context    actions.AgentLaunchContext
-	Route      flowLaunchRoute
-	Skipped    bool
+	// CreatedRecord is create-phase-only: the exact create result is retained
+	// across tracked reservation so the winner can detect a cross-process claim.
+	CreatedRecord flowstore.FlowRecord
+	Context       actions.AgentLaunchContext
+	Route         flowLaunchRoute
+	Skipped       bool
 	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.

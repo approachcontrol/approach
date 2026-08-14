@@ -571,6 +571,37 @@ func TestCreateFlowLaunchCreateAndReservationErrorsDoNotAdoptOrRecoverUnprovenRo
 	}
 }
 
+func TestCreateFlowLaunchRejectsRecordClaimedBeforeTrackedReservation(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m, cmd := h.admit(t, h.model(t))
+	m, written := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWritten)
+	m, reserveCmd := m.handleFlowLaunchEvent(written)
+	if reserveCmd == nil {
+		t.Fatal("proven create did not request tracked reservation")
+	}
+
+	// Model another process winning the gap after exact create: it creates the
+	// worktree, stamps a launch ID, and releases its tracked reservation first.
+	h.record.WorktreePath = "/dev/alpha-worktrees/winner"
+	h.record.Branch = "flow/winner"
+	h.record.Commit = "winner-commit"
+	h.record.Phases[0].Status = flowstore.PhaseRunning
+	h.record.Phases[0].LaunchIDs = []string{"winner-launch"}
+	reserved := reserveCmd().(flowLaunchEventMsg)
+	m, cmd = m.handleFlowLaunchEvent(reserved)
+	m = drainCreateLaunch(t, m, cmd)
+
+	joined := strings.Join(h.order, ",")
+	for _, forbidden := range []string{"worktree", "launch-id:", "metadata", "terminal", "block:"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("losing create attempt performed %q after contention: %#v", forbidden, h.order)
+		}
+	}
+	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "claimed by another launch") {
+		t.Fatalf("contention result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	}
+}
+
 func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
