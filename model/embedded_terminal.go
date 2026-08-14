@@ -142,6 +142,13 @@ type embeddedPromptPrefillResultMsg struct {
 	ID            embeddedTerminalID
 	LaunchContext actions.AgentLaunchContext
 	Err           error
+	// RetainTerminal means termination failed after a prefill error. The slot
+	// must remain visible occupancy and become nondetachable rather than hiding
+	// a process that may still be running.
+	RetainTerminal bool
+	// Create is populated only for new-Flow Plan Now. It keeps the request and
+	// repository presentation fence attached to the asynchronous prefill hop.
+	Create *flowLaunchCreateRequest
 }
 
 type realEmbeddedTerminal struct {
@@ -464,12 +471,14 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 	if actions.ShouldPrefillEmbeddedPrompt(ctx) {
 		return m, true, nil, func() tea.Msg {
 			err := prefillEmbeddedPromptIfNeeded(term, ctx)
+			retainTerminal := false
 			if err != nil {
 				if terminateErr := term.Terminate(); terminateErr != nil {
 					err = errors.Join(err, fmt.Errorf("terminate embedded terminal after prefill failure: %w", terminateErr))
+					retainTerminal = true
 				}
 			}
-			return embeddedPromptPrefillResultMsg{ID: id, LaunchContext: ctx, Err: err}
+			return embeddedPromptPrefillResultMsg{ID: id, LaunchContext: ctx, Err: err, RetainTerminal: retainTerminal}
 		}
 	}
 	m = m.activateEmbeddedTerminal(id)
@@ -487,6 +496,31 @@ func (m Model) activateEmbeddedTerminal(id embeddedTerminalID) Model {
 		break
 	}
 	return m
+}
+
+func (m Model) retainEmbeddedTerminalAfterPrefillFailure(id embeddedTerminalID, activate bool) Model {
+	for i := range m.embeddedTerminals {
+		slot := &m.embeddedTerminals[i]
+		if slot.ID != id {
+			continue
+		}
+		slot.PrefillPending = false
+		slot.DetachPolicy = embeddedTerminalDetachNever
+		if activate {
+			m.activeTerminalNum = slot.Number
+		}
+		break
+	}
+	return m
+}
+
+func (m Model) terminateEmbeddedTerminalByID(id embeddedTerminalID) error {
+	for _, slot := range m.embeddedTerminals {
+		if slot.ID == id && slot.Terminal != nil {
+			return slot.Terminal.Terminate()
+		}
+	}
+	return nil
 }
 
 func (m Model) hasEmbeddedTerminalID(id embeddedTerminalID) bool {

@@ -998,6 +998,18 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		return next.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
 	}
 	m = next
+	if attempt.Kind == flowLaunchKindCreatePhase && prefillCmd != nil {
+		create := attempt.Create
+		originalPrefillCmd := prefillCmd
+		prefillCmd = func() tea.Msg {
+			msg := originalPrefillCmd()
+			if result, ok := msg.(embeddedPromptPrefillResultMsg); ok {
+				result.Create = &create
+				return result
+			}
+			return msg
+		}
+	}
 	if prefillCmd == nil {
 		m = m.updateFlowTerminalFocusAfterLaunch(ctx)
 	}
@@ -1011,7 +1023,12 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	}
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	if attempt.Kind == flowLaunchKindCreatePhase {
-		m = m.clearFlowCreateRequest(attempt.Create.Request)
+		// Interactive launches keep their create request live until the prompt
+		// prefill result lands. That final asynchronous hop must not focus the old
+		// terminal or present its failure after a repo change/newer creation.
+		if prefillCmd == nil {
+			m = m.clearFlowCreateRequest(attempt.Create.Request)
+		}
 		releaseFlowLaunchReservation(msg.Release)
 	}
 	// Only a successful install reports these. A failed one has already returned
@@ -1245,27 +1262,72 @@ func flowLaunchFailurePersistCmd(
 func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg) (Model, tea.Cmd) {
 	ctx := msg.LaunchContext
 	errText := msg.Err.Error()
+	activateRetained := msg.Create == nil || m.createFlowLaunchOriginCurrent(*msg.Create)
+	finishSlot := func(next Model) Model {
+		if msg.RetainTerminal {
+			return next.retainEmbeddedTerminalAfterPrefillFailure(msg.ID, activateRetained)
+		}
+		return next.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+	}
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
-		m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+		m = finishSlot(m)
+		if msg.Create != nil {
+			present := m.createFlowLaunchOriginCurrent(*msg.Create)
+			m = m.clearFlowCreateRequest(msg.Create.Request)
+			if !present {
+				return m, nil
+			}
+			m = m.setStatus(statusOther, "Flow "+ctx.FlowID+": "+errText)
+			if m.flowRefreshSurfaceVisible() {
+				return m.startFlowSurfaceFetch()
+			}
+			return m, nil
+		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}
 	// The reservation consults the attempt map only. The slot being corrected
 	// is still installed, so full admission would refuse every time and the gap
 	// would never close.
-	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+	attempt := flowLaunchAttempt{
 		Token:        ctx.LaunchID,
 		Kind:         flowLaunchKindManualPhase,
 		FlowID:       ctx.FlowID,
 		PhaseID:      ctx.FlowPhaseID,
 		MutatedPhase: true,
-	}, flowLaunchStateFailurePersisting)
+	}
+	if msg.Create != nil {
+		attempt.Kind = flowLaunchKindCreatePhase
+		attempt.Origin = flowLaunchOriginNewFlow
+		attempt.Create = *msg.Create
+	}
+	next, reserved := m.reserveFlowLaunchAttempt(attempt, flowLaunchStateFailurePersisting)
 	if !reserved {
-		m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+		m = finishSlot(m)
+		if msg.Create != nil {
+			return m, flowLaunchFailurePersistCmdForCreate(m.launchSeams.SetPhase, update, ctx, errText, msg.Create)
+		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}
-	m = next.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+	m = finishSlot(next)
+	if msg.Create != nil {
+		return m, flowLaunchFailurePersistCmdForCreate(m.launchSeams.SetPhase, update, ctx, errText, msg.Create)
+	}
 	return m, flowLaunchFailurePersistCmd(m.launchSeams.SetPhase, update, ctx, errText)
+}
+
+func flowLaunchFailurePersistCmdForCreate(
+	setPhase func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error),
+	update flowstore.PhaseUpdate,
+	ctx actions.AgentLaunchContext,
+	errText string,
+	create *flowLaunchCreateRequest,
+) tea.Cmd {
+	return func() tea.Msg {
+		msg := flowLaunchFailurePersistCmd(setPhase, update, ctx, errText)().(flowLaunchFailurePersistedMsg)
+		msg.Create = create
+		return msg
+	}
 }
 
 func (m Model) withFlowLaunchAttemptPhase(flowID, token, phaseID string) Model {

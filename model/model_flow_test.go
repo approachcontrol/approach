@@ -20,6 +20,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -78,6 +79,61 @@ func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) m
 		}
 	}
 	return m
+}
+
+func settleModelCommandsWithin(t *testing.T, m model.Model, cmd tea.Cmd, rounds int, timeout time.Duration) model.Model {
+	t.Helper()
+	pending := []tea.Cmd{cmd}
+	for range rounds {
+		var nextPending []tea.Cmd
+		for _, current := range pending {
+			for _, msg := range testCommandMessagesWithin(current, timeout) {
+				var next tea.Cmd
+				m, next = update(m, msg)
+				if next != nil {
+					nextPending = append(nextPending, next)
+				}
+			}
+		}
+		pending = nextPending
+		if len(pending) == 0 {
+			break
+		}
+	}
+	return m
+}
+
+func testCommandMessagesWithin(cmd tea.Cmd, timeout time.Duration) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	result := make(chan tea.Msg, 1)
+	go func() { result <- cmd() }()
+	var raw tea.Msg
+	select {
+	case raw = <-result:
+	case <-time.After(timeout):
+		return nil
+	}
+	batch, ok := raw.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{raw}
+	}
+	children := make(chan []tea.Msg, len(batch))
+	for _, child := range batch {
+		go func(child tea.Cmd) { children <- testCommandMessagesWithin(child, timeout) }(child)
+	}
+	var messages []tea.Msg
+	deadline := time.After(timeout)
+	for range batch {
+		select {
+		case childMessages := <-children:
+			messages = append(messages, childMessages...)
+		case <-deadline:
+			return messages
+		}
+	}
+	return messages
 }
 
 func immediateTestCommandMessages(cmd tea.Cmd) []tea.Msg {
@@ -9651,6 +9707,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 		name           string
 		term           *fakeEmbeddedTerminal
 		wantStatusText []string
+		wantRetained   bool
 	}{
 		{
 			name: "write error",
@@ -9680,6 +9737,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 				terminateErr: errors.New("terminate failed"),
 			},
 			wantStatusText: []string{"prefill embedded prompt", "input rejected", "terminate failed"},
+			wantRetained:   true,
 		},
 	}
 
@@ -9737,8 +9795,9 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 					t.Fatalf("status = %q, want to contain %q", m.TransientError(), want)
 				}
 			}
-			if strings.Contains(m.View(), "agent output") {
-				t.Fatalf("failed prefill should not append a terminal slot:\n%s", m.View())
+			retained := strings.Contains(m.View(), "agent output")
+			if retained != tt.wantRetained {
+				t.Fatalf("failed prefill retained=%v, want %v:\n%s", retained, tt.wantRetained, m.View())
 			}
 		})
 	}
@@ -11831,6 +11890,94 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	}
 	if !listed {
 		t.Fatal("expected Flow surface refresh")
+	}
+}
+
+func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoPath, "init", "-b", "main")
+	mustGit(t, repoPath, "config", "user.email", "test@example.com")
+	mustGit(t, repoPath, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoPath, "add", "README.md")
+	mustGit(t, repoPath, "commit", "-m", "initial")
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: filepath.Join(root, "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	term := &fakeEmbeddedTerminal{lines: []string{"Codex ready", "agent output"}, state: "running"}
+	var started actions.AgentLaunchContext
+	var startWidth, startHeight int
+	m := model.NewWithOptions([]scanner.Repo{{Path: repoPath, DisplayName: "repo"}}, model.Options{
+		AgentCommand:         "codex",
+		CodexModel:           "gpt-5.6-sol",
+		CodexReasoningEffort: "high",
+		SessionStateRoot:     filepath.Join(root, "sessions"),
+		FlowStore:            store,
+		LaunchBackend:        "tmux",
+		TmuxLaunchAvailable:  func() bool { return true },
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("Plan Now must stay embedded when tmux is configured")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started, startWidth, startHeight = ctx, width, height
+			return term, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
+	m, _ = switchTestMode(m, ui.ModeFlows)
+
+	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Lifecycle Flow", "Write\nthe plan", "main", false)
+	if cmd == nil || model.ActiveFlowCreateForTest(m) == 0 {
+		t.Fatalf("form submission did not start a create lifecycle: cmd=%v active=%d", cmd != nil, model.ActiveFlowCreateForTest(m))
+	}
+	m = settleModelCommandsWithin(t, m, cmd, 20, 2*time.Second)
+
+	if started.Command != "codex" || started.Model != "gpt-5.6-sol" || started.ReasoningEffort != "high" {
+		t.Fatalf("normalized launch settings = %#v", started)
+	}
+	if started.FlowID == "" || started.FlowPhaseID != "plan" || started.PlanPhaseID != "plan" ||
+		started.RepoPath != repoPath || started.WorktreePath == "" || started.Branch == "" || started.Commit == "" ||
+		!started.Embedded || started.Headless || !started.FlowLaunchTracked {
+		t.Fatalf("embedded Plan Now context = %#v", started)
+	}
+	if startWidth <= 0 || startHeight <= 0 {
+		t.Fatalf("embedded terminal size = %dx%d", startWidth, startHeight)
+	}
+	prompt := strings.ToLower(started.InitialPrompt)
+	for _, want := range []string{"approach-flow", "write\nthe plan", "approach plan save", "approach flow plan set"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("Plan Now prompt missing %q: %q", want, started.InitialPrompt)
+		}
+	}
+	if model.ActiveFlowCreateForTest(m) != 0 || len(term.writes) != 1 || !strings.Contains(term.writes[0], "Write\nthe plan") {
+		t.Fatalf("prefill completion: active=%d writes=%#v", model.ActiveFlowCreateForTest(m), term.writes)
+	}
+	beforeWrites := len(term.writes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(term.writes) != beforeWrites+1 || term.writes[len(term.writes)-1] != "z" {
+		t.Fatalf("interactive launch did not focus terminal input: %#v", term.writes)
+	}
+	if !strings.Contains(m.View(), "agent output") {
+		t.Fatalf("embedded Plan Now terminal is not visible:\n%s", m.View())
+	}
+	record, err := store.Read(started.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FlowID != started.FlowID || record.WorktreePath != started.WorktreePath || record.Headless {
+		t.Fatalf("persisted Flow identity/metadata = %#v", record)
 	}
 }
 

@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -1732,10 +1733,33 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleQuitEmbeddedTerminals()
 	case embeddedPromptPrefillResultMsg:
 		if !m.hasEmbeddedTerminalID(msg.ID) {
+			if msg.Create != nil {
+				if msg.Err == nil {
+					msg.Err = fmt.Errorf("embedded terminal closed before prompt prefill completed")
+				}
+				return m.handleFlowLaunchPrefillFailure(msg)
+			}
 			return m, nil
+		}
+		if msg.Create != nil && !m.createFlowLaunchOriginCurrent(*msg.Create) {
+			cancelErr := fmt.Errorf("creation canceled after repository changed")
+			if msg.Err != nil {
+				// A failed prefill already attempted termination in its command.
+				// Preserve that result rather than terminating the same process twice.
+				msg.Err = errors.Join(cancelErr, msg.Err)
+			} else if terminateErr := m.terminateEmbeddedTerminalByID(msg.ID); terminateErr != nil {
+				msg.Err = errors.Join(cancelErr, fmt.Errorf("terminate embedded terminal after canceled prefill: %w", terminateErr))
+				msg.RetainTerminal = true
+			} else {
+				msg.Err = cancelErr
+			}
+			return m.handleFlowLaunchPrefillFailure(msg)
 		}
 		if msg.Err != nil {
 			return m.handleFlowLaunchPrefillFailure(msg)
+		}
+		if msg.Create != nil {
+			m = m.clearFlowCreateRequest(msg.Create.Request)
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)
 		return m.updateFlowTerminalFocusAfterLaunch(msg.LaunchContext), nil

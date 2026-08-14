@@ -3088,9 +3088,18 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateFailurePersisting); ok {
 		if attempt.Kind == flowLaunchKindCreatePhase {
 			presentCreate = m.createFlowLaunchOriginCurrent(attempt.Create)
-			m = m.clearFlowCreateRequest(attempt.Create.Request)
+			if msg.Create == nil {
+				m = m.clearFlowCreateRequest(attempt.Create.Request)
+			}
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+	}
+	// A create-tagged prefill correction may lose re-reservation to a newer
+	// exact-Flow attempt. Request cleanup is independently fenced by the request
+	// ID, so it must not depend on finding the old attempt; attempt release above
+	// remains token-fenced and cannot touch the winner.
+	if msg.Create != nil {
+		m = m.clearFlowCreateRequest(msg.Create.Request)
 	}
 	if !presentCreate {
 		return m, nil

@@ -24,6 +24,8 @@ type createLaunchHarness struct {
 	sessions     []sessions.SessionRecord
 	addErr       error
 	addPersists  bool
+	createErr    error
+	reserveErr   error
 	worktreeErr  error
 	bootstrapErr error
 	metadataErr  error
@@ -31,6 +33,7 @@ type createLaunchHarness struct {
 	readErrs     map[int]error
 	readCalls    int
 	terminalErr  error
+	terminal     EmbeddedTerminal
 	releases     int
 }
 
@@ -51,6 +54,9 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 			if h.terminalErr != nil {
 				return nil, h.terminalErr
 			}
+			if h.terminal != nil {
+				return h.terminal, nil
+			}
 			return flowPhaseLaunchTestTerminal{state: "running"}, nil
 		},
 	})
@@ -68,16 +74,22 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 		},
 		CreateFlow: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			h.order = append(h.order, "create:"+record.FlowID)
-			if record.FlowID != h.record.FlowID || record.RepoPath != h.record.RepoPath || opts.Headless == nil || !*opts.Headless {
+			if record.FlowID != h.record.FlowID || record.RepoPath != h.record.RepoPath || opts.Headless == nil || *opts.Headless != h.record.Headless {
 				t.Fatalf("exact create = %#v, %#v", record, opts)
 			}
 			created := h.record
 			created.Title, created.Instructions, created.BaseRef = record.Title, record.Instructions, record.BaseRef
+			if h.createErr != nil {
+				return flowstore.FlowRecord{}, h.createErr
+			}
 			h.record = created
 			return created, nil
 		},
 		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			h.order = append(h.order, "reserve:"+flowID)
+			if h.reserveErr != nil {
+				return flowstore.FlowRecord{}, nil, h.reserveErr
+			}
 			return h.record, func() { h.releases++ }, nil
 		},
 		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
@@ -143,18 +155,39 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 	return m
 }
 
+type createPrefillFailureTerminal struct {
+	flowPhaseLaunchTestTerminal
+	terminateErr error
+	terminates   int
+}
+
+func (t *createPrefillFailureTerminal) Write([]byte) (int, error) {
+	return 0, errors.New("prefill write failed")
+}
+
+func (t *createPrefillFailureTerminal) Terminate() error {
+	t.terminates++
+	return t.terminateErr
+}
+
 func (h *createLaunchHarness) start(t *testing.T, m Model) Model {
+	t.Helper()
+	m, cmd := h.admit(t, m)
+	return drainCreateLaunch(t, m, cmd)
+}
+
+func (h *createLaunchHarness) admit(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
 	var request uint64
 	m, request = m.nextFlowCreateRequest()
 	create := flowLaunchCreateRequest{
-		Request: request, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: true,
+		Request: request, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: h.record.Headless,
 	}
 	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: flowLaunchOriginNewFlow, Create: create})
 	if !admitted || cmd == nil {
 		t.Fatalf("create admission = %v, cmd=%v, status=%q", admitted, cmd != nil, next.status.Text)
 	}
-	return drainCreateLaunch(t, next, cmd)
+	return next, cmd
 }
 
 func drainCreateLaunch(t *testing.T, m Model, cmd tea.Cmd) Model {
@@ -173,6 +206,53 @@ func drainCreateLaunch(t *testing.T, m Model, cmd tea.Cmd) Model {
 		}
 	}
 	return m
+}
+
+func advanceCreateLaunchToStage(t *testing.T, m Model, cmd tea.Cmd, want flowLaunchStage) (Model, flowLaunchEventMsg) {
+	t.Helper()
+	for i := 0; cmd != nil && i < 20; i++ {
+		msg, ok := cmd().(flowLaunchEventMsg)
+		if !ok {
+			t.Fatalf("create command returned a non-event before stage %v", want)
+		}
+		if msg.Stage == want {
+			return m, msg
+		}
+		m, cmd = m.handleFlowLaunchEvent(msg)
+	}
+	t.Fatalf("create launch did not reach stage %v", want)
+	return m, flowLaunchEventMsg{}
+}
+
+func startInteractiveCreateUntilPrefill(t *testing.T, h *createLaunchHarness) (Model, embeddedPromptPrefillResultMsg) {
+	t.Helper()
+	h.record.Headless = false
+	m, cmd := h.admit(t, h.model(t))
+	var prefill embeddedPromptPrefillResultMsg
+	for i := 0; cmd != nil && i < 20; i++ {
+		raw := cmd()
+		switch msg := raw.(type) {
+		case flowLaunchEventMsg:
+			m, cmd = m.handleFlowLaunchEvent(msg)
+		case tea.BatchMsg:
+			for _, child := range msg {
+				if child == nil {
+					continue
+				}
+				if result, ok := child().(embeddedPromptPrefillResultMsg); ok {
+					prefill = result
+					break
+				}
+			}
+			cmd = nil
+		default:
+			t.Fatalf("create command returned %T before prefill", raw)
+		}
+	}
+	if prefill.ID == 0 || prefill.Create == nil {
+		t.Fatalf("prefill result = %#v, want create origin", prefill)
+	}
+	return m, prefill
 }
 
 func TestCreateFlowLaunchOwnsExactIdentityAndStartupOrdering(t *testing.T) {
@@ -397,5 +477,243 @@ func TestCreateFlowLaunchPreservesRequestTimeAgentSnapshotAcrossAllocation(t *te
 	m = drainCreateLaunch(t, m, cmd)
 	if len(h.contexts) != 1 || h.contexts[0].Command != "codex" {
 		t.Fatalf("launch contexts = %#v, want request-time codex snapshot", h.contexts)
+	}
+}
+
+func TestCreateFlowLaunchCreateAndReservationErrorsDoNotAdoptOrRecoverUnprovenRows(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*createLaunchHarness)
+		want      string
+	}{
+		{name: "create durability ambiguous", configure: func(h *createLaunchHarness) { h.createErr = errors.New("commit result unknown") }, want: "create flow "},
+		{name: "reservation refused", configure: func(h *createLaunchHarness) { h.reserveErr = errors.New("flow closed") }, want: "reserve launch: flow closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+			tc.configure(h)
+			m := h.start(t, h.model(t))
+			joined := strings.Join(h.order, ",")
+			if strings.Contains(joined, "worktree") || strings.Contains(joined, "reread:") || strings.Contains(joined, "metadata") || len(h.phaseUpdates) != 0 {
+				t.Fatalf("unproven row crossed into recovery: order=%#v updates=%#v", h.order, h.phaseUpdates)
+			}
+			if !strings.Contains(m.status.Text, tc.want) || m.activeFlowCreate != 0 || h.releases != 0 {
+				t.Fatalf("failure result: status=%q active=%d releases=%d", m.status.Text, m.activeFlowCreate, h.releases)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		stage        flowLaunchStage
+		wantMetadata bool
+		wantBlocks   int
+		wantRelease  int
+	}{
+		{name: "after create", stage: flowLaunchStageCreateWritten},
+		{name: "after reservation", stage: flowLaunchStageCreateReserved, wantBlocks: 2, wantRelease: 1},
+		{name: "after worktree", stage: flowLaunchStageCreateWorktree, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
+		{name: "after bootstrap", stage: flowLaunchStageCreateBootstrap, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
+		{name: "after launch id", stage: flowLaunchStageCreateLaunchID, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
+		{name: "after metadata", stage: flowLaunchStageCreateMetadata, wantMetadata: true, wantBlocks: 1, wantRelease: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{
+				{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+				{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+			})
+			m, cmd := h.admit(t, h.model(t))
+			m, event := advanceCreateLaunchToStage(t, m, cmd, tc.stage)
+			m.flowCreateSeq++
+			m.activeFlowCreate = m.flowCreateSeq
+			m = m.setStatusNow(statusOther, "newer creation status")
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			metadata := false
+			for _, call := range h.order {
+				metadata = metadata || call == "metadata"
+			}
+			if metadata != tc.wantMetadata || len(h.phaseUpdates) != tc.wantBlocks || h.releases != tc.wantRelease {
+				t.Fatalf("cancellation result: order=%#v updates=%#v releases=%d", h.order, h.phaseUpdates, h.releases)
+			}
+			if m.status.Text != "newer creation status" || m.activeFlowCreate == 0 || len(h.contexts) != 0 {
+				t.Fatalf("newer presentation changed: status=%q active=%d contexts=%#v", m.status.Text, m.activeFlowCreate, h.contexts)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchAllocatedIDRefusesRetainedFlowSlots(t *testing.T) {
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary", true: "repair"}[repair], func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+			m := h.model(t)
+			m.embeddedTerminals = []embeddedTerminalSlot{{ID: 1, Scope: embeddedTerminalScopeFlow, FlowID: h.record.FlowID, FlowRepair: repair, Terminal: flowPhaseLaunchTestTerminal{state: "running"}}}
+			m, cmd := h.admit(t, m)
+			allocated := cmd().(flowLaunchEventMsg)
+			m, cmd = m.handleFlowLaunchEvent(allocated)
+			if cmd != nil || m.activeFlowCreate != 0 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+				t.Fatalf("retained slot admission: cmd=%T active=%d attempt=%v", cmd, m.activeFlowCreate, m.flowLaunchAttemptOccupied(h.record.FlowID))
+			}
+			if !reflect.DeepEqual(h.order, []string{"allocate"}) {
+				t.Fatalf("retained slot crossed admission: %#v", h.order)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchParkedMetadataFailureDoesNotMutatePhases(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhasePending}})
+	h.metadataErr = errors.New("disk full")
+	m := h.start(t, h.model(t))
+	if len(h.phaseUpdates) != 0 || len(h.contexts) != 0 || h.releases != 1 {
+		t.Fatalf("parked metadata recovery: updates=%#v contexts=%#v releases=%d", h.phaseUpdates, h.contexts, h.releases)
+	}
+	if !strings.Contains(m.status.Text, "record start metadata: disk full") || m.activeFlowCreate != 0 {
+		t.Fatalf("parked metadata status=%q active=%d", m.status.Text, m.activeFlowCreate)
+	}
+}
+
+func TestCreateFlowLaunchInteractivePrefillKeepsOriginFenceUntilResult(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m, prefill := startInteractiveCreateUntilPrefill(t, h)
+	if m.activeFlowCreate != prefill.Create.Request {
+		t.Fatalf("active create request = %d, want pending prefill request %d", m.activeFlowCreate, prefill.Create.Request)
+	}
+	if len(m.embeddedTerminals) != 1 || !m.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("pending terminals = %#v", m.embeddedTerminals)
+	}
+
+	// A repo change invalidates the original create request. Its delayed prefill
+	// result must recover the phase without activating the old terminal or
+	// replacing presentation for the newly selected repo.
+	m.flowCreateSeq++
+	m.activeFlowCreate = m.flowCreateSeq
+	m = m.setStatusNow(statusOther, "new repo status")
+	next, persistCmd := m.Update(prefill)
+	m = next.(Model)
+	if persistCmd == nil {
+		t.Fatal("stale create prefill failure should persist phase recovery")
+	}
+	if m.activeTerminalNum != 0 || m.terminalFocus != terminalFocusList {
+		t.Fatalf("stale prefill activated terminal: active=%d focus=%v", m.activeTerminalNum, m.terminalFocus)
+	}
+	if len(m.embeddedTerminals) != 0 {
+		t.Fatalf("stale successful prefill left a hidden terminal: %#v", m.embeddedTerminals)
+	}
+	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, persistCmd)
+	settled, _ := m.Update(persisted)
+	m = settled.(Model)
+	if m.status.Text != "new repo status" {
+		t.Fatalf("stale prefill status = %q, want newer presentation preserved", m.status.Text)
+	}
+	if len(h.phaseUpdates) != 1 || h.phaseUpdates[0].PhaseID != "plan" || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("stale prefill recovery = %#v", h.phaseUpdates)
+	}
+}
+
+func TestCreateFlowLaunchInteractivePrefillSuccessCompletesRequestAndFocuses(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m, prefill := startInteractiveCreateUntilPrefill(t, h)
+	next, _ := m.Update(prefill)
+	m = next.(Model)
+	if m.activeFlowCreate != 0 || len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("successful prefill result: active=%d terminals=%#v", m.activeFlowCreate, m.embeddedTerminals)
+	}
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("successful prefill active terminal = %d, want 1", m.activeTerminalNum)
+	}
+}
+
+func TestCreateFlowLaunchMissingPrefillSlotRecoversPhaseAndCompletesRequest(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m, prefill := startInteractiveCreateUntilPrefill(t, h)
+	m = m.dismissEmbeddedTerminalForReason(prefill.ID, embeddedTerminalRemovalUserClose)
+	next, cmd := m.Update(prefill)
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("missing prefill slot should persist phase recovery")
+	}
+	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, cmd)
+	settled, _ := m.Update(persisted)
+	m = settled.(Model)
+	if m.activeFlowCreate != 0 || len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("missing-slot recovery: active=%d updates=%#v", m.activeFlowCreate, h.phaseUpdates)
+	}
+	if !strings.Contains(m.status.Text, "embedded terminal closed before prompt prefill completed") {
+		t.Fatalf("missing-slot status = %q", m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchPrefillPersistenceClearsRequestWhenAnotherAttemptWinsReservation(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m, prefill := startInteractiveCreateUntilPrefill(t, h)
+	newer := flowLaunchAttempt{Token: "newer-token", Kind: flowLaunchKindManualPhase, FlowID: h.record.FlowID}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(newer, flowLaunchStateReading)
+	if !ok {
+		t.Fatal("test could not install competing exact-Flow attempt")
+	}
+	prefill.Err = errors.New("prefill failed")
+	next, cmd := m.Update(prefill)
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("prefill failure should persist phase recovery")
+	}
+	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, cmd)
+	settled, _ := m.Update(persisted)
+	m = settled.(Model)
+	if m.activeFlowCreate != 0 {
+		t.Fatalf("active create request = %d, want cleared", m.activeFlowCreate)
+	}
+	attempt, exists := m.flowLaunchAttempt(h.record.FlowID)
+	if !exists || attempt.Token != newer.Token || attempt.State != flowLaunchStateReading {
+		t.Fatalf("competing attempt changed: %#v exists=%v", attempt, exists)
+	}
+}
+
+func TestCreateFlowLaunchPrefillTerminationFailureRetainsNondetachableOccupancy(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current", true: "stale"}[stale], func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+			term := &createPrefillFailureTerminal{
+				flowPhaseLaunchTestTerminal: flowPhaseLaunchTestTerminal{state: "running"},
+				terminateErr:                errors.New("terminate failed"),
+			}
+			h.terminal = term
+			m, prefill := startInteractiveCreateUntilPrefill(t, h)
+			if prefill.Err == nil || !prefill.RetainTerminal || term.terminates != 1 {
+				t.Fatalf("prefill termination result = %#v terminates=%d", prefill, term.terminates)
+			}
+			if stale {
+				m.flowCreateSeq++
+				m.activeFlowCreate = m.flowCreateSeq
+				m = m.setStatusNow(statusOther, "newer status")
+			}
+			next, cmd := m.Update(prefill)
+			m = next.(Model)
+			if cmd == nil || len(m.embeddedTerminals) != 1 {
+				t.Fatalf("retained prefill failure: cmd=%T terminals=%#v", cmd, m.embeddedTerminals)
+			}
+			slot := m.embeddedTerminals[0]
+			if slot.PrefillPending || slot.DetachPolicy != embeddedTerminalDetachNever || term.terminates != 1 {
+				t.Fatalf("retained slot = %#v terminates=%d", slot, term.terminates)
+			}
+			if stale && (m.activeTerminalNum != 0 || m.terminalFocus != terminalFocusList) {
+				t.Fatalf("stale retention changed focus: active=%d focus=%v", m.activeTerminalNum, m.terminalFocus)
+			}
+			persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, cmd)
+			settled, _ := m.Update(persisted)
+			m = settled.(Model)
+			if len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+				t.Fatalf("retained recovery = %#v", h.phaseUpdates)
+			}
+			if stale && m.status.Text != "newer status" {
+				t.Fatalf("stale retained status = %q", m.status.Text)
+			}
+		})
 	}
 }
