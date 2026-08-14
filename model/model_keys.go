@@ -2685,7 +2685,7 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		validatePlanLaunchInput,
 		func(input string) tea.Cmd {
 			ctx.InitialPrompt = input
-			return func() tea.Msg { return AgentLaunchRequestedMsg{LaunchContext: ctx} }
+			return func() tea.Msg { return agentLaunchRequestedMsg{LaunchContext: ctx} }
 		},
 	)
 	return m, nil

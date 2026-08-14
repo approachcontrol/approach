@@ -514,7 +514,7 @@ type flowLaunchFailurePersistedMsg struct {
 	releaseReadyBeadAdmission bool
 }
 
-type AgentLaunchRequestedMsg struct {
+type agentLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 }
 

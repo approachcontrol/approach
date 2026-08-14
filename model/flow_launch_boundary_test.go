@@ -6,8 +6,11 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/approachcontrol/approach/actions"
 )
 
 type flowLaunchFunctionContract struct {
@@ -15,14 +18,67 @@ type flowLaunchFunctionContract struct {
 	identifiers map[string]bool
 }
 
-func parseFlowLaunchFunctionContracts(t *testing.T, includeTests bool) map[string]flowLaunchFunctionContract {
+type flowLaunchFunctionKey struct {
+	receiver string
+	name     string
+}
+
+func modelFlowLaunchFunction(name string) flowLaunchFunctionKey {
+	return flowLaunchFunctionKey{receiver: "Model", name: name}
+}
+
+func flowLaunchReceiverName(expr ast.Expr) string {
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		return expr.Name
+	case *ast.StarExpr:
+		return flowLaunchReceiverName(expr.X)
+	default:
+		return ""
+	}
+}
+
+func TestGenericAgentLaunchRequestRejectsEveryFlowContextMarker(t *testing.T) {
+	tests := map[string]func(*actions.AgentLaunchContext){
+		"FlowID":                 func(ctx *actions.AgentLaunchContext) { ctx.FlowID = "flow-1" },
+		"FlowPhaseID":            func(ctx *actions.AgentLaunchContext) { ctx.FlowPhaseID = "plan" },
+		"FlowPhaseKind":          func(ctx *actions.AgentLaunchContext) { ctx.FlowPhaseKind = "plan" },
+		"FlowLaunchTracked":      func(ctx *actions.AgentLaunchContext) { ctx.FlowLaunchTracked = true },
+		"FlowAutoLaunch":         func(ctx *actions.AgentLaunchContext) { ctx.FlowAutoLaunch = true },
+		"FlowRepair":             func(ctx *actions.AgentLaunchContext) { ctx.FlowRepair = true },
+		"FlowAgent":              func(ctx *actions.AgentLaunchContext) { ctx.FlowAgent = true },
+		"FlowSavedSessionResume": func(ctx *actions.AgentLaunchContext) { ctx.FlowSavedSessionResume = true },
+		"FlowAutofix":            func(ctx *actions.AgentLaunchContext) { ctx.FlowAutofix = true },
+		"FlowPhaseTerminal":      func(ctx *actions.AgentLaunchContext) { ctx.FlowPhaseTerminal = true },
+	}
+	for name, mark := range tests {
+		t.Run(name, func(t *testing.T) {
+			m := NewWithOptions(nil, Options{})
+			ctx := actions.AgentLaunchContext{LaunchID: "launch-1"}
+			mark(&ctx)
+			released := 0
+			next, cmd := m.launchAgentForBackend(ctx, func() { released++ })
+			if cmd != nil {
+				t.Fatalf("generic Flow-bearing launch returned command %T", cmd)
+			}
+			if released != 1 {
+				t.Fatalf("generic Flow-bearing launch released reservation %d times", released)
+			}
+			if !strings.Contains(next.status.Text, "Flow launch lifecycle") {
+				t.Fatalf("generic Flow-bearing launch status = %q", next.status.Text)
+			}
+		})
+	}
+}
+
+func parseFlowLaunchFunctionContracts(t *testing.T, includeTests bool) map[flowLaunchFunctionKey]flowLaunchFunctionContract {
 	t.Helper()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	contracts := make(map[string]flowLaunchFunctionContract)
+	contracts := make(map[flowLaunchFunctionKey]flowLaunchFunctionContract)
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || (!includeTests && strings.HasSuffix(name, "_test.go")) {
@@ -52,26 +108,48 @@ func parseFlowLaunchFunctionContracts(t *testing.T, includeTests bool) map[strin
 				}
 				return true
 			})
-			contracts[function.Name.Name] = contract
+			key := flowLaunchFunctionKey{name: function.Name.Name}
+			if function.Recv != nil && len(function.Recv.List) == 1 {
+				key.receiver = flowLaunchReceiverName(function.Recv.List[0].Type)
+			}
+			if _, exists := contracts[key]; exists {
+				t.Fatalf("duplicate function contract for receiver=%q name=%q", key.receiver, key.name)
+			}
+			contracts[key] = contract
 		}
 	}
 	return contracts
 }
 
-func contractReaches(contracts map[string]flowLaunchFunctionContract, source, target string) bool {
-	seen := make(map[string]bool)
-	var visit func(string) bool
-	visit = func(name string) bool {
-		if name == target {
+func flowLaunchContractTargets(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, name string) []flowLaunchFunctionKey {
+	targets := make([]flowLaunchFunctionKey, 0, 1)
+	for key := range contracts {
+		if key.name == name {
+			targets = append(targets, key)
+		}
+	}
+	return targets
+}
+
+func contractReaches(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, source, target flowLaunchFunctionKey) bool {
+	seen := make(map[flowLaunchFunctionKey]bool)
+	var visit func(flowLaunchFunctionKey) bool
+	visit = func(key flowLaunchFunctionKey) bool {
+		if key == target {
 			return true
 		}
-		if seen[name] {
+		if seen[key] {
 			return false
 		}
-		seen[name] = true
-		for called := range contracts[name].calls {
-			if visit(called) {
-				return true
+		seen[key] = true
+		for called := range contracts[key].calls {
+			// A bare AST selector does not carry type information. Conservatively
+			// traverse every same-named package function or method instead of
+			// choosing one and risking a false-negative boundary pass.
+			for _, candidate := range flowLaunchContractTargets(contracts, called) {
+				if visit(candidate) {
+					return true
+				}
 			}
 		}
 		return false
@@ -79,21 +157,23 @@ func contractReaches(contracts map[string]flowLaunchFunctionContract, source, ta
 	return visit(source)
 }
 
-func contractReachableIdentifier(contracts map[string]flowLaunchFunctionContract, source, identifier string) bool {
-	seen := make(map[string]bool)
-	var visit func(string) bool
-	visit = func(name string) bool {
-		if seen[name] {
+func contractReachableIdentifier(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, source flowLaunchFunctionKey, identifier string) bool {
+	seen := make(map[flowLaunchFunctionKey]bool)
+	var visit func(flowLaunchFunctionKey) bool
+	visit = func(key flowLaunchFunctionKey) bool {
+		if seen[key] {
 			return false
 		}
-		seen[name] = true
-		contract := contracts[name]
+		seen[key] = true
+		contract := contracts[key]
 		if contract.identifiers[identifier] {
 			return true
 		}
 		for called := range contract.calls {
-			if visit(called) {
-				return true
+			for _, candidate := range flowLaunchContractTargets(contracts, called) {
+				if visit(candidate) {
+					return true
+				}
 			}
 		}
 		return false
@@ -101,32 +181,69 @@ func contractReachableIdentifier(contracts map[string]flowLaunchFunctionContract
 	return visit(source)
 }
 
-func contractSinkBeforeBoundary(contracts map[string]flowLaunchFunctionContract, source, boundary string, sinks map[string]bool) string {
-	seen := make(map[string]bool)
+func contractSinkBeforeBoundary(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, source, boundary flowLaunchFunctionKey, sinks map[string]bool) string {
+	seen := make(map[flowLaunchFunctionKey]bool)
 	exempt := map[string]bool{
 		"routeNonFlowSavedSessionResume": true,
 		"createReadyBeadFlowOnly":        true,
 	}
-	var visit func(string) string
-	visit = func(name string) string {
-		if name == boundary || seen[name] {
+	var visit func(flowLaunchFunctionKey) string
+	visit = func(key flowLaunchFunctionKey) string {
+		if key == boundary || seen[key] {
 			return ""
 		}
-		seen[name] = true
-		for called := range contracts[name].calls {
+		seen[key] = true
+		for called := range contracts[key].calls {
 			if exempt[called] {
 				continue
 			}
 			if sinks[called] {
 				return called
 			}
-			if found := visit(called); found != "" {
-				return found
+			for _, candidate := range flowLaunchContractTargets(contracts, called) {
+				if found := visit(candidate); found != "" {
+					return found
+				}
 			}
 		}
 		return ""
 	}
 	return visit(source)
+}
+
+func declaredFlowLaunchKinds(t *testing.T) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "flow_launch_intent.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := make(map[string]bool)
+	for _, declaration := range file.Decls {
+		generic, ok := declaration.(*ast.GenDecl)
+		if !ok || generic.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range generic.Specs {
+			values := spec.(*ast.ValueSpec)
+			for _, name := range values.Names {
+				if strings.HasPrefix(name.Name, "flowLaunchKind") {
+					kinds[name.Name] = true
+				}
+			}
+		}
+	}
+	return kinds
+}
+
+func contractDirectCallers(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, called string) map[flowLaunchFunctionKey]bool {
+	callers := make(map[flowLaunchFunctionKey]bool)
+	for key, contract := range contracts {
+		if contract.calls[called] {
+			callers[key] = true
+		}
+	}
+	return callers
 }
 
 func TestFlowLaunchLifecycleBoundary(t *testing.T) {
@@ -144,39 +261,75 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		{name: "handleAutofixSelectedFlowPR", kind: "flowLaunchKindAutofix"},
 	}
 	sinks := map[string]bool{
-		"CreateWithOptions":                 true,
-		"CreateFlow":                        true,
-		"ReserveAgentLaunch":                true,
-		"ReserveLaunch":                     true,
-		"AddPhaseLaunchID":                  true,
-		"SetStartMetadata":                  true,
-		"openFlowEmbeddedTerminal":          true,
-		"openFlowEmbeddedTerminalReserved":  true,
-		"runAgentLaunchWithStatus":          true,
-		"launchAgentForBackend":             true,
-		"launchAgentWithContextReservation": true,
-		"launchAgentWithContextStatus":      true,
-		"launchAgentInRepoTmuxSession":      true,
+		"CreateWithOptions":                         true,
+		"CreateFlow":                                true,
+		"ReserveAgentLaunch":                        true,
+		"ReserveLaunch":                             true,
+		"AddPhaseLaunchID":                          true,
+		"SetStartMetadata":                          true,
+		"openFlowEmbeddedTerminal":                  true,
+		"openFlowEmbeddedTerminalReserved":          true,
+		"runAgentLaunchWithStatus":                  true,
+		"launchAgentForBackend":                     true,
+		"launchAgentWithContextReservation":         true,
+		"launchAgentWithContextStatus":              true,
+		"launchAgentInRepoTmuxSession":              true,
+		"resumeSessionInEmbeddedTerminal":           true,
+		"resumeSessionInEmbeddedTerminalWithStatus": true,
+		"openEmbeddedTerminal":                      true,
+		"launchAgentAtPath":                         true,
+		"launchAgentAtPathWithBranch":               true,
+	}
+	// This inverted inventory is the fail-closed half of the contract: every
+	// production caller of a persistence or runtime sink must remain one of the
+	// reviewed lifecycle adapters or an explicitly non-Flow neighboring route.
+	// Adding a new wrapper or source fails even when it declares no intent kind.
+	wiring := flowLaunchFunctionKey{name: "NewWithOptions"}
+	expectedSinkCallers := map[string]map[flowLaunchFunctionKey]bool{
+		"CreateWithOptions":                         {wiring: true},
+		"CreateFlow":                                {{name: "createFlowLaunchWriteCmd"}: true},
+		"ReserveAgentLaunch":                        {wiring: true},
+		"ReserveLaunch":                             {{name: "createFlowLaunchReserveCmd"}: true},
+		"AddPhaseLaunchID":                          {wiring: true, {name: "createFlowLaunchIDCmd"}: true},
+		"SetStartMetadata":                          {wiring: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
+		"openFlowEmbeddedTerminal":                  {},
+		"openFlowEmbeddedTerminalReserved":          {modelFlowLaunchFunction("openFlowEmbeddedTerminal"): true, modelFlowLaunchFunction("installFlowLaunchEmbedded"): true},
+		"runAgentLaunchWithStatus":                  {modelFlowLaunchFunction("launchAgentInRepoTmuxSession"): true, modelFlowLaunchFunction("handoffFlowLaunchTmux"): true, modelFlowLaunchFunction("launchAgentWithContextStatus"): true, modelFlowLaunchFunction("runAgentLaunchWithReservation"): true},
+		"launchAgentForBackend":                     {modelFlowLaunchFunction("Update"): true, modelFlowLaunchFunction("routeNonFlowSavedSessionResume"): true, modelFlowLaunchFunction("launchAgentAtPath"): true, modelFlowLaunchFunction("launchAgentAtPathWithBranch"): true},
+		"launchAgentWithContextReservation":         {},
+		"launchAgentWithContextStatus":              {modelFlowLaunchFunction("launchAgentForBackend"): true, modelFlowLaunchFunction("launchAgentWithContextReservation"): true, modelFlowLaunchFunction("resumeSessionInEmbeddedTerminalWithStatus"): true},
+		"launchAgentInRepoTmuxSession":              {modelFlowLaunchFunction("launchAgentForBackend"): true, modelFlowLaunchFunction("resumeSessionForBackend"): true},
+		"resumeSessionInEmbeddedTerminal":           {modelFlowLaunchFunction("resumeSessionForBackend"): true},
+		"resumeSessionInEmbeddedTerminalWithStatus": {modelFlowLaunchFunction("resumeSessionInEmbeddedTerminal"): true, modelFlowLaunchFunction("resumeSessionForBackend"): true},
+		"openEmbeddedTerminal":                      {modelFlowLaunchFunction("resumeSessionInEmbeddedTerminalWithStatus"): true},
+		"launchAgentAtPath":                         {modelFlowLaunchFunction("handleOpenAgent"): true},
+		"launchAgentAtPathWithBranch":               {modelFlowLaunchFunction("handleWorktreeCreated"): true},
+	}
+	for sink := range sinks {
+		if got, want := contractDirectCallers(contracts, sink), expectedSinkCallers[sink]; !reflect.DeepEqual(got, want) {
+			t.Errorf("production callers of launch sink %s changed: got=%v want=%v", sink, got, want)
+		}
 	}
 	for _, source := range sources {
 		t.Run(source.name, func(t *testing.T) {
-			if _, ok := contracts[source.name]; !ok {
+			sourceKey := modelFlowLaunchFunction(source.name)
+			if _, ok := contracts[sourceKey]; !ok {
 				t.Fatalf("launch source %s is missing", source.name)
 			}
-			if !contractReachableIdentifier(contracts, source.name, source.kind) {
+			if !contractReachableIdentifier(contracts, sourceKey, source.kind) {
 				t.Fatalf("%s does not identify %s", source.name, source.kind)
 			}
-			if !contractReaches(contracts, source.name, "requestFlowLaunch") {
+			if !contractReaches(contracts, sourceKey, modelFlowLaunchFunction("requestFlowLaunch")) {
 				t.Fatalf("%s does not reach requestFlowLaunch", source.name)
 			}
-			if sink := contractSinkBeforeBoundary(contracts, source.name, "requestFlowLaunch", sinks); sink != "" {
+			if sink := contractSinkBeforeBoundary(contracts, sourceKey, modelFlowLaunchFunction("requestFlowLaunch"), sinks); sink != "" {
 				t.Fatalf("%s reaches launch sink %s before requestFlowLaunch", source.name, sink)
 			}
 		})
 	}
 
 	for _, source := range []string{"handleResumeSession", "handleEmbeddedSessionPickerSelected", "handleEnter"} {
-		if !contractReaches(contracts, source, "routeSavedSessionResume") {
+		if !contractReaches(contracts, modelFlowLaunchFunction(source), modelFlowLaunchFunction("routeSavedSessionResume")) {
 			t.Errorf("saved-session surface %s does not reach routeSavedSessionResume", source)
 		}
 	}
@@ -189,17 +342,31 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		{name: "requestReadyBeadFlowLaunch", origin: "flowLaunchOriginReadyBead"},
 	}
 	for _, source := range createSources {
-		contract := contracts[source.name]
+		sourceKey := modelFlowLaunchFunction(source.name)
+		contract := contracts[sourceKey]
 		if !contract.identifiers["flowLaunchCreateRequestedMsg"] || !contract.identifiers[source.origin] {
 			t.Errorf("%s does not emit a %s create request", source.name, source.origin)
 		}
-		if sink := contractSinkBeforeBoundary(contracts, source.name, "requestFlowLaunch", sinks); sink != "" {
+		if sink := contractSinkBeforeBoundary(contracts, sourceKey, modelFlowLaunchFunction("requestFlowLaunch"), sinks); sink != "" {
 			t.Errorf("%s reaches launch sink %s before lifecycle admission", source.name, sink)
 		}
 	}
-	if !contractReachableIdentifier(contracts, "Update", "flowLaunchKindCreatePhase") ||
-		!contractReaches(contracts, "Update", "requestFlowLaunch") {
+	update := modelFlowLaunchFunction("Update")
+	if !contractReachableIdentifier(contracts, update, "flowLaunchKindCreatePhase") ||
+		!contractReaches(contracts, update, modelFlowLaunchFunction("requestFlowLaunch")) {
 		t.Fatal("flowLaunchCreateRequestedMsg is not funneled through createPhase admission")
+	}
+	if !contracts[update].identifiers["flowLaunchEventMsg"] ||
+		!contractReaches(contracts, update, modelFlowLaunchFunction("handleFlowLaunchEvent")) {
+		t.Fatal("flowLaunchEventMsg is not funneled through handleFlowLaunchEvent")
+	}
+
+	coveredKinds := map[string]bool{"flowLaunchKindCreatePhase": true}
+	for _, source := range sources {
+		coveredKinds[source.kind] = true
+	}
+	if declared := declaredFlowLaunchKinds(t); !reflect.DeepEqual(declared, coveredKinds) {
+		t.Fatalf("Flow launch kind inventory changed: declared=%v covered=%v", declared, coveredKinds)
 	}
 }
 
@@ -216,6 +383,7 @@ func TestFlowLaunchLegacySymbolsAbsent(t *testing.T) {
 		"launchTrackedFlow" + "Embedded":         true,
 		"acceptCreationTime" + "FlowLaunch":      true,
 		"rejectStaleCreationTime" + "FlowLaunch": true,
+		"AgentLaunch" + "RequestedMsg":           true,
 		"flowLaunchLeases":                       true,
 		"pendingFlowLaunches":                    true,
 		"pendingFlowRepairLaunches":              true,

@@ -162,7 +162,6 @@ type flowLaunchEventMsg struct {
 	Commit         string
 	Proof          flowLaunchCreateProof
 	GenerationLost bool
-	Parked         bool
 	RecoveryErrs   []string
 	Settings       flowLaunchAgentSettingsSnapshot
 	ErrOp          string

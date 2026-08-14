@@ -192,6 +192,22 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		if msg.Err != "" {
 			return m.beginCreateFlowRecovery(attempt, msg, []string{"create worktree: " + msg.Err}, false, true)
 		}
+		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateMetadata)
+		if !ok {
+			releaseFlowLaunchReservation(msg.Release)
+			return m, nil
+		}
+		return next, createFlowLaunchMetadataCmd(next.launchSeams, msg)
+
+	case flowLaunchStageCreateMetadata:
+		if msg.Err != "" {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "record start metadata: "+msg.Err)
+		}
+		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed")
+		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateBootstrap)
 		if !ok {
 			releaseFlowLaunchReservation(msg.Release)
@@ -209,23 +225,23 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 			if operation == "" {
 				operation = "run bootstrap"
 			}
-			return m.beginCreateFlowRecovery(attempt, msg, []string{operation + ": " + msg.Err}, true, true)
+			return m.beginCreateFlowRecovery(attempt, msg, []string{operation + ": " + msg.Err}, false, true)
 		}
 		if len(msg.StartupRoots) == 0 {
-			next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateMetadata)
-			if !ok {
-				releaseFlowLaunchReservation(msg.Release)
-				return m, nil
+			releaseFlowLaunchReservation(msg.Release)
+			m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowLaunchCreatePresentation(attempt.Create)
+			m = m.setStatus(statusOther, "Created flow: "+attempt.Create.Title)
+			if m.flowRefreshSurfaceVisible() {
+				return m.startFlowSurfaceFetch()
 			}
-			msg.Parked = true
-			return next, createFlowLaunchMetadataCmd(next.launchSeams, msg)
+			return m, nil
 		}
 		root := msg.StartupRoots[0]
 		if !createFlowLaunchRootStillLaunchable(msg.Record, root) {
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"validate startup root: no longer launchable"}, true, true)
+			return m.beginCreateFlowRecovery(attempt, msg, []string{"validate startup root: no longer launchable"}, false, true)
 		}
 		if err := validateInitialFlowLaunchPhase(msg.Record, root); err != nil {
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"validate startup root: " + err.Error()}, true, true)
+			return m.beginCreateFlowRecovery(attempt, msg, []string{"validate startup root: " + err.Error()}, false, true)
 		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateLaunchID)
 		if !ok {
@@ -249,51 +265,21 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 				m = m.markFlowLaunchAttemptMutatedPhase(msg.FlowID, msg.Token)
 				attempt.MutatedPhase = true
 			}
-			return m.beginCreateFlowRecovery(attempt, msg, parts, true, block)
+			return m.beginCreateFlowRecovery(attempt, msg, parts, false, block)
 		}
 		root := msg.StartupRoots[0]
 		phase, ok := flowPhaseByID(msg.Record, root.PhaseID)
 		if !ok || !flowPhaseContainsLaunch(phase, msg.Token) {
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"AddPhaseLaunchID: launch proof missing"}, true, true)
+			return m.beginCreateFlowRecovery(attempt, msg, []string{"AddPhaseLaunchID: launch proof missing"}, false, true)
 		}
 		m = m.markFlowLaunchAttemptMutatedPhase(msg.FlowID, msg.Token)
 		attempt.MutatedPhase = true
 		settings, err := resolveFlowStartPhaseAgentSettings(createFlowStartRequest(attempt), phase)
 		if err != nil {
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"resolve phase agent settings: " + err.Error()}, true, true)
+			return m.beginCreateFlowRecovery(attempt, msg, []string{"resolve phase agent settings: " + err.Error()}, false, true)
 		}
 		msg.Context = createFlowLaunchContext(attempt, msg, phase, settings)
-		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateMetadata)
-		if !ok {
-			releaseFlowLaunchReservation(msg.Release)
-			return m, nil
-		}
-		return next, createFlowLaunchMetadataCmd(next.launchSeams, msg)
-
-	case flowLaunchStageCreateMetadata:
-		if msg.Err != "" {
-			if msg.Parked {
-				releaseFlowLaunchReservation(msg.Release)
-				return m.finishCreateAfterWrite(attempt, "record start metadata: "+msg.Err)
-			}
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"record start metadata: " + msg.Err}, false, true)
-		}
-		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
-			releaseFlowLaunchReservation(msg.Release)
-			return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed before embedded install")
-		}
-		if msg.Parked {
-			releaseFlowLaunchReservation(msg.Release)
-			m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowLaunchCreatePresentation(attempt.Create)
-			m = m.setStatus(statusOther, "Created flow: "+attempt.Create.Title)
-			if m.flowRefreshSurfaceVisible() {
-				return m.startFlowSurfaceFetch()
-			}
-			return m, nil
-		}
-		root := msg.StartupRoots[0]
-		phase, ok := flowPhaseByID(msg.Record, root.PhaseID)
-		if !ok || phase.Status != flowstore.PhaseRunning || !flowPhaseContainsLaunch(phase, msg.Token) {
+		if phase.Status != flowstore.PhaseRunning {
 			return m.failCreateFlowLaunchEmbedded(attempt, msg.Context, "launch proof changed before embedded install", msg.Release)
 		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStatePreparing)
@@ -507,9 +493,6 @@ func createFlowLaunchBootstrapCmd(seams flowLaunchSeams, attempt flowLaunchAttem
 	return func() tea.Msg {
 		event := prior
 		event.Stage, event.From, event.Err = flowLaunchStageCreateBootstrap, flowLaunchStateCreateBootstrap, ""
-		if seams.ResolveCommit != nil {
-			event.Commit = seams.ResolveCommit(prior.Worktree.WorktreePath)
-		}
 		if seams.BootstrapHookForRepo != nil {
 			if hook, ok := seams.BootstrapHookForRepo(attempt.Create.RepoPath); ok {
 				if seams.RunBootstrapHook == nil {
@@ -610,13 +593,16 @@ func createFlowLaunchMetadataCmd(seams flowLaunchSeams, prior flowLaunchEventMsg
 	return func() tea.Msg {
 		event := prior
 		event.Stage, event.From, event.Err = flowLaunchStageCreateMetadata, flowLaunchStateCreateMetadata, ""
+		if seams.ResolveCommit != nil {
+			event.Commit = seams.ResolveCommit(prior.Worktree.WorktreePath)
+		}
 		if seams.SetStartMetadata == nil {
 			event.Err = "Flow launch lifecycle is missing start metadata persistence"
 			return event
 		}
 		record, err := seams.SetStartMetadata(flowstore.StartMetadataUpdate{
-			FlowID: prior.FlowID, WorktreePath: prior.Worktree.WorktreePath, Branch: prior.Worktree.Branch,
-			BaseRef: prior.Create.BaseRef, Commit: prior.Commit,
+			FlowID: event.FlowID, WorktreePath: event.Worktree.WorktreePath, Branch: event.Worktree.Branch,
+			BaseRef: event.Create.BaseRef, Commit: event.Commit,
 		})
 		if err != nil {
 			event.Err = err.Error()
@@ -731,25 +717,26 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateWorktree:
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
+	case flowLaunchStageCreateMetadata:
+		if msg.Err != "" {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "")
+		}
+		if len(msg.StartupRoots) == 0 {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+				clearFlowLaunchCreatePresentation(attempt.Create), nil
+		}
+		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateBootstrap:
-		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, true, true)
+		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateLaunchID:
 		parts := []string{"creation canceled after repository changed"}
 		if msg.Err != "" {
 			parts = append([]string{"AddPhaseLaunchID: " + msg.Err}, msg.RecoveryErrs...)
 			parts = append(parts, "creation canceled after repository changed")
 		}
-		return m.beginCreateFlowRecovery(attempt, msg, parts, true, true)
-	case flowLaunchStageCreateMetadata:
-		if msg.Err != "" {
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"record start metadata: " + msg.Err}, false, true)
-		}
-		if msg.Parked {
-			releaseFlowLaunchReservation(msg.Release)
-			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
-				clearFlowLaunchCreatePresentation(attempt.Create), nil
-		}
-		return m.failCreateFlowLaunchEmbedded(attempt, msg.Context, "creation canceled after repository changed", msg.Release)
+		return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
 	case flowLaunchStageCreateRecovered:
 		releaseFlowLaunchReservation(msg.Release)
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).clearFlowLaunchCreatePresentation(attempt.Create), nil

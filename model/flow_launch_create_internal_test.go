@@ -30,6 +30,7 @@ type createLaunchHarness struct {
 	reserveErr     error
 	worktreeErr    error
 	bootstrapErr   error
+	bootstrapCheck func(flowstore.FlowRecord) error
 	metadataErr    error
 	metadataMutate func(*flowstore.FlowRecord)
 	phaseErrs      map[string]error
@@ -202,6 +203,11 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 		},
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			h.order = append(h.order, "bootstrap")
+			if h.bootstrapCheck != nil {
+				if err := h.bootstrapCheck(h.record); err != nil {
+					return err
+				}
+			}
 			return h.bootstrapErr
 		},
 		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -413,12 +419,18 @@ func startInteractiveCreateUntilPrefill(t *testing.T, h *createLaunchHarness) (M
 
 func TestCreateFlowLaunchOwnsExactIdentityAndStartupOrdering(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.bootstrapCheck = func(record flowstore.FlowRecord) error {
+		if record.WorktreePath != "/dev/alpha-worktrees/flow-new" || record.Branch != "flow/new" || record.Commit != "abc123" {
+			return fmt.Errorf("bootstrap observed start metadata %#v", record)
+		}
+		return nil
+	}
 	m := h.start(t, h.model(t))
 
 	want := []string{
 		"allocate", "sessions:" + h.record.FlowID, "create:" + h.record.FlowID, "reserve:" + h.record.FlowID,
-		"worktree", "commit", "bootstrap", "reread:" + h.record.FlowID,
-		"launch-id:" + h.record.FlowID + ":plan:launch-create-1", "metadata", "terminal",
+		"worktree", "commit", "metadata", "bootstrap", "reread:" + h.record.FlowID,
+		"launch-id:" + h.record.FlowID + ":plan:launch-create-1", "terminal",
 	}
 	if !reflect.DeepEqual(h.order, want) {
 		t.Fatalf("create order = %#v, want %#v", h.order, want)
@@ -485,11 +497,10 @@ func TestCreateFlowLaunchAddFailureProofControlsRecovery(t *testing.T) {
 		h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 		h.addErr = errors.New("write failed")
 		h.readErrs = map[int]error{2: errors.New("database busy")}
-		h.metadataErr = errors.New("disk full")
 		h.phaseErrs = map[string]error{"plan": errors.New("database busy")}
 		m := h.start(t, h.model(t))
 
-		want := "Flow " + h.record.FlowID + ": AddPhaseLaunchID: write failed; reread flow after AddPhaseLaunchID: database busy; record start metadata: disk full; block phase plan: database busy"
+		want := "Flow " + h.record.FlowID + ": AddPhaseLaunchID: write failed; reread flow after AddPhaseLaunchID: database busy; block phase plan: database busy"
 		if m.status.Text != want {
 			t.Fatalf("joined recovery status = %q, want %q", m.status.Text, want)
 		}
@@ -516,11 +527,21 @@ func TestCreateFlowLaunchBootstrapAndMetadataFailuresRecoverCapturedRoots(t *tes
 			tc.configure(h)
 			m := h.start(t, h.model(t))
 
-			if len(h.phaseUpdates) != 2 || h.phaseUpdates[0].PhaseID != "plan" || h.phaseUpdates[1].PhaseID != "implementation" {
-				t.Fatalf("captured-root recovery = %#v", h.phaseUpdates)
+			if tc.name == "bootstrap" {
+				if len(h.phaseUpdates) != 2 || h.phaseUpdates[0].PhaseID != "plan" || h.phaseUpdates[1].PhaseID != "implementation" {
+					t.Fatalf("captured-root recovery = %#v", h.phaseUpdates)
+				}
+			} else if len(h.phaseUpdates) != 0 {
+				t.Fatalf("metadata failure mutated phases before launch: %#v", h.phaseUpdates)
 			}
 			if len(h.contexts) != 0 || h.releases != 1 || !strings.Contains(m.status.Text, tc.wantOperation) {
 				t.Fatalf("recovery result: contexts=%#v releases=%d status=%q", h.contexts, h.releases, m.status.Text)
+			}
+			if tc.name == "metadata" {
+				joined := strings.Join(h.order, ",")
+				if strings.Contains(joined, "bootstrap") || strings.Contains(joined, "launch-id:") {
+					t.Fatalf("metadata failure crossed into bootstrap or launch persistence: %#v", h.order)
+				}
 			}
 		})
 	}
@@ -713,7 +734,7 @@ func TestCreateFlowLaunchRejectsSameIDReplacementBeforeTrackedReservation(t *tes
 	}
 }
 
-func TestCreateFlowLaunchRevalidatesLaunchProofAfterMetadata(t *testing.T) {
+func TestCreateFlowLaunchRevalidatesStartupRootAfterMetadata(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	h.metadataMutate = func(record *flowstore.FlowRecord) {
 		record.Phases[0].Status = flowstore.PhaseBlocked
@@ -724,7 +745,7 @@ func TestCreateFlowLaunchRevalidatesLaunchProofAfterMetadata(t *testing.T) {
 	if len(h.contexts) != 0 || strings.Contains(strings.Join(h.order, ","), "terminal") {
 		t.Fatalf("metadata proof drift spawned an agent: contexts=%#v order=%#v", h.contexts, h.order)
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "launch proof changed before embedded install") {
+	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "validate startup root: no longer launchable") {
 		t.Fatalf("metadata proof result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
 	}
 }
@@ -738,7 +759,7 @@ func TestCreateFlowLaunchRejectsSameIDReplacementAtPostBootstrapReread(t *testin
 	m := h.start(t, h.model(t))
 
 	joined := strings.Join(h.order, ",")
-	for _, forbidden := range []string{"launch-id:", "metadata", "terminal", "block:"} {
+	for _, forbidden := range []string{"launch-id:", "terminal", "block:"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("replacement reread performed %q: %#v", forbidden, h.order)
 		}
@@ -760,7 +781,7 @@ func TestCreateFlowLaunchRejectsGenerationLossDuringLaunchIDProofReread(t *testi
 	m := h.start(t, h.model(t))
 
 	joined := strings.Join(h.order, ",")
-	for _, forbidden := range []string{"metadata", "terminal", "block:"} {
+	for _, forbidden := range []string{"terminal", "block:"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("proof reread generation loss performed %q: %#v", forbidden, h.order)
 		}
@@ -799,7 +820,7 @@ func TestCreateFlowLaunchCancellationDoesNotRecoverAfterGenerationLoss(t *testin
 			m, cmd = m.handleFlowLaunchEvent(event)
 			m = drainCreateLaunch(t, m, cmd)
 
-			if len(h.phaseUpdates) != 0 || strings.Contains(strings.Join(h.order, ","), "metadata") {
+			if len(h.phaseUpdates) != 0 {
 				t.Fatalf("stale generation loss recovered replacement: order=%#v updates=%#v", h.order, h.phaseUpdates)
 			}
 			if h.releases != 1 || m.status.Text != "newer creation status" || m.activeFlowCreate == 0 {
@@ -835,7 +856,7 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 		{name: "after worktree", stage: flowLaunchStageCreateWorktree, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
 		{name: "after bootstrap", stage: flowLaunchStageCreateBootstrap, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
 		{name: "after launch id", stage: flowLaunchStageCreateLaunchID, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
-		{name: "after metadata", stage: flowLaunchStageCreateMetadata, wantMetadata: true, wantBlocks: 1, wantRelease: 1},
+		{name: "after metadata", stage: flowLaunchStageCreateMetadata, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCreateLaunchHarness([]flowstore.FlowPhase{

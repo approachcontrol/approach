@@ -150,6 +150,10 @@ func (m Model) launchAgentInRepoTmuxSession(ctx actions.AgentLaunchContext, rele
 // implement. In tmux mode those run as windows in the repo's tmux session
 // instead; without tmux they keep today's external behavior and say so.
 func (m Model) launchAgentForBackend(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
+	if flowLaunchContextRequiresLifecycle(ctx) {
+		releaseFlowLaunchReservation(release)
+		return m.setStatus(statusOther, "Flow launches must use the Flow launch lifecycle"), nil
+	}
 	route, fellBack := m.tmuxLaunchRoute(ctx)
 	if route {
 		return m.launchAgentInRepoTmuxSession(ctx, release)
@@ -159,6 +163,12 @@ func (m Model) launchAgentForBackend(ctx actions.AgentLaunchContext, release fun
 		launchedStatus = withFallbackNote(agentLaunchedStatus(ctx.Command), tmuxUnavailableNote)
 	}
 	return m.launchAgentWithContextStatus(ctx, release, launchedStatus)
+}
+
+func flowLaunchContextRequiresLifecycle(ctx actions.AgentLaunchContext) bool {
+	return strings.TrimSpace(ctx.FlowID) != "" || strings.TrimSpace(ctx.FlowPhaseID) != "" || strings.TrimSpace(ctx.FlowPhaseKind) != "" ||
+		ctx.FlowLaunchTracked || ctx.FlowAutoLaunch || ctx.FlowRepair || ctx.FlowAgent ||
+		ctx.FlowSavedSessionResume || ctx.FlowAutofix || ctx.FlowPhaseTerminal
 }
 
 // tmuxLaunchWindowLive reports whether any of these launches still has an open

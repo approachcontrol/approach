@@ -2085,7 +2085,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handlePromptTemplateReset(msg), nil
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
-	case AgentLaunchRequestedMsg:
+	case agentLaunchRequestedMsg:
 		return m.launchAgentForBackend(msg.LaunchContext, nil)
 	case FlowCreatedMsg:
 		return m.handleFlowCreated(msg)
