@@ -1586,17 +1586,14 @@ func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
 func agentSelectItems() []modal.SelectItem {
 	return []modal.SelectItem{
 		{Label: agent.CommandCodex, Value: agent.CommandCodex},
-		{Label: agent.CommandCodexApp, Value: agent.CommandCodexApp},
 		{Label: agent.CommandClaude, Value: agent.CommandClaude},
 	}
 }
 
 func selectedAgentIndex(command string) int {
 	switch agent.Normalize(command) {
-	case agent.CommandCodexApp:
-		return 1
 	case agent.CommandClaude:
-		return 2
+		return 1
 	default:
 		return 0
 	}
@@ -1615,10 +1612,6 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 	command := agent.Normalize(m.agentCommand)
 	if command == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting reasoning effort")
-		return m, nil
-	}
-	if command == agent.CommandCodexApp {
-		m = m.setStatus(statusOther, "Codex App uses app default reasoning effort")
 		return m, nil
 	}
 	if err := agent.Validate(command); err != nil {
@@ -1640,10 +1633,6 @@ func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
 	command := agent.Normalize(m.agentCommand)
 	if command == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting model")
-		return m, nil
-	}
-	if command == agent.CommandCodexApp {
-		m = m.setStatus(statusOther, "Codex App uses app default model")
 		return m, nil
 	}
 	if err := agent.Validate(command); err != nil {
@@ -2407,10 +2396,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return next, nil
 	}
-	if ctx.Command != agent.CommandCodexApp {
-		return next.resumeSessionForBackend(ctx, record, release)
-	}
-	return next.launchAgentWithContextReservation(ctx, release)
+	return next.resumeSessionForBackend(ctx, record, release)
 }
 
 // resumeSessionForBackend routes a CLI-agent resume to the repo's tmux session
@@ -2465,23 +2451,14 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	// Nothing above stops a repeat resume of a terminal phase, and in tmux mode
 	// the embedded slot that would have is absent. Resuming twice would run the
 	// same provider session in two windows, so the probe goes here, on the
-	// keystroke that admits the resume. It sits below the resolver because a
-	// codex-app resume can never take the tmux route and the probe is a
-	// subprocess.
-	if intent.ResumeCommand != agent.CommandCodexApp && m.tmuxPhaseAgentStillRunning(record, phase, record.WorktreePath) {
+	// keystroke that admits the resume. It sits below the resolver so the
+	// subprocess only runs for otherwise-resumable phases.
+	if m.tmuxPhaseAgentStillRunning(record, phase, record.WorktreePath) {
 		return m.setStatus(statusOther, tmuxPhaseLiveWindowRefusal), nil
 	}
 	// A resumed agent lands in the same worktree a phase-untracked worktree agent
 	// is working in, and no phase records that one, so it needs the Flow-scoped
 	// half too.
-	//
-	// No codex-app exemption here, unlike the phase probe above. That one is
-	// exempt because a codex-app resume opens no tmux window of its own; this one
-	// asks the opposite question — whether an autofix window is *already* open —
-	// and the answer does not depend on the route the resume takes. It is also
-	// the case that most needs asking: admitPhaseResumeFlowLaunch returns the
-	// codex-app navigation command before its occupancy check, so nothing else
-	// stands between `r` and a worktree the autofix agent is still editing.
 	//
 	// The subprocess stays off the common path regardless:
 	// tmuxWorktreeAgentStillRunning reads the registry first and only shells out
@@ -2491,39 +2468,7 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	}
 	intent.Origin = m.flowLaunchOrigin()
 	next, cmd, _ := m.requestFlowLaunch(intent)
-	// The verdict is deliberately ignored: a codex-app resume returns its
-	// navigation command with admitted = false, because no attempt holds the
-	// Flow.
 	return next, cmd
-}
-
-func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContext) tea.Cmd {
-	reserve := m.reserveFlowLaunch
-	launchAgent := m.launchAgent
-	flowID := ctx.FlowID
-	repoPath := ctx.RepoPath
-	return func() tea.Msg {
-		_, release, err := reserve(flowID)
-		if err != nil {
-			return ActionFailedMsg{RepoPath: repoPath, Err: "Resume Flow phase session: " + err.Error()}
-		}
-		defer release()
-
-		ctx.LaunchID = ""
-		ctx.FlowID = ""
-		ctx.FlowPhaseID = ""
-		launch, err := launchAgent(ctx)
-		if err != nil {
-			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
-		}
-		if err := launch.Cmd.Run(); err != nil {
-			if launch.Cleanup != nil {
-				launch.Cleanup()
-			}
-			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
-		}
-		return AgentResultMsg{LaunchContext: ctx, Detached: true}
-	}
 }
 
 // reserveSessionResume holds the cross-process launch/close reservation for the
@@ -2563,14 +2508,11 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		return actions.AgentLaunchContext{}, nil, false, m
 	}
 	command := string(record.Provider)
-	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
-		command = agent.CommandCodexApp
-	}
 	workingDir := record.CWD
 	if workingDir == "" {
 		workingDir = record.WorktreePath
 	}
-	if workingDir == "" && command != agent.CommandCodexApp {
+	if workingDir == "" {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
 		return actions.AgentLaunchContext{}, nil, false, m
 	}
@@ -2957,8 +2899,7 @@ func releaseFlowLaunchReservation(release func()) {
 }
 
 func (m Model) reserveFlowSpawn(ctx actions.AgentLaunchContext) (func(), error) {
-	tracked := ctx.FlowLaunchTracked || (agent.Normalize(ctx.Command) == agent.CommandCodexApp &&
-		strings.TrimSpace(ctx.FlowPhaseID) != "" && strings.TrimSpace(ctx.LaunchID) != "")
+	tracked := ctx.FlowLaunchTracked
 	if strings.TrimSpace(ctx.FlowID) == "" || !tracked || ctx.FlowRepair || m.reserveFlowLaunch == nil {
 		return func() {}, nil
 	}

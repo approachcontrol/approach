@@ -2454,20 +2454,6 @@ func TestAgentCommandRejectsResumeWithModel(t *testing.T) {
 	}
 }
 
-func TestAgentLaunchRejectsCodexAppModelOverride(t *testing.T) {
-	_, err := actions.AgentLaunch(actions.AgentLaunchContext{
-		Command:      "codex-app",
-		WorktreePath: "/repo/worktree",
-		Model:        "gpt-5.5",
-	})
-	if err == nil {
-		t.Fatal("expected codex-app model error")
-	}
-	if !strings.Contains(err.Error(), "model") || !strings.Contains(err.Error(), "codex-app") {
-		t.Fatalf("expected codex-app model error, got %q", err.Error())
-	}
-}
-
 func TestAgentCommandBuildsEmbeddedInteractiveCodexCommand(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:           "codex",
@@ -2583,7 +2569,7 @@ func TestShouldPrefillEmbeddedPrompt(t *testing.T) {
 		name string
 		mut  func(*actions.AgentLaunchContext)
 	}{
-		{name: "codex app", mut: func(ctx *actions.AgentLaunchContext) { ctx.Command = "codex-app" }},
+		{name: "unsupported command", mut: func(ctx *actions.AgentLaunchContext) { ctx.Command = "vim" }},
 		{name: "not embedded", mut: func(ctx *actions.AgentLaunchContext) { ctx.Embedded = false }},
 		{name: "headless", mut: func(ctx *actions.AgentLaunchContext) { ctx.Headless = true }},
 		{name: "resume", mut: func(ctx *actions.AgentLaunchContext) { ctx.ResumeSessionID = "session-1" }},
@@ -3064,10 +3050,14 @@ func TestAgentCommandResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing
 }
 
 func TestAgentCommand_RejectsMissingOrUnsupportedCommand(t *testing.T) {
-	for _, command := range []string{"", "vim"} {
+	for _, command := range []string{"", "vim", "codex-app"} {
 		t.Run(command, func(t *testing.T) {
-			if _, err := actions.AgentCommand(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"}); err == nil {
+			_, err := actions.AgentCommand(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"})
+			if err == nil {
 				t.Fatal("expected AgentCommand error")
+			}
+			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex or claude` {
+				t.Fatalf("AgentCommand error = %q", err)
 			}
 		})
 	}
@@ -3098,24 +3088,32 @@ func envEntryValue(env []string, wantKey string) (string, int) {
 }
 
 func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
-	for _, command := range []string{"", "vim"} {
+	for _, command := range []string{"", "vim", "codex-app"} {
 		t.Run(command, func(t *testing.T) {
-			if _, err := actions.AgentLaunch(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"}); err == nil {
+			_, err := actions.AgentLaunch(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"})
+			if err == nil {
 				t.Fatal("expected AgentLaunch error")
+			}
+			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex or claude` {
+				t.Fatalf("AgentLaunch error = %q", err)
 			}
 		})
 	}
 }
 
 func TestAgentLaunchResumeRejectsMissingOrUnsupportedCommand(t *testing.T) {
-	for _, command := range []string{"", "vim"} {
+	for _, command := range []string{"", "vim", "codex-app"} {
 		t.Run(command, func(t *testing.T) {
-			if _, err := actions.AgentLaunch(actions.AgentLaunchContext{
+			_, err := actions.AgentLaunch(actions.AgentLaunchContext{
 				Command:         command,
 				WorktreePath:    "/repo/worktree",
 				ResumeSessionID: "session-1",
-			}); err == nil {
+			})
+			if err == nil {
 				t.Fatal("expected AgentLaunch resume error")
+			}
+			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex or claude` {
+				t.Fatalf("AgentLaunch resume error = %q", err)
 			}
 		})
 	}

@@ -25,7 +25,6 @@ import (
 const (
 	flowWorktreeAgentTerminalStatus    = "Close or dismiss the existing Flow terminal before running autofix"
 	flowWorktreeAgentInFlightStatus    = "A Flow launch is already in flight"
-	flowWorktreeAgentCodexAppStatus    = "Flow autofix requires codex or claude; press A to choose one"
 	flowWorktreeAgentDriftStatus       = "Flow changed; refresh and try again"
 	flowWorktreeAgentLiveSessionStatus = "Flow already has a running agent session"
 	flowWorktreeAgentCanceledStatus    = "Flow agent launch canceled because a repair terminal is already open for this Flow"
@@ -67,8 +66,8 @@ func (m Model) selectedFlowAutofixTarget() (flowstore.FlowRecord, string, bool) 
 // tmux live-window probe is in the key handler because it shells out and may not
 // run in a predicate the renderer evaluates; the live-session and drift refusals
 // are in the read stage, the only place a fresh record and the session store
-// exist; and admission's unusable-agent-command refusal (unset, or codex-app) is
-// left advertised on purpose, exactly as repair leaves R advertised, because its
+// exist; and admission's unusable-agent-command refusal is left advertised on
+// purpose, exactly as repair leaves R advertised, because its
 // wording names the key that fixes it — "press A to choose one" teaches more
 // than a hint that silently disappears.
 func (m Model) selectedFlowAutofixReady() bool {
@@ -145,13 +144,8 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	}
 	command, _, _ := m.flowLaunchAgentSettings()
 	command = agent.Normalize(command)
-	switch {
-	case command == "":
+	if command == "" {
 		return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
-	case command == agent.CommandCodexApp:
-		// A codex-app deep link carries neither a prompt nor approach launch
-		// metadata, so it cannot run autofix at all.
-		return m.setStatus(statusOther, flowWorktreeAgentCodexAppStatus), nil, false
 	}
 	if err := agent.Validate(command); err != nil {
 		return m.setStatus(statusOther, err.Error()), nil, false

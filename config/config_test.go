@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -542,7 +544,7 @@ func TestSaveAgentCommand_CreatesMissingConfig(t *testing.T) {
 	}
 }
 
-func TestLoadFrom_AcceptsCodexAppAgent(t *testing.T) {
+func TestLoadFrom_NormalizesStoredCodexAppAgent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("[agent]\ncommand = \" CoDeX-App \"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -552,8 +554,8 @@ func TestLoadFrom_AcceptsCodexAppAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFrom returned error: %v", err)
 	}
-	if cfg.Agent.Command != "codex-app" {
-		t.Fatalf("expected normalized agent codex-app, got %q", cfg.Agent.Command)
+	if cfg.Agent.Command != "codex" {
+		t.Fatalf("expected retired agent to normalize to codex, got %q", cfg.Agent.Command)
 	}
 }
 
@@ -644,38 +646,46 @@ func TestLoadFrom_RejectsInvalidModels(t *testing.T) {
 	}
 }
 
-func TestSaveAgentCommand_WritesCodexApp(t *testing.T) {
-	xdg := t.TempDir()
-	err := config.SaveAgentCommand("codex-app",
-		config.WithGetenv(func(key string) string {
-			if key == "XDG_CONFIG_HOME" {
-				return xdg
+func TestSaveAgentCommand_RejectsCodexAppWithoutWriting(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing=%t", existing), func(t *testing.T) {
+			xdg := t.TempDir()
+			path := filepath.Join(xdg, "approach", "config.toml")
+			before := []byte("# preserved\n[agent]\ncommand = \"claude\"\n")
+			if existing {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, before, 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
-			return ""
-		}),
-		config.WithHomeDir(func() (string, error) {
-			return t.TempDir(), nil
-		}),
-	)
-	if err != nil {
-		t.Fatalf("SaveAgentCommand returned error: %v", err)
-	}
 
-	path := filepath.Join(xdg, "approach", "config.toml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `command = "codex-app"`) {
-		t.Fatalf("expected codex-app command in saved config, got:\n%s", raw)
-	}
-
-	cfg, err := config.LoadFrom(path)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Agent.Command != "codex-app" {
-		t.Fatalf("expected saved agent codex-app, got %q", cfg.Agent.Command)
+			err := config.SaveAgentCommand("codex-app",
+				config.WithGetenv(func(key string) string {
+					if key == "XDG_CONFIG_HOME" {
+						return xdg
+					}
+					return ""
+				}),
+				config.WithHomeDir(func() (string, error) { return t.TempDir(), nil }),
+			)
+			want := `unsupported agent "codex-app"; choose codex or claude`
+			if err == nil || err.Error() != want {
+				t.Fatalf("SaveAgentCommand() error = %v, want %q", err, want)
+			}
+			after, readErr := os.ReadFile(path)
+			if existing {
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if !bytes.Equal(after, before) {
+					t.Fatalf("config changed after rejected write:\n%s", after)
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Fatalf("missing config read error = %v, want not-exist", readErr)
+			}
+		})
 	}
 }
 

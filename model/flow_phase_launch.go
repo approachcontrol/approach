@@ -17,8 +17,7 @@ import (
 type FlowPhaseLaunchRoute int
 
 const (
-	FlowPhaseLaunchExternal FlowPhaseLaunchRoute = iota
-	FlowPhaseLaunchEmbedded
+	FlowPhaseLaunchEmbedded FlowPhaseLaunchRoute = iota + 1
 	// FlowPhaseLaunchTmux runs the agent as a window in the repo's tmux
 	// session. It is external-style: nothing in the TUI owns the process.
 	FlowPhaseLaunchTmux
@@ -140,10 +139,14 @@ func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 }
 
 func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunchPreparedRequest, error) {
-	if agent.Normalize(l.AgentCommand) == "" {
+	command := agent.Normalize(l.AgentCommand)
+	if command == "" {
 		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{
 			Message: "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
 		}
+	}
+	if err := agent.Validate(command); err != nil {
+		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
 	}
 	repoPath := req.Record.RepoPath
 	if repoPath == "" && l.CurrentRepoPath != nil {
@@ -294,29 +297,25 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		FlowAutoLaunch:   req.AutoLaunch,
 		InitialPrompt:    flowPhasePrompt(req.Record, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
 	}
-	route := FlowPhaseLaunchExternal
+	route := FlowPhaseLaunchEmbedded
 	fallbackNote := ""
-	switch command {
-	case agent.CommandCodex, agent.CommandClaude:
-		route = FlowPhaseLaunchEmbedded
-		ctx.FlowLaunchTracked = true
-		ctx.Embedded = true
-		ctx.Headless = req.Headless
-		// Persisted reservations carry UpdatedAt. A zero-time partial result from
-		// an injected launcher seam cannot authoritatively replace preferences.
-		if !req.AutoLaunch && !updated.UpdatedAt.IsZero() {
-			ctx.Headless = updated.Headless
-		}
-		// Headless is resolved above, so the tmux decision is made against the
-		// value that actually launches rather than the requested one.
-		if tmuxRoute, fellBack := l.tmuxLaunchRoute(ctx); tmuxRoute {
-			route = FlowPhaseLaunchTmux
-			// A tmux window has no dock to prefill and renders its own output,
-			// so it is external-style: the TUI owns no part of the process.
-			ctx.Embedded = false
-		} else if fellBack {
-			fallbackNote = tmuxFallbackNote
-		}
+	ctx.FlowLaunchTracked = true
+	ctx.Embedded = true
+	ctx.Headless = req.Headless
+	// Persisted reservations carry UpdatedAt. A zero-time partial result from
+	// an injected launcher seam cannot authoritatively replace preferences.
+	if !req.AutoLaunch && !updated.UpdatedAt.IsZero() {
+		ctx.Headless = updated.Headless
+	}
+	// Headless is resolved above, so the tmux decision is made against the
+	// value that actually launches rather than the requested one.
+	if tmuxRoute, fellBack := l.tmuxLaunchRoute(ctx); tmuxRoute {
+		route = FlowPhaseLaunchTmux
+		// A tmux window has no dock to prefill and renders its own output,
+		// so it is external-style: the TUI owns no part of the process.
+		ctx.Embedded = false
+	} else if fellBack {
+		fallbackNote = tmuxFallbackNote
 	}
 	return FlowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: fallbackNote}, nil
 }

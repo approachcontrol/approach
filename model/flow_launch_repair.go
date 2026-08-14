@@ -161,8 +161,6 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	switch command {
 	case "":
 		return m.setStatus(statusOther, "Press A to choose codex or claude before repairing a Flow"), nil, false
-	case agent.CommandCodexApp:
-		return m.setStatus(statusOther, "Flow repair requires an embedded CLI agent; press A to choose codex or claude"), nil, false
 	case agent.CommandCodex, agent.CommandClaude:
 		// Supported below.
 	default:

@@ -37,11 +37,6 @@ func TestResolvePicksProviderSpecificSettings(t *testing.T) {
 			},
 		},
 		{
-			name:    "codex-app carries no provider selection",
-			command: agent.CommandCodexApp,
-			want:    agent.Settings{Command: agent.CommandCodexApp},
-		},
-		{
 			name:    "unknown command is echoed back",
 			command: "gemini",
 			want:    agent.Settings{Command: "gemini"},

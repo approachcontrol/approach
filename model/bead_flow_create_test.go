@@ -1154,7 +1154,6 @@ func TestBeadsReadyStartFlowRoutesCreationTimeLaunchByAgent(t *testing.T) {
 	}{
 		{name: "codex embedded", command: "codex", wantEmbedded: true},
 		{name: "claude stays embedded in tmux mode", command: "claude", launchBackend: "tmux", wantEmbedded: true},
-		{name: "codex app external", command: "codex-app"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := inBeadsPane(newTestModel(testRepos(), model.Options{

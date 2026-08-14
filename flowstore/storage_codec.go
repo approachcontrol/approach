@@ -188,6 +188,7 @@ func decodeStoredFlow(flowID, repoPath, status, updatedAt string, data []byte) (
 	if err != nil || formatStorageTimeUnchecked(parsed) != updatedAt {
 		return storedFlow{}, fmt.Errorf("flow %q has invalid updated_at projection %q", flowID, updatedAt)
 	}
+	record.Phases = normalizePhaseAgentSettings(record.Phases)
 	return storedFlow{record: record}, nil
 }
 

@@ -1050,3 +1050,29 @@ func TestPrepareFlowDropsUnusableAgentSettings(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareFlowRejectsCodexAppBeforeCreatingFlowOrWorktree(t *testing.T) {
+	createFlowCalled := false
+	createWorktreeCalled := false
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			createFlowCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			createWorktreeCalled = true
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+	})
+
+	result, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: "One", Instructions: "Build it", AgentCommand: "codex-app",
+	})
+	want := `unsupported agent "codex-app"; choose codex or claude`
+	if err == nil || err.Error() != want {
+		t.Fatalf("PrepareFlow() = %#v, %v, want error %q", result, err, want)
+	}
+	if createFlowCalled || createWorktreeCalled {
+		t.Fatalf("rejected input performed work: createFlow=%t createWorktree=%t", createFlowCalled, createWorktreeCalled)
+	}
+}

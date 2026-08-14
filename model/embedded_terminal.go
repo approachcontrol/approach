@@ -15,7 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
-	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/claudestream"
 	"github.com/approachcontrol/approach/embeddedterm"
 	"github.com/approachcontrol/approach/model/modal"
@@ -1124,9 +1123,6 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil
-	}
-	if ctx.Command == agent.CommandCodexApp {
-		return next.launchAgentWithContextReservation(ctx, release)
 	}
 	return next.resumeSessionForBackend(ctx, record, release)
 }
