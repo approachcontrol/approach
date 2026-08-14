@@ -5384,7 +5384,7 @@ func TestModel_RRejectsNonEmbeddedProvidersBeforeLaunch(t *testing.T) {
 				},
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{repairableFlowForShortcut()})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			m = repairFromKey(t, m)
 			if starts != 0 {
 				t.Fatalf("repair started %d terminals for provider %q", starts, tt.command)
 			}

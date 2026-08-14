@@ -538,6 +538,318 @@ func TestModel_StaleFetchReconcilesAgainstTheNewerRecord(t *testing.T) {
 	})
 }
 
+func TestModel_PhaseAgentSettingsReconciliationPreservesPeerPhaseProgress(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	settingsWrite := stored
+	settingsWrite.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	settingsWrite.Phases[2].Agent = "claude"
+	settingsWrite.Phases[2].Model = "claude-sonnet-5"
+	settingsWrite.Phases[2].ReasoningEffort = "max"
+	settingsWrite.UpdatedAt = t0.Add(time.Minute)
+
+	peer := stored
+	peer.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	peer.Phases[2].Status = flowstore.PhaseCompleted
+	peer.UpdatedAt = t0.Add(-time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: settingsWrite, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{peer},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	phase := got[0].Phases[2]
+	if phase.Status != flowstore.PhaseCompleted {
+		t.Fatalf("phase status = %q, want the peer completion preserved", phase.Status)
+	}
+	if phase.Agent != "claude" || phase.Model != "claude-sonnet-5" || phase.ReasoningEffort != "max" {
+		t.Fatalf("phase settings = %#v, want the local settings write overlaid", phase)
+	}
+}
+
+func TestModel_PhaseAgentSettingsResultPreservesAlreadyDisplayedPeerProgress(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	settingsWrite := stored
+	settingsWrite.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	settingsWrite.Phases[2].Agent = "claude"
+	settingsWrite.Phases[2].Model = "claude-sonnet-5"
+	settingsWrite.UpdatedAt = t0.Add(time.Minute)
+
+	peer := stored
+	peer.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	peer.Phases[2].Status = flowstore.PhaseCompleted
+	peer.UpdatedAt = t0.Add(-time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{peer},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: settingsWrite, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	phase := got[0].Phases[2]
+	if phase.Status != flowstore.PhaseCompleted {
+		t.Fatalf("phase status = %q, want the displayed peer completion preserved", phase.Status)
+	}
+	if phase.Agent != "claude" || phase.Model != "claude-sonnet-5" {
+		t.Fatalf("phase settings = %#v, want the local settings write overlaid", phase)
+	}
+}
+
+func TestModel_OlderPhaseAgentSettingsResultCannotOverwriteNewerResult(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	older := stored
+	older.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	older.Phases[2].Agent = "claude"
+	older.Phases[2].Model = "claude-sonnet-5"
+	older.UpdatedAt = t0.Add(time.Minute)
+
+	newer := stored
+	newer.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	newer.Phases[2].Agent = "codex"
+	newer.Phases[2].Model = "gpt-5.6"
+	newer.UpdatedAt = t0.Add(2 * time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: newer, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: older, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	phase := got[0].Phases[2]
+	if phase.Agent != "codex" || phase.Model != "gpt-5.6" {
+		t.Fatalf("phase settings = %#v, want the newer result preserved", phase)
+	}
+}
+
+func TestModel_OlderPhaseAgentSettingsResultCannotOverwriteNewerPeerSettings(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	local := stored
+	local.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	local.Phases[2].Agent = "claude"
+	local.Phases[2].Model = "claude-sonnet-5"
+	local.UpdatedAt = t0.Add(time.Minute)
+
+	peer := stored
+	peer.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	peer.Phases[2].Agent = "codex"
+	peer.Phases[2].Model = "gpt-5.6"
+	peer.UpdatedAt = t0.Add(2 * time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{peer},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: local, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	phase := got[0].Phases[2]
+	if phase.Agent != "codex" || phase.Model != "gpt-5.6" {
+		t.Fatalf("phase settings = %#v, want the newer peer settings preserved", phase)
+	}
+}
+
+func TestModel_PhaseAgentSettingsTimestampRejectsOlderWholeRecordResult(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	settingsWrite := stored
+	settingsWrite.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	settingsWrite.Phases[2].Agent = "claude"
+	settingsWrite.Phases[2].Model = "claude-sonnet-5"
+	settingsWrite.Phases[2].UpdatedAt = t0.Add(2 * time.Minute)
+	settingsWrite.UpdatedAt = t0.Add(2 * time.Minute)
+
+	olderWholeRecord := stored
+	olderWholeRecord.UpdatedAt = t0.Add(time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: settingsWrite, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+	m, _ = update(m, model.FlowReopenedMsg{
+		RepoPath: "/dev/alpha", FlowID: stored.FlowID, Flow: olderWholeRecord,
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	phase := got[0].Phases[2]
+	if phase.Agent != "claude" || phase.Model != "claude-sonnet-5" {
+		t.Fatalf("phase settings = %#v, want the newer settings result preserved", phase)
+	}
+	if !got[0].UpdatedAt.Equal(settingsWrite.UpdatedAt) || !phase.UpdatedAt.Equal(settingsWrite.Phases[2].UpdatedAt) {
+		t.Fatalf("settings timestamps = record %s phase %s, want %s", got[0].UpdatedAt, phase.UpdatedAt, settingsWrite.UpdatedAt)
+	}
+}
+
+func TestModel_PhaseAgentSettingsReconciliationPreservesNewerPeerSettings(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	local := stored
+	local.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	local.Phases[2].Agent = "claude"
+	local.Phases[2].Model = "claude-sonnet-5"
+	local.Phases[2].UpdatedAt = t0.Add(time.Minute)
+	local.UpdatedAt = t0.Add(time.Minute)
+
+	peer := stored
+	peer.Phases = append([]flowstore.FlowPhase(nil), stored.Phases...)
+	peer.Phases[2].Agent = "codex"
+	peer.Phases[2].Model = "gpt-5.6"
+	peer.Phases[2].UpdatedAt = t0.Add(2 * time.Minute)
+	peer.UpdatedAt = t0.Add(2 * time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: local, PhaseID: "implementation", PhaseIdentity: "implementation",
+	})
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{peer},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	phase := got[0].Phases[2]
+	if phase.Agent != "codex" || phase.Model != "gpt-5.6" {
+		t.Fatalf("phase settings = %#v, want the newer peer settings preserved", phase)
+	}
+}
+
+func TestModel_PhaseAgentSettingsOverlayFallsBackToNormalizedPhaseIdentity(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.Phases = []flowstore.FlowPhase{{
+		PhaseID: " Plan ", Title: "Plan", Status: flowstore.PhaseReady, UpdatedAt: t0,
+	}}
+	stored.UpdatedAt = t0
+
+	settingsWrite := stored
+	settingsWrite.Phases = []flowstore.FlowPhase{{
+		PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady,
+		Agent: "claude", Model: "claude-sonnet-5", UpdatedAt: t0.Add(time.Minute),
+	}}
+	settingsWrite.UpdatedAt = t0.Add(time.Minute)
+
+	staleCanonical := stored
+	staleCanonical.Phases = []flowstore.FlowPhase{{
+		PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady, UpdatedAt: t0,
+	}}
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, " Plan ")
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: settingsWrite, PhaseID: " Plan ", PhaseIdentity: "plan",
+	})
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{staleCanonical},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	got := m.Flows()
+	if len(got) != 1 || len(got[0].Phases) != 1 {
+		t.Fatalf("Flows() = %#v, want one Flow phase", got)
+	}
+	phase := got[0].Phases[0]
+	if phase.PhaseID != "plan" || phase.Agent != "claude" || phase.Model != "claude-sonnet-5" {
+		t.Fatalf("canonical phase settings = %#v, want the persisted overlay", phase)
+	}
+}
+
+func TestModel_PhaseAgentSettingsResultUsesStoredOrderForNormalizedDuplicate(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.Phases = []flowstore.FlowPhase{
+		{PhaseID: "root", Title: "Root", Status: flowstore.PhaseCompleted, UpdatedAt: t0},
+		{PhaseID: " plan ", ParentPhaseID: "root", Title: "Selected", Status: flowstore.PhaseReady, UpdatedAt: t0},
+	}
+	stored.UpdatedAt = t0
+
+	settingsWrite := stored
+	settingsWrite.Phases = []flowstore.FlowPhase{
+		{PhaseID: "root", Title: "Root", Status: flowstore.PhaseCompleted, UpdatedAt: t0},
+		{
+			PhaseID: "Plan", ParentPhaseID: "root", Title: "Stored first", Status: flowstore.PhaseReady, Order: 2,
+			Agent: "claude", Model: "claude-sonnet-5", UpdatedAt: t0.Add(time.Minute),
+		},
+		{
+			PhaseID: "PLAN", ParentPhaseID: "root", Title: "Sorted first", Status: flowstore.PhaseReady, Order: 1,
+			Agent: "codex", Model: "gpt-5.6", UpdatedAt: t0.Add(time.Minute),
+		},
+	}
+	settingsWrite.UpdatedAt = t0.Add(time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m = selectFlowPhaseByID(t, m, " plan ")
+	m, _ = update(m, model.FlowPhaseAgentSettingsSetMsg{
+		Flow: settingsWrite, PhaseID: " plan ", PhaseIdentity: "plan",
+	})
+
+	got := m.Flows()
+	if len(got) != 1 || len(got[0].Phases) != 2 {
+		t.Fatalf("Flows() = %#v, want root and selected child", got)
+	}
+	phase := got[0].Phases[1]
+	if phase.Agent != "claude" || phase.Model != "claude-sonnet-5" {
+		t.Fatalf("phase settings = %#v, want the first stored normalized duplicate", phase)
+	}
+}
+
 // Successive writes to different fields of one Flow are independent. A stale
 // fetch must not revert an earlier field just because a later write to a
 // different field was cached after it.

@@ -544,7 +544,7 @@ func TestAutoFlowLaunchPreflightFailuresUseTransientAutoStatus(t *testing.T) {
 	}
 }
 
-func TestFlowLaunchAdmissionRejectsRetiredAgentBeforeAllocatingAttempt(t *testing.T) {
+func TestFlowLaunchRejectsRetiredAgentWithoutPersistingAttempt(t *testing.T) {
 	for _, auto := range []bool{false, true} {
 		name := "manual"
 		if auto {
@@ -573,8 +573,9 @@ func TestFlowLaunchAdmissionRejectsRetiredAgentBeforeAllocatingAttempt(t *testin
 				}
 			}
 
-			if launchIDCalls != 0 || h.readFlowCalls != 0 {
-				t.Fatalf("rejected launch allocated %d IDs and read %d Flows, want neither", launchIDCalls, h.readFlowCalls)
+			wantAuthoritativeChecks := 1
+			if launchIDCalls != wantAuthoritativeChecks || h.readFlowCalls != wantAuthoritativeChecks {
+				t.Fatalf("rejected launch allocated %d IDs and read %d Flows, want %d each", launchIDCalls, h.readFlowCalls, wantAuthoritativeChecks)
 			}
 			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
 				t.Fatalf("rejected launch persisted state: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
@@ -583,6 +584,60 @@ func TestFlowLaunchAdmissionRejectsRetiredAgentBeforeAllocatingAttempt(t *testin
 				t.Fatal("rejected launch retained an in-memory attempt")
 			}
 		})
+	}
+}
+
+func TestManualFlowLaunchUsesAuthoritativePhaseSettingsWhenCacheIsStale(t *testing.T) {
+	stale := manualLaunchFlowRecord()
+	stale.Phases[0].Model = agent.ModelGPT55
+
+	authoritative := stale
+	authoritative.Phases = append([]flowstore.FlowPhase(nil), stale.Phases...)
+	authoritative.Phases[0].Agent = agent.CommandClaude
+	authoritative.Phases[0].Model = agent.ModelClaudeSonnet5
+
+	h := newManualLaunchHarness(t, stale)
+	h.persistedFlows = []flowstore.FlowRecord{authoritative}
+	h.persistedRecord = authoritative
+	h.persistedRecordOK = true
+	opts := h.options()
+	opts.AgentCommand = " "
+	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+
+	m = h.launch(m)
+
+	if h.readFlowCalls != 1 {
+		t.Fatalf("authoritative Flow reads = %d, want 1", h.readFlowCalls)
+	}
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %d, want 1; status=%q", len(h.launchContexts), m.status.Text)
+	}
+	ctx := h.launchContexts[0]
+	if ctx.Command != agent.CommandClaude || ctx.Model != agent.ModelClaudeSonnet5 {
+		t.Fatalf("launch settings = %#v, want authoritative Claude stamp", ctx)
+	}
+}
+
+func TestAutoFlowLaunchUsesAuthoritativePhaseStampOverUnsupportedGlobal(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	record.Phases[0].Agent = agent.CommandClaude
+	record.Phases[0].Model = agent.ModelClaudeSonnet5
+
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.agentCommand = "codex-app"
+
+	m = h.autoDrain(m, record)
+
+	if h.readFlowCalls != 1 {
+		t.Fatalf("authoritative Flow reads = %d, want 1", h.readFlowCalls)
+	}
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %d, want 1; status=%q", len(h.launchContexts), m.status.Text)
+	}
+	ctx := h.launchContexts[0]
+	if ctx.Command != agent.CommandClaude || ctx.Model != agent.ModelClaudeSonnet5 {
+		t.Fatalf("launch settings = %#v, want authoritative Claude stamp", ctx)
 	}
 }
 
@@ -1483,8 +1538,9 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			if got := m.selectedFlowHasLaunchablePhase(); got != tc.wantAdvertise {
 				t.Fatalf("footer advertised launch = %v, want %v", got, tc.wantAdvertise)
 			}
-			next, _ := m.handleLaunchNextFlowPhase()
-			if got := next.(Model).status.Text; got != tc.wantStatus {
+			next, cmd := m.handleLaunchNextFlowPhase()
+			m = h.drain(next.(Model), cmd, 0)
+			if got := m.status.Text; got != tc.wantStatus {
 				t.Fatalf("status = %q, want %q", got, tc.wantStatus)
 			}
 			if len(h.launchUpdates) != 0 {

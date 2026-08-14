@@ -208,19 +208,6 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
-	// Kept synchronous, and after launchability, so the order statuses appear in
-	// does not change.
-	resolvedSettings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
-	if err != nil {
-		if agent.Normalize(m.agentCommand) == "" && agent.Normalize(phase.Agent) == "" {
-			return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
-		}
-		return m.setStatus(statusOther, err.Error()), nil, false
-	}
-	command := resolvedSettings.Command
-	if err := agent.Validate(command); err != nil {
-		return m.setStatus(statusOther, err.Error()), nil, false
-	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
@@ -253,27 +240,20 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 // repainted every second over whatever the user is actually looking at. It also
 // skips previewFlowLaunch: that resolves through the display caches, which the
 // poll's Flows are frequently absent from, so launchability is left entirely to
-// the authoritative read. An empty agent still fails Preflight in the read
-// stage and produces today's transient status; a non-empty unsupported value is
-// rejected here before allocating an attempt.
+// the authoritative read. Agent settings are likewise validated there, after
+// the persisted phase stamp has had a chance to override the global provider.
 func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
 	if flowID == "" || m.flowLaunchAdmissionOccupied(flowID) {
 		return m, nil, false
 	}
-	if command, _, _ := m.flowLaunchAgentSettings(); agent.Normalize(command) != "" {
-		if err := agent.Validate(command); err != nil {
-			return m, nil, false
-		}
-	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
 		return m, nil, false
 	}
-	// The settings snapshot is still taken. Only the refusal on an empty agent
-	// command is dropped: a zero-value snapshot would make every auto launch
-	// fail Preflight with "Press A to choose …".
+	// The settings snapshot is still taken: a zero-value snapshot would make
+	// every auto launch fail Preflight with "Press A to choose …".
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
 	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
 		Token:    token,

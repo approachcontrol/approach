@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -1165,7 +1166,21 @@ func (m Model) handleFlowPhaseAgentSettingsSet(msg FlowPhaseAgentSettingsSetMsg)
 		artifacts.NormalizePhaseID(phase.PhaseID) != msg.PhaseIdentity {
 		return m.setStatus(statusOther, "Flow phase selection changed before agent settings were applied")
 	}
-	m = m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
+	updatedPhaseIndex := flowPhaseStoredIndexByID(msg.Flow.Phases, msg.PhaseID)
+	if updatedPhaseIndex < 0 {
+		return m.setStatus(statusOther, "Unable to update Flow phase agent settings")
+	}
+	updatedPhase := msg.Flow.Phases[updatedPhaseIndex]
+	m = m.replaceFlowRecord(
+		msg.Flow,
+		flowPhaseAgentSettingsMutationField(msg.PhaseID),
+		flowPhaseAgentSettingsOverlay(
+			msg.PhaseID,
+			updatedPhase.AgentSettings(),
+			msg.Flow.UpdatedAt,
+			updatedPhase.UpdatedAt,
+		),
+	)
 	return m.setStatus(statusOther, fmt.Sprintf("Updated agent settings for Flow phase %s", msg.PhaseID))
 }
 
@@ -1709,6 +1724,9 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	if flow.FlowID == "" {
 		return m
 	}
+	if field.overlayOnly() && m.flowMutationSuperseded(flow, field) {
+		return m
+	}
 	m = m.rememberFlowMutation(flow, field, apply)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
@@ -1716,13 +1734,24 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
+	overlayOnly := field.overlayOnly() && apply != nil
+	// An overlay-only write result is authoritative only for its named field.
+	// Copying unrelated fields from it could regress a peer write that landed
+	// after the store returned; the regular refresh surfaces unrelated changes.
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
 	replacedFlows := false
 	for i := range items {
-		if items[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(items[i].UpdatedAt) {
+		if items[i].FlowID != flow.FlowID {
 			continue
 		}
-		items[i] = flow
+		if overlayOnly {
+			items[i] = apply(items[i])
+		} else {
+			if flow.UpdatedAt.Before(items[i].UpdatedAt) {
+				continue
+			}
+			items[i] = flow
+		}
 		replacedFlows = true
 		break
 	}
@@ -1740,10 +1769,17 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
 	replacedActive := false
 	for i := range activeRecords {
-		if activeRecords[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+		if activeRecords[i].FlowID != flow.FlowID {
 			continue
 		}
-		activeRecords[i] = flow
+		if overlayOnly {
+			activeRecords[i] = apply(activeRecords[i])
+		} else {
+			if flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+				continue
+			}
+			activeRecords[i] = flow
+		}
 		replacedActive = true
 		break
 	}
@@ -1757,6 +1793,27 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	return m.clampSelectionsAfterFilter()
 }
 
+func (m Model) flowMutationSuperseded(flow flowstore.FlowRecord, field flowMutationField) bool {
+	for _, cached := range m.latestFlowMutations {
+		if cached.field == field &&
+			cached.record.FlowID == flow.FlowID &&
+			sameRepoPath(cached.record.RepoPath, flow.RepoPath) &&
+			flow.UpdatedAt.Before(cached.record.UpdatedAt) {
+			return true
+		}
+	}
+	for _, records := range [][]flowstore.FlowRecord{m.flows.Items(), m.activeFlowRecords} {
+		for _, record := range records {
+			if record.FlowID == flow.FlowID &&
+				sameRepoPath(record.RepoPath, flow.RepoPath) &&
+				flow.UpdatedAt.Before(record.UpdatedAt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // cachedFlowMutation retains a Flow write this process persisted, together with
 // the list request generation current when the write completed. The generation
 // is a causal version: a fetch issued at a later generation already observes the
@@ -1766,9 +1823,8 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 //
 // apply re-applies only the field this process changed. A fetch issued before
 // the write can still read the store after a peer wrote a causally newer record,
-// so restoring a whole cached record would hide the peer's phase completions and
-// other metadata. Toggles that change one scalar therefore carry an apply
-// function and never replace the incoming record.
+// so targeted phase mutations use an overlay-only field and never restore their
+// whole cached record over the incoming one.
 type cachedFlowMutation struct {
 	record     flowstore.FlowRecord
 	generation uint64
@@ -1778,15 +1834,39 @@ type cachedFlowMutation struct {
 
 // flowMutationField identifies what a cached write changed, so writes to
 // different fields of one Flow are cached independently.
-type flowMutationField uint8
+type flowMutationField string
 
 const (
 	// flowMutationWholeRecord covers writes that change phases and derived
 	// state together, which cannot be expressed as a single-field overlay.
-	flowMutationWholeRecord flowMutationField = iota
-	flowMutationHeadless
-	flowMutationAutoMode
+	flowMutationWholeRecord              flowMutationField = "whole-record"
+	flowMutationHeadless                 flowMutationField = "headless"
+	flowMutationAutoMode                 flowMutationField = "auto-mode"
+	flowMutationPhaseAgentSettingsPrefix                   = "phase-agent-settings:"
 )
+
+func flowPhaseAgentSettingsMutationField(phaseID string) flowMutationField {
+	return flowMutationField(flowMutationPhaseAgentSettingsPrefix + phaseID)
+}
+
+func flowPhaseStoredIndexByID(phases []flowstore.FlowPhase, phaseID string) int {
+	for i := range phases {
+		if phases[i].PhaseID == phaseID {
+			return i
+		}
+	}
+	identity := artifacts.NormalizePhaseID(phaseID)
+	for i := range phases {
+		if artifacts.NormalizePhaseID(phases[i].PhaseID) == identity {
+			return i
+		}
+	}
+	return -1
+}
+
+func (field flowMutationField) overlayOnly() bool {
+	return strings.HasPrefix(string(field), flowMutationPhaseAgentSettingsPrefix)
+}
 
 func flowHeadlessOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
 	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
@@ -1802,6 +1882,31 @@ func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.Flow
 	}
 }
 
+func flowPhaseAgentSettingsOverlay(
+	phaseID string,
+	settings flowstore.PhaseAgentSettings,
+	recordUpdatedAt time.Time,
+	phaseUpdatedAt time.Time,
+) func(flowstore.FlowRecord) flowstore.FlowRecord {
+	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		target := flowPhaseStoredIndexByID(record.Phases, phaseID)
+		if target < 0 || record.Phases[target].UpdatedAt.After(phaseUpdatedAt) {
+			return record
+		}
+		if record.UpdatedAt.Before(recordUpdatedAt) {
+			record.UpdatedAt = recordUpdatedAt
+		}
+		record.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+		record.Phases[target].Agent = settings.Agent
+		record.Phases[target].Model = settings.Model
+		record.Phases[target].ReasoningEffort = settings.ReasoningEffort
+		if record.Phases[target].UpdatedAt.Before(phaseUpdatedAt) {
+			record.Phases[target].UpdatedAt = phaseUpdatedAt
+		}
+		return record
+	}
+}
+
 // preferNewerCachedFlowRecords re-applies mutations that a fetch issued before
 // the write could not have seen. Mutations the fetch supersedes are dropped by
 // pruneAcknowledgedFlowMutations.
@@ -1810,13 +1915,15 @@ func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.Flow
 // issued, but the store read happens later and unlocked, so an older request can
 // still return a record that already carries this write plus a newer peer write.
 //
-// Reconciliation therefore runs in two steps. UpdatedAt selects the base record: a cached
-// record stamped later than the incoming one carries phase and status metadata
-// the write result proved newer, so it becomes the base; otherwise the incoming
-// record wins and a peer's newer work is kept. Overlays are then re-applied on
-// top of whichever base was chosen, so a toggle this process persisted survives
-// either way, and a whole-record write that read the store before a concurrent
-// toggle cannot revert it.
+// Reconciliation therefore runs in two steps. UpdatedAt selects the base record
+// from mutations allowed to contribute one: a cached record stamped later than
+// the incoming one carries phase and status metadata the write result proved
+// newer, so it becomes the base; otherwise the incoming record wins and a peer's
+// newer work is kept. Targeted phase mutations are overlay-only and never
+// contribute a base. Overlays are then re-applied on top of whichever base was
+// chosen, so a field this process persisted survives either way, and a
+// whole-record write that read the store before a concurrent toggle cannot
+// revert it.
 //
 // UpdatedAt is the strongest ordering signal the store offers today, and it is
 // not a causal version: a peer may have a clock behind this process, and a
@@ -1828,7 +1935,7 @@ func preferNewerCachedFlowRecords(incoming []flowstore.FlowRecord, request uint6
 	merged := append([]flowstore.FlowRecord(nil), incoming...)
 	for i, record := range merged {
 		for _, mutation := range mutations {
-			if !unacknowledgedFlowMutationFor(mutation, request, record) {
+			if mutation.field.overlayOnly() || !unacknowledgedFlowMutationFor(mutation, request, record) {
 				continue
 			}
 			if merged[i].UpdatedAt.Before(mutation.record.UpdatedAt) {
@@ -1851,13 +1958,15 @@ func unacknowledgedFlowMutationFor(mutation cachedFlowMutation, request uint64, 
 		sameRepoPath(mutation.record.RepoPath, record.RepoPath)
 }
 
-// pruneAcknowledgedFlowMutations drops mutations that every surface able to
-// accept a Flow result has already observed. Repository Flows and Active Flows
-// keep separate request counters and both accept results, so a repository fetch
-// started while an Active Flows fetch is still outstanding must not retire a
-// mutation that the older request still needs. A hidden Active Flows surface
-// rejects its own results and re-fetches on entry, so it never holds pruning
-// back.
+// pruneAcknowledgedFlowMutations drops base-contributing mutations that every
+// surface able to accept a Flow result has already observed. Overlay-only
+// mutations remain as same-field result-ordering watermarks until their Flow is
+// deleted; their acknowledged generation keeps them inert during fetch merges.
+// Repository Flows and Active Flows keep separate request counters and both
+// accept results, so a repository fetch started while an Active Flows fetch is
+// still outstanding must not retire a mutation that the older request still
+// needs. A hidden Active Flows surface rejects its own results and re-fetches on
+// entry, so it never holds pruning back.
 func (m Model) pruneAcknowledgedFlowMutations() Model {
 	threshold := m.currentListRequest(ui.ModeFlows)
 	if active := m.currentListRequest(ui.ModeActiveFlows); m.activeFlowSurfaceVisible() && active < threshold {
@@ -1865,7 +1974,7 @@ func (m Model) pruneAcknowledgedFlowMutations() Model {
 	}
 	retained := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
 	for _, mutation := range m.latestFlowMutations {
-		if mutation.generation >= threshold {
+		if mutation.field.overlayOnly() || mutation.generation >= threshold {
 			retained = append(retained, mutation)
 		}
 	}
@@ -2009,6 +2118,13 @@ func (m Model) clearDeletedFlowState(flowID string) Model {
 	if record, ok := m.activeFlows.Selected(); ok && record.FlowID == flowID {
 		m.selectedActiveFlowPhaseID = ""
 	}
+	retainedMutations := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
+	for _, mutation := range m.latestFlowMutations {
+		if mutation.record.FlowID != flowID {
+			retainedMutations = append(retainedMutations, mutation)
+		}
+	}
+	m.latestFlowMutations = retainedMutations
 	return m
 }
 

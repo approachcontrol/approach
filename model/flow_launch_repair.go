@@ -157,26 +157,6 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	if m.flowLaunchAdmissionOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
 		return m.setStatus(statusOther, m.flowRepairOccupancyRefusal(flowID)), nil, false
 	}
-	repairSettings, err := resolveFlowRepairAgentSettings(record, m.agentPreferences())
-	if err != nil {
-		obstruction, _ := flowRepairObstructionForRecord(record)
-		if agent.Normalize(m.agentCommand) == "" && (!obstruction.HasPhase || agent.Normalize(obstruction.Phase.Agent) == "") {
-			return m.setStatus(statusOther, "Press A to choose codex or claude before repairing a Flow"), nil, false
-		}
-		if !obstruction.HasPhase || obstruction.Phase.AgentSettings().IsZero() {
-			command := agent.Normalize(m.agentCommand)
-			return m.setStatus(statusOther, fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", command)), nil, false
-		}
-		return m.setStatus(statusOther, err.Error()), nil, false
-	}
-	switch repairSettings.Command {
-	case "":
-		return m.setStatus(statusOther, "Press A to choose codex or claude before repairing a Flow"), nil, false
-	case agent.CommandCodex, agent.CommandClaude:
-		// Supported below.
-	default:
-		return m.setStatus(statusOther, fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", repairSettings.Command)), nil, false
-	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
 		// Silent, unlike admitManualFlowLaunch's noLaunchableFlowPhaseStatus on
@@ -402,7 +382,7 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// fallback and its PlanMarkdownPath lookup.
 		resolved, err := resolveFlowRepairAgentSettings(current, settings.Preferences)
 		if err != nil {
-			event.Err = err.Error()
+			event.Err = flowRepairAgentSettingsError(current, settings.Preferences, err)
 			return event
 		}
 		switch resolved.Command {
@@ -444,4 +424,15 @@ func resolveFlowRepairAgentSettings(record flowstore.FlowRecord, prefs agent.Pre
 		raw = obstruction.Phase.AgentSettings()
 	}
 	return flowstore.ResolvePhaseAgentSettings(prefs, raw)
+}
+
+func flowRepairAgentSettingsError(record flowstore.FlowRecord, prefs agent.Preferences, err error) string {
+	obstruction, _ := flowRepairObstructionForRecord(record)
+	if agent.Normalize(prefs.Command) == "" && (!obstruction.HasPhase || agent.Normalize(obstruction.Phase.Agent) == "") {
+		return "Press A to choose codex or claude before repairing a Flow"
+	}
+	if !obstruction.HasPhase || obstruction.Phase.AgentSettings().IsZero() {
+		return fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", agent.Normalize(prefs.Command))
+	}
+	return err.Error()
 }
