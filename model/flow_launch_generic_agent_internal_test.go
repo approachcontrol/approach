@@ -122,6 +122,53 @@ func TestGenericWorktreeAgentPressTimeRefusalsUseGenericContract(t *testing.T) {
 	}
 }
 
+func TestGenericWorktreeAgentRejectsLiveAutofixTmuxOccupancyAtBothBoundaries(t *testing.T) {
+	for _, protected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "admission", true: "protected install"}[protected], func(t *testing.T) {
+			record := genericFlowAgentRecord(t)
+			h := newManualLaunchHarness(t, record)
+			h.launchBackend = config.LaunchBackendTmux
+			h.tmuxAvailable = true
+			h.windowLive = func(_ string, launchIDs []string) bool {
+				return len(launchIDs) == 1 && launchIDs[0] == "autofix-live"
+			}
+			m := h.model()
+
+			if protected {
+				next, readCmd := m.handleStartSelectedFlowWorktreeAgent()
+				m = next.(Model)
+				readMsg, _ := runCommandWithoutWaiting(readCmd)
+				next, prepareCmd := m.Update(readMsg)
+				m = next.(Model)
+				preparedMsg, _ := runCommandWithoutWaiting(prepareCmd)
+				m = m.withFlowAutofixTmuxLaunch(record.FlowID, "autofix-live")
+				next, _ = m.Update(preparedMsg)
+				m = next.(Model)
+			} else {
+				m = m.withFlowAutofixTmuxLaunch(record.FlowID, "autofix-live")
+				next, cmd := m.handleStartSelectedFlowWorktreeAgent()
+				m = next.(Model)
+				if cmd != nil {
+					t.Fatal("live autofix tmux occupancy reached the authoritative read")
+				}
+			}
+
+			if m.status.Text != flowWorktreeAgentPendingStatus || len(h.launchContexts) != 0 {
+				t.Fatalf("live autofix refusal = %q, launches=%#v", m.status.Text, h.launchContexts)
+			}
+			if m.flowLaunchAttemptOccupied(record.FlowID) {
+				t.Fatal("live autofix refusal retained the generic lifecycle attempt")
+			}
+			if len(h.tmuxWindowProbes) != 1 || len(h.tmuxWindowProbes[0]) != 1 || h.tmuxWindowProbes[0][0] != "autofix-live" {
+				t.Fatalf("tmux probes = %#v, want the exact autofix launch", h.tmuxWindowProbes)
+			}
+			if protected && (h.launchReservations != 1 || h.launchReleases != 1) {
+				t.Fatalf("reservation/release = %d/%d", h.launchReservations, h.launchReleases)
+			}
+		})
+	}
+}
+
 func TestGenericWorktreeAgentSKeyUsesBothFlowSurfaces(t *testing.T) {
 	for _, active := range []bool{false, true} {
 		t.Run(map[bool]string{false: "flows", true: "active flows"}[active], func(t *testing.T) {
@@ -191,6 +238,30 @@ func TestGenericWorktreeAgentIgnoresHeadlessAndTmuxRouting(t *testing.T) {
 	ctx := h.launchContexts[0]
 	if !ctx.Embedded || ctx.Headless || ctx.InitialPrompt != "" {
 		t.Fatalf("generic embedded policy = %#v", ctx)
+	}
+}
+
+func TestGenericWorktreeAgentPreservesTerminalFocusAfterNavigationDuringPreparation(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.width = 160
+	m.height = 24
+	m.terminalDockVisible = false
+	m.terminalFocus = terminalFocusList
+
+	next, readCmd := m.handleStartSelectedFlowWorktreeAgent()
+	m = next.(Model)
+	readMsg, _ := runCommandWithoutWaiting(readCmd)
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
+	preparedMsg, _ := runCommandWithoutWaiting(prepareCmd)
+	m = modelWithModeForTest(m, ui.ModeWorktrees)
+	next, _ = m.Update(preparedMsg)
+	m = next.(Model)
+
+	if len(h.launchContexts) != 1 || !m.terminalDockVisible || m.terminalFocus != terminalFocusTerminal {
+		t.Fatalf("navigated generic focus: launches=%#v visible=%v focus=%v", h.launchContexts, m.terminalDockVisible, m.terminalFocus)
 	}
 }
 

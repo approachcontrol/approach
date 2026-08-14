@@ -104,6 +104,9 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	if m.flowLaunchAttemptOccupied(intent.FlowID) {
 		return m.setStatus(statusOther, flowWorktreeAgentPendingStatus), nil, false
 	}
+	if m.tmuxAutofixAgentStillRunning(record, record.WorktreePath) {
+		return m.setStatus(statusOther, flowWorktreeAgentPendingStatus), nil, false
+	}
 	if m.hasFlowEmbeddedTerminalForFlow(intent.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(intent.FlowID) {
 		return m.setStatus(statusOther, flowWorktreeAgentSlotStatus), nil, false
 	}

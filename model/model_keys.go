@@ -2771,6 +2771,9 @@ func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchR
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
+	if ctx.FlowAgent {
+		return m.focusEmbeddedTerminalInput()
+	}
 	if !m.flowSurfaceVisible() {
 		return m
 	}

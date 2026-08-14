@@ -936,6 +936,9 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	if canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, ctx.FlowID); blocked {
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, canceled)
 	}
+	if attempt.Kind == flowLaunchKindWorktreeAgent && m.tmuxAutofixAgentStillRunning(msg.Record, msg.WorktreePath) {
+		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, flowWorktreeAgentPendingStatus)
+	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
