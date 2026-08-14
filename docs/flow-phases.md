@@ -363,7 +363,7 @@ restart installs no baseline and performs no catch-up; live-edge advancement is
 owned by the later sequential-advance slice.
 
 When no exact-link Flow exists, epic enablement first runs the sole sanctioned
-Beads mutation, `bd update <child-id> --claim`, and waits for success before it
+Beads mutation, `bd update --claim -- <child-id>`, and waits for success before it
 calls `PrepareFlow`. A claim error therefore aborts before any new Flow record
 or worktree side effect from that attempt. Beads and Approach storage do not
 share a transaction: an error after the process starts may leave ownership

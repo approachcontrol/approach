@@ -13,7 +13,8 @@ launch.
 
 - `beadsquery` remains strictly read-only. The separate `beadsmutate` package
   is the sole sanctioned Beads write boundary; its only operation is
-  `bd update <id> --claim`, with its own runner. The runner isolates repository and
+  `bd update --claim -- <id>`, with its own runner. The positional separator keeps
+  flag-shaped IDs from being interpreted as options. The runner isolates repository and
   database selectors like the query runner while deliberately retaining
   `BEADS_ACTOR`, which controls assignment and same-actor retry idempotency.
   Claim failure halts the attempt before Flow preparation and surfaces its

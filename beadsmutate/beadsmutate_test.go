@@ -32,7 +32,7 @@ func TestMutatorClaimCanonicalizesInputsAndUsesClaimCommand(t *testing.T) {
 	if runner.calls != 1 || runner.dir != "/selected/repo" {
 		t.Fatalf("runner call = (%d, %q), want (1, %q)", runner.calls, runner.dir, "/selected/repo")
 	}
-	if want := []string{"update", "child-42", "--claim"}; !reflect.DeepEqual(runner.args, want) {
+	if want := []string{"update", "--claim", "--", "child-42"}; !reflect.DeepEqual(runner.args, want) {
 		t.Fatalf("runner args = %#v, want %#v", runner.args, want)
 	}
 }
@@ -49,8 +49,22 @@ func TestClaimUsesDefaultRunner(t *testing.T) {
 	if runner.calls != 1 || runner.dir != "/repo" {
 		t.Fatalf("runner call = (%d, %q), want (1, %q)", runner.calls, runner.dir, "/repo")
 	}
-	if want := []string{"update", "bead-default", "--claim"}; !reflect.DeepEqual(runner.args, want) {
+	if want := []string{"update", "--claim", "--", "bead-default"}; !reflect.DeepEqual(runner.args, want) {
 		t.Fatalf("runner args = %#v, want %#v", runner.args, want)
+	}
+}
+
+func TestMutatorClaimTreatsFlagShapedIDsAsPositional(t *testing.T) {
+	for _, beadID := range []string{"--help", "--db=/other/db", "--actor=other"} {
+		t.Run(beadID, func(t *testing.T) {
+			runner := &fakeRunner{}
+			if err := beadsmutate.NewMutator(runner).Claim("/repo", beadID); err != nil {
+				t.Fatalf("Claim() error = %v", err)
+			}
+			if want := []string{"update", "--claim", "--", beadID}; !reflect.DeepEqual(runner.args, want) {
+				t.Fatalf("runner args = %#v, want %#v", runner.args, want)
+			}
+		})
 	}
 }
 

@@ -47,7 +47,7 @@ func (m *Mutator) Claim(repoPath, beadID string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := m.runner.Run(repoPath, "update", beadID, "--claim"); err != nil {
+	if _, err := m.runner.Run(repoPath, "update", "--claim", "--", beadID); err != nil {
 		return fmt.Errorf("claiming bead %s: %w", beadID, err)
 	}
 	return nil

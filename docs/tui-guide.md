@@ -608,7 +608,7 @@ or otherwise changes tracker state.
 For a selected epic with loaded children and readiness, `a: auto on` enables
 progression from the first ready direct child. After a complete Flow listing
 rules out ambiguous or unusable candidates, a new-Flow path runs
-`bd update <child-id> --claim` and waits for it to finish before the first Flow record or
+`bd update --claim -- <child-id>` and waits for it to finish before the first Flow record or
 worktree side effect. Any claim error is shown with the child ID and underlying
 cause, progression remains known off, and no Flow is prepared by that attempt.
 Because a process-started error can leave ownership uncertain or already

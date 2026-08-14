@@ -12,14 +12,15 @@ import (
 )
 
 type epicProgressionToggleResultMsg struct {
-	target              beadExpansionTarget
-	progression         flowstore.EpicProgression
-	flow                flowstore.FlowRecord
-	baselineDisposition epicProgressionBaselineDisposition
-	enabled             bool
-	known               bool
-	status              string
-	release             func()
+	target               beadExpansionTarget
+	progression          flowstore.EpicProgression
+	flow                 flowstore.FlowRecord
+	baselineDisposition  epicProgressionBaselineDisposition
+	enabled              bool
+	known                bool
+	status               string
+	presentStatusOnStale bool
+	release              func()
 }
 
 type epicProgressionBaselineDisposition uint8
@@ -148,7 +149,7 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		} else {
 			if err := claimBead(target.repoPath, childID); err != nil {
 				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
-					status: fmt.Sprintf("Could not claim child %s; auto-progression remains off: %v", childID, err)}
+					status: fmt.Sprintf("Could not claim child %s; auto-progression remains off: %v", childID, err), presentStatusOnStale: true}
 			}
 			title := childID + ": " + childTitle
 			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", childID, childID)
@@ -262,6 +263,9 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 		m, flowRefreshCmd = m.startFlowSurfaceFetch()
 	}
 	if msg.target != m.beadExpansion.target {
+		if msg.presentStatusOnStale {
+			m = m.setStatus(statusOther, msg.status)
+		}
 		var progressionRefreshCmd tea.Cmd
 		current := m.beadExpansion.target
 		if current.token != 0 && current.repoPath == msg.target.repoPath && current.epicID == msg.target.epicID {

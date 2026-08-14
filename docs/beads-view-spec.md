@@ -234,7 +234,8 @@ it claims a child before preparing that child's new Flow.
 ## Out of Scope
 
 - Any Beads mutation except progression's single sanctioned `bd update
-  <child-id> --claim`; create, start, close, reopen, edit, dependency changes,
+  --claim -- <child-id>`; the positional separator keeps flag-shaped IDs from
+  becoming options. Create, start, close, reopen, edit, dependency changes,
   and automatic unclaim remain out of scope. Queries and manual Ready Flow
   creation stay strictly read-only.
 - Advancing to later children, launching a prepared child's

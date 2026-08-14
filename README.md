@@ -160,7 +160,8 @@ footer shows `a: auto on` to prepare the first ready direct child's Flow and
 enable progression, or `a: auto off` to disable it. Enabled rows show
 `[epic]  [auto]`. Enablement reuses the Ready ordering and exact create-only
 request mapping. Before preparing a new child Flow it claims that child with
-`bd update <id> --claim`; a claim error is shown with its cause and stops the
+`bd update --claim -- <id>`; the positional separator prevents flag-shaped IDs
+from being interpreted as options. A claim error is shown with its cause and stops the
 attempt before any Flow record or worktree is created. Retrying uses the same
 Beads actor because a post-start claim error may mean the claim already landed.
 Enablement may instead adopt one already-prepared pending Flow with the exact

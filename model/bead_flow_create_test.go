@@ -1375,6 +1375,9 @@ func TestEpicProgressionClaimAndPreparationKeepSharedAdmissionUntilResult(t *tes
 			if claims != 1 || creates != tt.wantCreates {
 				t.Fatalf("claims/creates = %d/%d, want 1/%d", claims, creates, tt.wantCreates)
 			}
+			if tt.claimErr != nil && !strings.Contains(m.TransientError(), tt.claimErr.Error()) {
+				t.Fatalf("stale claim failure status = %q, want cause %q", m.TransientError(), tt.claimErr)
+			}
 			if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); retry == nil {
 				t.Fatal("progression result did not release shared admission")
 			}
