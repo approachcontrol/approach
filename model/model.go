@@ -153,6 +153,7 @@ type Model struct {
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	ensureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	setFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
@@ -264,62 +265,63 @@ type visibleRepoFetchState struct {
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
-	AgentCommand             string
-	CodexModel               string
-	ClaudeModel              string
-	CodexReasoningEffort     string
-	ClaudeReasoningEffort    string
-	PlanPromptTemplate       string
-	FlowPromptTemplates      FlowPromptTemplates
-	FlowPresets              []flowstore.Preset
-	FlowPreset               *flowstore.Preset
-	RepoCreateRoot           string
-	ScanRepos                func() ([]scanner.Repo, error)
-	CreateRepo               func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
-	FetchRepo                func(string) error
-	ListSessions             func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
-	ReadTranscript           func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
-	ListPlans                func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
-	ListFlows                func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	ListReadyBeads           func(repoPath string) ([]beadsquery.Bead, error)
-	ListChildrenBeads        func(repoPath, parentID string) ([]beadsquery.Bead, error)
-	ListBlockedBeads         func(repoPath string) ([]beadsquery.Bead, error)
-	ListOpenBeads            func(repoPath string) ([]beadsquery.Bead, error)
-	ListInProgressBeads      func(repoPath string) ([]beadsquery.Bead, error)
-	ListClosedBeads          func(repoPath string) ([]beadsquery.Bead, error)
-	ShowBead                 func(repoPath, beadID string) (string, error)
-	CountClosedBeads         func(repoPath string) (int, error)
-	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
-	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
-	EnsureFlowWorktree       func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
-	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
-	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
-	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
-	SetFlowHeadless          func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
-	LookupPRMerge            func(int, string) (actions.PullRequestMerge, error)
-	MarkFlowManualMerge      func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
-	CloseFlow                func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
-	ReopenFlow               func(flowID string) (flowstore.FlowRecord, error)
-	ReserveFlowRepairLaunch  func(flowID string) (flowstore.FlowRecord, func(), error)
-	ReserveFlowLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
-	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
-	ResetFlowPhase           func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
-	DeleteFlow               func(flowID string) error
-	ReadPlan                 func(string) (string, error)
-	PlanMarkdownPath         func(planID string) (string, error)
-	CopyToClipboard          func(text string) error
-	OpenCode                 func(path string) error
-	OpenURL                  func(url string) error
-	PageText                 func(body string) (actions.TerminalLaunchSpec, error)
-	EditFile                 func(path string) (actions.TerminalLaunchSpec, error)
-	SaveAgentCommand         func(string) error
-	SaveAgentModel           func(string, string) error
-	SaveAgentReasoningEffort func(string, string) error
-	SavePromptTemplate       func(section, key, value string) error
-	ResetPromptTemplate      func(section, key string) error
-	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
-	LaunchDetachedTerminal   func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error)
-	LaunchAgent              func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	AgentCommand              string
+	CodexModel                string
+	ClaudeModel               string
+	CodexReasoningEffort      string
+	ClaudeReasoningEffort     string
+	PlanPromptTemplate        string
+	FlowPromptTemplates       FlowPromptTemplates
+	FlowPresets               []flowstore.Preset
+	FlowPreset                *flowstore.Preset
+	RepoCreateRoot            string
+	ScanRepos                 func() ([]scanner.Repo, error)
+	CreateRepo                func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
+	FetchRepo                 func(string) error
+	ListSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	ReadTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
+	ListPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
+	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
+	ListBlockedBeads          func(repoPath string) ([]beadsquery.Bead, error)
+	ListOpenBeads             func(repoPath string) ([]beadsquery.Bead, error)
+	ListInProgressBeads       func(repoPath string) ([]beadsquery.Bead, error)
+	ListClosedBeads           func(repoPath string) ([]beadsquery.Bead, error)
+	ShowBead                  func(repoPath, beadID string) (string, error)
+	CountClosedBeads          func(repoPath string) (int, error)
+	CreateFlow                func(FlowStartRequest) (FlowStartResult, error)
+	StartFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
+	EnsureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	ReadFlow                  func(flowID string) (flowstore.FlowRecord, error)
+	SetFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	SetFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
+	SetFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	SetFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
+	LookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
+	MarkFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
+	CloseFlow                 func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
+	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
+	ReserveFlowRepairLaunch   func(flowID string) (flowstore.FlowRecord, func(), error)
+	ReserveFlowLaunch         func(flowID string) (flowstore.FlowRecord, func(), error)
+	AddFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	ResetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
+	DeleteFlow                func(flowID string) error
+	ReadPlan                  func(string) (string, error)
+	PlanMarkdownPath          func(planID string) (string, error)
+	CopyToClipboard           func(text string) error
+	OpenCode                  func(path string) error
+	OpenURL                   func(url string) error
+	PageText                  func(body string) (actions.TerminalLaunchSpec, error)
+	EditFile                  func(path string) (actions.TerminalLaunchSpec, error)
+	SaveAgentCommand          func(string) error
+	SaveAgentModel            func(string, string) error
+	SaveAgentReasoningEffort  func(string, string) error
+	SavePromptTemplate        func(section, key, value string) error
+	ResetPromptTemplate       func(section, key string) error
+	LaunchTerminal            func(path string) (actions.TerminalLaunchSpec, error)
+	LaunchDetachedTerminal    func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error)
+	LaunchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	// LaunchBackend is config's [launch].backend. Empty means embedded, which
 	// leaves every launch route exactly as it is without tmux mode.
 	LaunchBackend         string
@@ -488,6 +490,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.SetPhase(update)
+		}
+	}
+	setFlowPhaseAgentSettings := opts.SetFlowPhaseAgentSettings
+	if setFlowPhaseAgentSettings == nil {
+		setFlowPhaseAgentSettings = func(update flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetPhaseAgentSettings(update)
 		}
 	}
 	setFlowAutoMode := opts.SetFlowAutoMode
@@ -771,14 +783,15 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
-		listChildrenBeads:  listChildrenBeads,
-		listReadyBeads:     listReadyBeads,
-		showBead:           showBead,
-		countClosedBeads:   countClosedBeads,
-		createFlow:         createFlowForRepo,
-		startFlowPlan:      startFlowPlan,
-		ensureFlowWorktree: ensureFlowWorktree,
-		setFlowPhase:       setFlowPhase,
+		listChildrenBeads:         listChildrenBeads,
+		listReadyBeads:            listReadyBeads,
+		showBead:                  showBead,
+		countClosedBeads:          countClosedBeads,
+		createFlow:                createFlowForRepo,
+		startFlowPlan:             startFlowPlan,
+		ensureFlowWorktree:        ensureFlowWorktree,
+		setFlowPhase:              setFlowPhase,
+		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
 		launchSeams: newFlowLaunchSeams(
 			readFlow,
 			listSessions,
@@ -1027,13 +1040,19 @@ func (m Model) ModelFor(command string) string {
 // launchAgentSettings resolves the stored per-provider selections down to the
 // single model and reasoning effort that apply to command.
 func (m Model) launchAgentSettings(command string) agent.Settings {
-	return agent.Resolve(agent.Preferences{
-		Command:      command,
+	prefs := m.agentPreferences()
+	prefs.Command = command
+	return agent.Resolve(prefs)
+}
+
+func (m Model) agentPreferences() agent.Preferences {
+	return agent.Preferences{
+		Command:      m.agentCommand,
 		CodexModel:   m.codexModel,
 		ClaudeModel:  m.claudeModel,
 		CodexEffort:  m.codexReasoningEffort,
 		ClaudeEffort: m.claudeReasoningEffort,
-	})
+	}
 }
 
 func (m Model) flowLaunchAgentSettings() (string, string, string) {
@@ -1042,34 +1061,67 @@ func (m Model) flowLaunchAgentSettings() (string, string, string) {
 }
 
 func (m Model) flowModelLabel() string {
-	command := agent.Normalize(m.agentCommand)
+	settings, valid := m.effectiveSelectedFlowAgentSettings()
+	if !valid {
+		return "invalid"
+	}
+	command := settings.Command
 	switch command {
 	case agent.CommandCodex:
-		return modelDisplay(m.ModelFor(command))
+		return modelDisplay(settings.Model)
 	case agent.CommandClaude:
-		return strings.TrimPrefix(modelDisplay(m.ModelFor(command)), "claude-")
+		return strings.TrimPrefix(modelDisplay(settings.Model), "claude-")
 	default:
 		return ""
 	}
 }
 
 func (m Model) flowReasoningEffortLabel() string {
-	command := agent.Normalize(m.agentCommand)
+	settings, valid := m.effectiveSelectedFlowAgentSettings()
+	if !valid {
+		return "effort: invalid"
+	}
+	command := settings.Command
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
+		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(settings.ReasoningEffort))
 	default:
 		return ""
 	}
 }
 
 func (m Model) flowAgentShortcutLabel() string {
-	switch command := agent.Normalize(m.agentCommand); command {
+	settings, valid := m.effectiveSelectedFlowAgentSettings()
+	if !valid {
+		return "invalid settings"
+	}
+	switch command := settings.Command; command {
 	case agent.CommandCodex, agent.CommandClaude:
 		return command
 	default:
 		return "choose agent"
 	}
+}
+
+func (m Model) effectiveSelectedFlowAgentSettings() (agent.Settings, bool) {
+	if m.flowPhaseAgentControlsSelected() {
+		if phase, ok := m.selectedFlowPhase(); ok {
+			settings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+			if err != nil {
+				return agent.Settings{}, false
+			}
+			return settings, true
+		}
+	}
+	return m.launchAgentSettings(m.agentCommand), true
+}
+
+func (m Model) flowPhaseAgentControlsSelected() bool {
+	if !m.flowSurfaceVisible() || m.activePane == ui.PaneRepos {
+		return false
+	}
+	_, ok := m.selectedFlowPhase()
+	return ok
 }
 
 func reasoningEffortDisplay(effort string) string {
@@ -1888,6 +1940,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAgentReasoningEffortSet(msg), nil
 	case AgentReasoningEffortSetFailedMsg:
 		return m.handleAgentReasoningEffortSetFailed(msg), nil
+	case FlowPhaseAgentSettingsSetMsg:
+		return m.handleFlowPhaseAgentSettingsSet(msg), nil
+	case FlowPhaseAgentSettingsSetFailedMsg:
+		return m.handleFlowPhaseAgentSettingsSetFailed(msg), nil
 	case promptTemplateEditRequestedMsg:
 		return m.handlePromptTemplateEditRequested(msg), nil
 	case PromptTemplateSavedMsg:
@@ -2299,7 +2355,7 @@ func flowRecordPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore
 }
 
 func flowRecordPhaseIndexByID(record flowstore.FlowRecord, phaseID string) (int, flowstore.FlowPhase, bool) {
-	requested := strings.TrimSpace(phaseID)
+	requested := phaseID
 	phases := flowstore.OrderedPhases(record.Phases)
 	for i, phase := range phases {
 		if phase.PhaseID == requested {

@@ -379,10 +379,36 @@ Each field means something on its own:
 - `default` — captured, and means the provider default. It is stored verbatim.
 - Anything else — captured and concrete.
 
-Nothing consumes these values at launch yet: `FlowPhaseLauncher`,
-`FlowStarter.StartPlan`, and Flow repair still resolve the agent, model, and
-reasoning effort from the current global settings. The fields are recorded for
-the follow-up that surfaces and then honors them.
+New phase launches resolve these fields independently. An empty `agent` uses
+the globally selected agent. A non-empty phase agent selects that provider's
+current global model and effort, even when another provider is selected
+globally; each non-empty phase model or effort then overrides its corresponding
+fallback. The raw triple is normalized and validated before fallback, so an
+invalid model-only stamp or provider-incompatible value cannot be repaired by
+an otherwise valid global preference. A literal `default` is non-empty and
+remains an explicit provider-default choice.
+
+Manual launches, AutoMode, and the initial Plan launch all use the target
+phase's effective settings. The launch-ID write is the linearization point: a
+settings edit committed before that write is honored, while one committed
+after it affects the next launch. Phase-scoped repair uses the obstructing
+phase's effective settings; a graph-wide obstruction has no target phase and
+therefore resolves entirely from globals. Session resume and the generic Flow
+worktree agent keep their existing provider rules because neither is a new
+target-phase launch.
+
+Replace the complete stamp with:
+
+```bash
+approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation \
+  --agent claude --model claude-opus-5 --reasoning-effort high
+```
+
+Omitted model and effort flags intentionally remain empty fallbacks. Use
+`--clear` instead of `--agent` to clear the whole stamp. This settings-only
+mutation is permitted for every phase and Flow status, including closed Flows;
+it changes no phase status, outcome, dependencies, launch/session history,
+readiness, or linked plan. An identical replacement preserves timestamps.
 
 ## Compatibility and migration
 

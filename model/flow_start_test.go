@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
 )
@@ -132,6 +133,61 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		if strings.Contains(prompt, strings.ToLower(unwanted)) {
 			t.Fatalf("launch prompt should not include metadata %q: %q", unwanted, ctx.InitialPrompt)
 		}
+	}
+}
+
+func TestFlowStarterStartPlanUsesAuthoritativeNormalizedPhase(t *testing.T) {
+	createdPhase := flowstore.FlowPhase{PhaseID: " Plan ", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}
+	authoritativePhase := flowstore.FlowPhase{
+		PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseRunning,
+		Agent: agent.CommandClaude,
+	}
+	var flow flowstore.FlowRecord
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{createdPhase}
+			flow = record
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/worktree", Branch: "flow/one"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			flow.WorktreePath = update.WorktreePath
+			flow.Branch = update.Branch
+			flow.Commit = update.Commit
+			return flow, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			flow.Phases = []flowstore.FlowPhase{authoritativePhase}
+			return flow, nil
+		},
+		ResolveCommit: func(string) string { return "abc123" },
+		NewLaunchID:   func() string { return "launch-1" },
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:    "/repo",
+		Title:       "Normalized phase",
+		PlanPhaseID: " Plan ",
+		AgentPreferences: agent.Preferences{
+			Command:      agent.CommandCodex,
+			CodexModel:   agent.ModelGPT55,
+			ClaudeModel:  agent.ModelClaudeSonnet5,
+			ClaudeEffort: agent.ReasoningEffortMax,
+		},
+		AgentPreferencesProvided: true,
+	})
+	if err != nil {
+		t.Fatalf("StartPlan() error = %v", err)
+	}
+	ctx := result.LaunchContext
+	if ctx.Command != agent.CommandClaude || ctx.Model != agent.ModelClaudeSonnet5 || ctx.ReasoningEffort != agent.ReasoningEffortMax {
+		t.Fatalf("launch settings = %q/%q/%q, want authoritative Claude settings", ctx.Command, ctx.Model, ctx.ReasoningEffort)
+	}
+	if ctx.FlowPhaseID != "plan" || ctx.PlanPhaseID != "plan" {
+		t.Fatalf("launch phase IDs = flow %q plan %q, want canonical plan", ctx.FlowPhaseID, ctx.PlanPhaseID)
 	}
 }
 

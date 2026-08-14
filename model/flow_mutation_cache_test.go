@@ -44,3 +44,22 @@ func TestPruneAcknowledgedFlowMutationsWaitsForEverySurface(t *testing.T) {
 		})
 	}
 }
+
+func TestPruneAcknowledgedFlowMutationsRetainsOverlayOrderingWatermark(t *testing.T) {
+	var m Model
+	m.listRequests[int(ui.ModeFlows)] = 20
+	m.latestFlowMutations = []cachedFlowMutation{{
+		record: flowstore.FlowRecord{
+			FlowID:   "flow-1",
+			RepoPath: "/dev/alpha",
+		},
+		generation: 10,
+		field:      flowPhaseAgentSettingsMutationField("implementation"),
+	}}
+
+	m = m.pruneAcknowledgedFlowMutations()
+
+	if len(m.latestFlowMutations) != 1 {
+		t.Fatalf("overlay ordering watermark was pruned: %#v", m.latestFlowMutations)
+	}
+}

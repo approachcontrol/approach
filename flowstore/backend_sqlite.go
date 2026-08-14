@@ -518,3 +518,33 @@ ON CONFLICT(flow_id) DO UPDATE SET
 	}
 	return nil
 }
+
+func (s sqliteSession) savePhaseAgentSettings(update phaseAgentSettingsSave) error {
+	var data []byte
+	if err := s.tx.QueryRow("SELECT record FROM flows WHERE flow_id = ?", s.flowID).Scan(&data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return flowNotFoundError(s.flowID)
+		}
+		return fmt.Errorf("read flow %q for settings-only save: %w", s.flowID, err)
+	}
+	patched, err := patchStoredFlowPhaseAgentSettings(data, update)
+	if err != nil {
+		return fmt.Errorf("patch flow %q agent settings: %w", s.flowID, err)
+	}
+	updatedAt, err := formatStorageTime(update.RecordUpdatedAt)
+	if err != nil {
+		return fmt.Errorf("save flow %q agent settings: %w", s.flowID, err)
+	}
+	result, err := s.tx.Exec("UPDATE flows SET updated_at = ?, record = ? WHERE flow_id = ?", updatedAt, patched, s.flowID)
+	if err != nil {
+		return fmt.Errorf("save flow %q agent settings: %w", s.flowID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read flow %q settings-only save result: %w", s.flowID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("save flow %q agent settings updated %d rows, want 1", s.flowID, rows)
+	}
+	return nil
+}
