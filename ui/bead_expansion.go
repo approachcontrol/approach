@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/approachcontrol/approach/beadsquery"
 )
 
@@ -34,10 +36,10 @@ func BeadVisualHeight(bead beadsquery.Bead, expansion BeadExpansion) int {
 	}
 	switch expansion.State {
 	case BeadExpansionLoaded:
-		if len(expansion.Children) == 0 {
-			return 2
-		}
 		height := 1 + len(expansion.Children)
+		if len(expansion.Children) == 0 {
+			height++
+		}
 		if !expansion.ReadinessKnown {
 			height++
 		}
@@ -74,16 +76,16 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 	case BeadExpansionLoaded:
 		if len(expansion.Children) == 0 {
 			stateLine("no direct children")
-			break
-		}
-		for _, child := range expansion.Children {
-			id := terminalSafeSingleLine(child.ID)
-			title := terminalSafeSingleLine(child.Title)
-			body := fmt.Sprintf("↳ %s  P%d  %s", id, child.Priority, title)
-			if expansion.ReadinessKnown && expansion.ReadyIDs[child.ID] {
-				body += "  [ready]"
+		} else {
+			for _, child := range expansion.Children {
+				id := terminalSafeSingleLine(child.ID)
+				title := terminalSafeSingleLine(child.Title)
+				body := fmt.Sprintf("↳ %s  P%d  %s", id, child.Priority, title)
+				if expansion.ReadinessKnown && expansion.ReadyIDs[child.ID] {
+					body += "  [ready]"
+				}
+				lines = append(lines, truncateToWidth("     "+body, width))
 			}
-			lines = append(lines, truncateToWidth("     "+body, width))
 		}
 		if !expansion.ReadinessKnown {
 			stateLine("Readiness unavailable: " + expansion.Detail)
@@ -100,12 +102,18 @@ func renderBeadRow(bead beadsquery.Bead, selected bool, width int) string {
 	if assignee != "" {
 		body += "  " + assignee
 	}
+	marker := ""
 	if strings.EqualFold(strings.TrimSpace(bead.IssueType), "epic") {
-		body += "  [epic]"
+		marker = "  [epic]"
 	}
-	line := "   " + body
+	prefix := "   "
 	if selected {
-		line = renderStyledRow(stashSelStyle.Render(" > "+body), stashSelStyle, width)
+		prefix = " > "
+	}
+	body = truncateToWidth(body, width-ansi.StringWidth(prefix)-ansi.StringWidth(marker))
+	line := prefix + body + marker
+	if selected {
+		line = renderStyledRow(stashSelStyle.Render(line), stashSelStyle, width)
 	}
 	return truncateToWidth(line, width)
 }

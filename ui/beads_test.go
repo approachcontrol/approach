@@ -69,6 +69,46 @@ func TestRenderBeadsPaneMarksEpicsAndExpandsSelectedEpicReadyFirst(t *testing.T)
 	}
 }
 
+func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	const width = 24
+	epic := beadsquery.Bead{
+		ID: "bd-epic", Priority: 1, Title: "A very long epic title",
+		Assignee: "a-very-long-assignee", IssueType: "epic",
+	}
+	for _, selected := range []bool{false, true} {
+		line := renderBeadRow(epic, selected, width)
+		plain := ansi.Strip(line)
+		if !strings.Contains(plain, "[epic]") {
+			t.Fatalf("selected=%t narrow row lost epic marker: %q", selected, plain)
+		}
+		if got := ansi.StringWidth(line); got > width {
+			t.Fatalf("selected=%t row width = %d, want <= %d: %q", selected, got, width, plain)
+		}
+	}
+}
+
+func TestRenderBeadsPaneEmptyChildrenStillShowsReadinessFailure(t *testing.T) {
+	t.Parallel()
+
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Detail: "bd ready failed",
+	}
+	lines := expansionVisualLines(epic, true, 60, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	for _, want := range []string{"no direct children", "Readiness unavailable: bd ready failed"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("empty partial failure missing %q:\n%s", want, plain)
+		}
+	}
+	if got := BeadVisualHeight(epic, expansion); got != 3 || got != len(lines) {
+		t.Fatalf("height = %d, rendered lines = %d, want 3", got, len(lines))
+	}
+}
+
 func TestRenderBeadsPaneExpansionStatesAreBoundedAndSanitized(t *testing.T) {
 	t.Parallel()
 
