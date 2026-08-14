@@ -91,12 +91,9 @@ type manualLaunchHarness struct {
 
 	// ensureRecords counts what the worktree-creation seam was asked to create,
 	// so "the git work never happened" is assertable rather than inferred.
-	ensureRecords  []flowstore.FlowRecord
-	ensureErr      error
-	ensured        flowstore.FlowRecord
-	inspectedPaths []string
-	inspectErr     error
-	inspectFunc    func(string) error
+	ensureRecords []flowstore.FlowRecord
+	ensureErr     error
+	ensured       flowstore.FlowRecord
 
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
@@ -193,23 +190,6 @@ func (h *manualLaunchHarness) options() Options {
 			h.readFlowCalls++
 			return h.persistedFlow(strings.TrimSpace(flowID))
 		},
-		// Overridden in every harness model: the default seam runs real git.
-		EnsureFlowWorktree: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			h.ensureRecords = append(h.ensureRecords, record)
-			if h.ensureErr != nil {
-				// The two compose, because the real seam's bootstrap-hook
-				// failure does: it persists the worktree and then reports.
-				return h.ensured, h.ensureErr
-			}
-			if h.ensured.FlowID != "" {
-				return h.ensured, nil
-			}
-			ensured := record
-			ensured.WorktreePath = "/dev/alpha-worktrees/flow-one"
-			ensured.Branch = "flow/flow-one"
-			ensured.Commit = "abc123"
-			return ensured, nil
-		},
 		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			if h.reserveLaunchErr != nil {
 				return flowstore.FlowRecord{}, nil, h.reserveLaunchErr
@@ -297,12 +277,19 @@ func (h *manualLaunchHarness) model() Model {
 func (h *manualLaunchHarness) modelWith(repos []scanner.Repo, opts Options) Model {
 	h.t.Helper()
 	m := NewWithOptions(repos, opts)
-	m.launchSeams.InspectWorktreeDirectory = func(path string) error {
-		h.inspectedPaths = append(h.inspectedPaths, path)
-		if h.inspectFunc != nil {
-			return h.inspectFunc(path)
+	m.launchSeams.EnsureWorktree = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		h.ensureRecords = append(h.ensureRecords, record)
+		if h.ensureErr != nil {
+			return h.ensured, h.ensureErr
 		}
-		return h.inspectErr
+		if h.ensured.FlowID != "" {
+			return h.ensured, nil
+		}
+		ensured := record
+		ensured.WorktreePath = "/dev/alpha-worktrees/flow-one"
+		ensured.Branch = "flow/flow-one"
+		ensured.Commit = "abc123"
+		return ensured, nil
 	}
 	m.contentPane = ui.PaneBottom
 	m.bottomMode = ui.ModeFlows
@@ -2069,36 +2056,6 @@ func TestFlowLaunchOccupancyMatchesExactFlowID(t *testing.T) {
 	}
 	if _, _, ok := held.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: "flow-abc"}); !ok {
 		t.Fatal("prefix-like Flow ID should still be launchable")
-	}
-}
-
-func TestFlowStarterPlanLaunchUsesFreshlyCreatedFlowID(t *testing.T) {
-	// gzs.1 leaves FlowStarter.StartPlan unguarded because the Flow it launches
-	// was created by the same call and cannot collide with a live attempt.
-	var launched flowstore.PhaseLaunchUpdate
-	starter := newPreparedFlowStarterForInternalTest(FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			record.FlowID = "created-flow"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady, Order: 1}}
-			return record, nil
-		},
-		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
-			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/created", Branch: "flow/created"}, nil
-		},
-		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			launched = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		ResolveCommit: func(string) string { return "abc123" },
-		NewLaunchID:   func() string { return "launch-1" },
-	})
-
-	result, err := starter.StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
-	if err != nil {
-		t.Fatalf("StartPlan() error = %v", err)
-	}
-	if launched.FlowID != "created-flow" || result.Flow.FlowID != "created-flow" {
-		t.Fatalf("StartPlan launched %q, want the Flow it just created", launched.FlowID)
 	}
 }
 

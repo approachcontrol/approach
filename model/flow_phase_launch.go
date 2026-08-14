@@ -14,24 +14,24 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-type FlowPhaseLaunchRoute int
+type flowPhaseLaunchRoute int
 
 const (
-	FlowPhaseLaunchEmbedded FlowPhaseLaunchRoute = iota + 1
-	// FlowPhaseLaunchTmux runs the agent as a window in the repo's tmux
+	flowPhaseLaunchEmbedded flowPhaseLaunchRoute = iota + 1
+	// flowPhaseLaunchTmux runs the agent as a window in the repo's tmux
 	// session. It is external-style: nothing in the TUI owns the process.
-	FlowPhaseLaunchTmux
+	flowPhaseLaunchTmux
 )
 
-type FlowPhaseLaunchRequest struct {
+type flowPhaseLaunchRequest struct {
 	Record     flowstore.FlowRecord
 	Phase      flowstore.FlowPhase
 	AutoLaunch bool
 	Headless   bool
 }
 
-type FlowPhaseLaunchPreparedRequest struct {
-	FlowPhaseLaunchRequest
+type flowPhaseLaunchPreparedRequest struct {
+	flowPhaseLaunchRequest
 	RepoPath     string
 	WorktreePath string
 	PlanPath     string
@@ -42,9 +42,9 @@ type FlowPhaseLaunchPreparedRequest struct {
 	CreatedWorktree bool
 }
 
-type FlowPhaseLaunchResult struct {
+type flowPhaseLaunchResult struct {
 	Context actions.AgentLaunchContext
-	Route   FlowPhaseLaunchRoute
+	Route   flowPhaseLaunchRoute
 	Skipped bool
 	// FallbackNote is set only when the tmux route was eligible and the
 	// availability probe failed. Choosing the embedded backend, and the
@@ -52,18 +52,18 @@ type FlowPhaseLaunchResult struct {
 	FallbackNote string
 }
 
-type FlowPhaseLaunchValidationError struct {
+type flowPhaseLaunchValidationError struct {
 	Message string
 }
 
-func (err FlowPhaseLaunchValidationError) Error() string {
+func (err flowPhaseLaunchValidationError) Error() string {
 	return err.Message
 }
 
-// FlowPhaseLaunchWorktreeError is what EnsureLaunchWorktree refuses with. It is
+// flowPhaseLaunchWorktreeError is what EnsureLaunchWorktree refuses with. It is
 // its own type so callers classify by step rather than by error text; the
 // lifecycle's outcome enum exists for the same reason.
-type FlowPhaseLaunchWorktreeError struct {
+type flowPhaseLaunchWorktreeError struct {
 	Message string
 	// Transient marks the refusals that clear without the user. AutoMode must
 	// not block a phase on one of these: the reservation the ensure seam waits
@@ -76,7 +76,7 @@ type FlowPhaseLaunchWorktreeError struct {
 	Stale bool
 }
 
-func (err FlowPhaseLaunchWorktreeError) Error() string {
+func (err flowPhaseLaunchWorktreeError) Error() string {
 	return err.Message
 }
 
@@ -98,7 +98,7 @@ const (
 	flowPhaseLaunchWorktreeBusy = "Another launch is setting up this Flow's worktree: "
 )
 
-type FlowPhaseLauncher struct {
+type flowLaunchPreparation struct {
 	CurrentRepoPath      func() (string, bool)
 	PlanMarkdownPath     func(string) (string, error)
 	ReadPlan             func(string) (string, error)
@@ -121,45 +121,41 @@ type FlowPhaseLauncher struct {
 	// has none, returning the updated record. Nil means "refuse worktree-less
 	// launches" — it never means "fall back to the repository root".
 	EnsureWorktree func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
-	// InspectWorktreeDirectory validates a non-empty recorded worktree path.
-	// Nil means "use the real filesystem inspector", never "skip validation".
-	InspectWorktreeDirectory func(string) error
 }
 
-func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
+func (m Model) flowLaunchPreparation() flowLaunchPreparation {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
-	return FlowPhaseLauncher{
-		Backend:                  m.launchBackend,
-		TmuxAvailable:            m.tmuxAvailable,
-		CurrentRepoPath:          m.currentRepoPath,
-		PlanMarkdownPath:         m.planMarkdownPath,
-		ReadPlan:                 m.readPlan,
-		AddFlowPhaseLaunchID:     m.addFlowPhaseLaunchID,
-		NewLaunchID:              newLaunchID,
-		SessionStateRoot:         m.sessionStateRoot,
-		AgentPreferences:         m.agentPreferences(),
-		AgentCommand:             command,
-		Model:                    model,
-		ReasoningEffort:          reasoningEffort,
-		PromptTemplates:          m.flowPromptTemplates,
-		EnsureWorktree:           m.ensureFlowWorktree,
-		InspectWorktreeDirectory: m.launchSeams.inspectWorktreeDirectory,
+	return flowLaunchPreparation{
+		Backend:              m.launchBackend,
+		TmuxAvailable:        m.tmuxAvailable,
+		CurrentRepoPath:      m.currentRepoPath,
+		PlanMarkdownPath:     m.planMarkdownPath,
+		ReadPlan:             m.readPlan,
+		AddFlowPhaseLaunchID: m.addFlowPhaseLaunchID,
+		NewLaunchID:          newLaunchID,
+		SessionStateRoot:     m.sessionStateRoot,
+		AgentPreferences:     m.agentPreferences(),
+		AgentCommand:         command,
+		Model:                model,
+		ReasoningEffort:      reasoningEffort,
+		PromptTemplates:      m.flowPromptTemplates,
+		EnsureWorktree:       m.launchSeams.EnsureWorktree,
 	}
 }
 
-func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunchPreparedRequest, error) {
+func (l flowLaunchPreparation) preflight(req flowPhaseLaunchRequest) (flowPhaseLaunchPreparedRequest, error) {
 	settings, err := l.resolvePhaseAgentSettings(req.Phase)
 	if err != nil {
 		if agent.Normalize(l.preferences().Command) == "" && agent.Normalize(req.Phase.Agent) == "" {
-			return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{
+			return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{
 				Message: "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
 			}
 		}
-		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
+		return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: err.Error()}
 	}
 	command := settings.Command
 	if err := agent.Validate(command); err != nil {
-		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
+		return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: err.Error()}
 	}
 	repoPath := req.Record.RepoPath
 	if repoPath == "" && l.CurrentRepoPath != nil {
@@ -171,28 +167,28 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 	// to EnsureLaunchWorktree, which is allowed to touch the filesystem.
 	worktreePath := req.Record.WorktreePath
 	if worktreePath == "" && repoPath == "" {
-		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: "Cannot determine launch path for this flow"}
+		return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: "Cannot determine launch path for this flow"}
 	}
 	planPath := req.Record.PlanPath
 	if req.Record.PlanID != "" && planPath == "" {
 		if l.PlanMarkdownPath == nil {
-			return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: "Cannot determine linked plan path"}
+			return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: "Cannot determine linked plan path"}
 		}
 		var err error
 		planPath, err = l.PlanMarkdownPath(req.Record.PlanID)
 		if err != nil {
-			return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
+			return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: err.Error()}
 		}
 	}
 	if flowstore.SemanticKind(req.Phase) == flowstore.KindPlanReview && req.Record.PlanID == "" {
-		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: "Plan Review needs a linked plan before launch"}
+		return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: "Plan Review needs a linked plan before launch"}
 	}
 	generateLaunchID := l.NewLaunchID
 	if generateLaunchID == nil {
 		generateLaunchID = newLaunchID
 	}
-	return FlowPhaseLaunchPreparedRequest{
-		FlowPhaseLaunchRequest: req,
+	return flowPhaseLaunchPreparedRequest{
+		flowPhaseLaunchRequest: req,
 		RepoPath:               repoPath,
 		WorktreePath:           worktreePath,
 		PlanPath:               planPath,
@@ -200,27 +196,23 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 	}, nil
 }
 
-// EnsureLaunchWorktree validates a prepared request's recorded worktree, or
-// provisions one when the record has no path. It is the only filesystem-aware
-// part of launch preparation, so callers must run it last: after every cheap
-// refusal Preflight makes and after the session-occupancy check, or a launch
-// that is about to be refused may inspect unnecessarily or leave an orphan
-// branch and directory behind.
-func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchPreparedRequest, error) {
+// EnsureLaunchWorktree resolves a prepared request whose WorktreePath is still
+// empty. It is the only part of launch preparation that mutates the filesystem,
+// so callers must run it last: after every cheap refusal Preflight makes and
+// after the session-occupancy check, or a launch that is about to be refused
+// leaves an orphan branch and directory behind.
+func (l flowLaunchPreparation) ensureWorktree(req flowPhaseLaunchPreparedRequest) (flowPhaseLaunchPreparedRequest, error) {
 	if req.WorktreePath != "" {
-		if err := l.inspectWorktreeDirectory(req.WorktreePath); err != nil {
-			return req, recordedFlowWorktreeUnusableError(req.WorktreePath, err)
-		}
 		return req, nil
 	}
 	// Record.RepoPath, never req.RepoPath: the latter has already fallen back to
 	// CurrentRepoPath, and creating a worktree there would put the Flow in
 	// whatever repository the user happens to have selected.
 	if req.Record.RepoPath == "" {
-		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoRepoStatus}
+		return req, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoRepoStatus}
 	}
 	if l.EnsureWorktree == nil {
-		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoWorktreeStatus}
+		return req, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoWorktreeStatus}
 	}
 	updated, err := l.EnsureWorktree(req.Record)
 	// A seam that persisted a worktree and then failed — the bootstrap hook is
@@ -239,13 +231,13 @@ func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedReque
 	if err != nil {
 		switch {
 		case created:
-			return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnusable + err.Error()}
+			return req, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnusable + err.Error()}
 		case errors.Is(err, ErrFlowWorktreeUnreserved):
 			// Nothing was created, so nothing is orphaned by coming back. A Flow
 			// closed out from under this read is the one unreserved case that
 			// will never clear, and it is stale rather than transient: its
 			// candidate is gone, so neither a retry nor a write applies.
-			return req, FlowPhaseLaunchWorktreeError{
+			return req, flowPhaseLaunchWorktreeError{
 				Message:   flowPhaseLaunchWorktreeBusy + err.Error(),
 				Transient: !flowstore.IsFlowClosed(err),
 				Stale:     flowstore.IsFlowClosed(err),
@@ -254,46 +246,28 @@ func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedReque
 			// The seam made a directory it could not persist, so it hands back
 			// the pre-ensure record and `created` is false. Creation is the one
 			// thing that did not fail, and the wrapped error names the path.
-			return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnrecorded + err.Error()}
+			return req, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeUnrecorded + err.Error()}
 		}
-		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + err.Error()}
+		return req, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + err.Error()}
 	}
 	if !created {
-		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + "no worktree path was recorded"}
-	}
-	// EnsureWorktree may return a path another process recorded while this
-	// launch was waiting for the reservation. Validate every successfully
-	// ensured path before Prepare can persist a launch ID against it.
-	if err := l.inspectWorktreeDirectory(req.WorktreePath); err != nil {
-		return req, recordedFlowWorktreeUnusableError(req.WorktreePath, err)
+		return req, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + "no worktree path was recorded"}
 	}
 	return req, nil
 }
 
-func recordedFlowWorktreeUnusableError(path string, err error) FlowPhaseLaunchWorktreeError {
-	return FlowPhaseLaunchWorktreeError{Message: fmt.Sprintf(
-		"Recorded Flow worktree %q is unusable: %v", path, err)}
-}
-
-func (l FlowPhaseLauncher) inspectWorktreeDirectory(path string) error {
-	if l.InspectWorktreeDirectory != nil {
-		return l.InspectWorktreeDirectory(path)
-	}
-	return inspectWorktreeDirectory(path)
-}
-
-func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchResult, error) {
+func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flowPhaseLaunchResult, error) {
 	// Structural rather than topological: an empty WorktreePath becomes an empty
 	// cmd.Dir, which makes the agent inherit Approach's own working directory.
 	// Refusing here means a caller that forgets to ensure cannot express the bug.
 	if req.WorktreePath == "" {
-		return FlowPhaseLaunchResult{}, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoWorktreeStatus}
+		return flowPhaseLaunchResult{}, flowPhaseLaunchWorktreeError{Message: flowPhaseLaunchNoWorktreeStatus}
 	}
 	planBody := ""
 	if req.Record.PlanID != "" && flowPhasePromptNeedsPlanBody(req.Phase) {
 		body, err := l.readPlan(req.Record.PlanID)
 		if err != nil {
-			return FlowPhaseLaunchResult{}, fmt.Errorf("failed to read linked plan %s: %w", req.Record.PlanID, err)
+			return flowPhaseLaunchResult{}, fmt.Errorf("failed to read linked plan %s: %w", req.Record.PlanID, err)
 		}
 		planBody = body
 	}
@@ -305,9 +279,9 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 	})
 	if err != nil {
 		if req.AutoLaunch && flowstore.IsAutoLaunchOutdated(err) {
-			return FlowPhaseLaunchResult{Skipped: true}, nil
+			return flowPhaseLaunchResult{Skipped: true}, nil
 		}
-		return FlowPhaseLaunchResult{}, fmt.Errorf("failed to mark flow phase running: %w", err)
+		return flowPhaseLaunchResult{}, fmt.Errorf("failed to mark flow phase running: %w", err)
 	}
 	launchPhase := req.Phase
 	if persistedPhase, ok := flowPhaseByID(updated, req.Phase.PhaseID); ok {
@@ -315,7 +289,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 	}
 	settings, err := l.resolvePhaseAgentSettings(launchPhase)
 	if err != nil {
-		return FlowPhaseLaunchResult{}, FlowPhaseLaunchValidationError{Message: err.Error()}
+		return flowPhaseLaunchResult{}, flowPhaseLaunchValidationError{Message: err.Error()}
 	}
 	command := settings.Command
 	// AddFlowPhaseLaunchID is the linearization point for the target phase only.
@@ -341,7 +315,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		FlowAutoLaunch:   req.AutoLaunch,
 		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
 	}
-	route := FlowPhaseLaunchEmbedded
+	route := flowPhaseLaunchEmbedded
 	fallbackNote := ""
 	ctx.FlowLaunchTracked = true
 	ctx.Embedded = true
@@ -354,37 +328,37 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 	// Headless is resolved above, so the tmux decision is made against the
 	// value that actually launches rather than the requested one.
 	if tmuxRoute, fellBack := l.tmuxLaunchRoute(ctx); tmuxRoute {
-		route = FlowPhaseLaunchTmux
+		route = flowPhaseLaunchTmux
 		// A tmux window has no dock to prefill and renders its own output,
 		// so it is external-style: the TUI owns no part of the process.
 		ctx.Embedded = false
 	} else if fellBack {
 		fallbackNote = tmuxFallbackNote
 	}
-	return FlowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: fallbackNote}, nil
+	return flowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: fallbackNote}, nil
 }
 
 // tmuxLaunchRoute applies the shared routing rule to the launcher's own copy of
 // the backend and probe, which a lifecycle attempt snapshots at admission.
-func (l FlowPhaseLauncher) tmuxLaunchRoute(ctx actions.AgentLaunchContext) (route bool, fellBack bool) {
+func (l flowLaunchPreparation) tmuxLaunchRoute(ctx actions.AgentLaunchContext) (route bool, fellBack bool) {
 	return tmuxLaunchRouteFor(l.Backend, l.TmuxAvailable, ctx)
 }
 
-func (l FlowPhaseLauncher) readPlan(planID string) (string, error) {
+func (l flowLaunchPreparation) readPlan(planID string) (string, error) {
 	if l.ReadPlan == nil {
 		return "", nil
 	}
 	return l.ReadPlan(planID)
 }
 
-func (l FlowPhaseLauncher) addFlowPhaseLaunchID(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+func (l flowLaunchPreparation) addFlowPhaseLaunchID(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 	if l.AddFlowPhaseLaunchID == nil {
 		return flowstore.FlowRecord{}, nil
 	}
 	return l.AddFlowPhaseLaunchID(update)
 }
 
-func (l FlowPhaseLauncher) preferences() agent.Preferences {
+func (l flowLaunchPreparation) preferences() agent.Preferences {
 	if l.AgentPreferences != (agent.Preferences{}) {
 		return l.AgentPreferences
 	}
@@ -400,7 +374,7 @@ func (l FlowPhaseLauncher) preferences() agent.Preferences {
 	return prefs
 }
 
-func (l FlowPhaseLauncher) resolvePhaseAgentSettings(phase flowstore.FlowPhase) (agent.Settings, error) {
+func (l flowLaunchPreparation) resolvePhaseAgentSettings(phase flowstore.FlowPhase) (agent.Settings, error) {
 	return flowstore.ResolvePhaseAgentSettings(l.preferences(), phase.AgentSettings())
 }
 

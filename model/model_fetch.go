@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
-	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/scanner"
@@ -341,7 +340,6 @@ func (m Model) clearFlowCreateRequest(request uint64) Model {
 func (m Model) nextReadyBeadFlowCreateRequest() (Model, uint64) {
 	m.readyBeadFlowCreateSeq++
 	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
-	m.flowPreparationAdmission = true
 	return m, m.activeReadyBeadFlowCreate
 }
 
@@ -353,7 +351,6 @@ func (m Model) clearReadyBeadFlowCreateRequest(request uint64) Model {
 	if m.isCurrentReadyBeadFlowCreateRequest(request) {
 		m.activeReadyBeadFlowCreate = 0
 	}
-	m.flowPreparationAdmission = false
 	return m
 }
 
@@ -361,52 +358,6 @@ func (m Model) invalidateReadyBeadFlowCreateRequest() Model {
 	m.readyBeadFlowCreateSeq++
 	m.activeReadyBeadFlowCreate = 0
 	return m
-}
-
-// acceptCreationTimeFlowLaunch validates the mutually exclusive request
-// namespaces used by Plan Now and Ready-Bead F before either launch path may
-// spawn. A valid Ready handoff clears its admission token here; from that point
-// the held Flow reservation and launch lifecycle own success or failure. A
-// stale Ready handoff retains both that reservation and shared preparation
-// admission until its already-running phase has been moved to launch failure.
-func (m Model) acceptCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, flowCreateRequest, readyBeadRequest uint64, release func()) (Model, bool, tea.Cmd) {
-	if flowCreateRequest != 0 && readyBeadRequest != 0 {
-		releaseFlowLaunchReservation(release)
-		return m, false, nil
-	}
-	if flowCreateRequest != 0 {
-		if !m.isCurrentRepo(ctx.RepoPath) || !m.isCurrentFlowCreateRequest(flowCreateRequest) {
-			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, false)
-			return m, false, cmd
-		}
-		return m.clearFlowCreateRequest(flowCreateRequest), true, nil
-	}
-	if readyBeadRequest != 0 {
-		if !m.isCurrentReadyBeadFlowCreateRequest(readyBeadRequest) {
-			m.activeReadyBeadFlowCreate = 0
-			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, true)
-			return m, false, cmd
-		}
-		if !m.isCurrentRepo(ctx.RepoPath) {
-			m.activeReadyBeadFlowCreate = 0
-			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, true)
-			return m, false, cmd
-		}
-		m = m.clearReadyBeadFlowCreateRequest(readyBeadRequest)
-	}
-	return m, true, nil
-}
-
-func (m Model) rejectStaleCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, release func(), releaseReadyBeadAdmission bool) (Model, tea.Cmd) {
-	m, cmd := m.startFlowLaunchFailureWithReadyAdmission(ctx, "Flow phase launch canceled because its creation request is stale", releaseReadyBeadAdmission)
-	if cmd == nil {
-		releaseFlowLaunchReservation(release)
-		return m, nil
-	}
-	return m, func() tea.Msg {
-		defer releaseFlowLaunchReservation(release)
-		return cmd()
-	}
 }
 
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
@@ -690,7 +641,8 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, head
 func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
 	return func() tea.Msg {
 		return flowLaunchCreateRequestedMsg{Create: flowLaunchCreateRequest{
-			RepoPath: repoPath, Title: title, Instructions: instructions, BaseRef: baseRef, Headless: headless,
+			Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow},
+			RepoPath:     repoPath, Title: title, Instructions: instructions, BaseRef: baseRef, Headless: headless,
 		}}
 	}
 }
@@ -718,82 +670,34 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 	}
 }
 
-func (m Model) createReadyBeadFlow(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64, intent readyBeadFlowIntent) tea.Cmd {
+func (m Model) createReadyBeadFlowOnly(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64) tea.Cmd {
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	preferences := m.agentPreferences()
-	if intent == readyBeadFlowCreateOnly {
-		return func() tea.Msg {
-			result, err := m.createFlow(FlowStartRequest{
-				RepoPath:                 repoPath,
-				Title:                    title,
-				Instructions:             instructions,
-				Bead:                     bead,
-				AgentCommand:             command,
-				Model:                    launchModel,
-				ReasoningEffort:          reasoningEffort,
-				AgentPreferences:         preferences,
-				AgentPreferencesProvided: true,
-			})
-			if err != nil {
-				return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
-			}
-			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
-		}
-	}
 	return func() tea.Msg {
-		result, err := m.startFlowPlan(FlowStartRequest{
-			RepoPath:                    repoPath,
-			Title:                       title,
-			Instructions:                instructions,
-			Bead:                        bead,
-			AgentCommand:                command,
-			Model:                       launchModel,
-			ReasoningEffort:             reasoningEffort,
-			AgentPreferences:            preferences,
-			AgentPreferencesProvided:    true,
-			SessionStateRoot:            m.sessionStateRoot,
-			FlowPromptTemplates:         m.flowPromptTemplates,
-			FlowPromptTemplatesProvided: true,
-			Headless:                    flowHeadlessPointer(true),
+		result, err := m.createFlow(FlowStartRequest{
+			RepoPath:                 repoPath,
+			Title:                    title,
+			Instructions:             instructions,
+			Bead:                     bead,
+			AgentCommand:             command,
+			Model:                    launchModel,
+			ReasoningEffort:          reasoningEffort,
+			AgentPreferences:         preferences,
+			AgentPreferencesProvided: true,
 		})
 		if err != nil {
-			releaseFlowLaunchReservation(result.LaunchRelease)
 			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
 		}
-		if result.LaunchSkipped {
-			releaseFlowLaunchReservation(result.LaunchRelease)
-			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
-		}
-		return readyBeadFlowPlanLaunchMessage(result.LaunchContext, result.LaunchRelease, request)
+		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
 	}
 }
 
-func readyBeadFlowPlanLaunchMessage(ctx actions.AgentLaunchContext, release func(), request uint64) tea.Msg {
-	msg := flowPlanLaunchMessage(ctx, release)
-	switch msg := msg.(type) {
-	case FlowEmbeddedLaunchRequestedMsg:
-		msg.ReadyBeadRequest = request
-		return msg
-	case PlanLaunchRequestedMsg:
-		msg.ReadyBeadRequest = request
-		return msg
-	default:
-		return msg
-	}
-}
-
-// flowPlanLaunchMessage carries the reservation StartPlan is still holding into
-// the handler that spawns, which owns releasing it. A non-nil release also
-// tells the embedded path the spawn is already reserved, so it must not take
-// the same lock a second time.
-func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, release func()) tea.Msg {
-	switch agent.Normalize(ctx.Command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		ctx.Embedded = true
-		ctx.FlowLaunchTracked = true
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx, LaunchRelease: release}
-	default:
-		return PlanLaunchRequestedMsg{LaunchContext: ctx, LaunchRelease: release}
+func (m Model) requestReadyBeadFlowLaunch(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		return flowLaunchCreateRequestedMsg{Create: flowLaunchCreateRequest{
+			Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginReadyBead, Request: request},
+			RepoPath:     repoPath, Title: title, Instructions: instructions, Bead: bead, Headless: true,
+		}}
 	}
 }
 

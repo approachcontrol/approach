@@ -186,7 +186,7 @@ func preparedAutoFlowLaunches(m Model, cmd tea.Cmd) (Model, []flowLaunchEventMsg
 	return m, prepared
 }
 
-func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, m Model, cmd tea.Cmd) (Model, FlowEmbeddedLaunchRequestedMsg) {
+func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, m Model, cmd tea.Cmd) (Model, flowLaunchEventMsg) {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("expected auto-advance command")
@@ -202,7 +202,7 @@ func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, m Model, cmd tea.Cmd) 
 	if launch.Route != flowLaunchRouteEmbedded {
 		t.Fatalf("auto-advance route = %v, want the embedded route", launch.Route)
 	}
-	return m, FlowEmbeddedLaunchRequestedMsg{LaunchContext: launch.Context}
+	return m, launch
 }
 
 func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
@@ -226,8 +226,8 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "branch-a" {
-		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "branch-a" {
+		t.Fatalf("first drain launch = %q, want branch-a", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
 		t.Fatalf("updates = %#v, want branch-a launch", updates)
@@ -235,7 +235,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 	// This unit test inspects the prepared message without feeding it through
 	// Update, so explicitly model the handoff that would replace the attempt
 	// with a terminal/session owner in the running program.
-	m = m.releaseFlowLaunchAttempt(launch.LaunchContext.FlowID, launch.LaunchContext.LaunchID)
+	m = m.releaseFlowLaunchAttempt(launch.Context.FlowID, launch.Context.LaunchID)
 
 	branchARunning := autoAdvanceCustomFlow(map[string]string{
 		"root":     flowstore.PhaseCompleted,
@@ -254,8 +254,8 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 	})
 	m, cmd = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{branchACompleted})
 	m, launch = firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "branch-b" {
-		t.Fatalf("second drain launch = %q, want branch-b", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "branch-b" {
+		t.Fatalf("second drain launch = %q, want branch-b", launch.Context.FlowPhaseID)
 	}
 }
 
@@ -318,8 +318,8 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "branch-a" {
-		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "branch-a" {
+		t.Fatalf("first drain launch = %q, want branch-a", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
 		t.Fatalf("updates after first launch = %#v, want branch-a", updates)
@@ -439,8 +439,8 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	if len(updates) != 1 || updates[0].PhaseID != "successor" || !updates[0].AutoLaunch {
 		t.Fatalf("post-exit updates = %#v, want one automatic successor", updates)
 	}
-	if !launch.LaunchContext.Headless || launch.LaunchContext.FlowRepair || launch.LaunchContext.FlowPhaseID != "successor" {
-		t.Fatalf("repair-origin successor launch = %#v", launch.LaunchContext)
+	if !launch.Context.Headless || launch.Context.FlowRepair || launch.Context.FlowPhaseID != "successor" {
+		t.Fatalf("repair-origin successor launch = %#v", launch.Context)
 	}
 	if len(m.pendingRepairAutoDrainFlowIDs) != 0 {
 		t.Fatalf("repair marker not consumed: %#v", m.pendingRepairAutoDrainFlowIDs)
@@ -485,8 +485,8 @@ func TestCleanRepairMarkerSuppressesPreExitCompletionEdgeUntilEligiblePoll(t *te
 		[]flowstore.FlowRecord{current}, []flowstore.FlowRecord{current}, 8,
 	)
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
-		t.Fatalf("eligible clean handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
+	if updates != 1 || launch.Context.FlowPhaseID != "successor" {
+		t.Fatalf("eligible clean handoff: updates=%d launch=%#v", updates, launch.Context)
 	}
 }
 
@@ -659,7 +659,7 @@ func TestNonCleanRepairRemovalSuppressesRepairCompletionEdge(t *testing.T) {
 				}
 				if cmd != nil {
 					if message := cmd(); message != nil {
-						if _, ok := message.(FlowEmbeddedLaunchRequestedMsg); ok {
+						if _, ok := message.(flowLaunchEventMsg); ok {
 							t.Fatalf("non-clean repair returned successor launch message %#v", message)
 						}
 					}
@@ -740,8 +740,8 @@ func TestSuccessfulRepairRetryOverridesEarlierSuppressingOutcome(t *testing.T) {
 
 	m, cmd, _ := autoAdvancePrepareForRequest(m, nil, []flowstore.FlowRecord{ready}, 6)
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
-		t.Fatalf("successful retry handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
+	if updates != 1 || launch.Context.FlowPhaseID != "successor" {
+		t.Fatalf("successful retry handoff: updates=%d launch=%#v", updates, launch.Context)
 	}
 }
 
@@ -760,8 +760,8 @@ func TestRepairAutoDrainRearmsAfterRunningToReadyStopTransition(t *testing.T) {
 	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{ready.FlowID: cleanRepairAutoDrainMarker(1)}
 	m, cmd, _ := autoAdvancePrepareForRequest(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{ready}, 1)
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
-		t.Fatalf("running-to-ready repair handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
+	if updates != 1 || launch.Context.FlowPhaseID != "successor" {
+		t.Fatalf("running-to-ready repair handoff: updates=%d launch=%#v", updates, launch.Context)
 	}
 }
 
@@ -782,8 +782,8 @@ func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
 	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{record.FlowID: cleanRepairAutoDrainMarker(1)}
 	m, cmd, _ := autoAdvancePrepareForRequest(m, nil, []flowstore.FlowRecord{record}, 1)
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if len(updates) != 1 || updates[0].PhaseID != "branch-a" || launch.LaunchContext.FlowPhaseID != "branch-a" {
-		t.Fatalf("custom DAG repair handoff: updates=%#v launch=%#v", updates, launch.LaunchContext)
+	if len(updates) != 1 || updates[0].PhaseID != "branch-a" || launch.Context.FlowPhaseID != "branch-a" {
+		t.Fatalf("custom DAG repair handoff: updates=%#v launch=%#v", updates, launch.Context)
 	}
 }
 
@@ -842,8 +842,8 @@ func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
 
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "summary" {
-		t.Fatalf("autoreview successor launch = %q, want summary", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "summary" {
+		t.Fatalf("autoreview successor launch = %q, want summary", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "summary" {
 		t.Fatalf("updates = %#v, want summary", updates)
@@ -1121,12 +1121,12 @@ func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T)
 		t.Fatalf("autoAdvanceSnapshot = %#v, want current flow", m.autoAdvanceSnapshot)
 	}
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowID != "flow-1" ||
-		launch.LaunchContext.RepoPath != "/dev/bravo" ||
-		launch.LaunchContext.FlowPhaseID != "implementation" ||
-		!launch.LaunchContext.Headless ||
-		!launch.LaunchContext.FlowLaunchTracked {
-		t.Fatalf("auto-advance launch context = %#v", launch.LaunchContext)
+	if launch.Context.FlowID != "flow-1" ||
+		launch.Context.RepoPath != "/dev/bravo" ||
+		launch.Context.FlowPhaseID != "implementation" ||
+		!launch.Context.Headless ||
+		!launch.Context.FlowLaunchTracked {
+		t.Fatalf("auto-advance launch context = %#v", launch.Context)
 	}
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
@@ -1359,8 +1359,8 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 	m.autoAdvanceInFlight = 2
 	m, cmd = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after config fix = %#v, want implementation auto launch", updates)
@@ -1446,8 +1446,8 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	m.autoAdvanceInFlight = 2
 	m, cmd = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after async failure = %#v, want retried implementation auto launch", updates)
@@ -1572,8 +1572,8 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 	m.autoAdvanceInFlight = 2
 	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("deferred auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("deferred auto-advance launch phase = %q, want implementation", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after deferred preflight fix = %#v, want implementation auto launch", updates)
@@ -1639,8 +1639,8 @@ func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testin
 	m.autoAdvanceInFlight = 1
 	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	if launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.Context.FlowPhaseID)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
@@ -1687,8 +1687,8 @@ func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testi
 		Request: 1,
 	})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowID != "flow-2" || launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("auto-advance launch context = %#v, want flow-2 implementation", launch.LaunchContext)
+	if launch.Context.FlowID != "flow-2" || launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch context = %#v, want flow-2 implementation", launch.Context)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
@@ -1736,8 +1736,8 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *test
 		Request: 1,
 	})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("auto-advance launch context = %#v, want implementation after rerun", launch.LaunchContext)
+	if launch.Context.FlowID != "flow-1" || launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch context = %#v, want implementation after rerun", launch.Context)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates = %#v, want implementation auto launch after rerun", updates)
@@ -1804,8 +1804,8 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testin
 		Request: 1,
 	})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "review-loop" {
-		t.Fatalf("auto-advance launch context = %#v, want review-loop after child completion", launch.LaunchContext)
+	if launch.Context.FlowID != "flow-1" || launch.Context.FlowPhaseID != "review-loop" {
+		t.Fatalf("auto-advance launch context = %#v, want review-loop after child completion", launch.Context)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "review-loop" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates = %#v, want review-loop auto launch after child completion", updates)
@@ -1889,8 +1889,8 @@ func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *te
 	m.flows = m.flows.SetItems(nil)
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
 	m, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "implementation" {
-		t.Fatalf("deferred launch context = %#v", launch.LaunchContext)
+	if launch.Context.FlowID != "flow-1" || launch.Context.FlowPhaseID != "implementation" {
+		t.Fatalf("deferred launch context = %#v", launch.Context)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates after source terminal closes = %#v, want implementation", updates)

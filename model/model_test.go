@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
@@ -99,54 +100,31 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return record, func() {}, nil
 		}
 	}
-	if opts.EnsureFlowWorktree == nil {
-		// The production default runs real git and a real bootstrap hook, so a
-		// test model that launches a phase on a worktree-less Flow would shell
-		// out to a repository that does not exist. This stands in for the
-		// worktree the launch now creates instead of falling back to the repo.
-		opts.EnsureFlowWorktree = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			if record.WorktreePath != "" {
-				return record, nil
-			}
-			record.WorktreePath = record.RepoPath + "-worktrees/" + record.FlowID
-			if record.Branch == "" {
-				record.Branch = "flow/" + record.FlowID
-			}
+	modelValue := model.NewWithOptions(repos, opts)
+	return model.WithFlowLaunchEnsureWorktreeForTest(modelValue, func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		if record.WorktreePath != "" {
 			return record, nil
 		}
-	}
-	m := model.NewWithOptions(repos, opts)
-	return model.WithFlowWorktreeInspectionForTest(m, func(string) error { return nil })
+		record.WorktreePath = record.RepoPath + "-worktrees/" + record.FlowID
+		if record.Branch == "" {
+			record.Branch = "flow/" + record.FlowID
+		}
+		return record, nil
+	})
+}
+
+type flowTerminalOpenRequest struct {
+	LaunchContext actions.AgentLaunchContext
 }
 
 // update sends a message and returns the concrete Model.
 func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
+	if request, ok := msg.(flowTerminalOpenRequest); ok {
+		return model.OpenFlowEmbeddedTerminalForTest(m, request.LaunchContext)
+	}
 	msg = stampListRequest(m, msg)
 	tm, cmd := m.Update(msg)
 	return tm.(model.Model), cmd
-}
-
-func applyTestCommand(m model.Model, cmd tea.Cmd) (model.Model, tea.Cmd) {
-	for _, msg := range testCommandMessages(cmd) {
-		m, _ = update(m, msg)
-	}
-	return m, nil
-}
-
-func testCommandMessages(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-	msg := cmd()
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok {
-		return []tea.Msg{msg}
-	}
-	var messages []tea.Msg
-	for _, nested := range batch {
-		messages = append(messages, testCommandMessages(nested)...)
-	}
-	return messages
 }
 
 func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {

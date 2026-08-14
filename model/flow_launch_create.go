@@ -16,14 +16,23 @@ import (
 
 const flowCreateInProgressStatus = "Flow creation is already in progress"
 
+// flowLaunchCreatePresentation is the typed identity of the UI request that
+// owns creation-time status and focus. New-Flow and Ready-Bead requests use
+// independent counters and must never clear or present for one another.
+type flowLaunchCreatePresentation struct {
+	Origin  flowLaunchOrigin
+	Request uint64
+}
+
 // flowLaunchCreateRequest is the creation-only portion of a lifecycle intent.
-// Request and RepoPath together are its presentation fence; the remaining
-// fields are immutable form snapshots.
+// Presentation and RepoPath together are its source-aware presentation fence;
+// the remaining fields are immutable request-time snapshots.
 type flowLaunchCreateRequest struct {
-	Request      uint64
+	Presentation flowLaunchCreatePresentation
 	RepoPath     string
 	Title        string
 	Instructions string
+	Bead         flowstore.BeadLink
 	BaseRef      string
 	Headless     bool
 }
@@ -44,30 +53,61 @@ const (
 )
 
 func (m Model) createFlowLaunchOriginCurrent(create flowLaunchCreateRequest) bool {
-	return create.Request != 0 && m.isCurrentFlowCreateRequest(create.Request) && m.isCurrentRepo(create.RepoPath)
+	if create.Presentation.Request == 0 || !m.isCurrentRepo(create.RepoPath) {
+		return false
+	}
+	switch create.Presentation.Origin {
+	case flowLaunchOriginNewFlow:
+		return m.isCurrentFlowCreateRequest(create.Presentation.Request)
+	case flowLaunchOriginReadyBead:
+		return m.isCurrentReadyBeadFlowCreateRequest(create.Presentation.Request)
+	default:
+		return false
+	}
+}
+
+func (m Model) clearFlowLaunchCreatePresentation(create flowLaunchCreateRequest) Model {
+	switch create.Presentation.Origin {
+	case flowLaunchOriginNewFlow:
+		return m.clearFlowCreateRequest(create.Presentation.Request)
+	case flowLaunchOriginReadyBead:
+		return m.clearReadyBeadFlowCreateRequest(create.Presentation.Request)
+	default:
+		return m
+	}
 }
 
 func (m Model) admitCreateFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	create := intent.Create
+	if create.Presentation.Origin == 0 {
+		create.Presentation.Origin = intent.Origin
+	}
+	if intent.Origin == 0 {
+		intent.Origin = create.Presentation.Origin
+	}
+	if create.Presentation.Origin != intent.Origin {
+		return m.clearFlowLaunchCreatePresentation(create), nil, false
+	}
+	intent.Create = create
 	if !m.createFlowLaunchOriginCurrent(create) {
-		return m.clearFlowCreateRequest(create.Request), nil, false
+		return m.clearFlowLaunchCreatePresentation(create), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
-		return m.clearFlowCreateRequest(create.Request).setStatus(statusOther, "Unable to allocate a Flow launch ID"), nil, false
+		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, "Unable to allocate a Flow launch ID"), nil, false
 	}
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
 	command := agent.Normalize(settings.Command)
 	if command == "" || agent.NormalizeStored(settings.Command) != command {
-		return m.clearFlowCreateRequest(create.Request).setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
+		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
 	}
 	if err := agent.Validate(command); err != nil {
-		return m.clearFlowCreateRequest(create.Request).setStatus(statusOther, err.Error()), nil, false
+		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, err.Error()), nil, false
 	}
 	settings.Command = command
 	allocate := m.launchSeams.AllocateFlowID
 	if allocate == nil {
-		return m.clearFlowCreateRequest(create.Request).setStatus(statusOther, "Flow launch lifecycle is missing ID allocation"), nil, false
+		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, "Flow launch lifecycle is missing ID allocation"), nil, false
 	}
 	return m, func() tea.Msg {
 		flowID, err := allocate(create.Title)
@@ -244,7 +284,7 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		}
 		if msg.Parked {
 			releaseFlowLaunchReservation(msg.Release)
-			m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowCreateRequest(attempt.Create.Request)
+			m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowLaunchCreatePresentation(attempt.Create)
 			m = m.setStatus(statusOther, "Created flow: "+attempt.Create.Title)
 			if m.flowRefreshSurfaceVisible() {
 				return m.startFlowSurfaceFetch()
@@ -270,9 +310,12 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateRecovered:
 		releaseFlowLaunchReservation(msg.Release)
-		m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowCreateRequest(attempt.Create.Request)
-		m = m.setStatus(statusOther, "Flow "+msg.FlowID+": "+msg.Err)
-		if m.flowRefreshSurfaceVisible() {
+		present := m.createFlowLaunchOriginCurrent(attempt.Create)
+		m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowLaunchCreatePresentation(attempt.Create)
+		if present {
+			m = m.setStatus(statusOther, "Flow "+msg.FlowID+": "+msg.Err)
+		}
+		if present && m.flowRefreshSurfaceVisible() {
 			return m.startFlowSurfaceFetch()
 		}
 		return m, nil
@@ -285,25 +328,25 @@ func (m Model) handleCreateFlowAllocated(msg flowLaunchEventMsg) (Model, tea.Cmd
 		return m, nil
 	}
 	if !m.createFlowLaunchOriginCurrent(msg.Create) {
-		return m.clearFlowCreateRequest(msg.Create.Request), nil
+		return m.clearFlowLaunchCreatePresentation(msg.Create), nil
 	}
 	if msg.Err != "" {
-		return m.clearFlowCreateRequest(msg.Create.Request).setStatus(statusOther, msg.Err), nil
+		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, msg.Err), nil
 	}
 	if !artifacts.IsSafeID(msg.FlowID) {
-		return m.clearFlowCreateRequest(msg.Create.Request).
+		return m.clearFlowLaunchCreatePresentation(msg.Create).
 			setStatus(statusOther, fmt.Sprintf("Flow ID allocation returned invalid ID %q", msg.FlowID)), nil
 	}
 	if m.flowLaunchAdmissionOccupied(msg.FlowID) {
-		return m.clearFlowCreateRequest(msg.Create.Request).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
 	attempt := flowLaunchAttempt{
 		Token: msg.Token, Kind: flowLaunchKindCreatePhase, FlowID: msg.FlowID,
-		Origin: flowLaunchOriginNewFlow, Settings: msg.Settings, Create: msg.Create,
+		Origin: msg.Create.Presentation.Origin, Settings: msg.Settings, Create: msg.Create,
 	}
 	next, ok := m.reserveFlowLaunchAttempt(attempt, flowLaunchStateCreateSessionReading)
 	if !ok {
-		return m.clearFlowCreateRequest(msg.Create.Request).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
 	return next, createFlowLaunchSessionsCmd(next.launchSeams, attempt)
 }
@@ -363,7 +406,7 @@ func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, 
 		req := createFlowStartRequest(attempt)
 		record, err := seams.CreateFlow(flowstore.FlowRecord{
 			FlowID: attempt.FlowID, RepoPath: req.RepoPath, Title: req.Title,
-			Instructions: req.Instructions, BaseRef: req.BaseRef,
+			Instructions: req.Instructions, Bead: req.Bead, BaseRef: req.BaseRef,
 		}, flowstore.CreateOptions{Headless: req.Headless, PhaseAgent: phaseAgentSettingsForRequest(req)})
 		event.Record = record
 		if err != nil {
@@ -599,11 +642,10 @@ func createFlowStartRequest(attempt flowLaunchAttempt) FlowStartRequest {
 	create := attempt.Create
 	headless := create.Headless
 	return FlowStartRequest{
-		RepoPath: create.RepoPath, Title: create.Title, Instructions: create.Instructions, BaseRef: create.BaseRef,
+		RepoPath: create.RepoPath, Title: create.Title, Instructions: create.Instructions, Bead: create.Bead, BaseRef: create.BaseRef,
 		AgentCommand: attempt.Settings.Command, Model: attempt.Settings.Model, ReasoningEffort: attempt.Settings.ReasoningEffort,
 		AgentPreferences: attempt.Settings.Preferences, AgentPreferencesProvided: true,
-		SessionStateRoot: attempt.Settings.SessionStateRoot, FlowPromptTemplates: attempt.Settings.PromptTemplates,
-		FlowPromptTemplatesProvided: true, Headless: &headless,
+		Headless: &headless,
 	}
 }
 
@@ -640,9 +682,9 @@ func createFlowLaunchRootStillLaunchable(record flowstore.FlowRecord, root flows
 
 func (m Model) finishCreateBeforeWrite(attempt flowLaunchAttempt, errText string) (Model, tea.Cmd) {
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
-	current := m.isCurrentFlowCreateRequest(attempt.Create.Request)
-	m = m.clearFlowCreateRequest(attempt.Create.Request)
-	if current && m.isCurrentRepo(attempt.Create.RepoPath) {
+	current := m.createFlowLaunchOriginCurrent(attempt.Create)
+	m = m.clearFlowLaunchCreatePresentation(attempt.Create)
+	if current {
 		m = m.setStatus(statusOther, errText)
 	}
 	return m, nil
@@ -650,9 +692,8 @@ func (m Model) finishCreateBeforeWrite(attempt flowLaunchAttempt, errText string
 
 func (m Model) finishCreateAfterWrite(attempt flowLaunchAttempt, errText string) (Model, tea.Cmd) {
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
-	current := m.isCurrentFlowCreateRequest(attempt.Create.Request)
-	present := current && m.isCurrentRepo(attempt.Create.RepoPath)
-	m = m.clearFlowCreateRequest(attempt.Create.Request)
+	present := m.createFlowLaunchOriginCurrent(attempt.Create)
+	m = m.clearFlowLaunchCreatePresentation(attempt.Create)
 	if present {
 		m = m.setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText)
 	}
@@ -706,12 +747,12 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		if msg.Parked {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
-				clearFlowCreateRequest(attempt.Create.Request), nil
+				clearFlowLaunchCreatePresentation(attempt.Create), nil
 		}
 		return m.failCreateFlowLaunchEmbedded(attempt, msg.Context, "creation canceled after repository changed", msg.Release)
 	case flowLaunchStageCreateRecovered:
 		releaseFlowLaunchReservation(msg.Release)
-		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).clearFlowCreateRequest(attempt.Create.Request), nil
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).clearFlowLaunchCreatePresentation(attempt.Create), nil
 	default:
 		releaseFlowLaunchReservation(msg.Release)
 		return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")

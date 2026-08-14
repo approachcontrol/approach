@@ -161,8 +161,6 @@ type Model struct {
 	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
-	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
-	ensureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
@@ -308,8 +306,6 @@ type Options struct {
 	ShowBead                  func(repoPath, beadID string) (string, error)
 	CountClosedBeads          func(repoPath string) (int, error)
 	CreateFlow                func(FlowStartRequest) (FlowStartResult, error)
-	StartFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
-	EnsureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	ReadFlow                  func(flowID string) (flowstore.FlowRecord, error)
 	SetFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
@@ -802,41 +798,28 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		}
 		return store.SetStartMetadata(update)
 	}
-	// The starter is built unconditionally because the launch path needs its
-	// EnsureWorktree even when a test injects both CreateFlow and StartFlowPlan.
-	// Nothing here is called until one of its methods is, so the cost is a few
-	// closures. A test that launches a phase on a worktree-less Flow must set
-	// Options.EnsureFlowWorktree, or replace launch persistence and get the
-	// refusing contract instead: the default runs real git and a real hook.
-	starter := NewFlowStarter(FlowStarterOptions{
+	creator := newFlowCreator(flowCreatorOptions{
 		CreateFlow:           createFlow,
 		CreatePreparation:    createPreparation,
 		CreateWorktree:       actions.CreateFlowWorktree,
 		SetStartMetadata:     setFlowStartMetadata,
 		SetPhase:             setFlowPhase,
-		AddPhaseLaunchID:     addFlowPhaseLaunchID,
 		ReserveLaunch:        reserveFlowLaunch,
 		BootstrapHookForRepo: bootstrapHookForRepo,
 		RunBootstrapHook:     runBootstrapHook,
 		ResolveCommit:        actions.ResolveWorktreeCommit,
-		NewLaunchID:          newLaunchID,
-		FlowPromptTemplates:  opts.FlowPromptTemplates,
 	})
 	createFlowForRepo := opts.CreateFlow
 	if createFlowForRepo == nil {
-		createFlowForRepo = starter.PrepareFlow
+		createFlowForRepo = creator.Create
 	}
-	startFlowPlan := opts.StartFlowPlan
-	if startFlowPlan == nil {
-		startFlowPlan = starter.StartPlan
-	}
-	ensureFlowWorktree := opts.EnsureFlowWorktree
-	if ensureFlowWorktree == nil && !customPhaseLaunchPersistence {
+	var ensureFlowWorktree func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	if !customPhaseLaunchPersistence {
 		// Same storage boundary as reserveFlowLaunch above, and for a stronger
 		// reason: the default seam runs real git and a real bootstrap hook, then
 		// writes start metadata into the default store. Left nil, the launcher's
 		// documented contract takes over and refuses worktree-less launches.
-		ensureFlowWorktree = starter.EnsureWorktree
+		ensureFlowWorktree = creator.EnsureWorktree
 	}
 	launchSeams := newFlowLaunchSeams(
 		readFlow,
@@ -850,6 +833,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	launchSeams.AllocateFlowID = allocateFlowID
 	launchSeams.CreateFlow = createFlow
 	launchSeams.ReserveLaunch = createReserveFlowLaunch
+	launchSeams.EnsureWorktree = ensureFlowWorktree
 	launchSeams.CreateWorktree = actions.CreateFlowWorktree
 	launchSeams.ResolveCommit = actions.ResolveWorktreeCommit
 	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
@@ -909,8 +893,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		showBead:                  showBead,
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
-		startFlowPlan:             startFlowPlan,
-		ensureFlowWorktree:        ensureFlowWorktree,
 		setFlowPhase:              setFlowPhase,
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
 		launchSeams:               launchSeams,
@@ -1844,7 +1826,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m.handleFlowLaunchPrefillFailure(msg)
 		}
 		if msg.Create != nil {
-			m = m.clearFlowCreateRequest(msg.Create.Request)
+			m = m.clearFlowLaunchCreatePresentation(*msg.Create)
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)
 		return m.updateFlowTerminalFocusAfterLaunch(msg.LaunchContext), nil
@@ -2103,32 +2085,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handlePromptTemplateReset(msg), nil
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
-	case PlanLaunchRequestedMsg:
-		var accepted bool
-		var rejectionCmd tea.Cmd
-		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
-		if !accepted {
-			return m, rejectionCmd
-		}
-		next, launchCmd := m.launchAgentForBackend(msg.LaunchContext, msg.LaunchRelease)
-		if msg.LaunchContext.FlowID != "" && next.flowRefreshSurfaceVisible() {
-			next, fetchCmd := next.startFlowSurfaceFetch()
-			return next, tea.Batch(fetchCmd, launchCmd)
-		}
-		return next, launchCmd
-	case FlowEmbeddedLaunchRequestedMsg:
-		var accepted bool
-		var rejectionCmd tea.Cmd
-		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
-		if !accepted {
-			return m, rejectionCmd
-		}
-		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
-		if msg.LaunchContext.FlowID != "" && next.flowRefreshSurfaceVisible() {
-			next, fetchCmd := next.startFlowSurfaceFetch()
-			return next, tea.Batch(fetchCmd, launchCmd)
-		}
-		return next, launchCmd
+	case AgentLaunchRequestedMsg:
+		return m.launchAgentForBackend(msg.LaunchContext, nil)
 	case FlowCreatedMsg:
 		return m.handleFlowCreated(msg)
 	case FlowCreateFailedMsg:
@@ -2152,7 +2110,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case flowLaunchEventMsg:
 		return m.handleFlowLaunchEvent(msg)
 	case flowLaunchCreateRequestedMsg:
-		intent := flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: flowLaunchOriginNewFlow, Create: msg.Create}
+		intent := flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: msg.Create.Presentation.Origin, Create: msg.Create}
 		next, cmd, _ := m.requestFlowLaunch(intent)
 		return next, cmd
 	case flowLaunchFailurePersistedMsg:

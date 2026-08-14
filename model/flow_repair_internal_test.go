@@ -335,7 +335,7 @@ func TestFlowPhaseResumeDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 // The resume test above covers the kind whose backstop message is its own; this
 // covers the shared one. Auto and manual launches route through the lifecycle,
 // so the refusal is exercised where they actually reach it — the install stage —
-// rather than through launchTrackedFlowEmbedded, whose production callers are
+// rather than through the lifecycle's tracked embedded installer, whose callers are
 // creation-time Flow starts and which never sees an auto launch.
 func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 	const (

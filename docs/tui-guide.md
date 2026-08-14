@@ -391,8 +391,8 @@ What does not change:
   until it exits, so a self-closing tmux window would render nothing and then
   discard it.
 - **Creation-time plan launches** stay embedded for CLI agents. New-Flow Plan
-  Now reaches the dock through the `createPhase` lifecycle; Ready `F` retains
-  its compatibility creation-time handoff until that shortcut is migrated.
+  Now and Ready `F` both reach the dock through the source-aware `createPhase`
+  lifecycle, even when `[launch].backend = "tmux"`.
 
 Lifecycle and ownership:
 
@@ -595,22 +595,33 @@ bootstrap hook. Lowercase `f` stops there: it does not link a saved plan or
 GitHub Issue, start a Flow phase, or launch an agent. Both keys persist a
 separate Bead link from the already-loaded row, containing the trimmed Bead ID
 and its trimmed parent epic ID when available; they still do not link a saved
-plan or GitHub Issue. Uppercase `F` continues through the
-existing `StartPlan` backend, which selects the first actionable phase and uses
-the configured agent, model, reasoning effort, Flow prompt-template snapshot,
-session state root, and an explicit default-on headless setting. `codex` and
-`claude` creation-time launches use the tracked embedded path even when
-`[launch].backend = "tmux"`; external-only agents keep the existing external
-backend route. Neither action invokes `bd`, calls `bd show`, claims the issue,
-or otherwise changes tracker state.
+plan or GitHub Issue. Uppercase `F` submits a Ready-source `createPhase` intent
+to the same exact-Flow launch lifecycle as Plan Now. The lifecycle selects the
+first actionable phase and uses the configured agent, model, reasoning effort,
+Flow prompt-template snapshot, session state root, and an explicit default-on
+headless setting. Its creation-time launch is strictly embedded, even when
+`[launch].backend = "tmux"`; no external launch fallback bypasses lifecycle
+ownership. Neither action invokes `bd`, calls `bd show`, claims the issue, or
+otherwise changes tracker state.
 
-The two keys share one admission token. Repeated or mixed presses cannot create
-duplicate Flows. A repository change — cursor move or rescan — invalidates a
-pending result; a stale start handoff never spawns and releases its launch
-reservation. Once a valid `F` handoff transfers ownership to the normal launch
-lifecycle, later terminal or spawn failure cannot clear a newer Ready request.
-Every preparation result returns through the Ready handler, which refreshes a
-visible Flow surface and includes a persisted Flow ID in any post-creation error.
+The two keys share one Ready admission token. Repeated or mixed presses cannot
+create duplicate Flows. A repository change — cursor move or rescan —
+invalidates that source's pending presentation without clearing a newer Ready
+request or an unrelated Plan Now request. Before persistence, stale lifecycle
+events stop without side effects. After exact creation, recovery still finishes
+for that persisted Flow while status, refresh, focus, and request clearing stay
+fenced to the current source token. Every post-creation error names the
+persisted Flow ID, and a visible Flow surface refreshes only for the current
+request.
+
+Every Flow launch surface — Plan Now, Ready `F`, manual `g`, AutoMode, phase
+resume, saved-session resume, repair, worktree agent, and autofix — is admitted
+by the same exact-Flow lifecycle. This does not merge their policies: manual and
+automatic launches keep their existing headless, retry, status, and tmux rules;
+saved-session resume and Ready `F` remain embedded-only; occupancy is still
+Flow-scoped; and the terminal dock takes ownership only after a successful
+embedded install. Pane focus and key ownership remain presentation concerns and
+never decide whether a launch may bypass lifecycle admission.
 
 Lowercase `f` produces the same parked Flow as a successful `n` form submission,
 so `g` on its first phase launches the agent inside the Flow's isolated

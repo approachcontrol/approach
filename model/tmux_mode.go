@@ -78,7 +78,7 @@ func tmuxRouteEligible(ctx actions.AgentLaunchContext) bool {
 //
 // It takes the backend and the probe rather than reading them off a receiver
 // because two callers hold their own copies: Model reads config's value live,
-// while a FlowPhaseLauncher snapshots both at admission so a lifecycle attempt
+// while a flowLaunchPreparation snapshots both at admission so a lifecycle attempt
 // decides against what it was admitted with. A nil probe means the real PATH.
 func tmuxLaunchRouteFor(backend string, available func() bool, ctx actions.AgentLaunchContext) (route bool, fellBack bool) {
 	if normalizeLaunchBackend(backend) != config.LaunchBackendTmux || !tmuxRouteEligible(ctx) {

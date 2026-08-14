@@ -37,6 +37,7 @@ const (
 	flowLaunchOriginEmbeddedSessionPicker
 	flowLaunchOriginInlineWorktreeSession
 	flowLaunchOriginNewFlow
+	flowLaunchOriginReadyBead
 )
 
 // flowLaunchSavedSessionKey is the exact identity shared by the session store

@@ -383,8 +383,8 @@ Two layers enforce that, and they behave differently on purpose:
   unusable triple and writes no record, for both the create-time default and any
   phase that declares its own settings.
 - The TUI creation mapping drops before it stores. The shared capture helper
-  used by `FlowStarter` compatibility paths and the `createPhase` lifecycle
-  discards an unusable triple rather than passing it down, so Flow creation
+  used by parked creation and the `createPhase` lifecycle discards an unusable
+  triple rather than passing it down, so Flow creation
   cannot start failing on an agent selection that used to be accepted. A
   dropped triple stamps nothing, which reads as "resolve from the global
   setting at launch".

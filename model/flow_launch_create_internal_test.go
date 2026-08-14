@@ -41,6 +41,30 @@ type createLaunchHarness struct {
 	releases       int
 }
 
+func TestBeadsReadyStartRoutesCreatePhaseBeforeSideEffects(t *testing.T) {
+	m := NewWithOptions(nil, Options{
+		AgentCommand: "codex",
+	})
+	cmd := m.requestReadyBeadFlowLaunch(
+		"/dev/alpha",
+		"bd-1: First",
+		"Read bd-1.",
+		flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"},
+		1,
+	)
+	if cmd == nil {
+		t.Fatal("Ready F returned no command")
+	}
+	msg, ok := cmd().(flowLaunchCreateRequestedMsg)
+	if !ok {
+		t.Fatalf("Ready F did not route a createPhase lifecycle request")
+	}
+	if msg.Create.Presentation != (flowLaunchCreatePresentation{Origin: flowLaunchOriginReadyBead, Request: 1}) ||
+		msg.Create.RepoPath != "/dev/alpha" || msg.Create.Bead != (flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}) || !msg.Create.Headless {
+		t.Fatalf("Ready F create request = %#v", msg.Create)
+	}
+}
+
 func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRecord(t *testing.T) {
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
 	if err != nil {
@@ -88,9 +112,9 @@ func TestCreateFlowLaunchEmbeddedSuccessRefreshesVisibleUnfocusedFlowPane(t *tes
 
 	attempt := flowLaunchAttempt{
 		Token: "launch-create-1", Kind: flowLaunchKindCreatePhase, FlowID: h.record.FlowID,
-		Create: flowLaunchCreateRequest{Request: 1, RepoPath: h.record.RepoPath},
+		Create: flowLaunchCreateRequest{Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: 1}, RepoPath: h.record.RepoPath},
 	}
-	m.activeFlowCreate = attempt.Create.Request
+	m.activeFlowCreate = attempt.Create.Presentation.Request
 	m = m.withFlowLaunchAttempt(attempt)
 	beforeRequest := m.ListRequest(ui.ModeFlows)
 	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
@@ -144,7 +168,7 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 		},
 		CreateFlow: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			h.order = append(h.order, "create:"+record.FlowID)
-			if record.FlowID != h.record.FlowID || record.RepoPath != h.record.RepoPath || opts.Headless == nil || *opts.Headless != h.record.Headless {
+			if record.FlowID != h.record.FlowID || record.RepoPath != h.record.RepoPath || record.Bead != h.record.Bead || opts.Headless == nil || *opts.Headless != h.record.Headless {
 				t.Fatalf("exact create = %#v, %#v", record, opts)
 			}
 			created := h.record
@@ -253,17 +277,73 @@ func (h *createLaunchHarness) start(t *testing.T, m Model) Model {
 }
 
 func (h *createLaunchHarness) admit(t *testing.T, m Model) (Model, tea.Cmd) {
+	return h.admitSource(t, m, flowLaunchOriginNewFlow)
+}
+
+func (h *createLaunchHarness) admitSource(t *testing.T, m Model, origin flowLaunchOrigin) (Model, tea.Cmd) {
 	t.Helper()
 	var request uint64
-	m, request = m.nextFlowCreateRequest()
-	create := flowLaunchCreateRequest{
-		Request: request, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: h.record.Headless,
+	switch origin {
+	case flowLaunchOriginNewFlow:
+		m, request = m.nextFlowCreateRequest()
+	case flowLaunchOriginReadyBead:
+		m, request = m.nextReadyBeadFlowCreateRequest()
+	default:
+		t.Fatalf("unsupported create origin %v", origin)
 	}
-	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: flowLaunchOriginNewFlow, Create: create})
+	create := flowLaunchCreateRequest{
+		Presentation: flowLaunchCreatePresentation{Origin: origin, Request: request},
+		RepoPath:     "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", Bead: h.record.Bead, BaseRef: "main", Headless: h.record.Headless,
+	}
+	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: origin, Create: create})
 	if !admitted || cmd == nil {
 		t.Fatalf("create admission = %v, cmd=%v, status=%q", admitted, cmd != nil, next.status.Text)
 	}
 	return next, cmd
+}
+
+func TestCreateFlowLaunchReadyOriginPersistsBeadAndUsesEmbeddedOnlyHandoff(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.record.Headless = true
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if len(h.contexts) != 1 || !h.contexts[0].Embedded || !h.contexts[0].Headless {
+		t.Fatalf("Ready launch contexts = %#v", h.contexts)
+	}
+	if m.activeReadyBeadFlowCreate != 0 || m.activeFlowCreate != 0 || h.releases != 1 {
+		t.Fatalf("Ready ownership: ready=%d new=%d releases=%d", m.activeReadyBeadFlowCreate, m.activeFlowCreate, h.releases)
+	}
+}
+
+func TestCreateFlowLaunchReadyFreshnessIsSourceAwareAtEveryBoundary(t *testing.T) {
+	stages := []flowLaunchStage{
+		flowLaunchStageCreateSessionsRead,
+		flowLaunchStageCreateWritten,
+		flowLaunchStageCreateReserved,
+		flowLaunchStageCreateWorktree,
+		flowLaunchStageCreateBootstrap,
+		flowLaunchStageCreateLaunchID,
+		flowLaunchStageCreateMetadata,
+	}
+	for _, stage := range stages {
+		t.Run(fmt.Sprint(stage), func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			m, event := advanceCreateLaunchToStage(t, m, cmd, stage)
+			m.readyBeadFlowCreateSeq++
+			m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+			m, newFlowRequest := m.nextFlowCreateRequest()
+			m = m.setStatusNow(statusOther, "newer presentation")
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			if m.activeReadyBeadFlowCreate == 0 || m.activeFlowCreate != newFlowRequest || m.status.Text != "newer presentation" {
+				t.Fatalf("source fence at %v: ready=%d new=%d status=%q", stage, m.activeReadyBeadFlowCreate, m.activeFlowCreate, m.status.Text)
+			}
+		})
+	}
 }
 
 func drainCreateLaunch(t *testing.T, m Model, cmd tea.Cmd) Model {
@@ -541,7 +621,7 @@ func TestCreateFlowLaunchPreservesRequestTimeAgentSnapshotAcrossAllocation(t *te
 	m := h.model(t)
 	var request uint64
 	m, request = m.nextFlowCreateRequest()
-	create := flowLaunchCreateRequest{Request: request, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: true}
+	create := flowLaunchCreateRequest{Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: request}, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: true}
 	m, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Create: create})
 	if !admitted || cmd == nil {
 		t.Fatal("create intent was not admitted")
@@ -818,8 +898,8 @@ func TestCreateFlowLaunchParkedMetadataFailureDoesNotMutatePhases(t *testing.T) 
 func TestCreateFlowLaunchInteractivePrefillKeepsOriginFenceUntilResult(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	m, prefill := startInteractiveCreateUntilPrefill(t, h)
-	if m.activeFlowCreate != prefill.Create.Request {
-		t.Fatalf("active create request = %d, want pending prefill request %d", m.activeFlowCreate, prefill.Create.Request)
+	if m.activeFlowCreate != prefill.Create.Presentation.Request {
+		t.Fatalf("active create request = %d, want pending prefill request %d", m.activeFlowCreate, prefill.Create.Presentation.Request)
 	}
 	if len(m.embeddedTerminals) != 1 || !m.embeddedTerminals[0].PrefillPending {
 		t.Fatalf("pending terminals = %#v", m.embeddedTerminals)
