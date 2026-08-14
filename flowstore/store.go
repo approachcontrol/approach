@@ -38,6 +38,21 @@ type PartialListEntry struct {
 	Cause  error
 }
 
+// DiagnosticFlowID renders the authoritative row ID without allowing corrupt
+// control bytes or an ambiguous blank value to reach terminal and log sinks.
+// FlowID itself remains unchanged so callers can inspect the exact stored key.
+func (e PartialListEntry) DiagnosticFlowID() string {
+	if strings.TrimSpace(e.FlowID) == "" {
+		return strconv.QuoteToASCII(e.FlowID)
+	}
+	for _, r := range e.FlowID {
+		if !strconv.IsPrint(r) {
+			return strconv.QuoteToASCII(e.FlowID)
+		}
+	}
+	return e.FlowID
+}
+
 // PartialListError reports rows omitted from an otherwise usable List result.
 // Entries retain the list query's deterministic SQL order.
 type PartialListError struct {
@@ -50,7 +65,7 @@ func (e *PartialListError) Error() string {
 	}
 	parts := make([]string, len(e.Entries))
 	for i, entry := range e.Entries {
-		parts[i] = fmt.Sprintf("%s: %v", entry.FlowID, entry.Cause)
+		parts[i] = fmt.Sprintf("%s: %v", entry.DiagnosticFlowID(), entry.Cause)
 	}
 	return fmt.Sprintf("skipped %d unreadable Flows: %s", len(e.Entries), strings.Join(parts, "; "))
 }
@@ -78,7 +93,7 @@ func AsPartialList(err error) (*PartialListError, bool) {
 				return nil, false
 			}
 			for _, entry := range partial.Entries {
-				if strings.TrimSpace(entry.FlowID) == "" || entry.Cause == nil {
+				if entry.Cause == nil {
 					return nil, false
 				}
 			}

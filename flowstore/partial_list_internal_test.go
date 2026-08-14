@@ -14,11 +14,12 @@ import (
 func TestAsPartialListRequiresStandaloneValidDiagnostic(t *testing.T) {
 	cause := errors.New("unreadable row")
 	partial := &PartialListError{Entries: []PartialListEntry{{FlowID: "bad", Cause: cause}}}
+	blankID := &PartialListError{Entries: []PartialListEntry{{Cause: cause}}}
 
-	for _, err := range []error{partial, fmt.Errorf("list flows: %w", partial)} {
+	for _, err := range []error{partial, fmt.Errorf("list flows: %w", partial), blankID} {
 		got, ok := AsPartialList(err)
-		if !ok || got != partial {
-			t.Fatalf("AsPartialList(%v) = (%#v, %t), want original partial diagnostic", err, got, ok)
+		if !ok {
+			t.Fatalf("AsPartialList(%v) = (%#v, %t), want typed partial diagnostic", err, got, ok)
 		}
 	}
 
@@ -30,7 +31,6 @@ func TestAsPartialListRequiresStandaloneValidDiagnostic(t *testing.T) {
 		{name: "joined fatal", err: errors.Join(partial, fatal)},
 		{name: "wrapped joined fatal", err: fmt.Errorf("list flows: %w", errors.Join(partial, fatal))},
 		{name: "empty", err: &PartialListError{}},
-		{name: "missing flow ID", err: &PartialListError{Entries: []PartialListEntry{{Cause: cause}}}},
 		{name: "missing cause", err: &PartialListError{Entries: []PartialListEntry{{FlowID: "bad"}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -38,6 +38,60 @@ func TestAsPartialListRequiresStandaloneValidDiagnostic(t *testing.T) {
 				t.Fatalf("AsPartialList(%v) = (%#v, %t), want fatal classification", test.err, got, ok)
 			}
 		})
+	}
+}
+
+func TestPartialListEntryDiagnosticFlowIDEscapesUnsafeValues(t *testing.T) {
+	for _, test := range []struct {
+		flowID string
+		want   string
+	}{
+		{flowID: "safe-id", want: "safe-id"},
+		{flowID: "", want: `""`},
+		{flowID: "   ", want: `"   "`},
+		{flowID: "bad\n\x1b]8;;https://example.invalid\a", want: `"bad\n\x1b]8;;https://example.invalid\a"`},
+	} {
+		entry := PartialListEntry{FlowID: test.flowID, Cause: errors.New("unreadable")}
+		if got := entry.DiagnosticFlowID(); got != test.want {
+			t.Errorf("DiagnosticFlowID(%q) = %q, want %q", test.flowID, got, test.want)
+		}
+	}
+}
+
+func TestSQLiteListRetainsHealthyRowsBesideBlankAndUnsafeCorruptIDs(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	backend := store.backend.(*sqliteBackend)
+	repo := filepath.Join(root, "repo")
+
+	insertListTestRecord(t, backend, listTestRecord("healthy", repo, 3))
+	insertListTestRaw(t, backend, "", repo, StatusPending, listTestTime(2), []byte("{"))
+	unsafeID := "bad\n\x1b]8;;https://example.invalid\a"
+	insertListTestRaw(t, backend, unsafeID, repo, StatusPending, listTestTime(1), []byte("{"))
+
+	records, err := store.List(FlowFilter{RepoPath: repo})
+	if got, want := flowIDs(records), []string{"healthy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("List() records = %v, want %v", got, want)
+	}
+	partial, ok := AsPartialList(err)
+	if !ok {
+		t.Fatalf("AsPartialList(%v) = false, want typed partial diagnostic", err)
+	}
+	if got, want := partialFlowIDs(partial), []string{"", unsafeID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("partial flow IDs = %q, want %q", got, want)
+	}
+	diagnostic := err.Error()
+	if strings.ContainsAny(diagnostic, "\n\x1b\a") {
+		t.Fatalf("List() diagnostic contains terminal control bytes: %q", diagnostic)
+	}
+	for _, want := range []string{`"": decode flow "" record`, `"bad\n\x1b]8;;https://example.invalid\a"`} {
+		if !strings.Contains(diagnostic, want) {
+			t.Fatalf("List() diagnostic = %q, want escaped identifier %q", diagnostic, want)
+		}
 	}
 }
 

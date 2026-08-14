@@ -171,7 +171,7 @@ func (m Model) flowDegradationWarning(mode ui.Mode) string {
 	limit := min(3, len(diagnostic.Entries))
 	ids := make([]string, 0, limit+1)
 	for _, entry := range diagnostic.Entries[:limit] {
-		ids = append(ids, entry.FlowID)
+		ids = append(ids, entry.DiagnosticFlowID())
 	}
 	if len(diagnostic.Entries) > limit {
 		ids = append(ids, "…")

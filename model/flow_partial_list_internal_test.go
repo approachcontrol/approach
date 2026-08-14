@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/approachcontrol/approach/flowstore"
@@ -56,6 +57,18 @@ func TestRepositoryFlowDegradationFollowsAcceptedResultFreshness(t *testing.T) {
 	m, _ = updateFlowRefreshTest(m, FlowResultMsg{RepoPath: "/repo/a", ListRequest: freshRequest})
 	if got := m.flowDegradationWarning(ui.ModeFlows); got != "" {
 		t.Fatalf("current clean result left degradation warning %q", got)
+	}
+}
+
+func TestFlowDegradationWarningEscapesUnsafeFlowIDs(t *testing.T) {
+	m := New([]scanner.Repo{{Path: "/repo/a"}})
+	m = m.setFlowDegradation(ui.ModeFlows, "/repo/a", testPartialList("", "   ", "bad\n\x1b]8;;https://example.invalid\a"))
+	warning := m.flowDegradationWarning(ui.ModeFlows)
+	if strings.ContainsAny(warning, "\n\x1b\a") {
+		t.Fatalf("degradation warning contains terminal control bytes: %q", warning)
+	}
+	if want := `Skipped 3 unreadable Flows ("", "   ", "bad\n\x1b]8;;https://example.invalid\a"); run approach flow list --json`; warning != want {
+		t.Fatalf("degradation warning = %q, want %q", warning, want)
 	}
 }
 
