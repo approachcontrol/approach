@@ -56,8 +56,16 @@ type sqliteBackend struct {
 	db *sql.DB
 	// root is the canonical, symlink-resolved store root. Kept because it is the
 	// evidence that secureCanonicalRoot's resolution reached the backend.
-	root    string
-	beginTx func(context.Context) (sqliteTransaction, error)
+	root          string
+	beginTx       func(context.Context) (sqliteTransaction, error)
+	queryListRows func(string, ...any) (flowListRows, error)
+}
+
+type flowListRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close() error
 }
 
 type sqliteTransaction interface {
@@ -147,6 +155,9 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 	backend := &sqliteBackend{db: db, root: root}
 	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
 		return db.BeginTx(ctx, nil)
+	}
+	backend.queryListRows = func(query string, args ...any) (flowListRows, error) {
+		return db.Query(query, args...)
 	}
 	return backend, nil
 }
@@ -379,11 +390,12 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 		args = append(args, filepath.Clean(filter.RepoPath))
 	}
 	query += " ORDER BY updated_at DESC, flow_id ASC"
-	rows, err := b.db.Query(query, args...)
+	rows, err := b.queryListRows(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list flows: %w", err)
 	}
-	var flows []storedFlow
+	flows := make([]storedFlow, 0)
+	partial := &PartialListError{}
 	for rows.Next() {
 		var flowID, repoPath, status, updatedAt string
 		var record []byte
@@ -393,8 +405,8 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 		}
 		decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, record)
 		if err != nil {
-			_ = rows.Close()
-			return nil, err
+			partial.Entries = append(partial.Entries, PartialListEntry{FlowID: flowID, Cause: err})
+			continue
 		}
 		flows = append(flows, decoded)
 	}
@@ -404,6 +416,9 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 	}
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("close flow list: %w", err)
+	}
+	if len(partial.Entries) > 0 {
+		return flows, partial
 	}
 	return flows, nil
 }

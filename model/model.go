@@ -55,6 +55,11 @@ type beadExpansionSnapshot struct {
 	projection ui.BeadExpansion
 }
 
+type flowDegradationState struct {
+	repoPath   string
+	diagnostic *flowstore.PartialListError
+}
+
 // Model is the bubbletea application model.
 type Model struct {
 	repos                     pane.Pane[scanner.Repo]
@@ -113,6 +118,7 @@ type Model struct {
 	pendingRepoSelection      string
 	listRequests              [listRequestSlots]uint64
 	listErrors                [listRequestSlots]string
+	flowDegradations          [listRequestSlots]flowDegradationState
 	activePane                ui.Pane
 	repoPaneCollapsed         bool
 	activeFlowSurface         bool
@@ -1293,6 +1299,8 @@ func (m Model) View() string {
 		Flows:                        flows,
 		FlowSelected:                 flowSelected,
 		FlowScroll:                   flowScroll,
+		FlowDegradationWarning:       m.flowDegradationWarning(ui.ModeFlows),
+		ActiveFlowDegradationWarning: m.flowDegradationWarning(ui.ModeActiveFlows),
 		BeadsOpen:                    beadsActive,
 		BeadsOpenSelected:            beadsSelected,
 		BeadsOpenScroll:              beadsScroll,

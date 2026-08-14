@@ -146,6 +146,67 @@ func (m Model) setCurrentListError(mode ui.Mode, detail string) Model {
 	return m
 }
 
+func (m Model) flowDegradation(mode ui.Mode) *flowstore.PartialListError {
+	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows {
+		return nil
+	}
+	state := m.flowDegradations[int(mode)]
+	if state.diagnostic == nil || len(state.diagnostic.Entries) == 0 {
+		return nil
+	}
+	if mode == ui.ModeFlows {
+		repoPath, ok := m.currentRepoPath()
+		if !ok || !sameRepoPath(repoPath, state.repoPath) {
+			return nil
+		}
+	}
+	return state.diagnostic
+}
+
+func (m Model) flowDegradationWarning(mode ui.Mode) string {
+	diagnostic := m.flowDegradation(mode)
+	if diagnostic == nil {
+		return ""
+	}
+	limit := min(3, len(diagnostic.Entries))
+	ids := make([]string, 0, limit+1)
+	for _, entry := range diagnostic.Entries[:limit] {
+		ids = append(ids, entry.FlowID)
+	}
+	if len(diagnostic.Entries) > limit {
+		ids = append(ids, "…")
+	}
+	return fmt.Sprintf("Skipped %d unreadable Flows (%s); run approach flow list --json",
+		len(diagnostic.Entries), strings.Join(ids, ", "))
+}
+
+func (m Model) setFlowDegradation(mode ui.Mode, repoPath string, diagnostic *flowstore.PartialListError) Model {
+	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows {
+		return m
+	}
+	beforeRows := m.paneFlowDegradationWarningRows(mode)
+	state := flowDegradationState{}
+	if diagnostic != nil && len(diagnostic.Entries) > 0 {
+		copied := &flowstore.PartialListError{Entries: append([]flowstore.PartialListEntry(nil), diagnostic.Entries...)}
+		state = flowDegradationState{diagnostic: copied}
+		if mode == ui.ModeFlows {
+			state.repoPath = repoPath
+		}
+	}
+	m.flowDegradations[int(mode)] = state
+	if m.paneFlowDegradationWarningRows(mode) != beforeRows {
+		m = m.reflowMode(mode)
+	}
+	return m
+}
+
+func (m Model) paneFlowDegradationWarningRows(mode ui.Mode) int {
+	if m.flowDegradationWarning(mode) == "" {
+		return 0
+	}
+	return 1
+}
+
 func (m Model) reflowMode(mode ui.Mode) Model {
 	switch mode {
 	case ui.ModeActiveFlows:

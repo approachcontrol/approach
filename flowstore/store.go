@@ -31,6 +31,52 @@ var ErrFlowNotFound = errors.New("flow not found")
 
 var errFlowNotFound = ErrFlowNotFound
 
+// PartialListEntry identifies one authoritative Flow row that could be scanned
+// but not decoded while listing. Cause retains the row-local corruption error.
+type PartialListEntry struct {
+	FlowID string
+	Cause  error
+}
+
+// PartialListError reports rows omitted from an otherwise usable List result.
+// Entries retain the list query's deterministic SQL order.
+type PartialListError struct {
+	Entries []PartialListEntry
+}
+
+func (e *PartialListError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := make([]string, len(e.Entries))
+	for i, entry := range e.Entries {
+		parts[i] = fmt.Sprintf("%s: %v", entry.FlowID, entry.Cause)
+	}
+	return fmt.Sprintf("skipped %d unreadable Flows: %s", len(e.Entries), strings.Join(parts, "; "))
+}
+
+// Unwrap exposes every retained row-local cause to errors.Is and errors.As.
+func (e *PartialListError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	causes := make([]error, len(e.Entries))
+	for i, entry := range e.Entries {
+		causes[i] = entry.Cause
+	}
+	return causes
+}
+
+// AsPartialList classifies err as a partial Flow-list result without requiring
+// callers to match diagnostic text.
+func AsPartialList(err error) (*PartialListError, bool) {
+	var partial *PartialListError
+	if !errors.As(err, &partial) || partial == nil {
+		return nil, false
+	}
+	return partial, true
+}
+
 // ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
 // wraps. It is exported so callers outside this package can build the rejection
 // their AutoMode handling has to survive.
@@ -2205,14 +2251,14 @@ func appendUnique(values []string, value string) []string {
 // List returns records matching filter, sorted by UpdatedAt descending.
 func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
 	stored, err := s.backend.list(filter)
-	if err != nil {
+	if _, partial := AsPartialList(err); err != nil && !partial {
 		return nil, err
 	}
-	var records []FlowRecord
+	records := make([]FlowRecord, 0, len(stored))
 	for _, flow := range stored {
 		records = append(records, flow.record)
 	}
-	return records, nil
+	return records, err
 }
 
 func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {

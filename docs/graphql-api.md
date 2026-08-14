@@ -318,9 +318,13 @@ that parses, the last two only to one that would really execute.
 
 ### Errors and logs
 
-Store and scan failures are logged server-side with full detail and surface to
-clients as the fixed message `internal error reading application state` — never
-a filesystem path or `os` error text.
+Store and scan failures are logged server-side with full detail. A non-partial
+Flow-store failure surfaces to clients as the fixed message
+`internal error reading application state` — never a filesystem path or `os`
+error text. A typed partial Flow-list result is different: the server logs the
+full skipped-row diagnostic, indexes the accompanying healthy records, and
+serves them normally. The GraphQL schema has no degradation field, and skipped
+row IDs or decoder causes never enter a response.
 
 One log line per request: method, path, status, duration. Never the
 `Authorization` or `X-Approach-Token` value, and never the query body. Request
@@ -339,10 +343,12 @@ Each request builds **one snapshot** — one `scanner.Scan` plus one
 therefore internally consistent, and every new request re-reads disk. There is
 no cross-request cache.
 
-**A failing scan degrades; a failing store errors.** A missing or mistyped scan
-root is the ordinary case, not an exceptional one, so a scan failure yields an
-empty scanned-repo set plus one logged warning: flow-derived repos still
-populate `repos`, and `flows` / `flow` are unaffected. A `flowstore.List`
+**A failing scan degrades; a non-partial failing store errors.** A missing or
+mistyped scan root is the ordinary case, not an exceptional one, so a scan
+failure yields an empty scanned-repo set plus one logged warning: flow-derived
+repos still populate `repos`, and `flows` / `flow` are unaffected. When
+`flowstore.List` returns healthy rows with its typed partial diagnostic, the
+snapshot logs the diagnostic and indexes those rows. Every other Flow-store
 failure is a real failure of the primary data source and surfaces as the
 sanitized GraphQL error above.
 

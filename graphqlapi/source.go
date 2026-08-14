@@ -26,8 +26,9 @@ import (
 type RepoSource func() ([]scanner.Repo, error)
 
 // FlowSource returns every persisted Flow record, in the store's order
-// (UpdatedAt descending). A failure is a real failure of the primary data
-// source and surfaces to clients as a sanitized GraphQL error.
+// (UpdatedAt descending). A typed partial-list error accompanies usable healthy
+// records and is logged server-side; every other failure surfaces to clients as
+// a sanitized GraphQL error.
 type FlowSource func() ([]flowstore.FlowRecord, error)
 
 // errStateUnavailable is the fixed message clients see when the primary data
@@ -108,9 +109,13 @@ func buildSnapshot(repos RepoSource, flows FlowSource, logf func(string, ...any)
 	}
 	records, err := flows()
 	if err != nil {
-		logf("reading flow records failed: %v", err)
-		snap.err = errStateUnavailable
-		return snap
+		if _, partial := flowstore.AsPartialList(err); partial {
+			logf("reading flow records partially degraded: %v", err)
+		} else {
+			logf("reading flow records failed: %v", err)
+			snap.err = errStateUnavailable
+			return snap
+		}
 	}
 	for _, record := range records {
 		// An externally written record with an empty repo_path would

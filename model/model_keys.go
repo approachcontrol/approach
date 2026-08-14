@@ -3457,6 +3457,7 @@ func (m Model) resetRightPaneCursors() Model {
 
 func (m Model) resetStoredPaneCursors() Model {
 	m = m.invalidateStoredListRequests()
+	m = m.setFlowDegradation(ui.ModeFlows, "", nil)
 	// Covers the rescan-driven repo changes in handleRepoRefreshResult, which
 	// never route through handleRepoSelectionChanged.
 	m = m.invalidateReadyBeadFlowCreateRequest()
@@ -3555,6 +3556,7 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 		rows -= ui.TableHeaderRows
 	}
 	rows -= m.paneCachedWarningRows(mode)
+	rows -= m.paneFlowDegradationWarningRows(mode)
 	// The positive floor predates the warning row and also covers hidden
 	// background panes, which are allocated no rows at all. Viewports this
 	// small cannot show a cached row either way, so the floor stays.

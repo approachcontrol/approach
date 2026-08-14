@@ -422,6 +422,8 @@ type RenderParams struct {
 	Flows                        []flowstore.FlowRecord
 	FlowSelected                 int
 	FlowScroll                   int
+	FlowDegradationWarning       string
+	ActiveFlowDegradationWarning string
 	BeadsOpen                    []beadsquery.Bead
 	BeadsOpenSelected            int
 	BeadsOpenScroll              int
@@ -986,8 +988,12 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	hasRows := stackedModePaneHasRows(p, mode, takeover)
 	_, sourceCount := paneItemFilterState(p, mode)
 	showCachedWarning := ShowsCachedListWarning(paneListError(p, mode), hasRows, sourceCount)
+	degradationWarning := paneFlowDegradationWarning(p, mode)
 	bodyRows := listRows
 	if showCachedWarning && bodyRows > 0 {
+		bodyRows--
+	}
+	if degradationWarning != "" && bodyRows > 0 {
 		bodyRows--
 	}
 	switch {
@@ -1028,9 +1034,16 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	default:
 		body = renderPlaceholderPane(width, bodyRows, paneEmptyMessage(p, mode, repoPath))
 	}
+	var warnings []string
+	if degradationWarning != "" {
+		warnings = append(warnings, truncateToWidth(aheadBehindStyle.Render(" "+degradationWarning), width))
+	}
 	if showCachedWarning {
 		warning := " Could not refresh " + modeDataLabel(mode) + "; showing cached data"
-		body = append([]string{truncateToWidth(dirtyRedStyle.Render(warning), width)}, body...)
+		warnings = append(warnings, truncateToWidth(dirtyRedStyle.Render(warning), width))
+	}
+	if len(warnings) > 0 {
+		body = append(warnings, body...)
 	}
 
 	lines := append(headerLines, body...)
@@ -1154,6 +1167,17 @@ func paneListError(p RenderParams, mode Mode) string {
 		return p.TopListError
 	case paneOK && pane == PaneBottom:
 		return p.BottomListError
+	default:
+		return ""
+	}
+}
+
+func paneFlowDegradationWarning(p RenderParams, mode Mode) string {
+	switch mode {
+	case ModeFlows:
+		return p.FlowDegradationWarning
+	case ModeActiveFlows:
+		return p.ActiveFlowDegradationWarning
 	default:
 		return ""
 	}

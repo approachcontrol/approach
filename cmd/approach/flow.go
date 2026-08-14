@@ -280,13 +280,22 @@ func runFlowList(args []string, deps runDeps) error {
 	}
 	defer func() { _ = store.Close() }()
 	records, err := store.List(flowstore.FlowFilter{RepoPath: *repoPath})
-	if err != nil {
+	_, partial := flowstore.AsPartialList(err)
+	if err != nil && !partial {
 		return err
 	}
 	if records == nil {
 		records = []flowstore.FlowRecord{}
 	}
-	return writeFlowJSON(deps.stdout, records)
+	if err := writeFlowJSON(deps.stdout, records); err != nil {
+		return err
+	}
+	if partial {
+		if _, writeErr := fmt.Fprintln(deps.stderr, err); writeErr != nil {
+			return fmt.Errorf("write partial flow list diagnostic: %w", writeErr)
+		}
+	}
+	return nil
 }
 
 func printFlowListHelp(w io.Writer) {
@@ -1408,6 +1417,8 @@ func writeFlowJSON(w io.Writer, value any) error {
 	if err != nil {
 		return fmt.Errorf("encode flow JSON: %w", err)
 	}
-	fmt.Fprintln(w, string(data))
+	if _, err := fmt.Fprintln(w, string(data)); err != nil {
+		return fmt.Errorf("write flow JSON: %w", err)
+	}
 	return nil
 }
