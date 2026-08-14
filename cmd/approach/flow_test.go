@@ -451,6 +451,55 @@ func TestRunFlowReadWithExplicitStateRootUsesRequestedRoot(t *testing.T) {
 	}
 }
 
+func TestRunFlowReadPrintsExactBeadLinkStates(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := make([]flowstore.FlowRecord, 0, 3)
+	for _, tt := range []struct {
+		title string
+		bead  flowstore.BeadLink
+	}{
+		{title: "Linked", bead: flowstore.BeadLink{ID: "child", EpicID: "epic"}},
+		{title: "Child only", bead: flowstore.BeadLink{ID: "child"}},
+		{title: "Unlinked"},
+	} {
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: tt.title, Instructions: "Read the Bead link.", RepoPath: filepath.Join(root, "repo"), Bead: tt.bead,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, record)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, tt := range []struct {
+		want   string
+		forbid string
+	}{
+		{want: `"bead":{"id":"child","epic_id":"epic"}`},
+		{want: `"bead":{"id":"child"}`, forbid: `"epic_id"`},
+		{forbid: `"bead"`},
+	} {
+		var stdout bytes.Buffer
+		if err := run([]string{"approach", "flow", "read", "--flow-id", records[i].FlowID, "--state-root", root},
+			noScanDeps(t, runDeps{stdout: &stdout})); err != nil {
+			t.Fatalf("flow read returned error: %v", err)
+		}
+		if tt.want != "" && !strings.Contains(stdout.String(), tt.want) {
+			t.Fatalf("flow read output = %s, want exact state %s", stdout.String(), tt.want)
+		}
+		if tt.forbid != "" && strings.Contains(stdout.String(), tt.forbid) {
+			t.Fatalf("flow read output unexpectedly contains %s: %s", tt.forbid, stdout.String())
+		}
+	}
+}
+
 func TestRunFlowListJSONFiltersByRepo(t *testing.T) {
 	root := t.TempDir()
 	alpha := filepath.Join(root, "alpha")

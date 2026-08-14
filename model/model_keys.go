@@ -608,11 +608,12 @@ func (m Model) handleReadyBeadFlowCreate(intent readyBeadFlowIntent) (Model, tea
 	repoPath, _ := m.currentRepoPath()
 	bead, _ := m.selectedVisibleBead()
 	beadID := strings.TrimSpace(bead.ID)
+	beadLink := flowstore.BeadLink{ID: beadID, EpicID: strings.TrimSpace(bead.Parent)}
 	title := beadID + ": " + strings.TrimSpace(bead.Title)
 	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
 	var request uint64
 	m, request = m.nextReadyBeadFlowCreateRequest()
-	return m, m.createReadyBeadFlow(repoPath, title, instructions, request, intent)
+	return m, m.createReadyBeadFlow(repoPath, title, instructions, beadLink, request, intent)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {

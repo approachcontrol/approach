@@ -30,6 +30,7 @@ type FlowStartRequest struct {
 	RepoPath         string
 	Title            string
 	Instructions     string
+	Bead             flowstore.BeadLink
 	BaseRef          string
 	AgentCommand     string
 	Model            string
@@ -294,6 +295,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	flow, err := s.createFlow(flowstore.FlowRecord{
 		Title:        req.Title,
 		Instructions: req.Instructions,
+		Bead:         req.Bead,
 		RepoPath:     req.RepoPath,
 		BaseRef:      req.BaseRef,
 	}, flowstore.CreateOptions{

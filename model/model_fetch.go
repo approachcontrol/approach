@@ -737,7 +737,7 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 	}
 }
 
-func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64, intent readyBeadFlowIntent) tea.Cmd {
+func (m Model) createReadyBeadFlow(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64, intent readyBeadFlowIntent) tea.Cmd {
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	preferences := m.agentPreferences()
 	if intent == readyBeadFlowCreateOnly {
@@ -746,6 +746,7 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 				RepoPath:                 repoPath,
 				Title:                    title,
 				Instructions:             instructions,
+				Bead:                     bead,
 				AgentCommand:             command,
 				Model:                    launchModel,
 				ReasoningEffort:          reasoningEffort,
@@ -763,6 +764,7 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 			RepoPath:                    repoPath,
 			Title:                       title,
 			Instructions:                instructions,
+			Bead:                        bead,
 			AgentCommand:                command,
 			Model:                       launchModel,
 			ReasoningEffort:             reasoningEffort,

@@ -68,6 +68,9 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 		return nil, err
 	}
 	if state.database {
+		if err := migrateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename), lockTimeout); err != nil {
+			return nil, describeUnusableDatabase(canonicalRoot, err)
+		}
 		if err := validateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename)); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
 		}
@@ -101,6 +104,82 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 		return nil, err
 	}
 	return backend, nil
+}
+
+// migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
+// It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
+// authoritative read-only validation and before the WAL runtime handle opens.
+func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error {
+	millis, err := sqliteBusyTimeoutMillis(lockTimeout)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{
+		"mode":    {"rw"},
+		"_pragma": {fmt.Sprintf("busy_timeout(%d)", millis)},
+		"_txlock": {"immediate"},
+	}))
+	if err != nil {
+		return fmt.Errorf("open authoritative flow database for migration: %w", err)
+	}
+	closeDB := true
+	defer func() {
+		if closeDB {
+			_ = db.Close()
+		}
+	}()
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("open authoritative flow database for migration: %w", err)
+	}
+	version, err := readSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	if version > databaseSchemaVersion {
+		return fmt.Errorf("%w (database schema %d, this build supports %d); upgrade approach",
+			errDatabaseFromNewerBuild, version, databaseSchemaVersion)
+	}
+	if version == databaseSchemaVersion {
+		if err := db.Close(); err != nil {
+			return fmt.Errorf("close authoritative flow database migration handle: %w", err)
+		}
+		closeDB = false
+		return nil
+	}
+	if version != 0 && version != 1 {
+		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
+	}
+	if err := validateSQLiteSchemaVersion(db, 1); err != nil {
+		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin flow database schema migration: %w", err)
+	}
+	rollback := func(cause error) error {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			return fmt.Errorf("%w; rollback flow database schema migration: %v", cause, rollbackErr)
+		}
+		return cause
+	}
+	for _, statement := range []string{
+		"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
+		flowBeadCompatibilityTrigger,
+		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return rollback(fmt.Errorf("commit flow database schema migration: %w", err))
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close authoritative flow database migration handle: %w", err)
+	}
+	closeDB = false
+	return nil
 }
 
 // describeUnusableDatabase adds the recovery path to an authoritative-database
@@ -469,7 +548,7 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 		return nil, nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -477,13 +556,13 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 	promoted := map[string]bool{}
 	var unresolved []string
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt string
+		var flowID, repoPath, status, updatedAt, beadID, epicID string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &data); err != nil {
 			return nil, nil, err
 		}
 		promoted[flowID] = true
-		stored, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, data)
+		stored, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -790,8 +869,8 @@ func buildStagedDatabase(path string, records []FlowRecord) error {
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := tx.Exec("INSERT INTO flows(flow_id, repo_path, status, updated_at, record) VALUES(?, ?, ?, ?, ?)",
-			projection.flowID, projection.repoPath, projection.status, projection.updatedAt, data); err != nil {
+		if _, err := tx.Exec("INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, record) VALUES(?, ?, ?, ?, ?, ?, ?)",
+			projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, data); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("import legacy flow %q: %w", record.FlowID, err)
 		}
@@ -863,21 +942,21 @@ func validateStagedDatabase(path string, expected []FlowRecord, compareRecords b
 		_ = db.Close()
 		return fmt.Errorf("staged flow database integrity check = %q, err=%v", integrity, err)
 	}
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		_ = db.Close()
 		return err
 	}
 	var actual []FlowRecord
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt string
+		var flowID, repoPath, status, updatedAt, beadID, epicID string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &data); err != nil {
 			_ = rows.Close()
 			_ = db.Close()
 			return err
 		}
-		stored, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, data)
+		stored, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, data)
 		if err != nil {
 			_ = rows.Close()
 			_ = db.Close()

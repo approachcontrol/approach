@@ -6,6 +6,7 @@
 package flowstore
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -389,7 +390,41 @@ type PullRequest struct {
 	Status     string `json:"status,omitempty"`
 }
 
-// Issue stores agent-reported issue metadata.
+// BeadLink stores the independent Beads issue associated with a Flow. EpicID
+// identifies the selected issue's parent epic when that relationship is known.
+type BeadLink struct {
+	ID     string `json:"id"`
+	EpicID string `json:"epic_id,omitempty"`
+}
+
+// UnmarshalJSON distinguishes an omitted link from a present but incomplete
+// object. The zero value remains valid on pre-Bead records because this method
+// is not called when the containing field is absent.
+func (link *BeadLink) UnmarshalJSON(data []byte) error {
+	type beadLink BeadLink
+	var decoded beadLink
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	value := BeadLink(decoded)
+	if err := validateBeadLink(value); err != nil {
+		return err
+	}
+	if value.ID == "" {
+		return errors.New("bead requires a bead id")
+	}
+	*link = value
+	return nil
+}
+
+func validateBeadLink(link BeadLink) error {
+	if link.ID == "" && link.EpicID != "" {
+		return fmt.Errorf("bead epic_id %q requires a bead id", link.EpicID)
+	}
+	return nil
+}
+
+// Issue stores agent-reported GitHub issue metadata.
 type Issue struct {
 	Provider string `json:"provider,omitempty"`
 	Number   int    `json:"number,omitempty"`
@@ -509,6 +544,7 @@ type FlowRecord struct {
 	PresetName    string      `json:"preset_name,omitempty"`
 	PlanID        string      `json:"plan_id,omitempty"`
 	PlanPath      string      `json:"plan_path,omitempty"`
+	Bead          BeadLink    `json:"bead,omitzero"`
 	Issue         Issue       `json:"issue,omitempty"`
 	PR            PullRequest `json:"pr,omitempty"`
 	Merge         Merge       `json:"merge,omitempty"`
