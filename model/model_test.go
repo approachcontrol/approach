@@ -115,7 +115,8 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return record, nil
 		}
 	}
-	return model.NewWithOptions(repos, opts)
+	m := model.NewWithOptions(repos, opts)
+	return model.WithFlowWorktreeInspectionForTest(m, func(string) error { return nil })
 }
 
 // update sends a message and returns the concrete Model.

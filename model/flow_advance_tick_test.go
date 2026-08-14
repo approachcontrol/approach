@@ -51,7 +51,9 @@ func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = autoAdvanceTestReadFlow
 	}
-	return NewWithOptions(repos, opts)
+	m := NewWithOptions(repos, opts)
+	m.launchSeams.InspectWorktreeDirectory = func(string) error { return nil }
+	return m
 }
 
 func autoAdvancePrepareForRequest(m Model, previous, current []flowstore.FlowRecord, request uint64) (Model, tea.Cmd, []string) {
