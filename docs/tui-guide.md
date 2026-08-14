@@ -390,9 +390,9 @@ What does not change:
   which is always headless) stay embedded. `claude --print` buffers all output
   until it exits, so a self-closing tmux window would render nothing and then
   discard it.
-- **The plan launch that Flow creation performs** — whether Plan Now or Ready
-  `F` — stays embedded for CLI agents. It shares its spawn path with repair,
-  which must stay in the dock.
+- **Creation-time plan launches** stay embedded for CLI agents. New-Flow Plan
+  Now reaches the dock through the `createPhase` lifecycle; Ready `F` retains
+  its compatibility creation-time handoff until that shortcut is migrated.
 
 Lifecycle and ownership:
 
@@ -703,6 +703,18 @@ new Flow in either case, so a parked Flow uses the same choice when launched
 later. Ready-Bead creation retains the default-on setting: lowercase `f`
 persists it for the parked Flow, while uppercase `F` also uses it for the
 immediate start. Command-line creation retains the same default.
+
+New-Flow submissions are single-flight across both Plan Now choices. While one
+submission is active, another form may be opened but cannot be submitted. With
+Plan Now enabled, the form emits only creation intent. The launch lifecycle
+allocates the final Flow ID before it checks exact-ID sessions; allocation is
+non-durable and does not reserve or create a record, so exact-ID creation is the
+collision authority. After creation the lifecycle holds its in-memory attempt
+and the cross-process launch/close reservation across worktree setup, bootstrap,
+launch-ID persistence, metadata, and embedded installation or recovery. The
+first canonical launchable root starts; parallel roots remain available unless
+startup recovery must block the captured root set. A graph with no launchable
+root is parked after metadata without a launch ID.
 
 On a Flow row or an expanded phase row:
 

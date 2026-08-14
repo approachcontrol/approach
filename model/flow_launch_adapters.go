@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -13,10 +14,18 @@ import (
 // writes through. It is built once in NewWithOptions and stored on the Model so
 // the lifecycle never reaches for a pane snapshot or a package-level store.
 type flowLaunchSeams struct {
+	AllocateFlowID           func(title string) (string, error)
+	CreateFlow               func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
 	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
 	ReadSession              func(sessions.Provider, string) (sessions.SessionRecord, error)
 	ListFlowSessions         func(flowID string) ([]sessions.SessionRecord, error)
+	ReserveLaunch            func(flowID string) (flowstore.FlowRecord, func(), error)
+	CreateWorktree           func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
+	ResolveCommit            func(worktreePath string) string
+	BootstrapHookForRepo     func(repoPath string) (actions.BootstrapHook, bool)
+	RunBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
 	AddPhaseLaunchID         func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	SetStartMetadata         func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase                 func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	PlanMarkdownPath         func(planID string) (string, error)
 	ReadPlan                 func(planID string) (string, error)

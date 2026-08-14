@@ -363,10 +363,12 @@ Two layers enforce that, and they behave differently on purpose:
 - The store is the invariant. `flowstore.Store.CreateWithOptions` rejects an
   unusable triple and writes no record, for both the create-time default and any
   phase that declares its own settings.
-- The TUI request mapping drops before it stores. `FlowStarter` discards an
-  unusable triple rather than passing it down, so Flow creation cannot start
-  failing on an agent selection that used to be accepted. A dropped triple
-  stamps nothing, which reads as "resolve from the global setting at launch".
+- The TUI creation mapping drops before it stores. The shared capture helper
+  used by `FlowStarter` compatibility paths and the `createPhase` lifecycle
+  discards an unusable triple rather than passing it down, so Flow creation
+  cannot start failing on an agent selection that used to be accepted. A
+  dropped triple stamps nothing, which reads as "resolve from the global
+  setting at launch".
 
 In practice neither path is reachable from normal use: config loading already
 validates the `[agent]` block, and the TUI picks models and efforts from fixed

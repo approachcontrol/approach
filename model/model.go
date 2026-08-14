@@ -701,6 +701,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	allocateFlowID := func(title string) (string, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return "", err
+		}
+		return store.AllocateID(title)
+	}
 	createFlow := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 		store, err := newFlowStore()
 		if err != nil {
@@ -751,6 +758,23 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		// documented contract takes over and refuses worktree-less launches.
 		ensureFlowWorktree = starter.EnsureWorktree
 	}
+	launchSeams := newFlowLaunchSeams(
+		readFlow,
+		readSession,
+		listSessions,
+		addFlowPhaseLaunchID,
+		setFlowPhase,
+		planMarkdownPath,
+		readPlan,
+	)
+	launchSeams.AllocateFlowID = allocateFlowID
+	launchSeams.CreateFlow = createFlow
+	launchSeams.ReserveLaunch = reserveFlowLaunch
+	launchSeams.CreateWorktree = actions.CreateFlowWorktree
+	launchSeams.ResolveCommit = actions.ResolveWorktreeCommit
+	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
+	launchSeams.RunBootstrapHook = runBootstrapHook
+	launchSeams.SetStartMetadata = setFlowStartMetadata
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
@@ -806,52 +830,44 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		ensureFlowWorktree:        ensureFlowWorktree,
 		setFlowPhase:              setFlowPhase,
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
-		launchSeams: newFlowLaunchSeams(
-			readFlow,
-			readSession,
-			listSessions,
-			addFlowPhaseLaunchID,
-			setFlowPhase,
-			planMarkdownPath,
-			readPlan,
-		),
-		setFlowAutoMode:          setFlowAutoMode,
-		setFlowHeadless:          setFlowHeadless,
-		lookupPRMerge:            lookupPRMerge,
-		markFlowManualMerge:      markFlowManualMerge,
-		closeFlow:                closeFlow,
-		reopenFlow:               reopenFlow,
-		reserveFlowRepairLaunch:  reserveFlowRepairLaunch,
-		reserveFlowLaunch:        reserveFlowLaunch,
-		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
-		resetFlowPhase:           resetFlowPhase,
-		deleteFlow:               deleteFlow,
-		readPlan:                 readPlan,
-		planMarkdownPath:         planMarkdownPath,
-		copyToClipboard:          copyToClipboard,
-		openCode:                 openCode,
-		openURL:                  openURL,
-		pageText:                 pageText,
-		editFile:                 editFile,
-		saveAgent:                saveAgent,
-		saveAgentModel:           saveAgentModel,
-		saveAgentReasoningEffort: saveAgentReasoningEffort,
-		savePromptTemplate:       savePromptTemplate,
-		resetPromptTemplate:      resetPromptTemplate,
-		launchTerminal:           launchTerminal,
-		launchDetachedTerminal:   launchDetachedTerminal,
-		launchAgent:              launchAgent,
-		launchBackend:            normalizeLaunchBackend(opts.LaunchBackend),
-		tmuxLaunchAvailable:      tmuxLaunchAvailable,
-		launchRepoTmuxAgent:      launchRepoTmuxAgent,
-		repoTmuxSessionExists:    repoTmuxSessionExists,
-		repoTmuxLaunchWindowLive: repoTmuxLaunchWindowLive,
-		tmuxAttachHint:           normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
-		startEmbeddedTerminal:    startEmbeddedTerminal,
-		finalizeAgentSession:     finalizeAgentSession,
-		sessionStateRoot:         opts.SessionStateRoot,
-		bootstrapHookForRepo:     bootstrapHookForRepo,
-		runBootstrapHook:         runBootstrapHook,
+		launchSeams:               launchSeams,
+		setFlowAutoMode:           setFlowAutoMode,
+		setFlowHeadless:           setFlowHeadless,
+		lookupPRMerge:             lookupPRMerge,
+		markFlowManualMerge:       markFlowManualMerge,
+		closeFlow:                 closeFlow,
+		reopenFlow:                reopenFlow,
+		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
+		reserveFlowLaunch:         reserveFlowLaunch,
+		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
+		resetFlowPhase:            resetFlowPhase,
+		deleteFlow:                deleteFlow,
+		readPlan:                  readPlan,
+		planMarkdownPath:          planMarkdownPath,
+		copyToClipboard:           copyToClipboard,
+		openCode:                  openCode,
+		openURL:                   openURL,
+		pageText:                  pageText,
+		editFile:                  editFile,
+		saveAgent:                 saveAgent,
+		saveAgentModel:            saveAgentModel,
+		saveAgentReasoningEffort:  saveAgentReasoningEffort,
+		savePromptTemplate:        savePromptTemplate,
+		resetPromptTemplate:       resetPromptTemplate,
+		launchTerminal:            launchTerminal,
+		launchDetachedTerminal:    launchDetachedTerminal,
+		launchAgent:               launchAgent,
+		launchBackend:             normalizeLaunchBackend(opts.LaunchBackend),
+		tmuxLaunchAvailable:       tmuxLaunchAvailable,
+		launchRepoTmuxAgent:       launchRepoTmuxAgent,
+		repoTmuxSessionExists:     repoTmuxSessionExists,
+		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
+		startEmbeddedTerminal:     startEmbeddedTerminal,
+		finalizeAgentSession:      finalizeAgentSession,
+		sessionStateRoot:          opts.SessionStateRoot,
+		bootstrapHookForRepo:      bootstrapHookForRepo,
+		runBootstrapHook:          runBootstrapHook,
 	}
 	if ui.IsGitMode(m.topMode) {
 		m.lastGitMode = m.topMode
@@ -2022,6 +2038,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAgentResultAfterFinalization(msg.Result, msg.Err)
 	case flowLaunchEventMsg:
 		return m.handleFlowLaunchEvent(msg)
+	case flowLaunchCreateRequestedMsg:
+		intent := flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: flowLaunchOriginNewFlow, Create: msg.Create}
+		next, cmd, _ := m.requestFlowLaunch(intent)
+		return next, cmd
 	case flowLaunchFailurePersistedMsg:
 		return m.handleFlowLaunchFailurePersisted(msg)
 	case DeleteFailedMsg:
