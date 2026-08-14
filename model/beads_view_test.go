@@ -614,6 +614,43 @@ func TestBeadExpansionHeightDrivesVisualScrollingPastExpandedEpic(t *testing.T) 
 	}
 }
 
+func TestSingleBeadExpansionKeepsBottomScrollAtBoundary(t *testing.T) {
+	t.Parallel()
+
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "child-1", Title: "One"}, {ID: "child-2", Title: "Two"},
+				{ID: "child-3", Title: "Three"}, {ID: "child-4", Title: "Four"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, cmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}},
+	})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 2 {
+		t.Fatalf("scroll after reaching final child = %d, want 2", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	view := ansi.Strip(m.View())
+	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 2 {
+		t.Fatalf("extra Down reset single expanded epic scroll to %d, want 2:\n%s", got, view)
+	}
+	if m.BeadsSelected(ui.ModeBeadsOpen) != 0 || !strings.Contains(view, "child-4") || strings.Contains(view, "> epic") {
+		t.Fatalf("single expanded epic boundary lost the final-child viewport:\n%s", view)
+	}
+}
+
 func beadsResultMessageForTest(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead) tea.Msg {
 	switch mode {
 	case ui.ModeBeadsReady:

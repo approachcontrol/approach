@@ -953,6 +953,9 @@ func (m Model) moveCursor(delta int) Model {
 			m.beads[index].pane = m.beads[index].pane.ScrollBy(delta, h, w)
 			return m
 		}
+		if m.beads[index].pane.Len() <= 1 {
+			return m
+		}
 		m.beads[index].pane = m.beads[index].pane.Move(delta, h, w)
 	}
 	return m
