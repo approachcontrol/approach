@@ -157,15 +157,6 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	if m.flowLaunchAdmissionOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
 		return m.setStatus(statusOther, m.flowRepairOccupancyRefusal(flowID)), nil, false
 	}
-	command, _, _ := m.flowLaunchAgentSettings()
-	switch command {
-	case "":
-		return m.setStatus(statusOther, "Press A to choose codex or claude before repairing a Flow"), nil, false
-	case agent.CommandCodex, agent.CommandClaude:
-		// Supported below.
-	default:
-		return m.setStatus(statusOther, fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", command)), nil, false
-	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
 		// Silent, unlike admitManualFlowLaunch's noLaunchableFlowPhaseStatus on
@@ -389,8 +380,20 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// ctx.PlanPath only when the record's plan ID still matches, so an
 		// unseeded context would silently discard the read stage's repo
 		// fallback and its PlanMarkdownPath lookup.
+		resolved, err := resolveFlowRepairAgentSettings(current, settings.Preferences)
+		if err != nil {
+			event.Err = flowRepairAgentSettingsError(current, settings.Preferences, err)
+			return event
+		}
+		switch resolved.Command {
+		case agent.CommandCodex, agent.CommandClaude:
+			// Embedded repair providers.
+		default:
+			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", resolved.Command)
+			return event
+		}
 		ctx := actions.AgentLaunchContext{
-			Command: settings.Command,
+			Command: resolved.Command,
 			// The admission token, never a fresh ID: every LaunchID-keyed fence
 			// downstream is on it.
 			LaunchID:         msg.Token,
@@ -402,8 +405,8 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			FlowID:           msg.FlowID,
 			FlowRepair:       true,
 			Embedded:         true,
-			Model:            settings.Model,
-			ReasoningEffort:  settings.ReasoningEffort,
+			Model:            resolved.Model,
+			ReasoningEffort:  resolved.ReasoningEffort,
 		}
 		// FlowPhaseID stays empty and FlowLaunchTracked stays false. The empty
 		// phase ID is what makes flowLaunchFailureUpdate refuse, which is what
@@ -412,4 +415,24 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		event.Route = flowLaunchRouteEmbedded
 		return event
 	}
+}
+
+func resolveFlowRepairAgentSettings(record flowstore.FlowRecord, prefs agent.Preferences) (agent.Settings, error) {
+	obstruction, _ := flowRepairObstructionForRecord(record)
+	raw := flowstore.PhaseAgentSettings{}
+	if obstruction.HasPhase {
+		raw = obstruction.Phase.AgentSettings()
+	}
+	return flowstore.ResolvePhaseAgentSettings(prefs, raw)
+}
+
+func flowRepairAgentSettingsError(record flowstore.FlowRecord, prefs agent.Preferences, err error) string {
+	obstruction, _ := flowRepairObstructionForRecord(record)
+	if agent.Normalize(prefs.Command) == "" && (!obstruction.HasPhase || agent.Normalize(obstruction.Phase.Agent) == "") {
+		return "Press A to choose codex or claude before repairing a Flow"
+	}
+	if !obstruction.HasPhase || obstruction.Phase.AgentSettings().IsZero() {
+		return fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", agent.Normalize(prefs.Command))
+	}
+	return err.Error()
 }

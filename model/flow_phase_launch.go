@@ -105,10 +105,14 @@ type FlowPhaseLauncher struct {
 	AddFlowPhaseLaunchID func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	NewLaunchID          func() string
 	SessionStateRoot     string
-	AgentCommand         string
-	Model                string
-	ReasoningEffort      string
-	PromptTemplates      FlowPromptTemplates
+	AgentPreferences     agent.Preferences
+	// AgentCommand, Model, and ReasoningEffort are retained for direct legacy
+	// callers. Production launchers provide AgentPreferences so a stamped phase
+	// can fall back to either provider's current values.
+	AgentCommand    string
+	Model           string
+	ReasoningEffort string
+	PromptTemplates FlowPromptTemplates
 	// Backend is config's [launch].backend. Empty means embedded.
 	Backend string
 	// TmuxAvailable probes for tmux. Nil means "probe the real PATH".
@@ -130,6 +134,7 @@ func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 		AddFlowPhaseLaunchID: m.addFlowPhaseLaunchID,
 		NewLaunchID:          newLaunchID,
 		SessionStateRoot:     m.sessionStateRoot,
+		AgentPreferences:     m.agentPreferences(),
 		AgentCommand:         command,
 		Model:                model,
 		ReasoningEffort:      reasoningEffort,
@@ -139,12 +144,16 @@ func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 }
 
 func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunchPreparedRequest, error) {
-	command := agent.Normalize(l.AgentCommand)
-	if command == "" {
-		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{
-			Message: "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+	settings, err := l.resolvePhaseAgentSettings(req.Phase)
+	if err != nil {
+		if agent.Normalize(l.preferences().Command) == "" && agent.Normalize(req.Phase.Agent) == "" {
+			return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{
+				Message: "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+			}
 		}
+		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
 	}
+	command := settings.Command
 	if err := agent.Validate(command); err != nil {
 		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
 	}
@@ -278,24 +287,33 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 	if persistedPhase, ok := flowPhaseByID(updated, req.Phase.PhaseID); ok {
 		launchPhase = persistedPhase
 	}
-	command := agent.Normalize(l.AgentCommand)
+	settings, err := l.resolvePhaseAgentSettings(launchPhase)
+	if err != nil {
+		return FlowPhaseLaunchResult{}, FlowPhaseLaunchValidationError{Message: err.Error()}
+	}
+	command := settings.Command
+	// AddFlowPhaseLaunchID is the linearization point for the target phase only.
+	// Keep every other launch input on the prepared snapshot: the linked plan
+	// body and path were already read from it, and mixing later record metadata
+	// into that context could identify a different plan or worktree.
+	launchRecord := req.Record
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
-		Model:            l.model(command),
-		ReasoningEffort:  l.reasoningEffort(command),
+		Model:            settings.Model,
+		ReasoningEffort:  settings.ReasoningEffort,
 		LaunchID:         req.LaunchID,
 		RepoPath:         req.RepoPath,
 		WorktreePath:     req.WorktreePath,
-		Branch:           req.Record.Branch,
-		Commit:           req.Record.Commit,
+		Branch:           launchRecord.Branch,
+		Commit:           launchRecord.Commit,
 		SessionStateRoot: l.SessionStateRoot,
-		PlanID:           req.Record.PlanID,
+		PlanID:           launchRecord.PlanID,
 		PlanPath:         req.PlanPath,
-		FlowID:           req.Record.FlowID,
+		FlowID:           launchRecord.FlowID,
 		FlowPhaseID:      launchPhase.PhaseID,
 		FlowPhaseKind:    flowstore.SemanticKind(launchPhase),
 		FlowAutoLaunch:   req.AutoLaunch,
-		InitialPrompt:    flowPhasePrompt(req.Record, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
+		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
 	}
 	route := FlowPhaseLaunchEmbedded
 	fallbackNote := ""
@@ -340,22 +358,24 @@ func (l FlowPhaseLauncher) addFlowPhaseLaunchID(update flowstore.PhaseLaunchUpda
 	return l.AddFlowPhaseLaunchID(update)
 }
 
-func (l FlowPhaseLauncher) reasoningEffort(command string) string {
-	switch command {
-	case agent.CommandCodex, agent.CommandClaude:
-		return l.ReasoningEffort
-	default:
-		return ""
+func (l FlowPhaseLauncher) preferences() agent.Preferences {
+	if l.AgentPreferences != (agent.Preferences{}) {
+		return l.AgentPreferences
 	}
+	prefs := agent.Preferences{Command: l.AgentCommand}
+	switch agent.Normalize(l.AgentCommand) {
+	case agent.CommandCodex:
+		prefs.CodexModel = l.Model
+		prefs.CodexEffort = l.ReasoningEffort
+	case agent.CommandClaude:
+		prefs.ClaudeModel = l.Model
+		prefs.ClaudeEffort = l.ReasoningEffort
+	}
+	return prefs
 }
 
-func (l FlowPhaseLauncher) model(command string) string {
-	switch command {
-	case agent.CommandCodex, agent.CommandClaude:
-		return l.Model
-	default:
-		return ""
-	}
+func (l FlowPhaseLauncher) resolvePhaseAgentSettings(phase flowstore.FlowPhase) (agent.Settings, error) {
+	return flowstore.ResolvePhaseAgentSettings(l.preferences(), phase.AgentSettings())
 }
 
 func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.FlowPhase, bool) {

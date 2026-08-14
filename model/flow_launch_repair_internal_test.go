@@ -117,6 +117,32 @@ func TestFlowRepairLaunchOpensOneUntrackedSlot(t *testing.T) {
 	}
 }
 
+func TestFlowRepairUsesAuthoritativePhaseSettingsWhenCacheIsStale(t *testing.T) {
+	stale := repairLaunchFlowRecord(t)
+	stale.Phases[0].Model = "gpt-5.5"
+
+	authoritative := stale
+	authoritative.Phases = append([]flowstore.FlowPhase(nil), stale.Phases...)
+	authoritative.Phases[0].Agent = "claude"
+	authoritative.Phases[0].Model = "claude-sonnet-5"
+
+	h := newManualLaunchHarness(t, stale)
+	h.persistedFlows = []flowstore.FlowRecord{authoritative}
+	h.agentCommand = " "
+	m := h.repair(h.repairModel())
+
+	if h.readFlowCalls != 1 || h.repairReservations != 1 {
+		t.Fatalf("authoritative reads = %d, repair reservations = %d; want one each", h.readFlowCalls, h.repairReservations)
+	}
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded repairs = %d, want 1; status=%q", len(h.launchContexts), m.status.Text)
+	}
+	ctx := h.launchContexts[0]
+	if ctx.Command != "claude" || ctx.Model != "claude-sonnet-5" {
+		t.Fatalf("repair settings = %#v, want authoritative Claude stamp", ctx)
+	}
+}
+
 // The slot identity is what AC3's "nondetachable" means in model/: a repair
 // terminal is its own kind of slot, carrying no phase. Nothing here refuses a
 // detach — handleEmbeddedTerminalDetachPrefix gates only on tmux backing, and
@@ -1008,6 +1034,7 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 		agent      string
 		wantStatus string
 		wantFooter bool
+		wantReads  int
 	}{
 		{
 			name: "repair attempt",
@@ -1108,12 +1135,14 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 			agent:      " ",
 			wantStatus: "Press A to choose codex or claude before repairing a Flow",
 			wantFooter: true,
+			wantReads:  1,
 		},
 		{
 			name:       "unsupported agent",
 			agent:      "not a provider",
 			wantStatus: `Flow repair does not support agent "not a provider"; press A to choose codex or claude`,
 			wantFooter: true,
+			wantReads:  1,
 		},
 	}
 
@@ -1140,8 +1169,8 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 			if got := m.status.Text; got != tc.wantStatus {
 				t.Fatalf("status = %q, want %q", got, tc.wantStatus)
 			}
-			if h.repairReservations != 0 {
-				t.Fatalf("an admission refusal took %d repair reservations, want zero", h.repairReservations)
+			if h.readFlowCalls != tc.wantReads || h.repairReservations != tc.wantReads || h.repairReleases != tc.wantReads {
+				t.Fatalf("refusal reads=%d reservations=%d releases=%d, want %d each", h.readFlowCalls, h.repairReservations, h.repairReleases, tc.wantReads)
 			}
 		})
 	}

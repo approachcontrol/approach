@@ -1551,6 +1551,9 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
+	if m.flowPhaseAgentControlsSelected() {
+		return m.handleSetFlowPhaseAgent()
+	}
 	m.modal = modal.OpenSelectWithLayout(
 		"Choose interactive helper",
 		agentSelectItems(),
@@ -1577,6 +1580,119 @@ func selectedAgentIndex(command string) int {
 	}
 }
 
+const inheritFlowPhaseAgentSetting = "__inherit_global__"
+
+func (m Model) selectedFlowPhaseAgentTarget() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID != m.currentExpandedFlowID() || m.currentSelectedFlowPhaseID() == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+	}
+	phase, ok := flowRecordPhaseByID(record, m.currentSelectedFlowPhaseID())
+	return record, phase, ok
+}
+
+func (m Model) handleSetFlowPhaseAgent() (tea.Model, tea.Cmd) {
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok {
+		return m.setStatus(statusOther, "Select an expanded Flow phase before setting its agent"), nil
+	}
+	items := append([]modal.SelectItem{{Label: "inherit global settings", Value: inheritFlowPhaseAgentSetting}}, agentSelectItems()...)
+	selected := 0
+	if raw := agent.Normalize(phase.Agent); raw != "" {
+		selected = selectedAgentIndex(raw) + 1
+	}
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose agent for phase %s", phase.PhaseID),
+		items,
+		selected,
+		modal.Layout{Width: 36, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			settings := flowstore.PhaseAgentSettings{}
+			if value != inheritFlowPhaseAgentSetting {
+				settings.Agent = agent.Normalize(value)
+			}
+			return m.setFlowPhaseAgentSettingsCmd(record.FlowID, phase.PhaseID, settings)
+		},
+	)
+	return m, nil
+}
+
+func (m Model) handleSetFlowPhaseModel() (tea.Model, tea.Cmd) {
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok {
+		return m.setStatus(statusOther, "Select an expanded Flow phase before setting its model"), nil
+	}
+	effective, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+	if err != nil {
+		return m.setStatus(statusOther, err.Error()), nil
+	}
+	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, modelSelectItems(effective.Command)...)
+	selected := 0
+	if raw := agent.NormalizeModel(phase.Model); raw != "" {
+		selected = selectedModelIndex(effective.Command, raw) + 1
+	}
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose model for phase %s", phase.PhaseID), items, selected,
+		modal.Layout{Width: 40, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			settings := phase.AgentSettings().Normalize()
+			if value == inheritFlowPhaseAgentSetting {
+				settings.Model = ""
+			} else {
+				if settings.Agent == "" {
+					settings.Agent = effective.Command
+				}
+				settings.Model = agent.NormalizeModel(value)
+			}
+			return m.setFlowPhaseAgentSettingsCmd(record.FlowID, phase.PhaseID, settings)
+		},
+	)
+	return m, nil
+}
+
+func (m Model) handleSetFlowPhaseReasoningEffort() (tea.Model, tea.Cmd) {
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok {
+		return m.setStatus(statusOther, "Select an expanded Flow phase before setting reasoning effort"), nil
+	}
+	effective, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+	if err != nil {
+		return m.setStatus(statusOther, err.Error()), nil
+	}
+	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, reasoningEffortSelectItems(effective.Command)...)
+	selected := 0
+	if raw := agent.NormalizeReasoningEffort(phase.ReasoningEffort); raw != "" {
+		selected = selectedReasoningEffortIndex(effective.Command, raw) + 1
+	}
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose effort for phase %s", phase.PhaseID), items, selected,
+		modal.Layout{Width: 40, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			settings := phase.AgentSettings().Normalize()
+			if value == inheritFlowPhaseAgentSetting {
+				settings.ReasoningEffort = ""
+			} else {
+				if settings.Agent == "" {
+					settings.Agent = effective.Command
+				}
+				settings.ReasoningEffort = agent.NormalizeReasoningEffort(value)
+			}
+			return m.setFlowPhaseAgentSettingsCmd(record.FlowID, phase.PhaseID, settings)
+		},
+	)
+	return m, nil
+}
+
+func (m Model) setFlowPhaseAgentSettingsCmd(flowID, phaseID string, settings flowstore.PhaseAgentSettings) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{FlowID: flowID, PhaseID: phaseID, Settings: settings})
+		if err != nil {
+			return FlowPhaseAgentSettingsSetFailedMsg{FlowID: flowID, PhaseID: phaseID, Err: err.Error()}
+		}
+		return FlowPhaseAgentSettingsSetMsg{Flow: flow, PhaseID: phaseID, PhaseIdentity: artifacts.NormalizePhaseID(phaseID)}
+	}
+}
+
 func (m Model) setAgent(command string) tea.Cmd {
 	return func() tea.Msg {
 		if err := m.saveAgent(command); err != nil {
@@ -1587,6 +1703,9 @@ func (m Model) setAgent(command string) tea.Cmd {
 }
 
 func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
+	if m.flowPhaseAgentControlsSelected() {
+		return m.handleSetFlowPhaseReasoningEffort()
+	}
 	command := agent.Normalize(m.agentCommand)
 	if command == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting reasoning effort")
@@ -1608,6 +1727,9 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
+	if m.flowPhaseAgentControlsSelected() {
+		return m.handleSetFlowPhaseModel()
+	}
 	command := agent.Normalize(m.agentCommand)
 	if command == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting model")
