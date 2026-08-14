@@ -214,6 +214,111 @@ func TestBeadExpansionRejectsStaleResultAfterCursorAndFilterChanges(t *testing.T
 	}
 }
 
+func TestBeadExpansionFilterEditRestartsUnchangedSelectedEpic(t *testing.T) {
+	t.Parallel()
+
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, oldCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic-alpha", Title: "Alpha epic", IssueType: "epic"}},
+	})
+	if oldCmd == nil {
+		t.Fatal("accepted epic did not start expansion")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, replacementCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Alpha")})
+	if replacementCmd == nil {
+		t.Fatal("filter edit retaining the selected epic did not restart expansion")
+	}
+	m, _ = update(m, oldCmd())
+	if strings.Contains(ansi.Strip(m.View()), "epic-alpha-child") {
+		t.Fatalf("pre-filter result restored after same-selection filter edit:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func TestProgrammaticTopModeExitClearsPendingBeadExpansion(t *testing.T) {
+	t.Parallel()
+
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, staleCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}},
+	})
+	if staleCmd == nil || !strings.Contains(ansi.Strip(m.View()), "loading direct children") {
+		t.Fatal("setup did not start pending expansion")
+	}
+
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/review-loop"})
+	if m.Mode() != ui.ModeBranches || strings.Contains(ansi.Strip(m.View()), "loading direct children") {
+		t.Fatalf("programmatic top-mode exit retained expansion:\n%s", ansi.Strip(m.View()))
+	}
+	m, _ = update(m, staleCmd())
+	if strings.Contains(ansi.Strip(m.View()), "epic-child") {
+		t.Fatalf("stale result was accepted after programmatic top-mode exit:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func TestReturningFromActiveFlowsRestartsSelectedEpicExpansion(t *testing.T) {
+	t.Parallel()
+
+	childrenCalls := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+			childrenCalls++
+			return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListFlows:      func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, staleCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}},
+	})
+	if staleCmd == nil {
+		t.Fatal("accepted epic did not start expansion")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, returnCmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeBeadsOpen || returnCmd == nil || childrenCalls != 0 {
+		t.Fatalf("return from Active Flows = mode %v cmd %T calls %d, want Beads/Open deferred restart", m.Mode(), returnCmd, childrenCalls)
+	}
+	m, _ = update(m, staleCmd())
+	if strings.Contains(ansi.Strip(m.View()), "epic-child") {
+		t.Fatalf("pre-takeover result restored after return:\n%s", ansi.Strip(m.View()))
+	}
+
+	batch, ok := returnCmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("return command = %T, want batch with Flow refresh and expansion", returnCmd())
+	}
+	for _, cmd := range batch {
+		m, _ = update(m, cmd())
+	}
+	if childrenCalls != 2 || !strings.Contains(ansi.Strip(m.View()), "epic-child") {
+		t.Fatalf("return expansion calls/view = %d:\n%s", childrenCalls, ansi.Strip(m.View()))
+	}
+}
+
 func TestBeadExpansionFilterClearInvalidatesFilteredEpicAndRestartsTopEpic(t *testing.T) {
 	t.Parallel()
 

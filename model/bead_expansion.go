@@ -77,6 +77,17 @@ func (m Model) handleBeadExpansionResult(msg beadExpansionResultMsg) Model {
 	if msg.target.token == 0 || msg.target != m.beadExpansion.target {
 		return m
 	}
+	index, ok := beadSubviewIndex(msg.target.mode)
+	if !ok || m.topMode != msg.target.mode {
+		return m
+	}
+	state := m.beads[index]
+	selected, selectedOK := state.pane.Selected()
+	if !state.available || state.pending || state.error != "" ||
+		state.repoPath != msg.target.repoPath || !selectedOK ||
+		selected.ID != msg.target.epicID || !isEpicBead(selected) {
+		return m
+	}
 	projection := ui.BeadExpansion{EpicID: msg.target.epicID}
 	if msg.childrenErr != nil {
 		projection.State = ui.BeadExpansionError

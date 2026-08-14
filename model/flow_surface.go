@@ -86,6 +86,9 @@ func (m Model) selectStoredMode(mode ui.Mode) (Model, bool) {
 		return m, false
 	}
 	if pane == ui.PaneTop {
+		if m.topMode != mode && ui.IsBeadsMode(m.topMode) {
+			m = m.clearBeadExpansion()
+		}
 		m.topMode = mode
 	} else {
 		m.bottomMode = mode
@@ -327,13 +330,15 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	}
 	returnMode := m.focusedMode()
 	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
+	m, expansionCmd := m.reconcileBeadExpansion()
 	if m.flowRefreshSurfaceVisible() {
-		return m.startFlowsModeFetchWithRefreshTick()
+		next, refreshCmd := m.startFlowsModeFetchWithRefreshTick()
+		return next, batchNonNil(refreshCmd, expansionCmd)
 	}
 	// No replacement refresh will advance the generation for a hidden stored
 	// pane, so invalidate the takeover's outstanding tick explicitly.
 	if hadFlowRefreshOwnership {
 		m.flowRefreshTickGen++
 	}
-	return m, nil
+	return m, expansionCmd
 }

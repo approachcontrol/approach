@@ -266,6 +266,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		m = m.setExpandedFlowID("")
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		index, _ := beadSubviewIndex(mode)
+		if m.beads[index].pane.Query() != query {
+			m = m.clearBeadExpansion()
+		}
 		m.beads[index].pane = m.beads[index].pane.SetQuery(query)
 		m = m.reflowBeads(mode)
 	}

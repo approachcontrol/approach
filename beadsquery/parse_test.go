@@ -51,6 +51,30 @@ func TestParseOpenSortsCounterIDsNaturally(t *testing.T) {
 	}
 }
 
+func TestParseReadyUsesRawIDAsFinalTieBreak(t *testing.T) {
+	t.Parallel()
+
+	inputs := []string{
+		`[
+			{"id":"bd-1","priority":1,"title":"Plain"},
+			{"id":"bd-01","priority":1,"title":"Padded"}
+		]`,
+		`[
+			{"id":"bd-01","priority":1,"title":"Padded"},
+			{"id":"bd-1","priority":1,"title":"Plain"}
+		]`,
+	}
+	for _, input := range inputs {
+		got, err := beadsquery.ParseReady(input)
+		if err != nil {
+			t.Fatalf("ParseReady() error = %v", err)
+		}
+		if got[0].ID != "bd-01" || got[1].ID != "bd-1" {
+			t.Fatalf("ParseReady() IDs = %q, %q, want bd-01, bd-1", got[0].ID, got[1].ID)
+		}
+	}
+}
+
 func TestParseChildrenAcceptsCapturedRowsAndOptionalMetadata(t *testing.T) {
 	t.Parallel()
 
