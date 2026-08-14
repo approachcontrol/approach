@@ -14,6 +14,7 @@ import (
 // the lifecycle never reaches for a pane snapshot or a package-level store.
 type flowLaunchSeams struct {
 	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
+	ReadSession              func(sessions.Provider, string) (sessions.SessionRecord, error)
 	ListFlowSessions         func(flowID string) ([]sessions.SessionRecord, error)
 	AddPhaseLaunchID         func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	SetPhase                 func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -28,6 +29,7 @@ type flowLaunchSeams struct {
 // FlowID field; adding one would be a public API change in another package.
 func newFlowLaunchSeams(
 	readFlow func(string) (flowstore.FlowRecord, error),
+	readSession func(sessions.Provider, string) (sessions.SessionRecord, error),
 	listSessions func(sessions.SessionFilter) ([]sessions.SessionRecord, error),
 	addPhaseLaunchID func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error),
 	setPhase func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error),
@@ -35,7 +37,8 @@ func newFlowLaunchSeams(
 	readPlan func(string) (string, error),
 ) flowLaunchSeams {
 	return flowLaunchSeams{
-		ReadFlow: readFlow,
+		ReadFlow:    readFlow,
+		ReadSession: readSession,
 		ListFlowSessions: func(flowID string) ([]sessions.SessionRecord, error) {
 			flowID = strings.TrimSpace(flowID)
 			if flowID == "" || listSessions == nil {

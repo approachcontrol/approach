@@ -199,6 +199,12 @@ through the sessions and `enter` resumes the selected session from its
 recorded `cwd` or worktree path. Filtering worktrees, refreshing the worktree
 list, switching views, or changing repos closes the inline list.
 
+An inline record cached with a Flow association is refreshed by exact provider
+and session ID before routing. If it remains Flow-associated, Enter opens the
+same embedded, phase-untracked, retained Flow terminal used by the other saved
+session surfaces. If it is authoritatively non-Flow, the refreshed record keeps
+the established external-or-tmux inline route.
+
 ## Git View: Branches Subview (`b`)
 
 Shows non-worktree branches and the root branch. Worktree branches are managed
@@ -257,6 +263,14 @@ status, or summary. Press `o` to page the normalized transcript in `less -R`,
 `s` to page the selected summary, `r` to resume the selected provider session,
 or `y` to copy the raw provider session ID. `enter` also pages the selected
 transcript.
+
+If the selected row is cached as Flow-associated, `r` first refreshes that
+exact provider/session record and routes it through the Flow launch lifecycle.
+An authoritative Flow resume is interactive, embedded-only, phase-untracked
+(empty phase ID), nondetachable, and retained as exact-Flow occupancy after
+exit. If refresh removes the Flow association, the refreshed record follows
+the ordinary Sessions-pane route instead. Rows initially without a Flow keep
+their existing embedded/tmux/external behavior.
 
 How sessions are captured, where they are stored, and how resume picks its
 working directory are covered in `docs/agent-sessions.md`.
@@ -322,6 +336,13 @@ sessions created by that embedded launch; detached tmux sessions are no longer
 owned by Approach and are not prompted for on quit. Embedded terminals are not
 restored after Approach restarts.
 
+The global `ctrl+] l` picker applies the same cached-association rule as
+Sessions-pane `r` and the inline worktree list. All three submit one exact
+provider/session-ID lifecycle intent for cached Flow records. An authoritative
+Flow-associated CLI resume always installs an embedded, phase-untracked,
+nondetachable retained slot; unsupported embedded startup does not fall back.
+An authoritative non-Flow refresh returns to the origin's established route.
+
 ## tmux Mode
 
 Setting `[launch].backend = "tmux"` (see `docs/config.md`) moves interactive
@@ -331,17 +352,21 @@ unless you opt in.
 
 What changes in tmux mode:
 
-- **Flow phase launches (`g`), Flow phase resumes (`r`), Sessions-view resumes
-  (`r`), and resumes picked from the embedded dock's session picker
-  (`ctrl+]` `l`)** run as windows in the repo's tmux session instead of the
-  embedded dock. AutoMode is not in this list: it always launches headless, and
+- **Flow phase launches (`g`), Flow phase resumes (`r`), and non-Flow
+  Sessions-view/picker resumes** run as windows in the repo's tmux session
+  instead of the embedded dock. Cached Flow-associated saved sessions first
+  refresh through the lifecycle; if still Flow-associated they stay embedded,
+  while an authoritative non-Flow record uses this tmux route. AutoMode is not
+  in this list: it always launches headless, and
   headless stays embedded (see below). **A Flow's headless preference is on by
   default**, so `g` on a freshly created Flow stays embedded until you turn
   headless off with `h`; resumes (`r`) are always interactive and go to tmux
   either way, so the same phase can launch embedded and resume in tmux.
 - **Worktree `a`, `N` (new worktree + agent), plans-mode implement (`a` / `i`),
-  and the worktree session resume (`x` then `enter`)** run there too. This is a
-  behavior change to launches that today open a *new external terminal* attached
+  and non-Flow worktree session resume (`x` then `enter`)** run there too. A
+  worktree session that remains Flow-associated after exact refresh stays in
+  the embedded dock. For the other launches, this is a behavior change to
+  launches that today open a *new external terminal* attached
   to a per-worktree multiplexer session — or, if you are running Approach inside
   tmux, switch your current client to that session. In tmux mode they open a
   window in the repo's session and never switch your client, so use `T` or your
@@ -403,10 +428,12 @@ Limitations:
   three actions instead ask tmux whether a window for that work is still open,
   and refuse with "Flow phase still has an agent running in tmux" when one is.
   `x` and `r` check the selected phase's launches; `R` checks every launch the
-  Flow has made, since a repair is Flow-wide. Resumes that start from a session
-  record instead of a Flow phase — sessions view `r`, the inline worktree session
-  list, and the dock's session picker — check the launch that produced that
-  record and refuse with "Session still has an agent running in tmux". Codex
+  Flow has made, since a repair is Flow-wide. Authoritatively non-Flow resumes
+  that start from a session record — sessions view `r`, the inline worktree
+  session list, and the dock's session picker — check the launch that produced
+  that record and refuse with "Session still has an agent running in tmux".
+  Flow-associated saved resumes do not take this route: their lifecycle-owned
+  retained dock slot is the occupancy boundary instead. Codex
   makes that ordinary rather than rare: it records an `ended` session after each
   turn while its CLI stays open, so the record you resume from often still has a
   live agent. Consequences worth knowing:
@@ -1031,8 +1058,9 @@ persisted preference whether Plan Now is on or off; an immediate Plan launch
 and a later launch of a parked Flow both use that stored value. Records created
 before the field existed read as headless-on without being rewritten solely by
 a read. Manual phase and repair launches use the target Flow's value. Auto-mode
-CLI launches are always headless, independent of it; session resume behavior is
-unchanged.
+CLI launches are always headless, independent of it; non-Flow and phase-resume
+behavior is unchanged. Flow-associated saved-session resumes ignore the
+preference and are always interactive.
 
 The toggle and launches fence each other in both directions. A launch started
 while a headless write is still settling is refused with `Applying headless mode

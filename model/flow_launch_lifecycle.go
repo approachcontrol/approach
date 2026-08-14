@@ -45,13 +45,15 @@ func flowLaunchPhaseSessionLiveStatus(phaseID string) string {
 // needs it and the two must stay byte-identical.
 const flowLaunchNoAgentCommandStatus = "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent"
 
-// flowLaunchStage names the two asynchronous hops the lifecycle emits. Handoff
-// results and failure persistence arrive on messages that already exist, so
-// they are not stages.
+// flowLaunchStage names the asynchronous hops the lifecycle emits. Saved
+// session resume adds an exact-session read before the normal Flow read;
+// handoff results and failure persistence arrive on messages that already
+// exist, so they are not stages.
 type flowLaunchStage int
 
 const (
-	flowLaunchStageRead flowLaunchStage = iota + 1
+	flowLaunchStageSessionRead flowLaunchStage = iota + 1
+	flowLaunchStageRead
 	flowLaunchStagePrepared
 )
 
@@ -88,16 +90,18 @@ const (
 // flowLaunchEventMsg carries one asynchronous hop back into Update. Token,
 // Kind, and From together fence it against the attempt that started it.
 type flowLaunchEventMsg struct {
-	Token   string
-	Kind    flowLaunchKind
-	From    flowLaunchState
-	FlowID  string
-	PhaseID string
-	Stage   flowLaunchStage
-	Record  flowstore.FlowRecord
-	Context actions.AgentLaunchContext
-	Route   flowLaunchRoute
-	Skipped bool
+	Token      string
+	Kind       flowLaunchKind
+	From       flowLaunchState
+	FlowID     string
+	PhaseID    string
+	Stage      flowLaunchStage
+	Record     flowstore.FlowRecord
+	Session    sessions.SessionRecord
+	SessionKey flowLaunchSavedSessionKey
+	Context    actions.AgentLaunchContext
+	Route      flowLaunchRoute
+	Skipped    bool
 	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.
@@ -191,6 +195,8 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 		return m.admitAutofixFlowLaunch(intent)
 	case flowLaunchKindWorktreeAgent:
 		return m.admitWorktreeAgentFlowLaunch(intent)
+	case flowLaunchKindSavedSessionResume:
+		return m.admitSavedSessionFlowLaunch(intent)
 	default:
 		// Later beads route the remaining kinds; nothing submits them yet.
 		return m, nil, false
@@ -433,6 +439,9 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 	}
 	if intent.Kind == flowLaunchKindWorktreeAgent {
 		return worktreeAgentFlowLaunchReadCmd(seams, intent, token)
+	}
+	if intent.Kind == flowLaunchKindSavedSessionResume {
+		return savedSessionFlowLaunchSessionReadCmd(seams, intent, token)
 	}
 	launcher := settings.apply(m.flowLaunchLauncher(token))
 	if intent.Kind == flowLaunchKindAutoPhase {
@@ -690,7 +699,13 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
+	if msg.Kind == flowLaunchKindSavedSessionResume && (attempt.SessionKey != msg.SessionKey || !msg.SessionKey.valid()) {
+		releaseFlowLaunchReservation(msg.Release)
+		return m, nil
+	}
 	switch msg.Stage {
+	case flowLaunchStageSessionRead:
+		return m.handleSavedSessionFlowLaunchSessionRead(attempt, msg)
 	case flowLaunchStageRead:
 		if msg.Kind == flowLaunchKindAutoPhase {
 			return m.handleAutoFlowLaunchRead(attempt, msg)
@@ -718,6 +733,10 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if msg.Kind == flowLaunchKindSavedSessionResume && m.hasFlowEmbeddedTerminalForFlow(attempt.FlowID) {
+			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+				setStatus(statusOther, savedSessionResumeFlowOccupiedStatus), nil
+		}
 		settings := attempt.Settings
 		if msg.Kind == flowLaunchKindWorktreeAgent {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
@@ -734,6 +753,9 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m = next.withFlowLaunchAttemptPhase(attempt.FlowID, attempt.Token, msg.PhaseID)
+		if msg.Kind == flowLaunchKindSavedSessionResume {
+			return m, m.savedSessionFlowLaunchPrepareCmd(msg)
+		}
 		return m, m.flowLaunchPrepareCmd(msg, settings)
 	case flowLaunchStagePrepared:
 		if msg.Skipped {
@@ -771,7 +793,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		// failFlowLaunch's persisting branch, where the empty phase ID makes
 		// flowLaunchFailureUpdate return false and the failure degrades to a bare
 		// status instead of ActionFailedMsg.
-		if msg.Kind != flowLaunchKindRepair && msg.Kind != flowLaunchKindAutofix && msg.Kind != flowLaunchKindWorktreeAgent {
+		if msg.Kind != flowLaunchKindRepair && msg.Kind != flowLaunchKindAutofix && msg.Kind != flowLaunchKindWorktreeAgent && msg.Kind != flowLaunchKindSavedSessionResume {
 			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
 			attempt.MutatedPhase = true
 		}
@@ -893,6 +915,8 @@ func createdFlowWorktreeNote(record flowstore.FlowRecord) string {
 
 func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
 	switch stage {
+	case flowLaunchStageSessionRead:
+		return flowLaunchStateReadingSession, true
 	case flowLaunchStageRead:
 		return flowLaunchStateReading, true
 	case flowLaunchStagePrepared:
@@ -916,7 +940,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	// the terminal open computes prefill, and the phase-untracked Flow agent would
 	// then fail both of ShouldPrefillEmbeddedPrompt's cases and send its prompt
 	// to argv instead of the dock.
-	if attempt.Kind != flowLaunchKindRepair && attempt.Kind != flowLaunchKindAutofix && attempt.Kind != flowLaunchKindWorktreeAgent {
+	if attempt.Kind != flowLaunchKindRepair && attempt.Kind != flowLaunchKindAutofix && attempt.Kind != flowLaunchKindWorktreeAgent && attempt.Kind != flowLaunchKindSavedSessionResume {
 		ctx.FlowLaunchTracked = true
 	}
 	if canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, ctx.FlowID); blocked {
@@ -1032,6 +1056,12 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 		}
 		return "", false
 	}
+	if kind == flowLaunchKindSavedSessionResume {
+		if m.hasFlowEmbeddedTerminalForFlow(flowID) {
+			return "Saved session resume canceled because an embedded terminal already occupies this Flow", true
+		}
+		return "", false
+	}
 	if kind == flowLaunchKindRepair {
 		if m.hasFlowRepairEmbeddedTerminalForFlow(flowID) || m.hasFlowEmbeddedTerminalForFlow(flowID) {
 			return flowRepairTerminalStatus, true
@@ -1055,7 +1085,7 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 // persistable produces no flowLaunchFailurePersistedMsg, so entering
 // failurePersisting first would strand the attempt and block the Flow forever.
 func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunchContext, repoPath, errText string) (Model, tea.Cmd) {
-	if attempt.Kind == flowLaunchKindRepair || attempt.Kind == flowLaunchKindWorktreeAgent {
+	if attempt.Kind == flowLaunchKindRepair || attempt.Kind == flowLaunchKindWorktreeAgent || attempt.Kind == flowLaunchKindSavedSessionResume {
 		// Repair and generic Flow agents report with a bare status on every
 		// stage. Neither writes a phase, so the MutatedPhase ladder below has
 		// nothing to classify, and routing either through ActionFailedMsg would
@@ -1235,7 +1265,7 @@ func flowLaunchPhaseSessionOccupiedExcept(phase flowstore.FlowPhase, records []s
 		if _, ok := launches[strings.TrimSpace(record.LaunchID)]; !ok {
 			continue
 		}
-		if flowSessionLive(record.Status, record.EndedAt) {
+		if sessions.IsActive(record.Status, record.EndedAt) {
 			return true
 		}
 	}
@@ -1274,7 +1304,7 @@ func liveLaunchIDsForPhase(phase flowstore.FlowPhase, records []sessions.Session
 		if _, ok := launches[launchID]; !ok {
 			return
 		}
-		if flowSessionLive(status, endedAt) {
+		if sessions.IsActive(status, endedAt) {
 			live[launchID] = struct{}{}
 		}
 	}
@@ -1291,13 +1321,4 @@ func liveLaunchIDsForPhase(phase flowstore.FlowPhase, records []sessions.Session
 		}
 	}
 	return out
-}
-
-// flowSessionLive is main's liveness half, extracted so the lifecycle and
-// phaseHasMatchingLiveSession cannot drift apart.
-func flowSessionLive(status string, endedAt time.Time) bool {
-	if status = strings.TrimSpace(status); status != "" {
-		return status != "ended"
-	}
-	return endedAt.IsZero()
 }

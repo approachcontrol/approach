@@ -5724,8 +5724,6 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 			Commit:       "abc123",
 			PlanID:       "plan-1",
 			PlanPath:     "/state/approach/plans/plan-1/plan.md",
-			FlowID:       "flow-1",
-			FlowPhaseID:  "review-loop",
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
@@ -5757,7 +5755,24 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 
 func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
+	record := sessions.SessionRecord{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "codex-session-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "review-loop",
+	}
+	flow := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}
 	m := newTestModel(testRepos(), model.Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) { return record, nil },
+		ReadFlow:    func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() {}, nil
+		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
@@ -5769,21 +5784,13 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
-		{
-			Provider:     sessions.ProviderCodex,
-			SessionID:    "codex-session-1",
-			RepoPath:     "/dev/alpha",
-			WorktreePath: "/dev/alpha-worktrees/feat",
-			FlowID:       "flow-1",
-			FlowPhaseID:  "review-loop",
-		},
-	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{record}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for embedded start failure")
 	}
+	m = settleModelCommands(t, m, cmd, 3)
 	if !strings.Contains(m.View(), "embedded start failed") {
 		t.Fatalf("expected embedded start failure in status:\n%s", m.View())
 	}
@@ -6091,8 +6098,6 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 				Commit:       "abc123",
 				PlanID:       "plan-1",
 				PlanPath:     "/state/approach/plans/plan-1/plan.md",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "implementation",
 			}}, nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {

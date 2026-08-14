@@ -131,13 +131,34 @@ before Approach creates session artifacts.
 Resume uses the stored provider session ID: Codex resumes with
 `codex ... resume <session-id>` and Claude Code with
 `claude ... --resume <session-id>`, preserving the same hook and metadata
-wiring as fresh launches. Resume session IDs are trimmed and whitespace-only
-IDs are rejected, so a resume command never carries a blank ID. Approach runs the
+wiring as fresh launches. Initially non-Flow resume session IDs retain their
+existing behavior: they are trimmed and whitespace-only IDs are rejected, so a
+resume command never carries a blank ID. Approach runs the
 resume command from the recorded session `cwd` when present, falling back to
 the captured worktree path, while preserving the stored worktree metadata for
 subsequent hooks. Sessions missing a provider session ID cannot be resumed;
 Approach reports this in the status line instead of starting a fresh provider
 session.
+
+A record cached with a Flow association takes one lifecycle route from all
+three sources: Sessions-pane `r`, the embedded dock's global session picker,
+and Enter on an inline worktree session. The cached Flow is only the initial
+reservation hint. Approach first reads the exact provider plus raw session ID
+and verifies the decoded key. If the refreshed record moved from Flow A to Flow
+B, ownership transfers to B before B is read; if it is now non-Flow, ownership
+is released and the refreshed record returns to that source's existing
+non-Flow route. This preserves refreshed repo, worktree, `cwd`, branch, commit,
+plan path/ID, provider, and raw session ID instead of launching from the cached
+row.
+
+An authoritatively Flow-associated CLI resume is interactive and embedded-only,
+regardless of tmux mode or the Flow's headless preference. It exports the
+authoritative Flow ID with an empty phase ID, records no phase launch ID or
+phase status, schedules no prompt prefill, and passes the nonblank raw session
+ID byte-for-byte to the provider. The retained terminal cannot detach and
+continues to occupy that exact Flow after the process exits until the user
+dismisses it. Unsupported embedded startup is a failure; it never falls back
+to an external or tmux launch.
 
 A Flow phase resume (`r` in the Flows surface) additionally goes through the
 Flow launch lifecycle: it targets the exact Flow and phase, re-reads the

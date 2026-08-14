@@ -9,6 +9,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // flowRepairObstruction describes the persisted condition an untracked repair
@@ -130,7 +131,7 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {
 			continue
 		}
-		if flowSessionLive(session.Status, session.EndedAt) {
+		if sessions.IsActive(session.Status, session.EndedAt) {
 			return true
 		}
 	}

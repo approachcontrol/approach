@@ -229,6 +229,39 @@ func (s *Store) List(filter SessionFilter) ([]SessionRecord, error) {
 	return records, nil
 }
 
+// Read returns the record stored under the exact provider and raw session ID.
+// The decoded key is verified as well as the hashed path so corrupt or
+// misplaced metadata cannot masquerade as the requested session.
+func (s *Store) Read(provider Provider, sessionID string) (SessionRecord, error) {
+	if err := validateRecordKey(provider, sessionID); err != nil {
+		return SessionRecord{}, err
+	}
+	record, ok, err := s.readMetadata(provider, sessionID)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	if !ok {
+		return SessionRecord{}, fmt.Errorf("session %q/%q not found", provider, sessionID)
+	}
+	if record.Provider != provider || record.SessionID != sessionID {
+		return SessionRecord{}, fmt.Errorf(
+			"session metadata key %q/%q does not match requested key %q/%q",
+			record.Provider, record.SessionID, provider, sessionID,
+		)
+	}
+	return record, nil
+}
+
+// IsActive applies the shared current-status and legacy EndedAt liveness rule.
+// An explicit status is authoritative; records without one are active only
+// until the legacy end timestamp is present.
+func IsActive(status string, endedAt time.Time) bool {
+	if status = strings.TrimSpace(status); status != "" {
+		return status != "ended"
+	}
+	return endedAt.IsZero()
+}
+
 func (s *Store) ReadTranscript(provider Provider, sessionID string) ([]TranscriptEvent, error) {
 	if err := validateRecordKey(provider, sessionID); err != nil {
 		return nil, err
