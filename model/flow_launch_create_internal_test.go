@@ -37,6 +37,41 @@ type createLaunchHarness struct {
 	releases     int
 }
 
+func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRecord(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	created, err := store.Create(flowstore.FlowRecord{
+		RepoPath: "/dev/alpha", Title: "Custom persistence", Instructions: "Write the plan.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Phases) == 0 {
+		t.Fatal("test Flow has no startup phases")
+	}
+
+	m := NewWithOptions(nil, Options{
+		FlowStore: store,
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return store.AddPhaseLaunchID(update)
+		},
+	})
+	record, release, err := m.launchSeams.ReserveLaunch(created.FlowID)
+	if release != nil {
+		defer release()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FlowID != created.FlowID || len(record.Phases) != len(created.Phases) {
+		t.Fatalf("create reservation record = %#v, want authoritative created Flow", record)
+	}
+}
+
 func newCreateLaunchHarness(phases []flowstore.FlowPhase) *createLaunchHarness {
 	return &createLaunchHarness{record: flowstore.FlowRecord{
 		FlowID: "20260814T120000Z-new-flow", RepoPath: "/dev/alpha", Title: "New Flow",

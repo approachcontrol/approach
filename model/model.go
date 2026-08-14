@@ -599,6 +599,30 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
+	createReserveFlowLaunch := reserveFlowLaunch
+	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
+		// The compatibility reservation above intentionally returns identity only,
+		// but create-phase startup must snapshot the authoritative post-create graph
+		// or it cannot distinguish a launchable Flow from a parked one. Reread via
+		// the caller's configured storage boundary while retaining the same no-op
+		// reservation ownership used by existing custom persistence integrations.
+		createReserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			record, release, err := reserveFlowLaunch(flowID)
+			if err != nil {
+				return flowstore.FlowRecord{}, release, err
+			}
+			authoritative, err := readFlow(flowID)
+			if err != nil {
+				releaseFlowLaunchReservation(release)
+				return flowstore.FlowRecord{}, nil, err
+			}
+			if authoritative.FlowID != record.FlowID {
+				releaseFlowLaunchReservation(release)
+				return flowstore.FlowRecord{}, nil, fmt.Errorf("reserve launch reread returned flow %q", authoritative.FlowID)
+			}
+			return authoritative, release, nil
+		}
+	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
 	if addFlowPhaseLaunchID == nil {
 		addFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -770,7 +794,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	)
 	launchSeams.AllocateFlowID = allocateFlowID
 	launchSeams.CreateFlow = createFlow
-	launchSeams.ReserveLaunch = reserveFlowLaunch
+	launchSeams.ReserveLaunch = createReserveFlowLaunch
 	launchSeams.CreateWorktree = actions.CreateFlowWorktree
 	launchSeams.ResolveCommit = actions.ResolveWorktreeCommit
 	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
