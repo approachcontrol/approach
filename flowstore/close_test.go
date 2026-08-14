@@ -691,6 +691,30 @@ func TestAgentLaunchReservationSerializesWithClose(t *testing.T) {
 	}
 }
 
+func TestEpicProgressionSuccessorReservationAllowsClosedAndMissingFlows(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := createCloseTestFlow(t, store, root)
+	if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before reconciliation"}); err != nil {
+		t.Fatalf("CloseFlow() error = %v", err)
+	}
+
+	for _, flowID := range []string{record.FlowID, "missing-successor"} {
+		release, err := store.ReserveEpicProgressionSuccessor(flowID)
+		if err != nil {
+			t.Fatalf("ReserveEpicProgressionSuccessor(%q) error = %v", flowID, err)
+		}
+		if release == nil {
+			t.Fatalf("ReserveEpicProgressionSuccessor(%q) returned nil release", flowID)
+		}
+		release()
+	}
+}
+
 func TestAgentLaunchReservationSerializesWithDeleteAndSameIDRecreate(t *testing.T) {
 	root := t.TempDir()
 	launchStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})

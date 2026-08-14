@@ -339,9 +339,13 @@ func (m Model) clearFlowCreateRequest(request uint64) Model {
 }
 
 func (m Model) nextReadyBeadFlowCreateRequest() (Model, uint64) {
+	var admitted bool
+	m, _, admitted = m.acquireFlowPreparation(flowPreparationReadyBead)
+	if !admitted {
+		return m, 0
+	}
 	m.readyBeadFlowCreateSeq++
 	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
-	m.flowPreparationAdmission = true
 	return m, m.activeReadyBeadFlowCreate
 }
 
@@ -353,7 +357,6 @@ func (m Model) clearReadyBeadFlowCreateRequest(request uint64) Model {
 	if m.isCurrentReadyBeadFlowCreateRequest(request) {
 		m.activeReadyBeadFlowCreate = 0
 	}
-	m.flowPreparationAdmission = false
 	return m
 }
 
@@ -370,35 +373,43 @@ func (m Model) invalidateReadyBeadFlowCreateRequest() Model {
 // stale Ready handoff retains both that reservation and shared preparation
 // admission until its already-running phase has been moved to launch failure.
 func (m Model) acceptCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, flowCreateRequest, readyBeadRequest uint64, release func()) (Model, bool, tea.Cmd) {
+	kind := m.flowPreparationOwner.Kind
+	if readyBeadRequest != 0 && kind == flowPreparationNone {
+		kind = flowPreparationReadyBead
+	}
+	return m.acceptCreationTimeFlowLaunchOwned(ctx, flowCreateRequest, readyBeadRequest, release, kind, m.flowPreparationOwner.Token)
+}
+
+func (m Model) acceptCreationTimeFlowLaunchOwned(ctx actions.AgentLaunchContext, flowCreateRequest, readyBeadRequest uint64, release func(), preparationKind flowPreparationKind, preparationToken uint64) (Model, bool, tea.Cmd) {
 	if flowCreateRequest != 0 && readyBeadRequest != 0 {
 		releaseFlowLaunchReservation(release)
 		return m, false, nil
 	}
 	if flowCreateRequest != 0 {
 		if !m.isCurrentRepo(ctx.RepoPath) || !m.isCurrentFlowCreateRequest(flowCreateRequest) {
-			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, false)
+			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, flowPreparationNone, 0)
 			return m, false, cmd
 		}
 		return m.clearFlowCreateRequest(flowCreateRequest), true, nil
 	}
 	if readyBeadRequest != 0 {
-		if !m.isCurrentReadyBeadFlowCreateRequest(readyBeadRequest) {
-			m.activeReadyBeadFlowCreate = 0
-			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, true)
+		if !m.isCurrentReadyBeadFlowCreateRequest(readyBeadRequest) || !m.flowPreparationMatches(preparationKind, preparationToken) {
+			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, preparationKind, preparationToken)
 			return m, false, cmd
 		}
 		if !m.isCurrentRepo(ctx.RepoPath) {
 			m.activeReadyBeadFlowCreate = 0
-			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, true)
+			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release, preparationKind, preparationToken)
 			return m, false, cmd
 		}
 		m = m.clearReadyBeadFlowCreateRequest(readyBeadRequest)
+		m = m.releaseFlowPreparation(preparationKind, preparationToken)
 	}
 	return m, true, nil
 }
 
-func (m Model) rejectStaleCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, release func(), releaseReadyBeadAdmission bool) (Model, tea.Cmd) {
-	m, cmd := m.startFlowLaunchFailureWithReadyAdmission(ctx, "Flow phase launch canceled because its creation request is stale", releaseReadyBeadAdmission)
+func (m Model) rejectStaleCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, release func(), preparationKind flowPreparationKind, preparationToken uint64) (Model, tea.Cmd) {
+	m, cmd := m.startFlowLaunchFailureWithPreparationOwner(ctx, "Flow phase launch canceled because its creation request is stale", preparationKind, preparationToken)
 	if cmd == nil {
 		releaseFlowLaunchReservation(release)
 		return m, nil
@@ -718,7 +729,7 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 	}
 }
 
-func (m Model) createReadyBeadFlow(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64, intent readyBeadFlowIntent) tea.Cmd {
+func (m Model) createReadyBeadFlow(repoPath, title, instructions string, bead flowstore.BeadLink, request, preparationToken uint64, intent readyBeadFlowIntent) tea.Cmd {
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	preferences := m.agentPreferences()
 	if intent == readyBeadFlowCreateOnly {
@@ -735,9 +746,9 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, bead fl
 				AgentPreferencesProvided: true,
 			})
 			if err != nil {
-				return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
+				return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request, preparationToken: preparationToken}
 			}
-			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
+			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request, preparationToken: preparationToken}
 		}
 	}
 	return func() tea.Msg {
@@ -758,24 +769,28 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, bead fl
 		})
 		if err != nil {
 			releaseFlowLaunchReservation(result.LaunchRelease)
-			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
+			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request, preparationToken: preparationToken}
 		}
 		if result.LaunchSkipped {
 			releaseFlowLaunchReservation(result.LaunchRelease)
-			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
+			return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request, preparationToken: preparationToken}
 		}
-		return readyBeadFlowPlanLaunchMessage(result.LaunchContext, result.LaunchRelease, request)
+		return readyBeadFlowPlanLaunchMessage(result.LaunchContext, result.LaunchRelease, request, preparationToken)
 	}
 }
 
-func readyBeadFlowPlanLaunchMessage(ctx actions.AgentLaunchContext, release func(), request uint64) tea.Msg {
+func readyBeadFlowPlanLaunchMessage(ctx actions.AgentLaunchContext, release func(), request, preparationToken uint64) tea.Msg {
 	msg := flowPlanLaunchMessage(ctx, release)
 	switch msg := msg.(type) {
 	case FlowEmbeddedLaunchRequestedMsg:
 		msg.ReadyBeadRequest = request
+		msg.preparationKind = flowPreparationReadyBead
+		msg.preparationToken = preparationToken
 		return msg
 	case PlanLaunchRequestedMsg:
 		msg.ReadyBeadRequest = request
+		msg.preparationKind = flowPreparationReadyBead
+		msg.preparationToken = preparationToken
 		return msg
 	default:
 		return msg
