@@ -662,6 +662,9 @@ func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
 	if ctx.FlowRepair {
 		return "repair"
 	}
+	if ctx.FlowAgent {
+		return "agent"
+	}
 	for _, value := range []string{
 		ctx.FlowPhaseID,
 		ctx.FlowID,
@@ -928,7 +931,7 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 	ids := make([]embeddedTerminalID, 0)
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -943,7 +946,7 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 
 func (m Model) hasExitedFlowEmbeddedTerminalAutoClose() bool {
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {

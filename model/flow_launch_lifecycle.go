@@ -1066,14 +1066,15 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 // persistable produces no flowLaunchFailurePersistedMsg, so entering
 // failurePersisting first would strand the attempt and block the Flow forever.
 func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunchContext, repoPath, errText string) (Model, tea.Cmd) {
-	if attempt.Kind == flowLaunchKindRepair {
-		// Repair reports with a bare status on every stage. It writes no phase,
-		// so the MutatedPhase ladder below has nothing to classify, and routing
-		// it through ActionFailedMsg would put its refusals behind main's repo
-		// gate — invisible to a user who moved the repos-pane selection during
-		// the reservation hop, with Active Flows closed. The pre-lifecycle path
-		// used an unconditional setStatus, and the install stage already does;
-		// this keeps every stage agreeing.
+	if attempt.Kind == flowLaunchKindRepair || attempt.Kind == flowLaunchKindWorktreeAgent {
+		// Repair and generic Flow agents report with a bare status on every
+		// stage. Neither writes a phase, so the MutatedPhase ladder below has
+		// nothing to classify, and routing either through ActionFailedMsg would
+		// put its refusals behind main's repo gate — invisible to a user who
+		// moved the repos-pane selection during an asynchronous hop with Active
+		// Flows closed. For generic agents, releasing before that unfenced
+		// follow-up landed would also let an old failure overwrite the status of
+		// a newer exact-Flow attempt.
 		//
 		// The refetch is the other half of what ActionFailedMsg carried: every
 		// refusal that lands here was decided against a record fresher than the

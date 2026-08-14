@@ -14,6 +14,7 @@ import (
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func genericFlowAgentRecord(t *testing.T) flowstore.FlowRecord {
@@ -165,7 +166,8 @@ func TestGenericWorktreeAgentLaunchesEmbeddedWithoutPhaseMutation(t *testing.T) 
 		t.Fatalf("generic launch mutated phase history: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
 	}
 	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].FlowID != record.FlowID ||
-		m.embeddedTerminals[0].FlowPhaseID != "" || m.embeddedTerminals[0].PrefillPending {
+		m.embeddedTerminals[0].FlowPhaseID != "" || m.embeddedTerminals[0].Identity != "agent" ||
+		m.embeddedTerminals[0].PrefillPending {
 		t.Fatalf("generic retained terminals = %#v", m.embeddedTerminals)
 	}
 	if m.flowLaunchAttemptOccupied(record.FlowID) {
@@ -211,6 +213,33 @@ func TestGenericWorktreeAgentRetainedSlotRejectsDetachBeforeCallingTerminal(t *t
 	}
 	if len(nextModel.embeddedTerminals) != 1 || nextModel.embeddedTerminals[0].FlowID != record.FlowID {
 		t.Fatalf("detach refusal changed retained ownership: %#v", nextModel.embeddedTerminals)
+	}
+}
+
+func TestGenericWorktreeAgentExitedSlotRetainsOccupancyUntilDismissed(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	m := Model{embeddedTerminals: []embeddedTerminalSlot{
+		{
+			Number:    1,
+			ID:        1,
+			Scope:     embeddedTerminalScopeFlow,
+			FlowID:    record.FlowID,
+			FlowAgent: true,
+			Terminal:  internalFakeEmbeddedTerminal{state: "exited"},
+		},
+	}}
+
+	if m.hasExitedFlowEmbeddedTerminalAutoClose() {
+		t.Fatal("exited generic Flow-agent slot should not schedule automatic dismissal")
+	}
+	m = m.dismissExitedFlowEmbeddedTerminals()
+	if len(m.embeddedTerminals) != 1 || !m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
+		t.Fatalf("exited generic slot lost retained occupancy: %#v", m.embeddedTerminals)
+	}
+
+	m = m.dismissEmbeddedTerminal(m.embeddedTerminals[0].ID)
+	if len(m.embeddedTerminals) != 0 || m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
+		t.Fatalf("explicit dismissal did not release generic occupancy: %#v", m.embeddedTerminals)
 	}
 }
 
@@ -498,6 +527,48 @@ func TestGenericWorktreeAgentPlanPathResolutionFailuresReleaseOnlyItsAttempt(t *
 				t.Fatalf("plan-path refusal launched or mutated: %#v %#v %#v", h.launchContexts, h.launchUpdates, h.phaseUpdates)
 			}
 		})
+	}
+}
+
+func TestGenericWorktreeAgentProtectedFailureSurfacesSynchronouslyWithoutFollowup(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.launchSeams.PlanMarkdownPath = func(planID string) (string, error) {
+		return "", errors.New("protected plan path boom")
+	}
+
+	next, readCmd := m.handleStartSelectedFlowWorktreeAgent()
+	m = next.(Model)
+	readMsg, ok := runCommandWithoutWaiting(readCmd)
+	if !ok {
+		t.Fatal("authoritative read did not settle")
+	}
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
+	h.record.PlanID = "plan-final"
+	h.record.PlanPath = ""
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("protected preparation did not settle")
+	}
+	preparedEvent, ok := preparedMsg.(flowLaunchEventMsg)
+	if !ok {
+		t.Fatalf("protected preparation result = %T, want flowLaunchEventMsg", preparedMsg)
+	}
+	// The failure must remain visible even if the user leaves both Flow
+	// surfaces while the protected preparation command is in flight.
+	m = modelWithModeForTest(m, ui.ModeWorktrees)
+	m, followup := m.handleFlowLaunchEvent(preparedEvent)
+
+	if followup != nil {
+		t.Fatal("protected generic failure queued an unfenced follow-up message")
+	}
+	if m.status.Text != "protected plan path boom" || m.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatalf("protected failure = %q, occupied=%v", m.status.Text, m.flowLaunchAttemptOccupied(record.FlowID))
+	}
+	if len(h.launchContexts) != 0 || len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+		t.Fatalf("protected failure launched or mutated: %#v %#v %#v", h.launchContexts, h.launchUpdates, h.phaseUpdates)
 	}
 }
 
