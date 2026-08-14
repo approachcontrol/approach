@@ -28,6 +28,49 @@ func closedGuardRecord(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
 	}
 }
 
+type preparedFlowFinalizerForInternalTest struct {
+	latest *flowstore.FlowRecord
+}
+
+func (f preparedFlowFinalizerForInternalTest) Finalize(callback func() error) (flowstore.FlowRecord, error) {
+	if callback != nil {
+		if err := callback(); err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+	}
+	prepared := *f.latest
+	stamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	prepared.PreparedAt = &stamp
+	*f.latest = prepared
+	return prepared, nil
+}
+
+func newPreparedFlowStarterForInternalTest(opts FlowStarterOptions) FlowStarter {
+	if opts.CreatePreparation == nil && opts.CreateFlow != nil {
+		createFlow := opts.CreateFlow
+		setStartMetadata := opts.SetStartMetadata
+		var latest flowstore.FlowRecord
+		opts.CreatePreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			created, err := createFlow(record, createOpts)
+			if err != nil {
+				return flowstore.FlowRecord{}, nil, err
+			}
+			latest = created
+			return created, preparedFlowFinalizerForInternalTest{latest: &latest}, nil
+		}
+		if setStartMetadata != nil {
+			opts.SetStartMetadata = func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+				started, err := setStartMetadata(update)
+				if err == nil {
+					latest = started
+				}
+				return started, err
+			}
+		}
+	}
+	return NewFlowStarter(opts)
+}
+
 // flowPhaseCanLaunchAtIndex has two branches that bypass PhaseLaunchEligible —
 // a ready Merge phase and an autoreview rerun — so guarding the flowstore
 // primitive alone leaves both open on a closed Flow.
@@ -202,7 +245,7 @@ func TestFlowStarterPlanHoldsLaunchReservationAcrossBookkeeping(t *testing.T) {
 		}
 	}
 
-	result, err := NewFlowStarter(starterOptions(nil)).StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
+	result, err := newPreparedFlowStarterForInternalTest(starterOptions(nil)).StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
 	if err != nil {
 		t.Fatalf("StartPlan() error = %v", err)
 	}
@@ -225,7 +268,7 @@ func TestFlowStarterPlanHoldsLaunchReservationAcrossBookkeeping(t *testing.T) {
 	// persisting a launch ID for an agent that will be refused.
 	closedErr := errors.New("cannot launch an agent for flow \"created-flow\" because it is closed")
 	order = nil
-	failed, err := NewFlowStarter(starterOptions(closedErr)).StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
+	failed, err := newPreparedFlowStarterForInternalTest(starterOptions(closedErr)).StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
 	if err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("StartPlan() error = %v, want the closed-Flow refusal", err)
 	}

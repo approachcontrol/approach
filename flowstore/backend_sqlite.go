@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +27,7 @@ const (
 // future schema change has something to branch on, and so an older binary can
 // tell "a newer approach wrote this" apart from "this file is corrupt" —
 // without it, both surface as a raw column-set mismatch dump.
-const databaseSchemaVersion = 2
+const databaseSchemaVersion = 3
 
 // errDatabaseFromNewerBuild marks the one validation failure that is NOT a
 // damaged database. The file is fine; this binary is old. It must stay
@@ -56,6 +57,28 @@ CREATE TABLE IF NOT EXISTS flows (
     epic_id TEXT NOT NULL DEFAULT ''
  )`
 
+const flowTableSchemaV3 = `
+CREATE TABLE IF NOT EXISTS flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL,
+    bead_id TEXT NOT NULL DEFAULT '',
+    epic_id TEXT NOT NULL DEFAULT '',
+    prepared_at TEXT NOT NULL DEFAULT ''
+ )`
+
+const epicProgressionTableSchema = `
+CREATE TABLE IF NOT EXISTS epic_progressions (
+    repo_path TEXT NOT NULL,
+    epic_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL,
+    PRIMARY KEY(repo_path, epic_id)
+)`
+
 const flowBeadCompatibilityTrigger = `
 CREATE TRIGGER IF NOT EXISTS guard_linked_flow_record_update
 BEFORE UPDATE OF record ON flows
@@ -68,14 +91,24 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove persisted Bead link');
 END`
 
-const flowSchemaSQL = flowTableSchemaV2 + `;
+const flowPreparedCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_prepared_flow_record_update
+BEFORE UPDATE OF record, prepared_at ON flows
+WHEN OLD.prepared_at <> '' AND (NEW.prepared_at <> OLD.prepared_at OR COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.prepared_at'), '') <> OLD.prepared_at)
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted preparation receipt');
+END`
+
+const flowSchemaSQL = flowTableSchemaV3 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
     ON flows(repo_path, updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_status_updated
     ON flows(status, updated_at DESC, flow_id ASC);
-` + flowBeadCompatibilityTrigger + `;`
+` + epicProgressionTableSchema + `;
+` + flowBeadCompatibilityTrigger + `;
+` + flowPreparedCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -327,6 +360,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0"}
 	case 2:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0"}
+	case 3:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
@@ -336,7 +371,16 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	if err := validateSQLiteIndexes(db); err != nil {
 		return err
 	}
-	return validateSQLiteBeadCompatibilityTrigger(db, version)
+	if err := validateSQLiteBeadCompatibilityTrigger(db, version); err != nil {
+		return err
+	}
+	if version == 3 {
+		if err := validateSQLiteEpicProgressionTable(db); err != nil {
+			return err
+		}
+		return validateSQLitePreparedCompatibilityTrigger(db)
+	}
+	return nil
 }
 
 func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
@@ -350,6 +394,8 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV1
 	case 2:
 		want = flowTableSchemaV2
+	case 3:
+		want = flowTableSchemaV3
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
 	}
@@ -398,8 +444,15 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 		"index:idx_flows_updated:flows",
 		"table:flows:flows",
 	}
-	if version == 2 {
+	if version >= 2 {
 		want = append(want, "trigger:guard_linked_flow_record_update:flows")
+	}
+	if version == 3 {
+		want = append(want,
+			"table:epic_progressions:epic_progressions",
+			"trigger:guard_prepared_flow_record_update:flows",
+		)
+		sort.Strings(want)
 	}
 	if !equalStrings(objects, want) {
 		return fmt.Errorf("flow database has incompatible schema objects: got %v, want %v", objects, want)
@@ -411,7 +464,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 {
+	if version != 2 && version != 3 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string
@@ -422,6 +475,54 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	want := normalizeSQLiteSchemaSQL(flowBeadCompatibilityTrigger)
 	if got != want {
 		return fmt.Errorf("flow database has incompatible Bead compatibility trigger: got %q, want %q", got, want)
+	}
+	return nil
+}
+
+func validateSQLitePreparedCompatibilityTrigger(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_prepared_flow_record_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database preparation compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowPreparedCompatibilityTrigger) {
+		return fmt.Errorf("flow database has incompatible preparation compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowPreparedCompatibilityTrigger))
+	}
+	return nil
+}
+
+func validateSQLiteEpicProgressionTable(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='table' AND name='epic_progressions'").Scan(&got); err != nil {
+		return fmt.Errorf("validate epic progression table definition: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(epicProgressionTableSchema) {
+		return fmt.Errorf("flow database has incompatible epic progression table definition: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(epicProgressionTableSchema))
+	}
+	rows, err := db.Query("PRAGMA table_xinfo(epic_progressions)")
+	if err != nil {
+		return fmt.Errorf("validate epic progression columns: %w", err)
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var cid, notNull, primaryKey, hidden int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey, &hidden); err != nil {
+			return fmt.Errorf("scan epic progression columns: %w", err)
+		}
+		defaultText := "<nil>"
+		if defaultValue != nil {
+			defaultText = fmt.Sprint(defaultValue)
+		}
+		columns = append(columns, name+":"+strings.ToUpper(columnType)+":"+strconv.Itoa(notNull)+":"+strconv.Itoa(primaryKey)+":"+defaultText+":"+strconv.Itoa(hidden))
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate epic progression columns: %w", err)
+	}
+	want := []string{"repo_path:TEXT:1:1:<nil>:0", "epic_id:TEXT:1:2:<nil>:0", "enabled:INTEGER:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0"}
+	if !equalStrings(columns, want) {
+		return fmt.Errorf("flow database has incompatible epic progression columns: got %v, want %v", columns, want)
 	}
 	return nil
 }
@@ -523,20 +624,20 @@ func (b *sqliteBackend) get(flowID string) (storedFlow, bool, error) {
 		return storedFlow{}, false, err
 	}
 	return queryStoredFlow(b.db.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows WHERE flow_id = ?", flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows WHERE flow_id = ?", flowID,
 	), flowID)
 }
 
 func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (storedFlow, bool, error) {
-	var flowID, repoPath, status, updatedAt, beadID, epicID string
+	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
 	var record []byte
-	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &record); err != nil {
+	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &record); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storedFlow{}, false, nil
 		}
 		return storedFlow{}, false, fmt.Errorf("read flow %q row: %w", requestedID, err)
 	}
-	decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, record)
+	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, record)
 	if err != nil {
 		return storedFlow{}, false, err
 	}
@@ -544,7 +645,7 @@ func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (s
 }
 
 func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
-	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows"
+	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows"
 	var args []any
 	if filter.RepoPath != "" {
 		query += " WHERE repo_path = ?"
@@ -558,13 +659,13 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 	flows := make([]storedFlow, 0)
 	partial := &PartialListError{}
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
 		var record []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &record); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &record); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan flow list row: %w", err)
 		}
-		decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, record)
+		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, record)
 		if err != nil {
 			partial.Entries = append(partial.Entries, PartialListEntry{FlowID: flowID, Cause: err})
 			continue
@@ -660,7 +761,7 @@ type sqliteSession struct {
 
 func (s sqliteSession) get() (storedFlow, bool, error) {
 	return queryStoredFlow(s.tx.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows WHERE flow_id = ?", s.flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows WHERE flow_id = ?", s.flowID,
 	), s.flowID)
 }
 
@@ -681,16 +782,17 @@ func (s sqliteSession) save(record FlowRecord) error {
 		return err
 	}
 	_, err = s.tx.Exec(`
-INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, record)
-VALUES(?, ?, ?, ?, ?, ?, ?)
+INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(flow_id) DO UPDATE SET
     repo_path=excluded.repo_path,
     status=excluded.status,
     updated_at=excluded.updated_at,
     bead_id=excluded.bead_id,
     epic_id=excluded.epic_id,
+	prepared_at=excluded.prepared_at,
     record=excluded.record`,
-		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, data)
+		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, data)
 	if err != nil {
 		return fmt.Errorf("save flow %q: %w", record.FlowID, err)
 	}

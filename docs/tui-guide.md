@@ -98,7 +98,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree (flows and active flows views) |
 | `A` | Choose and persist the global coding agent (`codex` or `claude`), or edit the selected expanded Flow phase's agent stamp |
-| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
+| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, toggle auto mode for the selected Flow, or toggle persisted auto-progression for a selected epic when `a: auto on/off` is shown |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
 | `u` | Unlock a locked worktree (worktrees view) |

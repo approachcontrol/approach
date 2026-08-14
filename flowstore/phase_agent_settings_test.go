@@ -149,6 +149,55 @@ func TestStoreSetPhaseAgentSettingsReplacesAndClearsOnlyTheTargetStamp(t *testin
 	}
 }
 
+func TestStoreSetPhaseAgentSettingsDoesNotRegressBehindPreparationReceipt(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: t.TempDir(),
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		Title: "Prepared settings", Instructions: "Keep receipt ordering valid.", RepoPath: "/repo",
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: created.FlowID, WorktreePath: "/worktrees/prepared-settings", Branch: "flow/prepared-settings",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	prepared, err := finalizer.Finalize(nil)
+	if err != nil || prepared.PreparedAt == nil {
+		t.Fatalf("Finalize() = %#v, %v", prepared, err)
+	}
+
+	now = now.Add(-30 * time.Second)
+	updated, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{
+		FlowID:   created.FlowID,
+		PhaseID:  prepared.Phases[0].PhaseID,
+		Settings: flowstore.PhaseAgentSettings{Agent: agent.CommandCodex},
+	})
+	if err != nil {
+		t.Fatalf("SetPhaseAgentSettings() error = %v", err)
+	}
+	if !updated.UpdatedAt.Equal(*prepared.PreparedAt) || !updated.Phases[0].UpdatedAt.Equal(*prepared.PreparedAt) {
+		t.Fatalf("settings timestamps = record %s phase %s, want receipt %s",
+			updated.UpdatedAt, updated.Phases[0].UpdatedAt, prepared.PreparedAt)
+	}
+	authoritative, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() after regressing clock error = %v", err)
+	}
+	if authoritative.PreparedAt == nil || !authoritative.PreparedAt.Equal(*prepared.PreparedAt) {
+		t.Fatalf("authoritative receipt = %v, want %s", authoritative.PreparedAt, prepared.PreparedAt)
+	}
+}
+
 func TestStoreSetPhaseAgentSettingsPreservesRawLegacyRecordOutsideExactTarget(t *testing.T) {
 	root := t.TempDir()
 	createdAt := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)

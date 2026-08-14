@@ -114,6 +114,7 @@ type Model struct {
 	activeFlowCreate          uint64
 	readyBeadFlowCreateSeq    uint64
 	activeReadyBeadFlowCreate uint64
+	flowPreparationAdmission  bool
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
 	pendingRepoSelection      string
@@ -154,6 +155,9 @@ type Model struct {
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
 	listChildrenBeads         func(string, string) ([]beadsquery.Bead, error)
 	listReadyBeads            func(string) ([]beadsquery.Bead, error)
+	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
+	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
+	enableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
 	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
@@ -200,6 +204,7 @@ type Model struct {
 	terminalDockVisible       bool
 	terminalFocus             terminalFocus
 	autoAdvanceDrainFlows     map[string]struct{}
+	epicProgressionBaselines  map[string]flowstore.FlowRecord
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	// flowAutofixTmuxLaunches maps a Flow ID to every autofix tmux
@@ -293,6 +298,9 @@ type Options struct {
 	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
+	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
+	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
+	EnableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
 	ListBlockedBeads          func(repoPath string) ([]beadsquery.Bead, error)
 	ListOpenBeads             func(repoPath string) ([]beadsquery.Bead, error)
 	ListInProgressBeads       func(repoPath string) ([]beadsquery.Bead, error)
@@ -462,6 +470,44 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listChildrenBeads := opts.ListChildrenBeads
 	if listChildrenBeads == nil {
 		listChildrenBeads = beadsquery.ListChildren
+	}
+	readEpicProgression := opts.ReadEpicProgression
+	if readEpicProgression == nil {
+		if opts.FlowStore == nil && strings.TrimSpace(opts.SessionStateRoot) == "" {
+			// Expansion loads are automatic. A bare Model used by tests or an
+			// embedder must not open and migrate the user's default artifact root.
+			readEpicProgression = func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+				return flowstore.EpicProgression{}, false, nil
+			}
+		} else {
+			readEpicProgression = func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+				store, err := newFlowStore()
+				if err != nil {
+					return flowstore.EpicProgression{}, false, err
+				}
+				return store.ReadEpicProgression(key)
+			}
+		}
+	}
+	setEpicProgression := opts.SetEpicProgression
+	if setEpicProgression == nil {
+		setEpicProgression = func(update flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.EpicProgression{}, err
+			}
+			return store.SetEpicProgression(update)
+		}
+	}
+	enableEpicProgression := opts.EnableEpicProgression
+	if enableEpicProgression == nil {
+		enableEpicProgression = func(update flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.EpicProgression{}, flowstore.FlowRecord{}, err
+			}
+			return store.EnableEpicProgressionForPreparedFlow(update)
+		}
 	}
 	listBlockedBeads := opts.ListBlockedBeads
 	if listBlockedBeads == nil {
@@ -741,6 +787,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		createOpts.Preset = opts.FlowPreset
 		return store.CreateWithOptions(record, createOpts)
 	}
+	createPreparation := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, nil, err
+		}
+		createOpts.Preset = opts.FlowPreset
+		return store.CreatePreparation(record, createOpts)
+	}
 	setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 		store, err := newFlowStore()
 		if err != nil {
@@ -756,6 +810,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	// refusing contract instead: the default runs real git and a real hook.
 	starter := NewFlowStarter(FlowStarterOptions{
 		CreateFlow:           createFlow,
+		CreatePreparation:    createPreparation,
 		CreateWorktree:       actions.CreateFlowWorktree,
 		SetStartMetadata:     setFlowStartMetadata,
 		SetPhase:             setFlowPhase,
@@ -848,6 +903,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		},
 		listChildrenBeads:         listChildrenBeads,
 		listReadyBeads:            listReadyBeads,
+		readEpicProgression:       readEpicProgression,
+		setEpicProgression:        setEpicProgression,
+		enableEpicProgression:     enableEpicProgression,
 		showBead:                  showBead,
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
@@ -1359,6 +1417,9 @@ func (m Model) View() string {
 		ReadyBeadFlowCreateAvailable: m.canCreateReadyBeadFlow(),
 		ReadyBeadFlowStartAvailable:  m.canStartReadyBeadFlow(),
 		ReadyBeadFlowKeysOwned:       m.readyBeadFlowKeysOwned(),
+		EpicAutoOnAvailable:          m.canEnableEpicProgression(),
+		EpicAutoOffAvailable:         m.canDisableEpicProgression(),
+		EpicAutoKeyOwned:             m.epicProgressionKeysOwned(),
 		BeadsError:                   beadsError,
 		BeadsQuery:                   beadsQuery,
 		BeadsSourceCount:             beadsSourceCount,
@@ -1924,6 +1985,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return next.reconcileBeadExpansion()
 	case beadExpansionResultMsg:
 		return m.handleBeadExpansionResult(msg), nil
+	case beadProgressionResultMsg:
+		return m.handleBeadProgressionResult(msg), nil
+	case epicProgressionToggleResultMsg:
+		return m.handleEpicProgressionToggleResult(msg)
 	case BeadDetailResultMsg:
 		return m.handleBeadDetailResult(msg)
 	case FlowAutoModeSetMsg:

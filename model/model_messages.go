@@ -506,11 +506,12 @@ type agentSessionFinalizedMsg struct {
 }
 
 type flowLaunchFailurePersistedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	OriginalErr   string
-	PersistErr    error
-	Release       func()
-	Create        *flowLaunchCreateRequest
+	LaunchContext             actions.AgentLaunchContext
+	OriginalErr               string
+	PersistErr                error
+	Release                   func()
+	Create                    *flowLaunchCreateRequest
+	releaseReadyBeadAdmission bool
 }
 
 type PlanLaunchRequestedMsg struct {

@@ -2066,7 +2066,7 @@ func TestFlowStarterPlanLaunchUsesFreshlyCreatedFlowID(t *testing.T) {
 	// gzs.1 leaves FlowStarter.StartPlan unguarded because the Flow it launches
 	// was created by the same call and cannot collide with a live attempt.
 	var launched flowstore.PhaseLaunchUpdate
-	starter := NewFlowStarter(FlowStarterOptions{
+	starter := newPreparedFlowStarterForInternalTest(FlowStarterOptions{
 		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "created-flow"
 			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady, Order: 1}}

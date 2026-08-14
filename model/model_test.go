@@ -125,6 +125,29 @@ func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
 	return tm.(model.Model), cmd
 }
 
+func applyTestCommand(m model.Model, cmd tea.Cmd) (model.Model, tea.Cmd) {
+	for _, msg := range testCommandMessages(cmd) {
+		m, _ = update(m, msg)
+	}
+	return m, nil
+}
+
+func testCommandMessages(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var messages []tea.Msg
+	for _, nested := range batch {
+		messages = append(messages, testCommandMessages(nested)...)
+	}
+	return messages
+}
+
 func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 	switch msg := msg.(type) {
 	case model.WorktreeResultMsg:

@@ -543,6 +543,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleToggleFlowAutoMode()
 		}
+		if m.epicProgressionKeysOwned() {
+			return m.handleToggleEpicProgression()
+		}
 		return m.handleOpenAgent()
 	case "d":
 		return m.handleDelete()
@@ -598,7 +601,7 @@ func (m Model) readyBeadFlowKeysOwned() bool {
 }
 
 func (m Model) canCreateReadyBeadFlow() bool {
-	return m.readyBeadFlowKeysOwned() && m.activeReadyBeadFlowCreate == 0
+	return m.readyBeadFlowKeysOwned() && !m.flowPreparationAdmission
 }
 
 func (m Model) canStartReadyBeadFlow() bool {
@@ -2082,7 +2085,9 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+	current := m.isCurrentReadyBeadFlowCreateRequest(msg.Request)
+	m.flowPreparationAdmission = false
+	if !current {
 		return m, nil
 	}
 	// Release the request before the repo check so a repo change that bypassed
@@ -2103,7 +2108,9 @@ func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, t
 }
 
 func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+	current := m.isCurrentReadyBeadFlowCreateRequest(msg.Request)
+	m.flowPreparationAdmission = false
+	if !current {
 		return m, nil
 	}
 	m = m.clearReadyBeadFlowCreateRequest(msg.Request)
@@ -3067,16 +3074,24 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 }
 
 func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText string) (Model, tea.Cmd) {
+	return m.startFlowLaunchFailureWithReadyAdmission(ctx, errText, false)
+}
+
+func (m Model) startFlowLaunchFailureWithReadyAdmission(ctx actions.AgentLaunchContext, errText string, releaseReadyBeadAdmission bool) (Model, tea.Cmd) {
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
+		if releaseReadyBeadAdmission {
+			m.flowPreparationAdmission = false
+		}
 		return m.setStatus(statusOther, errText), nil
 	}
 	return m, func() tea.Msg {
 		_, err := m.setFlowPhase(update)
 		return flowLaunchFailurePersistedMsg{
-			LaunchContext: ctx,
-			OriginalErr:   errText,
-			PersistErr:    err,
+			LaunchContext:             ctx,
+			OriginalErr:               errText,
+			PersistErr:                err,
+			releaseReadyBeadAdmission: releaseReadyBeadAdmission,
 		}
 	}
 }
@@ -3087,6 +3102,9 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 	presentCreate := true
 	if msg.Create != nil {
 		presentCreate = m.createFlowLaunchOriginCurrent(*msg.Create)
+	}
+	if msg.releaseReadyBeadAdmission {
+		m.flowPreparationAdmission = false
 	}
 	// A mismatch skips only the release: this message is shared with every
 	// source that has no lifecycle attempt, and returning early would swallow

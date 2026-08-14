@@ -557,6 +557,7 @@ type FlowRecord struct {
 	// stays distinguishable from a legacy record that predates the field.
 	Headless      bool               `json:"headless"`
 	Phases        []FlowPhase        `json:"phases"`
+	PreparedAt    *time.Time         `json:"prepared_at,omitempty"`
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
 	GraphRecovery GraphRecoveryState `json:"-"`
@@ -745,6 +746,9 @@ func (s *Store) AllocateID(title string) (string, error) {
 // CreateWithOptions writes a new flow record, optionally seeding empty phase
 // lists from a preset instead of the default graph.
 func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRecord, error) {
+	// A preparation receipt is a capability minted only by a successful
+	// preparation finalizer. General creation never trusts a caller-supplied one.
+	record.PreparedAt = nil
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, fmt.Errorf("flow title is required")
 	}
@@ -909,7 +913,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		phase := record.Phases[phaseIndex]
 		priorStatus := phase.Status
 		if err := validatePhaseUpdate(phase, update); err != nil {
@@ -1014,7 +1018,7 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 		if phase.AgentSettings().Normalize() == settings && phase.AgentSettings() == settings {
 			return record, nil
 		}
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		record.Phases[phaseIndex] = phase.withAgentSettings(settings)
 		record.Phases[phaseIndex].UpdatedAt = now
 		record.UpdatedAt = now
@@ -1074,7 +1078,7 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 		// update's now would leave the compensated phase — and the record — at or
 		// behind a concurrent writer's timestamp, and the TUI drops a record whose
 		// UpdatedAt is behind the one it already holds.
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		compensated := record
 		compensated.Phases = append([]FlowPhase(nil), record.Phases...)
 		compensated.Phases[index] = markPhaseSyncNeedsAttention(compensated.Phases[index], syncErr, now)
@@ -1584,7 +1588,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		summary := strings.TrimSpace(update.Summary)
 		if summary == "" {
 			summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
@@ -1664,7 +1668,7 @@ func (s *Store) compensateManualMergeSyncFailure(flowID string, committed manual
 			!mergeEqual(record.Merge, committed.merge) {
 			return record, nil
 		}
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		record.Phases[index] = markPhaseSyncNeedsAttention(record.Phases[index], syncErr, now)
 		record.PR.Status = committed.previousPRStatus
 		record.Merge = Merge{Status: MergePending}
@@ -1828,6 +1832,14 @@ func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error)
 		return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", update.PlanPath)
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.PreparedAt != nil {
+			if value := strings.TrimSpace(update.WorktreePath); value != "" && filepath.Clean(value) != record.WorktreePath {
+				return FlowRecord{}, fmt.Errorf("flow %q preparation receipt protects worktree path %q", record.FlowID, record.WorktreePath)
+			}
+			if value := strings.TrimSpace(update.Branch); value != "" && value != record.Branch {
+				return FlowRecord{}, fmt.Errorf("flow %q preparation receipt protects branch %q", record.FlowID, record.Branch)
+			}
+		}
 		if value := strings.TrimSpace(update.WorktreePath); value != "" {
 			record.WorktreePath = filepath.Clean(value)
 		}
@@ -2266,7 +2278,7 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 				return FlowRecord{}, err
 			}
 		}
-		record, err = mutate(record, s.now())
+		record, err = mutate(record, flowMutationTime(record, s.now()))
 		if err != nil {
 			return FlowRecord{}, err
 		}
@@ -3083,6 +3095,28 @@ func defaultTime(value, fallback time.Time) time.Time {
 		return fallback
 	}
 	return value
+}
+
+func monotonicMutationTime(candidate time.Time, floors ...time.Time) time.Time {
+	stamp := candidate.UTC()
+	for _, floor := range floors {
+		if floor.IsZero() {
+			continue
+		}
+		floor = floor.UTC()
+		if stamp.Before(floor) {
+			stamp = floor
+		}
+	}
+	return stamp
+}
+
+func flowMutationTime(record FlowRecord, candidate time.Time) time.Time {
+	floors := []time.Time{record.CreatedAt, record.UpdatedAt}
+	if record.PreparedAt != nil {
+		floors = append(floors, *record.PreparedAt)
+	}
+	return monotonicMutationTime(candidate, floors...)
 }
 
 func normalizeRecord(record FlowRecord, selfHeal bool) FlowRecord {

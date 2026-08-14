@@ -89,6 +89,41 @@ func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
 	}
 }
 
+func TestRenderBeadRowPreservesEpicAndAutoMarkersAtMinimumWidth(t *testing.T) {
+	t.Parallel()
+
+	const width = 19 // selection prefix plus "  [epic]  [auto]"
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "A very long epic title", IssueType: "epic"}
+	line := renderBeadRow(epic, true, width, true)
+	plain := ansi.Strip(line)
+	if !strings.Contains(plain, "[epic]  [auto]") {
+		t.Fatalf("minimum-width row lost persistent markers: %q", plain)
+	}
+	if got := ansi.StringWidth(line); got != width {
+		t.Fatalf("row width = %d, want %d: %q", got, width, plain)
+	}
+}
+
+func TestRenderBeadsPaneShowsProgressionFailureWithoutHidingChildren(t *testing.T) {
+	t.Parallel()
+
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Children:          []beadsquery.Bead{{ID: "bd-child", Priority: 2, Title: "Child"}},
+		ReadinessKnown:    true,
+		ProgressionDetail: "database failed\n\x1b]8;;https://example.invalid\aunsafe",
+	}
+	lines := expansionVisualLines(epic, true, 60, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if len(lines) != 3 || !strings.Contains(plain, "bd-child") || !strings.Contains(plain, "Auto-progression unavailable: database failed unsafe") {
+		t.Fatalf("progression warning/children render = %d lines:\n%s", len(lines), plain)
+	}
+	if got := BeadVisualHeight(epic, expansion); got != len(lines) {
+		t.Fatalf("BeadVisualHeight() = %d, rendered lines = %d", got, len(lines))
+	}
+}
+
 func TestRenderBeadsPanePreservesReadyMarkerAtNarrowWidths(t *testing.T) {
 	t.Parallel()
 
@@ -712,6 +747,42 @@ func TestRender_BeadsReadyFlowShortcutsUseIndependentAvailabilitySnapshots(t *te
 				t.Fatalf("unavailable Ready action advertised:\n%s", view)
 			}
 		})
+	}
+}
+
+func TestRender_SelectedEpicShowsPersistentAutoMarkerAndToggleHints(t *testing.T) {
+	base := RenderParams{
+		Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+		Width: 90, Height: 12, Mode: ModeBeadsOpen, ActivePane: PaneTop,
+		BeadsOpen:          []beadsquery.Bead{{ID: "epic-1", Title: "A deliberately long epic title", IssueType: "epic"}},
+		BeadsOpenAvailable: true,
+		BeadExpansion: BeadExpansion{
+			EpicID: "epic-1", State: BeadExpansionLoaded, ReadinessKnown: true,
+			ProgressionKnown: true, ProgressionEnabled: true,
+		},
+		EpicAutoOffAvailable: true,
+		EpicAutoKeyOwned:     true,
+	}
+	view := ansi.Strip(Render(base))
+	if !strings.Contains(view, "[epic]  [auto]") {
+		t.Fatalf("selected enabled epic missing both markers:\n%s", view)
+	}
+	if !strings.Contains(view, "a: auto off") {
+		t.Fatalf("enabled epic footer missing disable hint:\n%s", view)
+	}
+
+	base.Width = 140
+	pane := ansi.Strip(shortcutPaneText(Render(base)))
+	if !strings.Contains(pane, "a      auto off") {
+		t.Fatalf("enabled epic shortcut pane missing disable hint:\n%s", pane)
+	}
+
+	base.BeadExpansion.ProgressionEnabled = false
+	base.EpicAutoOffAvailable = false
+	base.EpicAutoOnAvailable = true
+	view = ansi.Strip(Render(base))
+	if strings.Contains(view, "[auto]") || !strings.Contains(view, "auto on") {
+		t.Fatalf("disabled epic projection/hint is wrong:\n%s", view)
 	}
 }
 

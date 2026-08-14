@@ -78,7 +78,7 @@ right. The essentials:
 | `F` | In a settled Beads Ready pane, create the selected Bead's Flow and start its first actionable phase; pull in eligible Git contexts and elsewhere outside that Ready selection |
 | `f5` | Rescan repositories and refresh both stored content panes; Active Flows also refreshes while its takeover is open |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
-| `a` | Launch the configured coding agent |
+| `a` | Launch the configured coding agent; on a selected epic, toggle its auto-progression; on a Flow, toggle phase auto mode |
 | `n` | Create a worktree, branch, Flow, or repo (context-dependent) |
 | `N` | Create a worktree and launch the agent in it |
 | `enter` | Page a diff, transcript, or selected bead detail, or expand phases |
@@ -151,6 +151,17 @@ session root, and default-on headless setting. CLI agents stay embedded for this
 creation-time start even in tmux mode; external-only agents keep their normal
 external route. Neither shortcut invokes `bd` or claims the issue, so Beads
 remains untouched.
+
+Selecting an epic in any Beads subview also loads its persisted progression
+state alongside the direct-child and Ready snapshots. Press `a` when the
+footer shows `a: auto on` to prepare the first ready direct child's Flow and
+enable progression, or `a: auto off` to disable it. Enabled rows show
+`[epic]  [auto]`. Enablement reuses the Ready ordering and exact create-only
+request mapping, may adopt one already-prepared pending Flow with the exact
+Bead/epic link, and refuses partial listings, ambiguity, incomplete preparation,
+running Flows, and terminal Flows. It never claims the Bead, starts a phase, or
+launches an agent. With no ready child it reports that progression remains off
+and writes neither a Flow nor progression state.
 
 The Ready selection owns both keys while either request is in flight, preventing
 repeated or mixed presses from creating duplicates. `F` is advertised only when
@@ -239,8 +250,9 @@ Flows are stored in `<artifact-root>/approach.db` using SQLite WAL mode. On the
 first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
 records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
-and agent sessions remain file-backed. Existing SQLite schema versions 0 and 1
-upgrade in place to version 2 without rewriting stored Flow JSON blobs.
+and agent sessions remain file-backed. SQLite schema v3 adds protected Flow
+preparation receipts and the `epic_progressions` table. Versions 0, 1, and 2
+upgrade transactionally without rewriting existing Flow JSON blobs.
 
 ## Development
 

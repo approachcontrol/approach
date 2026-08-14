@@ -14,6 +14,7 @@ func populatedFlowRecord() FlowRecord {
 	updated := created.Add(time.Hour)
 	mergedAt := updated.Add(time.Minute)
 	closedAt := updated.Add(2 * time.Minute)
+	preparedAt := created.Add(30 * time.Minute)
 	return FlowRecord{
 		SchemaVersion: schemaVersion,
 		FlowID:        "20240304-050607-parity",
@@ -44,6 +45,7 @@ func populatedFlowRecord() FlowRecord {
 			Sessions:  []Session{{Provider: "claude", SessionID: "s1", LaunchID: "launch-1", Status: "ended", StartedAt: created, EndedAt: updated, TranscriptPath: "/tmp/t.jsonl"}},
 			CreatedAt: created, UpdatedAt: updated,
 		}},
+		PreparedAt:    &preparedAt,
 		CreatedAt:     created,
 		UpdatedAt:     updated,
 		GraphRecovery: GraphRecoveryState{Status: GraphRecoveryMissingEdgesUnresolved},
@@ -103,6 +105,10 @@ func TestStorageDTOCoversEveryFlowRecordField(t *testing.T) {
 		dtoType, ok := dtoFields[name]
 		if !ok {
 			t.Errorf("FlowRecord field %q has no storedFlowDTO counterpart; it would never be persisted", name)
+			continue
+		}
+		if name == "prepared_at" && recordType == "*time.Time" && dtoType == "string" {
+			delete(dtoFields, name)
 			continue
 		}
 		if dtoType != recordType {

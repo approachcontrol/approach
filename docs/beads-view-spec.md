@@ -175,6 +175,32 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
   leaving Beads clear it synchronously. Results for an old snapshot are
   ignored. The stored top Beads pane owns expansion even while the bottom pane
   has focus; no polling or cross-subview child cache is added.
+- The same selection-scoped request independently reads the epic's persisted
+  progression row. Absence is known-disabled; a progression read failure makes
+  only toggle state unknown and never discards usable child/readiness data.
+  Conversely, child or Ready failures never hide a known enabled marker or the
+  executable disable action.
+- A selected enabled epic renders the exact suffix `  [epic]  [auto]`. The
+  footer and shortcut rail show `a: auto off` / `a      auto off` while disable
+  is executable. A known-disabled epic shows `auto on` only after its direct
+  children and readiness snapshots are loaded. With no ready direct child, the
+  action reports `No ready child for epic <id>; auto-progression remains off`
+  and creates or writes nothing.
+- Enabling chooses the first ready direct child in the expansion's established
+  order. It lists the complete repository Flow corpus and either prepares a new
+  Flow through `PrepareFlow` or adopts the sole open `pending` exact-link match
+  carrying a persisted preparation receipt. Partial listings, multiple exact
+  matches, missing receipts, running state, deliberate closure, failure
+  terminals, success terminals, and unknown statuses all refuse enablement.
+  Preparation uses the Ready create-only title, durable-requirements prompt,
+  Bead/epic link, and captured agent settings. It does not call `bd`, claim a
+  Bead, start a phase, or launch an agent.
+- One in-process admission ticket is shared by epic enable/disable and Ready
+  `f`/`F`. Navigation invalidates source projection/status identity but does not
+  release the ticket. A prepared/adopted Flow stays under its launch/close
+  reservation through fresh transactional revalidation and progression-write
+  reconciliation. This prevents duplicate effects inside one Model; it does
+  not promise cross-process create uniqueness.
 
 ## Testing Decisions
 
@@ -204,6 +230,8 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
 - Any mutation of beads (create, start, close, reopen, edit, dependency
   changes). Beads access and tracker state remain strictly read-only; creating
   an Approach-owned Flow artifact is not a Beads mutation.
+- Advancing to later children, claiming children, launching a prepared child's
+  phase, or startup catch-up for completions observed while Approach was down.
 - Background polling or auto-refresh while the view is visible.
 - Reading beads storage files directly, or any fallback path that bypasses the
   `bd` CLI.
