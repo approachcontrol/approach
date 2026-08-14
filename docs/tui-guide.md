@@ -561,15 +561,18 @@ phase graph and normal Flow creation defaults apply. Both shortcuts prepare the
 Flow exactly like an `n` form submission with Plan Now off: it creates the
 `flow/<slug>` branch and worktree from the repository's current HEAD, records
 the worktree, branch, and commit start metadata, and runs the repository's
-bootstrap hook. Lowercase `f` stops there: it does not link a plan or issue,
-start a Flow phase, or launch an agent. Uppercase `F` continues through the
+bootstrap hook. Lowercase `f` stops there: it does not link a saved plan or
+GitHub Issue, start a Flow phase, or launch an agent. Both keys persist a
+separate Bead link from the already-loaded row, containing the trimmed Bead ID
+and its trimmed parent epic ID when available; they still do not link a saved
+plan or GitHub Issue. Uppercase `F` continues through the
 existing `StartPlan` backend, which selects the first actionable phase and uses
 the configured agent, model, reasoning effort, Flow prompt-template snapshot,
 session state root, and an explicit default-on headless setting. `codex` and
 `claude` creation-time launches use the tracked embedded path even when
 `[launch].backend = "tmux"`; external-only agents keep the existing external
-backend route. Neither action invokes `bd`, so the selected Bead and all other
-tracker state remain untouched.
+backend route. Neither action invokes `bd`, calls `bd show`, claims the issue,
+or otherwise changes tracker state.
 
 The two keys share one admission token. Repeated or mixed presses cannot create
 duplicate Flows. A repository change — cursor move or rescan — invalidates a

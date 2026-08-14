@@ -432,6 +432,58 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 	}
 }
 
+func TestBeadsReadyFlowRequestsCarryNormalizedSelectedBeadLink(t *testing.T) {
+	for _, key := range []rune{'f', 'F'} {
+		for _, tt := range []struct {
+			name   string
+			parent string
+			want   flowstore.BeadLink
+		}{
+			{name: "known epic", parent: "  epic-parent  ", want: flowstore.BeadLink{ID: "bead-child", EpicID: "epic-parent"}},
+			{name: "unknown epic", parent: "  ", want: flowstore.BeadLink{ID: "bead-child"}},
+		} {
+			t.Run(string(key)+"/"+tt.name, func(t *testing.T) {
+				var captured model.FlowStartRequest
+				showCalls := 0
+				opts := model.Options{
+					AgentCommand:   "codex",
+					ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+					ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
+					ShowBead: func(string, string) (string, error) {
+						showCalls++
+						return "", nil
+					},
+					CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+						captured = req
+						return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-f", RepoPath: req.RepoPath}}, nil
+					},
+					StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+						captured = req
+						return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-F", RepoPath: req.RepoPath}, LaunchSkipped: true}, nil
+					},
+				}
+				m := inBeadsPane(newTestModel(testRepos(), opts))
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "  bead-child  ", Parent: tt.parent, Title: "Child"}})
+
+				_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+				if cmd == nil {
+					t.Fatalf("Ready %c returned nil command", key)
+				}
+				_ = cmd()
+				if captured.Bead != tt.want {
+					t.Fatalf("Ready %c request Bead = %#v, want %#v", key, captured.Bead, tt.want)
+				}
+				if showCalls != 0 {
+					t.Fatalf("Ready %c called ShowBead %d times", key, showCalls)
+				}
+			})
+		}
+	}
+}
+
 func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 	newReadyModel := func(t *testing.T, beads []beadsquery.Bead, available bool, create func(model.FlowStartRequest) (model.FlowStartResult, error)) model.Model {
 		t.Helper()
@@ -924,7 +976,7 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 		FlowPresets:           []flowstore.Preset{preset},
 		FlowPreset:            &preset,
 		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
-			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+			return []beadsquery.Bead{{ID: "bd-1", Parent: "epic-1", Title: "One"}}, nil
 		},
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	})
@@ -950,6 +1002,9 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 	if record.PresetName != "ready-bead" || record.Title != "bd-1: One" || record.RepoPath != repoPath {
 		t.Fatalf("persisted Flow identity = %#v", record)
 	}
+	if record.Bead != (flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}) {
+		t.Fatalf("persisted Flow Bead = %#v", record.Bead)
+	}
 	wantWorktree := filepath.Join(filepath.Dir(repoPath), filepath.Base(repoPath)+"-worktrees", "flow-bd-1-one")
 	if record.WorktreePath != wantWorktree || record.Branch != "flow/bd-1-one" {
 		t.Fatalf("persisted Flow worktree = %q branch = %q, want %q and %q", record.WorktreePath, record.Branch, wantWorktree, "flow/bd-1-one")
@@ -962,7 +1017,7 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 	}
 	if record.BaseRef != "" ||
 		record.PlanID != "" || record.PlanPath != "" || record.Issue != (flowstore.Issue{}) || record.PR != (flowstore.PullRequest{}) {
-		t.Fatalf("persisted Flow has base-ref/plan/link metadata: %#v", record)
+		t.Fatalf("persisted Flow has base-ref/plan/GitHub metadata: %#v", record)
 	}
 	if !record.AutoMode || record.Merge.Status != flowstore.MergePending {
 		t.Fatalf("creation defaults = auto %v merge %#v", record.AutoMode, record.Merge)
@@ -1017,8 +1072,10 @@ func TestBeadsReadyStartFlowProductionWiringLaunchesFirstActionablePhase(t *test
 		FlowPresets:          []flowstore.Preset{preset},
 		FlowPreset:           &preset,
 		FlowPromptTemplates:  model.FlowPromptTemplates{Plan: "Ready plan {flow_id}: {instructions}"},
-		ListReadyBeads:       func(string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil },
-		ListOpenBeads:        func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "bd-1", Parent: "epic-1", Title: "One"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			return newStore().ReserveAgentLaunch(flowID)
 		},
@@ -1055,6 +1112,9 @@ func TestBeadsReadyStartFlowProductionWiringLaunchesFirstActionablePhase(t *test
 	record, err := newStore().Read(ctx.FlowID)
 	if err != nil {
 		t.Fatalf("Read(%q) error = %v", ctx.FlowID, err)
+	}
+	if record.Bead != (flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}) {
+		t.Fatalf("production Ready F persisted Bead = %#v", record.Bead)
 	}
 	phase := phaseByID(record, "research")
 	if phase.Status != flowstore.PhaseRunning || len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != ctx.LaunchID {

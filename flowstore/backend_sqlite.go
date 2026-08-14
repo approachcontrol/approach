@@ -26,7 +26,7 @@ const (
 // future schema change has something to branch on, and so an older binary can
 // tell "a newer approach wrote this" apart from "this file is corrupt" —
 // without it, both surface as a raw column-set mismatch dump.
-const databaseSchemaVersion = 1
+const databaseSchemaVersion = 2
 
 // errDatabaseFromNewerBuild marks the one validation failure that is NOT a
 // damaged database. The file is fine; this binary is old. It must stay
@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS flows (
     repo_path TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    record BLOB NOT NULL
+    record BLOB NOT NULL,
+    bead_id TEXT NOT NULL DEFAULT '',
+    epic_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
@@ -119,9 +121,6 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 		return nil, err
 	}
 	if err := validateSQLiteSchema(db); err != nil {
-		return nil, err
-	}
-	if err := stampSchemaVersionIfUnset(db); err != nil {
 		return nil, err
 	}
 	// The cap must be far ABOVE the realistic concurrent-writer count, and it must
@@ -227,23 +226,6 @@ func initializeSQLiteSchema(db *sql.DB) error {
 	return validateSQLiteSchema(db)
 }
 
-// stampSchemaVersionIfUnset upgrades a database written before the stamp
-// existed. Databases from a newer approach are rejected by validateSQLiteSchema
-// before this runs, so this only ever moves 0 forward.
-func stampSchemaVersionIfUnset(db *sql.DB) error {
-	version, err := readSchemaVersion(db)
-	if err != nil {
-		return err
-	}
-	if version != 0 {
-		return nil
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)); err != nil {
-		return fmt.Errorf("stamp flow database schema version: %w", err)
-	}
-	return nil
-}
-
 func readSchemaVersion(db *sql.DB) (int64, error) {
 	var version int64
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -254,9 +236,7 @@ func readSchemaVersion(db *sql.DB) (int64, error) {
 
 func validateSQLiteSchema(db *sql.DB) error {
 	// Version first, so a database from a newer approach reports that plainly
-	// instead of dumping a column-set diff the operator cannot interpret. A 0
-	// means "written before the stamp existed" and is accepted: the column and
-	// index checks below are the real compatibility gate for that generation.
+	// instead of dumping a column-set diff the operator cannot interpret.
 	version, err := readSchemaVersion(db)
 	if err != nil {
 		return err
@@ -265,6 +245,16 @@ func validateSQLiteSchema(db *sql.DB) error {
 		return fmt.Errorf("%w (database schema %d, this build supports %d); upgrade approach",
 			errDatabaseFromNewerBuild, version, databaseSchemaVersion)
 	}
+	if version != databaseSchemaVersion {
+		return fmt.Errorf("flow database schema %d requires bootstrap migration to %d", version, databaseSchemaVersion)
+	}
+	return validateSQLiteSchemaVersion(db, databaseSchemaVersion)
+}
+
+// validateSQLiteSchemaVersion checks one exact physical generation. The
+// bootstrap migrator uses v1 to reject corrupt or arbitrary v0/v1 layouts
+// before any ALTER TABLE statement runs; normal readers validate only v2.
+func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	// An empty file reads as version 0 with no tables, so the version check above
 	// cannot catch it and the column comparison below would report it as a diff
 	// against an empty column set — the unreadable dump this check exists to
@@ -289,7 +279,11 @@ func validateSQLiteSchema(db *sql.DB) error {
 			_ = rows.Close()
 			return fmt.Errorf("validate flow database schema columns: %w", err)
 		}
-		columns = append(columns, name+":"+strings.ToUpper(columnType)+":"+strconv.Itoa(notNull)+":"+strconv.Itoa(primaryKey))
+		defaultText := "<nil>"
+		if defaultValue != nil {
+			defaultText = fmt.Sprint(defaultValue)
+		}
+		columns = append(columns, name+":"+strings.ToUpper(columnType)+":"+strconv.Itoa(notNull)+":"+strconv.Itoa(primaryKey)+":"+defaultText)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -298,7 +292,15 @@ func validateSQLiteSchema(db *sql.DB) error {
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close flow database schema rows: %w", err)
 	}
-	wantColumns := []string{"flow_id:TEXT:0:1", "repo_path:TEXT:1:0", "status:TEXT:1:0", "updated_at:TEXT:1:0", "record:BLOB:1:0"}
+	var wantColumns []string
+	switch version {
+	case 1:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>", "repo_path:TEXT:1:0:<nil>", "status:TEXT:1:0:<nil>", "updated_at:TEXT:1:0:<nil>", "record:BLOB:1:0:<nil>"}
+	case 2:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>", "repo_path:TEXT:1:0:<nil>", "status:TEXT:1:0:<nil>", "updated_at:TEXT:1:0:<nil>", "record:BLOB:1:0:<nil>", "bead_id:TEXT:1:0:''", "epic_id:TEXT:1:0:''"}
+	default:
+		return fmt.Errorf("no flow database schema contract for version %d", version)
+	}
 	if !equalStrings(columns, wantColumns) {
 		return fmt.Errorf("flow database has incompatible flows columns: got %v, want %v", columns, wantColumns)
 	}
@@ -362,20 +364,20 @@ func (b *sqliteBackend) get(flowID string) (storedFlow, bool, error) {
 		return storedFlow{}, false, err
 	}
 	return queryStoredFlow(b.db.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, record FROM flows WHERE flow_id = ?", flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows WHERE flow_id = ?", flowID,
 	), flowID)
 }
 
 func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (storedFlow, bool, error) {
-	var flowID, repoPath, status, updatedAt string
+	var flowID, repoPath, status, updatedAt, beadID, epicID string
 	var record []byte
-	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &record); err != nil {
+	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &record); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storedFlow{}, false, nil
 		}
 		return storedFlow{}, false, fmt.Errorf("read flow %q row: %w", requestedID, err)
 	}
-	decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, record)
+	decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, record)
 	if err != nil {
 		return storedFlow{}, false, err
 	}
@@ -383,7 +385,7 @@ func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (s
 }
 
 func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
-	query := "SELECT flow_id, repo_path, status, updated_at, record FROM flows"
+	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows"
 	var args []any
 	if filter.RepoPath != "" {
 		query += " WHERE repo_path = ?"
@@ -397,13 +399,13 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 	flows := make([]storedFlow, 0)
 	partial := &PartialListError{}
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt string
+		var flowID, repoPath, status, updatedAt, beadID, epicID string
 		var record []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &record); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &record); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan flow list row: %w", err)
 		}
-		decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, record)
+		decoded, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, record)
 		if err != nil {
 			partial.Entries = append(partial.Entries, PartialListEntry{FlowID: flowID, Cause: err})
 			continue
@@ -499,7 +501,7 @@ type sqliteSession struct {
 
 func (s sqliteSession) get() (storedFlow, bool, error) {
 	return queryStoredFlow(s.tx.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, record FROM flows WHERE flow_id = ?", s.flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows WHERE flow_id = ?", s.flowID,
 	), s.flowID)
 }
 
@@ -520,14 +522,16 @@ func (s sqliteSession) save(record FlowRecord) error {
 		return err
 	}
 	_, err = s.tx.Exec(`
-INSERT INTO flows(flow_id, repo_path, status, updated_at, record)
-VALUES(?, ?, ?, ?, ?)
+INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, record)
+VALUES(?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(flow_id) DO UPDATE SET
     repo_path=excluded.repo_path,
     status=excluded.status,
     updated_at=excluded.updated_at,
+    bead_id=excluded.bead_id,
+    epic_id=excluded.epic_id,
     record=excluded.record`,
-		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, data)
+		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, data)
 	if err != nil {
 		return fmt.Errorf("save flow %q: %w", record.FlowID, err)
 	}

@@ -437,6 +437,15 @@ keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
 Flow terminals are documented in `docs/tui-guide.md`. Other phase and
 progression mutation remains CLI/agent-driven in v1.
 
+`FlowRecord.Bead` is independent of `FlowRecord.Issue`. `Bead` stores the Beads
+ID and, when the selected issue is a child with a known parent, its epic ID;
+`Issue` remains the optional GitHub issue link managed by `approach flow issue
+set`. Ready-Beads `f` and `F` populate `Bead` from the already-loaded selected
+row without invoking or mutating `bd`. Manual TUI/CLI Flow creation remains
+unlinked. JSON writes `"bead":{"id":"child","epic_id":"epic"}` for a
+linked child, omits `epic_id` when unknown, and omits `bead` entirely for an
+unlinked Flow. An epic ID without a Bead ID is rejected.
+
 On first open when `approach.db` is absent and legacy `<artifact-root>/flows/`
 records exist, Approach canonicalizes the readable legacy corpus into a closed
 staged database, validates it, and atomically promotes the database. `flows/`
@@ -524,7 +533,14 @@ Migration failure modes:
 
 The database and its records have separate compatibility gates:
 
-- `PRAGMA user_version` covers the database as a whole. A value newer than this
+- `PRAGMA user_version` covers the database as a whole. Version 2 adds the
+  `flows.bead_id` and `flows.epic_id` non-null text projections, both defaulting
+  to the empty string. Under the bootstrap lease, existing version 0
+  (unstamped v1 layout) and version 1 databases are validated against the exact
+  predecessor table-and-index contract, then upgraded transactionally in place.
+  Existing rows, JSON record blobs, earlier projections, and retained `flows/`
+  files are not rewritten or removed. A malformed predecessor is rejected
+  before either column or the version stamp changes. A value newer than this
   build supports prevents the store from opening and reports that Approach must
   be upgraded. This is not corruption and is never downgraded to a partial
   result.
@@ -536,7 +552,9 @@ The database and its records have separate compatibility gates:
   skipped Flow ID. Query, scan, iteration, and close failures remain fatal.
 
 Point reads stay strict: `approach flow read --flow-id ID` returns the damaged
-row's decode or version error and never reports it as not found. By contrast,
+row's decode, version, or physical-projection mismatch and never reports it as
+not found. Every read compares `bead_id` and `epic_id` with the decoded JSON in
+the same way as the existing identity/status projections. By contrast,
 `approach flow list --json` writes the healthy subset as a valid JSON array to
 stdout, writes the skipped-row diagnostic to stderr, and exits successfully.
 `--repo-path` scopes both the returned rows and the diagnostic. If every

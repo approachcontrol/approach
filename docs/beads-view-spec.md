@@ -126,8 +126,10 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
   with Plan Now off: the configured preset seeds the phase graph, the
   `flow/<slug>` branch and worktree are created from the repository's current
   HEAD (no base ref is supplied), start metadata is recorded, and the
-  repository's bootstrap hook runs. It supplies no plan/link, launch/session,
-  agent, issue, or PR metadata and never invokes agent launchers or `bd`.
+  repository's bootstrap hook runs. It persists an independent Bead link from
+  the selected row (`id` plus optional parent `epic_id`) but supplies no saved
+  plan, GitHub Issue, PR, or launch/session metadata and never invokes agent
+  launchers or `bd`.
 - Ready Flow persistence has its own monotonically increasing request token.
   Duplicate keypresses are ignored while it is active. Cursor-driven repo
   changes invalidate it at the top of `handleRepoSelectionChanged`, before

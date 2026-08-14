@@ -142,12 +142,15 @@ the phase graph, and both shortcuts prepare the Flow exactly like a Flows-pane
 `n` submission with Plan Now off: it creates the `flow/<slug>` branch and
 worktree from the repository's current HEAD, records the start metadata, and
 runs the bootstrap hook. Lowercase `f` then parks the Flow without linking a
-plan or issue, starting a phase, or launching an agent. Uppercase `F` instead
+saved plan or GitHub Issue, starting a phase, or launching an agent. Both
+shortcuts persist an independent Bead link from the selected row: the trimmed
+Bead ID plus its trimmed parent epic ID when present. Uppercase `F` instead
 starts the first actionable phase through the normal creation-time Flow launch
 path, using the configured agent, model, reasoning effort, prompt templates,
 session root, and default-on headless setting. CLI agents stay embedded for this
 creation-time start even in tmux mode; external-only agents keep their normal
-external route. Neither shortcut invokes `bd`, so the Bead remains untouched.
+external route. Neither shortcut invokes `bd` or claims the issue, so Beads
+remains untouched.
 
 The Ready selection owns both keys while either request is in flight, preventing
 repeated or mixed presses from creating duplicates. `F` is advertised only when
@@ -236,7 +239,8 @@ Flows are stored in `<artifact-root>/approach.db` using SQLite WAL mode. On the
 first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
 records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
-and agent sessions remain file-backed.
+and agent sessions remain file-backed. Existing SQLite schema versions 0 and 1
+upgrade in place to version 2 without rewriting stored Flow JSON blobs.
 
 ## Development
 

@@ -305,6 +305,8 @@ type fakeFlowListRow struct {
 	repoPath  string
 	status    string
 	updatedAt string
+	beadID    string
+	epicID    string
 	record    []byte
 	scanErr   error
 }
@@ -333,7 +335,9 @@ func (r *fakeFlowListRows) Scan(dest ...any) error {
 	*dest[1].(*string) = row.repoPath
 	*dest[2].(*string) = row.status
 	*dest[3].(*string) = row.updatedAt
-	*dest[4].(*[]byte) = row.record
+	*dest[4].(*string) = row.beadID
+	*dest[5].(*string) = row.epicID
+	*dest[6].(*[]byte) = row.record
 	return nil
 }
 
@@ -351,6 +355,8 @@ func fakeListRowForRecord(t *testing.T, record FlowRecord) fakeFlowListRow {
 		repoPath:  projection.repoPath,
 		status:    projection.status,
 		updatedAt: projection.updatedAt,
+		beadID:    projection.beadID,
+		epicID:    projection.epicID,
 		record:    data,
 	}
 }

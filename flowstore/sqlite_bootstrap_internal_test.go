@@ -93,6 +93,20 @@ func TestSQLiteMigrationIsOneTimeAndLeavesLegacySourceInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
+	if first.Bead != (BeadLink{}) {
+		t.Fatalf("migrated pre-Bead Flow link = %#v, want zero value", first.Bead)
+	}
+	backend := store.backend.(*sqliteBackend)
+	var beadID, epicID string
+	if err := backend.db.QueryRow("SELECT bead_id, epic_id FROM flows WHERE flow_id = ?", flowID).Scan(&beadID, &epicID); err != nil {
+		t.Fatalf("read migrated Bead projections: %v", err)
+	}
+	if beadID != "" || epicID != "" {
+		t.Fatalf("migrated Bead projections = (%q, %q), want empty", beadID, epicID)
+	}
+	if got := readDatabaseVersionForBeadTest(t, backend.db); got != databaseSchemaVersion {
+		t.Fatalf("migrated database version = %d, want %d", got, databaseSchemaVersion)
+	}
 
 	if err := os.WriteFile(legacyPath, []byte(`{"schema_version":1,"flow_id":"changed"}`), 0o600); err != nil {
 		t.Fatalf("mutate retained legacy fixture: %v", err)

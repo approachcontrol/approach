@@ -28,6 +28,7 @@ func populatedFlowRecord() FlowRecord {
 		PresetName:    "custom",
 		PlanID:        "plan-1",
 		PlanPath:      "/tmp/plan.md",
+		Bead:          BeadLink{ID: "bead-child", EpicID: "bead-epic"},
 		Issue:         Issue{Provider: "github", Number: 7, URL: "https://github.com/o/r/issues/7"},
 		PR:            PullRequest{Provider: "github", Number: 9, URL: "https://github.com/o/r/pull/9", HeadBranch: "feature", BaseBranch: "main", Status: "open"},
 		Merge:         Merge{Status: MergeMerged, Commit: "def456", MergedAt: &mergedAt},
