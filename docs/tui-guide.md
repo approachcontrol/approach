@@ -612,6 +612,16 @@ lifecycle, later terminal or spawn failure cannot clear a newer Ready request.
 Every preparation result returns through the Ready handler, which refreshes a
 visible Flow surface and includes a persisted Flow ID in any post-creation error.
 
+Enabled epics advance from the same view-independent 1 Hz Flow poll. When the
+exact in-session baseline Flow is newly observed as `completed` or `merged`,
+Approach prepares the next unlinked direct child in fresh `bd ready` order; it
+does not claim the Bead or launch the new Flow. The status line reports the
+prepared child and Flow ID, retryable preparation/reconciliation errors, or an
+owned successor that blocks later children. When no creation candidate remains,
+it reports auto-progression completion and turns normal progression off. No
+startup catch-up occurs: explicitly toggle progression off and back on to
+install a new live baseline after reconciling an unknown drain state.
+
 Lowercase `f` produces the same parked Flow as a successful `n` form submission,
 so `g` on its first phase launches the agent inside the Flow's isolated
 worktree. An initial store failure leaves no Flow. If worktree creation fails,

@@ -357,10 +357,45 @@ durable.
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
 writer transaction re-reads the Flow and enables the epic progression row.
-This slice records the pending Flow as a runtime baseline before releasing the
-reservation, but does not dispatch a phase or advance to another child. A
-restart installs no baseline and performs no catch-up; live-edge advancement is
-owned by the later sequential-advance slice.
+Successful in-session enablement records that authoritative pending Flow as the
+runtime baseline before releasing the reservation. The view-independent 1 Hz
+poll compares only that exact baseline with the current unscoped Flow corpus.
+It advances on a newly observed `completed` or `merged` state, refreshes the
+baseline on other successful observations, and preserves it across failed or
+degraded polls and a missing tracked Flow. Startup never reconstructs these
+baselines from enabled rows and never catches up a terminal Flow observed while
+Approach was down.
+
+Each live edge takes the shared, monotonically token-owned preparation
+admission. Before any Beads query or creation side effect, the worker re-reads
+the progression row; absent, disabled, or halted state cancels the edge, while
+an unreadable row leaves it armed for retry. With no successor already owned by
+that edge, it intersects a fresh direct-child query with fresh `bd ready` order,
+indexes the complete repository Flow corpus by exact canonical repository plus
+`{child ID, epic ID}`, skips every ready child that already has such a Flow, and
+prepares the first unlinked child. Links for another repository or epic do not
+suppress the candidate. This path calls preparation only: it does not claim a
+Bead, create a launch intent, start a phase, or dispatch an agent.
+
+Once preparation returns a Flow ID, that exact ID is owned in memory before any
+retry classification. Later polls reread and retry it before consulting Beads,
+so a partial preparation, reservation failure, or reconciliation failure cannot
+skip ahead and create another child. Missing receipts, deliberate closure, and
+non-`pending` exact-linked successors are visible owned obstructions. They keep
+the source edge and ownership armed but fail closed against later selection;
+durable halt persistence remains a separate concern.
+
+While holding the successor's launch/close reservation, one writer transaction
+revalidates progression before the Flow. Inactive progression wins over every
+simultaneous Flow condition; otherwise an absent or changed-link Flow is
+released, an incomplete/closed/non-pending exact Flow is an owned obstruction,
+an open prepared pending Flow is accepted, and storage uncertainty is
+retryable. Only acceptance replaces the runtime baseline. If the Ready/direct
+child intersection is empty, or every intersecting child already has an exact
+linked Flow, the TUI disables normal progression and reports completion. A
+disable write error is reconciled by reread: confirmed off completes, confirmed
+on retries, and unreadable state removes runtime ownership fail-closed until an
+explicit successful re-enable installs a new baseline.
 
 ## Per-phase agent settings
 

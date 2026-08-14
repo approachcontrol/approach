@@ -115,6 +115,9 @@ type Model struct {
 	readyBeadFlowCreateSeq    uint64
 	activeReadyBeadFlowCreate uint64
 	flowPreparationAdmission  bool
+	flowPreparationSeq        uint64
+	flowPreparationOwner      flowPreparationOwner
+
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
 	pendingRepoSelection      string
@@ -158,6 +161,7 @@ type Model struct {
 	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	enableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
+	reconcileEpicSuccessor    func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
@@ -205,6 +209,10 @@ type Model struct {
 	terminalFocus             terminalFocus
 	autoAdvanceDrainFlows     map[string]struct{}
 	epicProgressionBaselines  map[string]flowstore.FlowRecord
+
+	epicProgressionOwnedSuccessors map[string]epicProgressionOwnedSuccessor
+	epicProgressionAdvanceSeq      uint64
+	activeEpicProgressionAdvance   epicProgressionAdvanceRequest
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	// flowAutofixTmuxLaunches maps a Flow ID to every autofix tmux
@@ -301,6 +309,7 @@ type Options struct {
 	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	EnableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
+	ReconcileEpicSuccessor    func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 	ListBlockedBeads          func(repoPath string) ([]beadsquery.Bead, error)
 	ListOpenBeads             func(repoPath string) ([]beadsquery.Bead, error)
 	ListInProgressBeads       func(repoPath string) ([]beadsquery.Bead, error)
@@ -507,6 +516,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.EpicProgression{}, flowstore.FlowRecord{}, err
 			}
 			return store.EnableEpicProgressionForPreparedFlow(update)
+		}
+	}
+	reconcileEpicSuccessor := opts.ReconcileEpicSuccessor
+	if reconcileEpicSuccessor == nil {
+		reconcileEpicSuccessor = func(update flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorRetryable}, err
+			}
+			return store.ReconcileEpicProgressionSuccessor(update)
 		}
 	}
 	listBlockedBeads := opts.ListBlockedBeads
@@ -906,6 +925,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readEpicProgression:       readEpicProgression,
 		setEpicProgression:        setEpicProgression,
 		enableEpicProgression:     enableEpicProgression,
+		reconcileEpicSuccessor:    reconcileEpicSuccessor,
 		showBead:                  showBead,
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
@@ -1873,6 +1893,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.startAutoAdvanceFetch()
 	case AutoAdvanceResultMsg:
 		return m.handleAutoAdvanceResult(msg)
+	case epicProgressionAdvanceResultMsg:
+		return m.handleEpicProgressionAdvanceResult(msg)
 	case StatusExpiredMsg:
 		return m.handleStatusExpired(msg), nil
 	case StatusFadeMsg:
@@ -2106,7 +2128,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PlanLaunchRequestedMsg:
 		var accepted bool
 		var rejectionCmd tea.Cmd
-		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunchOwned(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease, msg.preparationKind, msg.preparationToken)
 		if !accepted {
 			return m, rejectionCmd
 		}
@@ -2119,7 +2141,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case FlowEmbeddedLaunchRequestedMsg:
 		var accepted bool
 		var rejectionCmd tea.Cmd
-		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunchOwned(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease, msg.preparationKind, msg.preparationToken)
 		if !accepted {
 			return m, rejectionCmd
 		}

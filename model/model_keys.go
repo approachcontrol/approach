@@ -624,7 +624,7 @@ func (m Model) handleReadyBeadFlowCreate(intent readyBeadFlowIntent) (Model, tea
 	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
 	var request uint64
 	m, request = m.nextReadyBeadFlowCreateRequest()
-	return m, m.createReadyBeadFlow(repoPath, title, instructions, beadLink, request, intent)
+	return m, m.createReadyBeadFlow(repoPath, title, instructions, beadLink, request, m.flowPreparationOwner.Token, intent)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
@@ -2086,7 +2086,11 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 
 func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, tea.Cmd) {
 	current := m.isCurrentReadyBeadFlowCreateRequest(msg.Request)
-	m.flowPreparationAdmission = false
+	token := msg.preparationToken
+	if token == 0 && m.flowPreparationOwner.Kind == flowPreparationReadyBead {
+		token = m.flowPreparationOwner.Token
+	}
+	m = m.releaseFlowPreparation(flowPreparationReadyBead, token)
 	if !current {
 		return m, nil
 	}
@@ -2109,7 +2113,11 @@ func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, t
 
 func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg) (Model, tea.Cmd) {
 	current := m.isCurrentReadyBeadFlowCreateRequest(msg.Request)
-	m.flowPreparationAdmission = false
+	token := msg.preparationToken
+	if token == 0 && m.flowPreparationOwner.Kind == flowPreparationReadyBead {
+		token = m.flowPreparationOwner.Token
+	}
+	m = m.releaseFlowPreparation(flowPreparationReadyBead, token)
 	if !current {
 		return m, nil
 	}
@@ -3078,11 +3086,17 @@ func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText st
 }
 
 func (m Model) startFlowLaunchFailureWithReadyAdmission(ctx actions.AgentLaunchContext, errText string, releaseReadyBeadAdmission bool) (Model, tea.Cmd) {
+	kind, token := flowPreparationNone, uint64(0)
+	if releaseReadyBeadAdmission {
+		kind, token = m.flowPreparationOwner.Kind, m.flowPreparationOwner.Token
+	}
+	return m.startFlowLaunchFailureWithPreparationOwner(ctx, errText, kind, token)
+}
+
+func (m Model) startFlowLaunchFailureWithPreparationOwner(ctx actions.AgentLaunchContext, errText string, kind flowPreparationKind, token uint64) (Model, tea.Cmd) {
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
-		if releaseReadyBeadAdmission {
-			m.flowPreparationAdmission = false
-		}
+		m = m.releaseFlowPreparation(kind, token)
 		return m.setStatus(statusOther, errText), nil
 	}
 	return m, func() tea.Msg {
@@ -3091,7 +3105,9 @@ func (m Model) startFlowLaunchFailureWithReadyAdmission(ctx actions.AgentLaunchC
 			LaunchContext:             ctx,
 			OriginalErr:               errText,
 			PersistErr:                err,
-			releaseReadyBeadAdmission: releaseReadyBeadAdmission,
+			releaseReadyBeadAdmission: kind == flowPreparationReadyBead,
+			preparationKind:           kind,
+			preparationToken:          token,
 		}
 	}
 }
@@ -3104,7 +3120,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		presentCreate = m.createFlowLaunchOriginCurrent(*msg.Create)
 	}
 	if msg.releaseReadyBeadAdmission {
-		m.flowPreparationAdmission = false
+		m = m.releaseFlowPreparation(msg.preparationKind, msg.preparationToken)
 	}
 	// A mismatch skips only the release: this message is shared with every
 	// source that has no lifecycle attempt, and returning early would swallow

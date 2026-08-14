@@ -61,6 +61,35 @@ type PreparedEpicProgressionUpdate struct {
 	Bead   BeadLink
 }
 
+// EpicProgressionSuccessorOutcome classifies the authoritative relationship
+// between an already-enabled epic and one prepared sequential successor.
+type EpicProgressionSuccessorOutcome string
+
+const (
+	EpicProgressionSuccessorInactive         EpicProgressionSuccessorOutcome = "inactive"
+	EpicProgressionSuccessorReleased         EpicProgressionSuccessorOutcome = "released"
+	EpicProgressionSuccessorOwnedObstruction EpicProgressionSuccessorOutcome = "owned_obstruction"
+	EpicProgressionSuccessorAccepted         EpicProgressionSuccessorOutcome = "accepted"
+	EpicProgressionSuccessorRetryable        EpicProgressionSuccessorOutcome = "retryable"
+)
+
+// EpicProgressionSuccessorUpdate names the exact prepared Flow that sequential
+// progression owns. Callers hold its launch/close reservation while reconciling.
+type EpicProgressionSuccessorUpdate struct {
+	FlowID string
+	Key    EpicProgressionKey
+	Bead   BeadLink
+}
+
+// EpicProgressionSuccessorResult returns the records observed in the same
+// writer transaction that produced Outcome. Flow is empty for inactive and for
+// an absent released Flow.
+type EpicProgressionSuccessorResult struct {
+	Outcome     EpicProgressionSuccessorOutcome
+	Progression EpicProgression
+	Flow        FlowRecord
+}
+
 type storedEpicProgressionDTO struct {
 	SchemaVersion int                  `json:"schema_version"`
 	RepoPath      string               `json:"repo_path"`
@@ -199,6 +228,78 @@ ON CONFLICT(repo_path, epic_id) DO UPDATE SET
 		)
 	}
 	return progression, flow, nil
+}
+
+// ReconcileEpicProgressionSuccessor authoritatively classifies a prepared
+// sequential successor without enabling or otherwise mutating progression.
+// Inactive progression wins before any Flow condition is inspected.
+func (s *Store) ReconcileEpicProgressionSuccessor(update EpicProgressionSuccessorUpdate) (EpicProgressionSuccessorResult, error) {
+	retryable := func(err error) (EpicProgressionSuccessorResult, error) {
+		return EpicProgressionSuccessorResult{Outcome: EpicProgressionSuccessorRetryable}, err
+	}
+	if err := validateFlowID(update.FlowID); err != nil {
+		return retryable(err)
+	}
+	key, err := normalizeEpicProgressionKey(update.Key)
+	if err != nil {
+		return retryable(err)
+	}
+	if err := validateBeadLink(update.Bead); err != nil {
+		return retryable(err)
+	}
+	if update.Bead.ID == "" || update.Bead.EpicID == "" ||
+		update.Bead.ID != strings.TrimSpace(update.Bead.ID) ||
+		update.Bead.EpicID != strings.TrimSpace(update.Bead.EpicID) {
+		return retryable(errors.New("sequential epic progression requires a canonical exact child and epic Bead link"))
+	}
+	if update.Bead.EpicID != key.EpicID {
+		return retryable(fmt.Errorf("sequential epic progression key epic %q does not match Flow link epic %q", key.EpicID, update.Bead.EpicID))
+	}
+	backend, ok := s.backend.(*sqliteBackend)
+	if !ok {
+		return retryable(errors.New("flow backend does not support atomic sequential epic progression reconciliation"))
+	}
+	tx, err := backend.beginTx(context.Background())
+	if err != nil {
+		return retryable(fmt.Errorf("begin sequential epic progression reconciliation %q: %w", update.FlowID, err))
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	progression, found, err := queryEpicProgression(tx.QueryRow(
+		"SELECT repo_path, epic_id, enabled, updated_at, record FROM epic_progressions WHERE repo_path = ? AND epic_id = ?",
+		key.RepoPath, key.EpicID,
+	), key)
+	if err != nil {
+		return retryable(err)
+	}
+	result := EpicProgressionSuccessorResult{Progression: progression}
+	if !found || !progression.Enabled || progression.Halt != nil {
+		result.Outcome = EpicProgressionSuccessorInactive
+	} else {
+		stored, flowFound, readErr := queryStoredFlow(tx.QueryRow(
+			"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows WHERE flow_id = ?", update.FlowID,
+		), update.FlowID)
+		if readErr != nil {
+			return retryable(readErr)
+		}
+		if !flowFound {
+			result.Outcome = EpicProgressionSuccessorReleased
+		} else {
+			result.Flow = stored.record
+			switch {
+			case filepath.Clean(result.Flow.RepoPath) != key.RepoPath || result.Flow.Bead != update.Bead:
+				result.Outcome = EpicProgressionSuccessorReleased
+			case result.Flow.PreparedAt == nil || FlowClosed(result.Flow) || DeriveStatus(result.Flow) != StatusPending:
+				result.Outcome = EpicProgressionSuccessorOwnedObstruction
+			default:
+				result.Outcome = EpicProgressionSuccessorAccepted
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return retryable(fmt.Errorf("commit sequential epic progression reconciliation %q: %w", update.FlowID, err))
+	}
+	return result, nil
 }
 
 func normalizeEpicProgressionKey(key EpicProgressionKey) (EpicProgressionKey, error) {

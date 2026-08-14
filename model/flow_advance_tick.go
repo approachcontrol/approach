@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -78,6 +79,9 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	var autoCmd tea.Cmd
 	m, autoCmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(previous, current, msg.Request)
 	cmds = append(cmds, autoCmd)
+	var progressionCmd tea.Cmd
+	m, progressionCmd = m.prepareEpicProgressionAdvance(current)
+	cmds = append(cmds, progressionCmd)
 	m.autoAdvanceSnapshot = current
 
 	statuses := autoAdvanceStatusEvents(previous, current)
@@ -91,6 +95,59 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	m, tickCmd = m.finishAutoAdvanceFetch(msg.Request)
 	cmds = append(cmds, tickCmd)
 	return m, batchNonNil(cmds...)
+}
+
+func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord) (Model, tea.Cmd) {
+	if len(m.epicProgressionBaselines) == 0 {
+		return m, nil
+	}
+	currentByID := make(map[string]flowstore.FlowRecord, len(current))
+	for _, flow := range current {
+		if flow.FlowID != "" {
+			currentByID[flow.FlowID] = flow
+		}
+	}
+	keys := make([]string, 0, len(m.epicProgressionBaselines))
+	for key := range m.epicProgressionBaselines {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		baseline := m.epicProgressionBaselines[key]
+		observed, ok := currentByID[baseline.FlowID]
+		if !ok {
+			continue
+		}
+		if !sameRepoPath(baseline.RepoPath, observed.RepoPath) || baseline.Bead != observed.Bead {
+			continue
+		}
+		if !epicProgressionSuccessTerminal(observed) {
+			m.epicProgressionBaselines[key] = cloneFlowRecord(observed)
+			continue
+		}
+		if epicProgressionSuccessTerminal(baseline) {
+			continue
+		}
+		var cmd tea.Cmd
+		m, cmd = m.startEpicProgressionAdvance(key, baseline)
+		if cmd != nil {
+			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+func epicProgressionSuccessTerminal(flow flowstore.FlowRecord) bool {
+	status := strings.TrimSpace(flow.Status)
+	if status == "" {
+		status = flowstore.DeriveStatus(flow)
+	}
+	switch status {
+	case flowstore.StatusCompleted, flowstore.StatusMerged:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m Model) seedAutoAdvanceSnapshot(flows []flowstore.FlowRecord) Model {
