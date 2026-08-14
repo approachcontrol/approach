@@ -1,6 +1,7 @@
 package flowstore
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,58 @@ func TestEpicProgressionStickyHaltRetentionAndClearing(t *testing.T) {
 	}
 	if !enabled.Enabled || enabled.Halt != nil || !enabled.UpdatedAt.Equal(now) {
 		t.Fatalf("enabled progression = %#v, want cleared halt", enabled)
+	}
+}
+
+func TestReconcileEpicProgressionSuccessorHaltedPrecedesFlowState(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	store, err := NewStore(StoreOptions{Root: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	key := EpicProgressionKey{RepoPath: "/repo", EpicID: "epic"}
+	halted := EpicProgression{
+		SchemaVersion: epicProgressionSchemaVersion,
+		RepoPath:      key.RepoPath,
+		EpicID:        key.EpicID,
+		Halt:          &EpicProgressionHalt{ChildBeadID: "epic.1", Status: StatusBlocked, Message: "blocked"},
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	data, updatedAt, err := encodeEpicProgression(halted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := store.backend.(*sqliteBackend)
+	if _, err := backend.db.Exec(`INSERT INTO epic_progressions(repo_path, epic_id, enabled, updated_at, record) VALUES(?, ?, 0, ?, ?)`,
+		key.RepoPath, key.EpicID, updatedAt, data); err != nil {
+		t.Fatal(err)
+	}
+
+	link := BeadLink{ID: "epic.2", EpicID: key.EpicID}
+	flow, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "prepared", RepoPath: key.RepoPath, Title: "Prepared", Instructions: "Test.", Bead: link,
+	}, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(StartMetadataUpdate{
+		FlowID: flow.FlowID, WorktreePath: filepath.Join(t.TempDir(), "worktree"), Branch: "flow/prepared",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finalizer.Finalize(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, flowID := range []string{"absent", flow.FlowID} {
+		result, err := store.ReconcileEpicProgressionSuccessor(EpicProgressionSuccessorUpdate{
+			FlowID: flowID, Key: key, Bead: link,
+		})
+		if err != nil || result.Outcome != EpicProgressionSuccessorInactive {
+			t.Fatalf("flow %q result = %#v, err %v; want inactive", flowID, result, err)
+		}
 	}
 }
 

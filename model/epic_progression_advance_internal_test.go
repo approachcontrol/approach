@@ -52,8 +52,8 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 			requests = append(requests, request)
 			return FlowStartResult{Flow: successor}, nil
 		},
-		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
-			return successor, func() { releases++ }, nil
+		reserveEpicSuccessor: func(string) (func(), error) {
+			return func() { releases++ }, nil
 		},
 		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
@@ -115,12 +115,12 @@ func TestEpicProgressionAdvanceRetriesOwnedSuccessorBeforeLaterReadyChild(t *tes
 			createCalls++
 			return FlowStartResult{Flow: owned}, errors.New("finalize failed")
 		},
-		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+		reserveEpicSuccessor: func(string) (func(), error) {
 			reserves++
 			if reserves == 1 {
-				return flowstore.FlowRecord{}, nil, errors.New("busy")
+				return nil, errors.New("busy")
 			}
-			return owned, func() {}, nil
+			return func() {}, nil
 		},
 		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: owned}, nil
@@ -258,6 +258,8 @@ func TestEpicProgressionOwnedObstructionForbidsBeadQueriesAndLaterSelection(t *t
 				ownedFlow.Closed = flowstore.Closure{Reason: "closed", ClosedAt: &stamp}
 			}
 			beadQueries := 0
+			reserves := 0
+			reconciles := 0
 			m := Model{
 				autoAdvanceInFlight:      1,
 				epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
@@ -276,18 +278,69 @@ func TestEpicProgressionOwnedObstructionForbidsBeadQueriesAndLaterSelection(t *t
 					t.Fatal("owned obstruction attempted exhaustion")
 					return flowstore.EpicProgression{}, nil
 				},
+				reserveEpicSuccessor: func(string) (func(), error) {
+					reserves++
+					return func() {}, nil
+				},
+				reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
+					reconciles++
+					return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorOwnedObstruction, Flow: ownedFlow}, nil
+				},
 			}
-			m.launchSeams.ReadFlow = func(string) (flowstore.FlowRecord, error) { return ownedFlow, nil }
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 			result := epicProgressionAdvanceMessage(t, cmd)
 			next, _ = updateFlowRefreshTest(next, result)
-			if beadQueries != 0 || !strings.Contains(next.status.Text, "blocks auto-progression") {
-				t.Fatalf("queries=%d status=%q", beadQueries, next.status.Text)
+			if beadQueries != 0 || reserves != 1 || reconciles != 1 || !strings.Contains(next.status.Text, "blocks auto-progression") {
+				t.Fatalf("queries=%d reserves=%d reconciles=%d status=%q", beadQueries, reserves, reconciles, next.status.Text)
 			}
 			if got := next.epicProgressionOwnedSuccessors[key]; got.FlowID != ownedFlow.FlowID {
 				t.Fatalf("obstruction ownership = %#v", got)
 			}
 		})
+	}
+}
+
+func TestEpicProgressionAuthoritativeInactiveWinsOverOwnedFlowCondition(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	terminal := cloneFlowRecord(source)
+	terminal.Status = flowstore.StatusCompleted
+	ownedFlow := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusBlocked)
+	owned := epicProgressionOwnedSuccessor{SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: ownedFlow.FlowID}
+	releases := 0
+	m := Model{
+		autoAdvanceInFlight:      1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
+			key: owned,
+		},
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		reserveEpicSuccessor: func(string) (func(), error) {
+			return func() { releases++ }, nil
+		},
+		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
+			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorInactive}, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			t.Fatal("owned successor queried Beads")
+			return nil, nil
+		},
+	}
+
+	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+	result := epicProgressionAdvanceMessage(t, cmd)
+	next, _ = updateFlowRefreshTest(next, result)
+	if _, present := next.epicProgressionBaselines[key]; present {
+		t.Fatal("authoritative inactive result retained source baseline")
+	}
+	if _, present := next.epicProgressionOwnedSuccessors[key]; present {
+		t.Fatal("authoritative inactive result retained owned successor")
+	}
+	if releases != 1 {
+		t.Fatalf("reservation releases = %d, want 1", releases)
 	}
 }
 
@@ -364,8 +417,8 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 			createCalls++
 			return FlowStartResult{Flow: successor}, nil
 		},
-		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
-			return successor, func() { releases++ }, nil
+		reserveEpicSuccessor: func(string) (func(), error) {
+			return func() { releases++ }, nil
 		},
 		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
@@ -433,7 +486,9 @@ func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryOrEpic(t *te
 			request = candidate
 			return FlowStartResult{Flow: successor}, nil
 		},
-		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) { return successor, func() {}, nil },
+		reserveEpicSuccessor: func(string) (func(), error) {
+			return func() {}, nil
+		},
 		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
 		},
@@ -531,8 +586,8 @@ func TestEpicProgressionReconciliationFailureRetriesOwnedFlowWithoutReselection(
 		},
 		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { beadQueries++; return nil, nil },
 		listReadyBeads:    func(string) ([]beadsquery.Bead, error) { beadQueries++; return nil, nil },
-		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
-			return ownedFlow, func() { releases++ }, nil
+		reserveEpicSuccessor: func(string) (func(), error) {
+			return func() { releases++ }, nil
 		},
 		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 			reconciles++

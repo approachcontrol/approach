@@ -378,14 +378,15 @@ suppress the candidate. This path calls preparation only: it does not claim a
 Bead, create a launch intent, start a phase, or dispatch an agent.
 
 Once preparation returns a Flow ID, that exact ID is owned in memory before any
-retry classification. Later polls reread and retry it before consulting Beads,
+retry classification. Later polls reserve and reconcile it before consulting Beads,
 so a partial preparation, reservation failure, or reconciliation failure cannot
 skip ahead and create another child. Missing receipts, deliberate closure, and
 non-`pending` exact-linked successors are visible owned obstructions. They keep
 the source edge and ownership armed but fail closed against later selection;
 durable halt persistence remains a separate concern.
 
-While holding the successor's launch/close reservation, one writer transaction
+While holding a successor-specific launch/close reservation that permits an
+absent or closed Flow, one writer transaction
 revalidates progression before the Flow. Inactive progression wins over every
 simultaneous Flow condition; otherwise an absent or changed-link Flow is
 released, an incomplete/closed/non-pending exact Flow is an owned obstruction,

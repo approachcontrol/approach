@@ -86,10 +86,22 @@ func TestReconcileEpicProgressionSuccessorClassifiesAuthoritativeState(t *testin
 	}
 }
 
+func TestReconcileEpicProgressionSuccessorValidationFailureIsRetryable(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	result, err := store.ReconcileEpicProgressionSuccessor(flowstore.EpicProgressionSuccessorUpdate{})
+	if err == nil || result.Outcome != flowstore.EpicProgressionSuccessorRetryable {
+		t.Fatalf("result = %#v, err %v; want retryable validation failure", result, err)
+	}
+}
+
 func TestReconcileEpicProgressionSuccessorInactivePrecedesEveryFlowCondition(t *testing.T) {
-	for _, enabled := range []bool{false} {
+	for _, progressionState := range []string{"absent", "disabled"} {
 		for _, flowCondition := range []string{"absent", "wrong-link", "incomplete", "closed", "running", "prepared"} {
-			t.Run(fmt.Sprintf("enabled=%t/%s", enabled, flowCondition), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s", progressionState, flowCondition), func(t *testing.T) {
 				store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
 				if err != nil {
 					t.Fatal(err)
@@ -98,8 +110,10 @@ func TestReconcileEpicProgressionSuccessorInactivePrecedesEveryFlowCondition(t *
 				repo := filepath.Join(t.TempDir(), "repo")
 				key := flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "epic"}
 				link := flowstore.BeadLink{ID: "epic.2", EpicID: "epic"}
-				if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: enabled}); err != nil {
-					t.Fatal(err)
+				if progressionState != "absent" {
+					if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
 				}
 				flowID := "successor-" + flowCondition
 				if flowCondition != "absent" {
@@ -145,8 +159,8 @@ func TestReconcileEpicProgressionSuccessorInactivePrecedesEveryFlowCondition(t *
 					t.Fatalf("result = %#v, err %v; want inactive", result, err)
 				}
 				persisted, found, err := store.ReadEpicProgression(key)
-				if err != nil || !found || persisted.Enabled {
-					t.Fatalf("inactive row changed = %#v, found %t, err %v", persisted, found, err)
+				if err != nil || found != (progressionState != "absent") || (found && persisted.Enabled) {
+					t.Fatalf("inactive state changed = %#v, found %t, err %v", persisted, found, err)
 				}
 			})
 		}

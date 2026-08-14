@@ -177,6 +177,7 @@ type Model struct {
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
+	reserveEpicSuccessor      func(string) (func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -330,6 +331,7 @@ type Options struct {
 	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
 	ReserveFlowRepairLaunch   func(flowID string) (flowstore.FlowRecord, func(), error)
 	ReserveFlowLaunch         func(flowID string) (flowstore.FlowRecord, func(), error)
+	ReserveEpicSuccessor      func(flowID string) (func(), error)
 	AddFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow                func(flowID string) error
@@ -664,6 +666,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
+	reserveEpicSuccessor := opts.ReserveEpicSuccessor
+	if reserveEpicSuccessor == nil {
+		reserveEpicSuccessor = func(flowID string) (func(), error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return nil, err
+			}
+			return store.ReserveEpicProgressionSuccessor(flowID)
+		}
+	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
 		// The compatibility reservation above intentionally returns identity only,
@@ -942,6 +954,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reopenFlow:                reopenFlow,
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
+		reserveEpicSuccessor:      reserveEpicSuccessor,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,
 		deleteFlow:                deleteFlow,

@@ -144,8 +144,7 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 	listReady := m.listReadyBeads
 	listFlows := m.listFlows
 	createFlow := m.createFlow
-	readFlow := m.launchSeams.ReadFlow
-	reserveFlow := m.reserveFlowLaunch
+	reserveFlow := m.reserveEpicSuccessor
 	reconcile := m.reconcileEpicSuccessor
 	setProgression := m.setEpicProgression
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
@@ -170,29 +169,8 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 		}
 
 		candidate := owned
-		candidateFlow := flowstore.FlowRecord{}
 		if hasOwned && owned.SourceFlowID == request.SourceFlowID {
-			authoritative, readErr := readFlow(owned.FlowID)
-			if readErr != nil {
-				msg := result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not reread owned successor Flow %s: %v", owned.FlowID, readErr))
-				if flowstore.IsNotFound(readErr) {
-					msg.disposition = epicProgressionAdvanceReleased
-					msg.status = fmt.Sprintf("Owned successor Flow %s is gone; auto-progression will retry selection", owned.FlowID)
-				} else {
-					msg.owned, msg.hasOwned = owned, true
-				}
-				return msg
-			}
-			link := flowstore.BeadLink{ID: owned.ChildID, EpicID: epicID}
-			if filepath.Clean(authoritative.RepoPath) != repoPath || authoritative.Bead != link {
-				return result(epicProgressionAdvanceReleased, fmt.Sprintf("Owned successor Flow %s no longer has the required child link; auto-progression will retry selection", owned.FlowID))
-			}
-			if detail := rejectOwnedEpicProgressionSuccessor(authoritative); detail != "" {
-				msg := result(epicProgressionAdvanceOwnedObstruction, detail)
-				msg.owned, msg.hasOwned, msg.flow = owned, true, authoritative
-				return msg
-			}
-			candidateFlow = authoritative
+			candidate = owned
 		} else {
 			hasOwned = false
 			children, childrenErr := listChildren(repoPath, epicID)
@@ -261,8 +239,7 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 				Bead:         link, AgentCommand: command, Model: launchModel, ReasoningEffort: reasoningEffort,
 				AgentPreferences: preferences, AgentPreferencesProvided: true,
 			})
-			candidateFlow = flowResult.Flow
-			candidate.FlowID = strings.TrimSpace(candidateFlow.FlowID)
+			candidate.FlowID = strings.TrimSpace(flowResult.Flow.FlowID)
 			if createErr != nil && candidate.FlowID == "" {
 				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not prepare Flow for child %s: %v", candidate.ChildID, createErr))
 			}
@@ -272,35 +249,18 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			if candidate.FlowID != "" {
 				hasOwned = true
 			}
-			if createErr != nil {
-				authoritative, readErr := readFlow(candidate.FlowID)
-				if readErr != nil {
-					msg := result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not confirm preparation for owned successor Flow %s: %v", candidate.FlowID, readErr))
-					msg.owned, msg.hasOwned, msg.flow = candidate, true, candidateFlow
-					return msg
-				}
-				candidateFlow = authoritative
-			}
-			if filepath.Clean(candidateFlow.RepoPath) != repoPath || candidateFlow.Bead != link {
-				return result(epicProgressionAdvanceReleased, fmt.Sprintf("Prepared Flow %s does not have the required child link; auto-progression will retry selection", candidate.FlowID))
-			}
-			if detail := rejectOwnedEpicProgressionSuccessor(candidateFlow); detail != "" {
-				msg := result(epicProgressionAdvanceOwnedObstruction, detail)
-				msg.owned, msg.hasOwned, msg.flow = candidate, true, candidateFlow
-				return msg
-			}
 		}
 
-		authoritative, release, reserveErr := reserveFlow(candidate.FlowID)
+		release, reserveErr := reserveFlow(candidate.FlowID)
 		if reserveErr != nil {
 			msg := result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not reserve owned successor Flow %s: %v", candidate.FlowID, reserveErr))
-			msg.owned, msg.hasOwned, msg.flow = candidate, true, candidateFlow
+			msg.owned, msg.hasOwned = candidate, true
 			return msg
 		}
 		link := flowstore.BeadLink{ID: candidate.ChildID, EpicID: epicID}
-		reconciled, reconcileErr := reconcile(flowstore.EpicProgressionSuccessorUpdate{FlowID: authoritative.FlowID, Key: key, Bead: link})
+		reconciled, reconcileErr := reconcile(flowstore.EpicProgressionSuccessorUpdate{FlowID: candidate.FlowID, Key: key, Bead: link})
 		msg := result(epicProgressionAdvanceRetryable, "")
-		msg.release, msg.owned, msg.hasOwned, msg.flow = release, candidate, true, authoritative
+		msg.release, msg.owned, msg.hasOwned = release, candidate, true
 		if reconcileErr != nil {
 			msg.status = fmt.Sprintf("Could not reconcile owned successor Flow %s: %v", candidate.FlowID, reconcileErr)
 			return msg
