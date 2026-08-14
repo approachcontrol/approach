@@ -343,7 +343,9 @@ func (m Model) handleEpicProgressionAdvanceResult(msg epicProgressionAdvanceResu
 		m, statusCmd = m.setAutoAdvanceLaunchStatus(msg.status)
 	}
 	var flowRefreshCmd, progressionRefreshCmd tea.Cmd
-	if msg.flow.FlowID != "" && m.flowRefreshSurfaceVisible() {
+	hasPersistedFlow := strings.TrimSpace(msg.flow.FlowID) != "" ||
+		(msg.hasOwned && strings.TrimSpace(msg.owned.FlowID) != "")
+	if hasPersistedFlow && m.flowRefreshSurfaceVisible() {
 		m, flowRefreshCmd = m.startFlowSurfaceFetch()
 	}
 	target := m.beadExpansion.target

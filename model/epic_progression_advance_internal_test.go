@@ -383,6 +383,39 @@ func TestEpicProgressionAuthoritativeInactiveWinsOverOwnedFlowCondition(t *testi
 	}
 }
 
+func TestEpicProgressionAdvanceRefreshesVisibleFlowSurfaceFromPersistedOwnedID(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	owned := epicProgressionOwnedSuccessor{SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: "flow-b"}
+	const ownerToken = 7
+	listCalls := 0
+	m := Model{
+		activeFlowSurface:        true,
+		flowPreparationAdmission: true,
+		flowPreparationOwner:     flowPreparationOwner{Kind: flowPreparationEpicAdvance, Token: ownerToken},
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		activeEpicProgressionAdvance: epicProgressionAdvanceRequest{
+			Request: 1, OwnerToken: ownerToken, EpicKey: key, SourceFlowID: source.FlowID,
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listCalls++
+			return nil, nil
+		},
+	}
+	next, cmd := m.handleEpicProgressionAdvanceResult(epicProgressionAdvanceResultMsg{
+		request: 1, ownerToken: ownerToken, epicKey: key, sourceFlowID: source.FlowID,
+		disposition: epicProgressionAdvanceInactive, owned: owned, hasOwned: true,
+	})
+	_ = epicProgressionTestCommandMessages(cmd)
+	if listCalls != 1 {
+		t.Fatalf("Flow refresh calls = %d, want 1 for persisted owned successor", listCalls)
+	}
+	if _, present := next.epicProgressionBaselines[key]; present {
+		t.Fatal("inactive result retained source baseline")
+	}
+}
+
 func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)
