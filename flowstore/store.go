@@ -67,14 +67,33 @@ func (e *PartialListError) Unwrap() []error {
 	return causes
 }
 
-// AsPartialList classifies err as a partial Flow-list result without requiring
-// callers to match diagnostic text.
+// AsPartialList classifies a valid standalone partial Flow-list result without
+// requiring callers to match diagnostic text. Ordinary single-error wrapping
+// is accepted, but aggregate error trees are rejected so a joined fatal error
+// can never be downgraded merely because it also contains a partial diagnostic.
 func AsPartialList(err error) (*PartialListError, bool) {
-	var partial *PartialListError
-	if !errors.As(err, &partial) || partial == nil {
-		return nil, false
+	for err != nil {
+		if partial, ok := err.(*PartialListError); ok {
+			if partial == nil || len(partial.Entries) == 0 {
+				return nil, false
+			}
+			for _, entry := range partial.Entries {
+				if strings.TrimSpace(entry.FlowID) == "" || entry.Cause == nil {
+					return nil, false
+				}
+			}
+			return partial, true
+		}
+		if _, aggregate := err.(interface{ Unwrap() []error }); aggregate {
+			return nil, false
+		}
+		wrapped, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return nil, false
+		}
+		err = wrapped.Unwrap()
 	}
-	return partial, true
+	return nil, false
 }
 
 // ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection

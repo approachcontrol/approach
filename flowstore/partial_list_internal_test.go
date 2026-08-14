@@ -3,12 +3,43 @@ package flowstore
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestAsPartialListRequiresStandaloneValidDiagnostic(t *testing.T) {
+	cause := errors.New("unreadable row")
+	partial := &PartialListError{Entries: []PartialListEntry{{FlowID: "bad", Cause: cause}}}
+
+	for _, err := range []error{partial, fmt.Errorf("list flows: %w", partial)} {
+		got, ok := AsPartialList(err)
+		if !ok || got != partial {
+			t.Fatalf("AsPartialList(%v) = (%#v, %t), want original partial diagnostic", err, got, ok)
+		}
+	}
+
+	fatal := errors.New("database unavailable")
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "joined fatal", err: errors.Join(partial, fatal)},
+		{name: "wrapped joined fatal", err: fmt.Errorf("list flows: %w", errors.Join(partial, fatal))},
+		{name: "empty", err: &PartialListError{}},
+		{name: "missing flow ID", err: &PartialListError{Entries: []PartialListEntry{{Cause: cause}}}},
+		{name: "missing cause", err: &PartialListError{Entries: []PartialListEntry{{FlowID: "bad"}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got, ok := AsPartialList(test.err); ok || got != nil {
+				t.Fatalf("AsPartialList(%v) = (%#v, %t), want fatal classification", test.err, got, ok)
+			}
+		})
+	}
+}
 
 func TestSQLiteListReturnsHealthyRowsWithPartialDiagnostic(t *testing.T) {
 	root := t.TempDir()
