@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
@@ -70,6 +71,381 @@ func TestBeadsSubviewLettersSwitchAndStartMatchingDeferredQuery(t *testing.T) {
 				t.Fatalf("result mode = %v for %T, want %v", got, msg, tt.mode)
 			}
 		})
+	}
+}
+
+func TestSelectedEpicExpansionQueriesDeferredAndRendersReadyFirst(t *testing.T) {
+	t.Parallel()
+
+	childrenCalls, readyCalls := 0, 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(repoPath, parentID string) ([]beadsquery.Bead, error) {
+			childrenCalls++
+			if repoPath != "/dev/alpha" || parentID != "bd-epic" {
+				t.Fatalf("ListChildrenBeads(%q, %q), want alpha/epic", repoPath, parentID)
+			}
+			return []beadsquery.Bead{{ID: "bd-child-1", Priority: 2, Title: "Neutral"}, {ID: "bd-child-2", Priority: 1, Title: "Ready"}}, nil
+		},
+		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
+			readyCalls++
+			return []beadsquery.Bead{{ID: "bd-child-2", Priority: 1, Title: "Ready"}, {ID: "other", Priority: 0, Title: "Outside epic"}}, nil
+		},
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, cmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: " ePiC "}},
+	})
+	if cmd == nil || childrenCalls != 0 || readyCalls != 0 {
+		t.Fatalf("accepted epic result = cmd %T calls %d/%d, want deferred command and zero calls", cmd, childrenCalls, readyCalls)
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "loading direct children") || !strings.Contains(view, "[epic]") {
+		t.Fatalf("loading expansion missing from view:\n%s", view)
+	}
+
+	m, _ = update(m, cmd())
+	if childrenCalls != 1 || readyCalls != 1 {
+		t.Fatalf("query calls = %d/%d, want 1/1", childrenCalls, readyCalls)
+	}
+	view := ansi.Strip(m.View())
+	readyIndex, neutralIndex := strings.Index(view, "bd-child-2"), strings.Index(view, "bd-child-1")
+	if readyIndex < 0 || neutralIndex < 0 || readyIndex > neutralIndex || !strings.Contains(view, "Ready  [ready]") || strings.Contains(view, "Neutral  [ready]") {
+		t.Fatalf("accepted expansion did not render ready-first with positive marker only:\n%s", view)
+	}
+}
+
+func TestBeadExpansionNonEpicAndLegacyMetadataDoNotQuery(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads:     func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { calls++; return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	for _, bead := range []beadsquery.Bead{{ID: "legacy", Title: "Legacy"}, {ID: "task", Title: "Task", IssueType: "task"}} {
+		var cmd tea.Cmd
+		m, cmd = update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{bead}})
+		if cmd != nil || calls != 0 || strings.Contains(ansi.Strip(m.View()), "direct children") {
+			t.Fatalf("non-epic %#v started expansion: cmd=%T calls=%d\n%s", bead, cmd, calls, ansi.Strip(m.View()))
+		}
+	}
+}
+
+func TestBeadExpansionPartialFailuresRemainLocal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		childrenErr error
+		readyErr    error
+		want        string
+		wantChild   bool
+	}{
+		{name: "children", childrenErr: errors.New("children\nfailed"), want: "Could not load children: children failed"},
+		{name: "readiness", readyErr: beadsquery.ErrNotConfigured, want: "Readiness unavailable: beads not configured", wantChild: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := inBeadsPane(newTestModel(testRepos(), model.Options{
+				ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+				ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+					return []beadsquery.Bead{{ID: "bd-child", Priority: 1, Title: "Child"}}, tt.childrenErr
+				},
+				ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, tt.readyErr },
+			}))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			m, cmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{{ID: "bd-epic", Title: "Epic", IssueType: "epic"}}})
+			m, _ = update(m, cmd())
+			view := ansi.Strip(m.View())
+			if !strings.Contains(view, tt.want) || strings.Contains(view, "beads not configured\n") || strings.Contains(view, "Could not load open beads") {
+				t.Fatalf("partial failure escaped local expansion state:\n%s", view)
+			}
+			if strings.Contains(view, "bd-child") != tt.wantChild {
+				t.Fatalf("child visibility = %v, want %v:\n%s", strings.Contains(view, "bd-child"), tt.wantChild, view)
+			}
+			if !m.BeadsAvailable(ui.ModeBeadsOpen) {
+				t.Fatal("local expansion failure changed parent list availability")
+			}
+		})
+	}
+}
+
+func TestBeadExpansionRejectsStaleResultAfterCursorAndFilterChanges(t *testing.T) {
+	t.Parallel()
+
+	childrenFor := ""
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+			childrenFor = parentID
+			return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, oldCmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{
+		{ID: "epic-a", Title: "Alpha", IssueType: "epic"}, {ID: "epic-b", Title: "Bravo", IssueType: "EPIC"},
+	}})
+	m, replacementCmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if replacementCmd == nil || childrenFor != "" || !strings.Contains(ansi.Strip(m.View()), "epic-b") {
+		t.Fatalf("cursor transition did not synchronously replace expansion: cmd=%T called=%q\n%s", replacementCmd, childrenFor, ansi.Strip(m.View()))
+	}
+	m, _ = update(m, oldCmd())
+	if strings.Contains(ansi.Strip(m.View()), "epic-a-child") {
+		t.Fatalf("stale cursor result restored old expansion:\n%s", ansi.Strip(m.View()))
+	}
+	m, _ = update(m, replacementCmd())
+	if !strings.Contains(ansi.Strip(m.View()), "epic-b-child") {
+		t.Fatalf("replacement result missing:\n%s", ansi.Strip(m.View()))
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, filterCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Alpha")})
+	if filterCmd == nil || strings.Contains(ansi.Strip(m.View()), "epic-b-child") {
+		t.Fatalf("filter did not invalidate and start selected replacement: cmd=%T\n%s", filterCmd, ansi.Strip(m.View()))
+	}
+}
+
+func TestBeadExpansionFilterClearInvalidatesFilteredEpicAndRestartsTopEpic(t *testing.T) {
+	t.Parallel()
+
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, oldAlphaCmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{
+		{ID: "epic-alpha", Title: "Alpha", IssueType: "epic"}, {ID: "epic-bravo", Title: "Bravo", IssueType: "epic"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, bravoCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Bravo")})
+	if bravoCmd == nil {
+		t.Fatal("filter edit returned nil replacement expansion command")
+	}
+	m, _ = update(m, oldAlphaCmd())
+	if strings.Contains(ansi.Strip(m.View()), "epic-alpha-child") {
+		t.Fatalf("pre-filter result restored stale alpha expansion:\n%s", ansi.Strip(m.View()))
+	}
+	bravoResult := bravoCmd()
+	m, _ = update(m, bravoResult)
+	if !strings.Contains(ansi.Strip(m.View()), "epic-bravo-child") {
+		t.Fatalf("filtered bravo expansion missing:\n%s", ansi.Strip(m.View()))
+	}
+
+	m, alphaCmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if alphaCmd == nil || strings.Contains(ansi.Strip(m.View()), "epic-bravo-child") {
+		t.Fatalf("filter clear did not synchronously replace bravo: cmd=%T\n%s", alphaCmd, ansi.Strip(m.View()))
+	}
+	m, _ = update(m, bravoResult)
+	if strings.Contains(ansi.Strip(m.View()), "epic-bravo-child") {
+		t.Fatalf("stale filtered result restored after clear:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func TestBeadExpansionUsesStoredTopPaneWhileBottomFocused(t *testing.T) {
+	t.Parallel()
+
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "child-1", Title: "One"}, {ID: "child-2", Title: "Two"}, {ID: "child-3", Title: "Three"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %v, want bottom Flows focus", m.Mode())
+	}
+	m, cmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}, {ID: "after", Title: "After"}}})
+	if cmd == nil {
+		t.Fatal("bottom focus prevented stored top epic query")
+	}
+	m, _ = update(m, cmd())
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "child-1") || m.BeadsScroll(ui.ModeBeadsOpen) < 0 {
+		t.Fatalf("stored top expansion did not render/reflow while bottom focused:\n%s", view)
+	}
+}
+
+func TestBottomPaneInputDoesNotRestartClearedTopBeadExpansion(t *testing.T) {
+	t.Parallel()
+
+	childrenCalls := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			childrenCalls++
+			return nil, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, childCmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}}})
+	if childCmd == nil {
+		t.Fatal("accepted epic did not start initial command")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %v, want restored bottom focus", m.Mode())
+	}
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyDown},
+		{Type: tea.KeyRunes, Runes: []rune{'/'}},
+		{Type: tea.KeyRunes, Runes: []rune("flow")},
+	} {
+		var cmd tea.Cmd
+		m, cmd = update(m, key)
+		if cmd != nil {
+			t.Fatalf("bottom input %q restarted top expansion with command %T", key.String(), cmd)
+		}
+	}
+	if childrenCalls != 0 {
+		t.Fatalf("bottom input ran child query %d times", childrenCalls)
+	}
+}
+
+func TestBeadExpansionLifecycleInvalidatesAcrossSubviewRepoAndRefresh(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		transition func(model.Model) (model.Model, tea.Cmd)
+		mode       ui.Mode
+		repoPath   string
+	}{
+		{
+			name: "letter subview",
+			transition: func(m model.Model) (model.Model, tea.Cmd) {
+				return update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			},
+			mode: ui.ModeBeadsReady, repoPath: "/dev/alpha",
+		},
+		{
+			name: "repository cursor",
+			transition: func(m model.Model) (model.Model, tea.Cmd) {
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+				return update(m, tea.KeyMsg{Type: tea.KeyDown})
+			},
+			mode: ui.ModeBeadsOpen, repoPath: "/dev/bravo",
+		},
+		{
+			name: "refresh",
+			transition: func(m model.Model) (model.Model, tea.Cmd) {
+				return update(m, tea.KeyMsg{Type: tea.KeyF5})
+			},
+			mode: ui.ModeBeadsOpen, repoPath: "/dev/alpha",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			childrenCalls := 0
+			query := func(string) ([]beadsquery.Bead, error) { return nil, nil }
+			m := inBeadsPane(newTestModel(testRepos(), model.Options{
+				ScanRepos:           func() ([]scanner.Repo, error) { return testRepos(), nil },
+				ListReadyBeads:      query,
+				ListBlockedBeads:    query,
+				ListOpenBeads:       query,
+				ListInProgressBeads: query,
+				ListClosedBeads:     query,
+				CountClosedBeads:    func(string) (int, error) { return 0, nil },
+				ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+					childrenCalls++
+					return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+				},
+			}))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			m, oldCmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{{ID: "old-epic", Title: "Old", IssueType: "epic"}}})
+			if oldCmd == nil || childrenCalls != 0 {
+				t.Fatalf("setup expansion = cmd %T calls %d", oldCmd, childrenCalls)
+			}
+
+			m, transitionCmd := tt.transition(m)
+			if transitionCmd == nil || childrenCalls != 0 || strings.Contains(ansi.Strip(m.View()), "old-epic-child") {
+				t.Fatalf("transition did not synchronously invalidate without querying: cmd=%T calls=%d\n%s", transitionCmd, childrenCalls, ansi.Strip(m.View()))
+			}
+			m, _ = update(m, oldCmd())
+			if strings.Contains(ansi.Strip(m.View()), "old-epic-child") {
+				t.Fatalf("stale result restored old expansion:\n%s", ansi.Strip(m.View()))
+			}
+
+			msg := beadsResultMessageForTest(tt.mode, tt.repoPath, m.ListRequest(tt.mode), []beadsquery.Bead{{ID: "new-epic", Title: "New", IssueType: "epic"}})
+			m, replacementCmd := update(m, msg)
+			if replacementCmd == nil {
+				t.Fatalf("accepted replacement in %v returned nil child command", tt.mode)
+			}
+		})
+	}
+}
+
+func TestBeadExpansionHeightDrivesVisualScrollingPastExpandedEpic(t *testing.T) {
+	t.Parallel()
+
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "child-1", Title: "One"}, {ID: "child-2", Title: "Two"},
+				{ID: "child-3", Title: "Three"}, {ID: "child-4", Title: "Four"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, cmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{
+		{ID: "epic", Title: "Epic", IssueType: "epic"}, {ID: "after", Title: "After"},
+	}})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 1 {
+		t.Fatalf("scroll = %d, want visual offset accounting for expanded epic", got)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "child-1") || !strings.Contains(view, "child-2") || strings.Contains(view, "after") {
+		t.Fatalf("expanded-row scrolling did not traverse child lines before moving selection:\n%s", view)
+	}
+	for m.BeadsSelected(ui.ModeBeadsOpen) == 0 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "> after") {
+		t.Fatalf("cursor did not move after expansion was fully scrolled:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func beadsResultMessageForTest(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead) tea.Msg {
+	switch mode {
+	case ui.ModeBeadsReady:
+		return model.BeadsReadyResultMsg{RepoPath: repoPath, ListRequest: request, Available: true, Beads: beads}
+	case ui.ModeBeadsBlocked:
+		return model.BeadsBlockedResultMsg{RepoPath: repoPath, ListRequest: request, Available: true, Beads: beads}
+	case ui.ModeBeadsOpen:
+		return model.BeadsOpenResultMsg{RepoPath: repoPath, ListRequest: request, Available: true, Beads: beads}
+	case ui.ModeBeadsInProgress:
+		return model.BeadsInProgressResultMsg{RepoPath: repoPath, ListRequest: request, Available: true, Beads: beads}
+	case ui.ModeBeadsClosed:
+		return model.BeadsClosedResultMsg{RepoPath: repoPath, ListRequest: request, Available: true, Beads: beads}
+	default:
+		panic("unsupported Beads mode")
 	}
 }
 

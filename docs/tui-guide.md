@@ -485,6 +485,32 @@ Ready is `bd`'s dependency-graph computation, not a status derived inside
 Approach. Ready and Open are independent results: an open bead with all
 blockers resolved intentionally appears in both. Rows render as
 `<id>  P<n>  <title>` and append two spaces plus the assignee when present.
+Rows whose optional `issue_type` is `epic` (case-insensitive, ignoring outer
+space) append `[epic]` in all five subviews; older `bd` output may omit both
+`issue_type` and `parent` without changing existing rows.
+
+Selecting an epic expands it inline in the stored top Beads pane, including
+while the bottom pane has focus. Approach asynchronously runs exactly
+`bd children <epic-id> --json --readonly` for direct children and the existing
+`bd ready --json --limit 0 --readonly` query as the readiness oracle. Ready
+direct children appear first in Ready's established priority/natural-ID order;
+the other direct children follow in the children query's stable
+priority/natural-ID order (with raw ID as the final tie-break). A child gets a
+`[ready]` marker only when it is positively present in Ready. Other children
+remain neutral because they may be blocked, closed, or already in progress.
+
+The parent row is followed by a single loading, empty, or child-query-error
+line, or by the ordered child rows. If children load but readiness does not,
+all children remain visible in stable order without status markers and a local
+`Readiness unavailable` warning follows them. These bounded local states do not
+change whether the parent Beads list is available. Up/down scroll through an
+expanded epic that exceeds the viewport before moving the selection away.
+Changing selection or filter, clearing a filter, switching Beads subviews,
+changing repos, refreshing, or leaving Beads clears the expansion and
+invalidates its request synchronously. A returning result must still match the
+same repository, subview, epic, and request token; switching away and back does
+not reuse child data. There is no child polling.
+
 For a settled Closed result, the active header item shows the unfiltered
 accepted row count: plain `closed 0` through `closed 100` when the stats total
 is not larger, or `closed 100 of <total>` when more rows exist. The two queries

@@ -1,0 +1,58 @@
+[
+  {
+    "id": "approach-y7g.2",
+    "title": "Persist Bead linkage on FlowRecord",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "feature",
+    "parent": "approach-y7g",
+    "dependencies": [
+      {
+        "issue_id": "approach-y7g.2",
+        "depends_on_id": "approach-y7g",
+        "type": "parent-child"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 2
+  },
+  {
+    "id": "approach-y7g.1",
+    "title": "Epic/child visibility in Beads view",
+    "status": "in_progress",
+    "priority": 2,
+    "issue_type": "feature",
+    "parent": "approach-y7g",
+    "dependencies": [
+      {
+        "issue_id": "approach-y7g.1",
+        "depends_on_id": "approach-y7g",
+        "type": "parent-child"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1
+  },
+  {
+    "id": "approach-y7g.4",
+    "title": "Enable auto-progression on an epic creates first child Flow",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "feature",
+    "parent": "approach-y7g",
+    "dependencies": [
+      {
+        "issue_id": "approach-y7g.4",
+        "depends_on_id": "approach-y7g.1",
+        "type": "blocks"
+      },
+      {
+        "issue_id": "approach-y7g.4",
+        "depends_on_id": "approach-y7g",
+        "type": "parent-child"
+      }
+    ],
+    "dependency_count": 3,
+    "dependent_count": 3
+  }
+]

@@ -1431,30 +1431,30 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 	return m
 }
 
-func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
+func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) (Model, bool) {
 	return m.handleBeadsResult(ui.ModeBeadsOpen, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
 }
 
-func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string) Model {
+func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string) (Model, bool) {
 	return m.handleBeadsResultWithTotal(mode, repoPath, beads, request, available, errorDetail, 0)
 }
 
-func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) Model {
+func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) (Model, bool) {
 	return m.handleBeadsResultWithTotal(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error, msg.Total)
 }
 
-func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) Model {
+func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) (Model, bool) {
 	if !m.modeStored(mode) {
-		return m
+		return m, false
 	}
 	var ok bool
 	m, ok = m.acceptListResult(repoPath, mode, request)
 	if !ok {
-		return m
+		return m, false
 	}
 	index, ok := beadSubviewIndex(mode)
 	if !ok {
-		return m
+		return m, false
 	}
 	if !available || errorDetail != "" {
 		beads = nil
@@ -1466,7 +1466,7 @@ func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads [
 	m.beads[index].error = errorDetail
 	m.beads[index].total = total
 	m.beads[index].repoPath = repoPath
-	return m.reflowBeads(mode)
+	return m.reflowBeads(mode), true
 }
 
 func (m Model) handleWorktreeSessionResult(msg WorktreeSessionResultMsg) Model {

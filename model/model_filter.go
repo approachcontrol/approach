@@ -80,7 +80,7 @@ func newFlowPane() pane.Pane[flowstore.FlowRecord] {
 func newBeadPane() pane.Pane[beadsquery.Bead] {
 	return pane.New(func(bead beadsquery.Bead) string {
 		return strings.Join([]string{bead.ID, bead.Title, bead.Assignee}, " ")
-	}, fixedHeight[beadsquery.Bead])
+	}, beadItemHeight(ui.BeadExpansion{}))
 }
 
 func newBeadSubviews() [beadSubviewCount]beadSubviewState {
