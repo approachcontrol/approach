@@ -2169,7 +2169,7 @@ func TestModel_PhaseAgentPickerPersistsWithoutChangingGlobals(t *testing.T) {
 	if !strings.Contains(view, "inherit global settings") || !strings.Contains(view, "Choose agent for phase merge") {
 		t.Fatalf("phase agent picker contents:\n%s", view)
 	}
-	for range 3 {
+	for range 2 {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -2225,7 +2225,6 @@ func TestModel_PhaseAgentPickerTargetsExactWhitespaceDuplicate(t *testing.T) {
 		t.Fatalf("picker targeted the wrong normalized duplicate:\n%s", view)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp}) // codex
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("phase agent selection returned no persistence command")

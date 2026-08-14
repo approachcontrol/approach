@@ -210,14 +210,14 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
-	settings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+	resolvedSettings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
 	if err != nil {
 		if agent.Normalize(m.agentCommand) == "" && agent.Normalize(phase.Agent) == "" {
 			return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
 		}
 		return m.setStatus(statusOther, err.Error()), nil, false
 	}
-	command := settings.Command
+	command := resolvedSettings.Command
 	if err := agent.Validate(command); err != nil {
 		return m.setStatus(statusOther, err.Error()), nil, false
 	}

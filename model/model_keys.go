@@ -1626,9 +1626,6 @@ func (m Model) handleSetFlowPhaseModel() (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m.setStatus(statusOther, err.Error()), nil
 	}
-	if effective.Command == agent.CommandCodexApp {
-		return m.setStatus(statusOther, "Codex App uses app default model"), nil
-	}
 	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, modelSelectItems(effective.Command)...)
 	selected := 0
 	if raw := agent.NormalizeModel(phase.Model); raw != "" {
@@ -1661,9 +1658,6 @@ func (m Model) handleSetFlowPhaseReasoningEffort() (tea.Model, tea.Cmd) {
 	effective, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
 	if err != nil {
 		return m.setStatus(statusOther, err.Error()), nil
-	}
-	if effective.Command == agent.CommandCodexApp {
-		return m.setStatus(statusOther, "Codex App uses app default reasoning effort"), nil
 	}
 	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, reasoningEffortSelectItems(effective.Command)...)
 	selected := 0

@@ -408,9 +408,6 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		switch resolved.Command {
 		case agent.CommandCodex, agent.CommandClaude:
 			// Embedded repair providers.
-		case agent.CommandCodexApp:
-			event.Err = "Flow repair requires an embedded CLI agent; press A to choose codex or claude"
-			return event
 		default:
 			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", resolved.Command)
 			return event

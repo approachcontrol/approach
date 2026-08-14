@@ -62,7 +62,7 @@ func TestResolvePhaseAgentSettings(t *testing.T) {
 		},
 		{
 			name: "codex-app overrides fail before fallback",
-			raw:  flowstore.PhaseAgentSettings{Agent: agent.CommandCodexApp, ReasoningEffort: agent.ReasoningEffortHigh},
+			raw:  flowstore.PhaseAgentSettings{Agent: "codex-app", ReasoningEffort: agent.ReasoningEffortHigh},
 			err:  true,
 		},
 	}
