@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -518,6 +519,53 @@ func TestPhaseResumeReadStageRefusals(t *testing.T) {
 				t.Fatalf("a refused resume opened a terminal: %#v", h.launchContexts)
 			}
 			if _, ok := m.flowLaunchAttempt("flow-1"); ok {
+				t.Fatal("a refused resume must release the Flow")
+			}
+		})
+	}
+}
+
+func TestPhaseResumeRefusesUnusableRecordedWorktree(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		worktreePath  string
+		inspectionErr error
+	}{
+		{
+			name:          "missing path",
+			worktreePath:  "/dev/alpha-worktrees/missing-flow",
+			inspectionErr: errors.New("stat /dev/alpha-worktrees/missing-flow: no such file or directory"),
+		},
+		{
+			name:          "not a directory",
+			worktreePath:  "/dev/alpha-worktrees/not-a-directory",
+			inspectionErr: errors.New("/dev/alpha-worktrees/not-a-directory is not a directory"),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := resumeLaunchFlowRecord()
+			record.WorktreePath = tt.worktreePath
+			h := newManualLaunchHarness(t, record)
+			h.inspectErr = tt.inspectionErr
+
+			m := h.resume(h.resumeModel())
+
+			want := fmt.Sprintf("Recorded Flow worktree %q is unusable: %v", tt.worktreePath, tt.inspectionErr)
+			if got := m.status.Text; got != want {
+				t.Fatalf("status = %q, want %q", got, want)
+			}
+			if len(h.inspectedPaths) != 1 || h.inspectedPaths[0] != tt.worktreePath {
+				t.Fatalf("inspected paths = %#v, want the recorded path once", h.inspectedPaths)
+			}
+			if h.launchReservations != 0 || len(h.launchUpdates) != 0 {
+				t.Fatalf("a refused resume persisted something: reservations=%d launches=%#v",
+					h.launchReservations, h.launchUpdates)
+			}
+			if len(h.launchContexts) != 0 || len(h.agentContexts) != 0 || len(h.tmuxContexts) != 0 {
+				t.Fatalf("a refused resume spawned something: embedded=%#v agents=%#v tmux=%#v",
+					h.launchContexts, h.agentContexts, h.tmuxContexts)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
 				t.Fatal("a refused resume must release the Flow")
 			}
 		})

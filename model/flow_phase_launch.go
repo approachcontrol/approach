@@ -209,8 +209,7 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchPreparedRequest, error) {
 	if req.WorktreePath != "" {
 		if err := l.inspectWorktreeDirectory(req.WorktreePath); err != nil {
-			return req, FlowPhaseLaunchWorktreeError{Message: fmt.Sprintf(
-				"Recorded Flow worktree %q is unusable: %v", req.WorktreePath, err)}
+			return req, recordedFlowWorktreeUnusableError(req.WorktreePath, err)
 		}
 		return req, nil
 	}
@@ -263,6 +262,11 @@ func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedReque
 		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + "no worktree path was recorded"}
 	}
 	return req, nil
+}
+
+func recordedFlowWorktreeUnusableError(path string, err error) FlowPhaseLaunchWorktreeError {
+	return FlowPhaseLaunchWorktreeError{Message: fmt.Sprintf(
+		"Recorded Flow worktree %q is unusable: %v", path, err)}
 }
 
 func (l FlowPhaseLauncher) inspectWorktreeDirectory(path string) error {

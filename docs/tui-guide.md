@@ -637,11 +637,12 @@ agent.
 
 A Flow that records a non-empty worktree path takes a different route: Approach
 inspects that exact path before persisting a phase launch ID or preparing an
-agent process. If the path is missing or is not a directory, a manual launch is
-refused with the recorded path and inspection reason, while AutoMode blocks the
-candidate phase with the same reason in its notes. Approach does not clear the
-path, prune Git metadata, recreate the worktree, or fall back to the repository
-root; those cases can require different recovery choices.
+agent process. If the path is missing or is not a directory, a `g` phase launch
+or `r` phase resume is refused with the recorded path and inspection reason,
+while AutoMode blocks the candidate phase with the same reason in its notes.
+Approach does not clear the path, prune Git metadata, recreate the worktree, or
+fall back to the repository root; those cases can require different recovery
+choices.
 
 A record that already names a local branch gets a worktree for that branch, so
 the name prompts render as the push target keeps meaning what it said. If that
