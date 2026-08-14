@@ -20,6 +20,31 @@ func progressionAdvanceFlow(flowID, repoPath, childID, epicID, status string) fl
 	}
 }
 
+func TestEpicProgressionEnableIgnoresAlreadyInFlightTerminalSnapshot(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	pending := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	terminal := cloneFlowRecord(pending)
+	terminal.Status = flowstore.StatusCompleted
+
+	m := Model{autoAdvanceRequestSeq: 1, autoAdvanceInFlight: 1}
+	m, _ = m.handleEpicProgressionToggleResult(epicProgressionToggleResultMsg{
+		target:              beadExpansionTarget{repoPath: repo, epicID: epic},
+		flow:                pending,
+		known:               true,
+		enabled:             true,
+		baselineDisposition: epicProgressionBaselineReplace,
+	})
+
+	next, _ := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+	if next.activeEpicProgressionAdvance.Request != 0 || next.flowPreparationAdmission {
+		t.Fatalf("stale request scheduled progression: active=%#v admission=%t", next.activeEpicProgressionAdvance, next.flowPreparationAdmission)
+	}
+	if got := next.epicProgressionBaselines[key]; got.Status != flowstore.StatusPending {
+		t.Fatalf("baseline = %#v, want the enable-time pending record", got)
+	}
+}
+
 func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)

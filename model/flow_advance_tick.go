@@ -80,7 +80,7 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	m, autoCmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(previous, current, msg.Request)
 	cmds = append(cmds, autoCmd)
 	var progressionCmd tea.Cmd
-	m, progressionCmd = m.prepareEpicProgressionAdvance(current)
+	m, progressionCmd = m.prepareEpicProgressionAdvance(current, msg.Request)
 	cmds = append(cmds, progressionCmd)
 	m.autoAdvanceSnapshot = current
 
@@ -97,7 +97,7 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	return m, batchNonNil(cmds...)
 }
 
-func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord) (Model, tea.Cmd) {
+func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, request uint64) (Model, tea.Cmd) {
 	if len(m.epicProgressionBaselines) == 0 {
 		return m, nil
 	}
@@ -123,6 +123,12 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord) (Mo
 	}
 	for offset := range keys {
 		key := keys[(start+offset)%len(keys)]
+		if minimum := m.epicProgressionBaselineMinimumRequests[key]; minimum != 0 {
+			if request < minimum {
+				continue
+			}
+			delete(m.epicProgressionBaselineMinimumRequests, key)
+		}
 		baseline := m.epicProgressionBaselines[key]
 		observed, ok := currentByID[baseline.FlowID]
 		if !ok {

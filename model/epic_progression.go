@@ -326,9 +326,14 @@ func (m Model) handleEpicProgressionAdvanceResult(msg epicProgressionAdvanceResu
 	switch msg.disposition {
 	case epicProgressionAdvanceAccepted:
 		m.epicProgressionBaselines[msg.epicKey] = cloneFlowRecord(msg.flow)
+		if m.epicProgressionBaselineMinimumRequests == nil {
+			m.epicProgressionBaselineMinimumRequests = make(map[string]uint64)
+		}
+		m.epicProgressionBaselineMinimumRequests[msg.epicKey] = m.autoAdvanceRequestSeq + 1
 		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
 	case epicProgressionAdvanceInactive, epicProgressionAdvanceExhausted, epicProgressionAdvanceExhaustedUnknown:
 		delete(m.epicProgressionBaselines, msg.epicKey)
+		delete(m.epicProgressionBaselineMinimumRequests, msg.epicKey)
 		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
 	case epicProgressionAdvanceReleased:
 		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
@@ -588,10 +593,15 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 			if m.epicProgressionBaselines == nil {
 				m.epicProgressionBaselines = make(map[string]flowstore.FlowRecord)
 			}
+			if m.epicProgressionBaselineMinimumRequests == nil {
+				m.epicProgressionBaselineMinimumRequests = make(map[string]uint64)
+			}
 			m.epicProgressionBaselines[key] = msg.flow
+			m.epicProgressionBaselineMinimumRequests[key] = m.autoAdvanceRequestSeq + 1
 			delete(m.epicProgressionOwnedSuccessors, key)
 		case epicProgressionBaselineRemove:
 			delete(m.epicProgressionBaselines, key)
+			delete(m.epicProgressionBaselineMinimumRequests, key)
 			delete(m.epicProgressionOwnedSuccessors, key)
 		}
 	}

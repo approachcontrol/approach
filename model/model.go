@@ -211,6 +211,8 @@ type Model struct {
 	autoAdvanceDrainFlows     map[string]struct{}
 	epicProgressionBaselines  map[string]flowstore.FlowRecord
 
+	epicProgressionBaselineMinimumRequests map[string]uint64
+
 	epicProgressionOwnedSuccessors map[string]epicProgressionOwnedSuccessor
 	epicProgressionAdvanceSeq      uint64
 	activeEpicProgressionAdvance   epicProgressionAdvanceRequest
@@ -383,6 +385,7 @@ func New(repos []scanner.Repo) Model {
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
+	customEpicSuccessorPersistence := opts.ReconcileEpicSuccessor != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -669,12 +672,20 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	reserveEpicSuccessor := opts.ReserveEpicSuccessor
 	if reserveEpicSuccessor == nil {
-		reserveEpicSuccessor = func(flowID string) (func(), error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return nil, err
+		if customEpicSuccessorPersistence {
+			// A caller that replaces successor reconciliation owns its storage
+			// boundary; opening the default store here would reserve another backend.
+			reserveEpicSuccessor = func(string) (func(), error) {
+				return func() {}, nil
 			}
-			return store.ReserveEpicProgressionSuccessor(flowID)
+		} else {
+			reserveEpicSuccessor = func(flowID string) (func(), error) {
+				store, err := newFlowStore()
+				if err != nil {
+					return nil, err
+				}
+				return store.ReserveEpicProgressionSuccessor(flowID)
+			}
 		}
 	}
 	createReserveFlowLaunch := reserveFlowLaunch
