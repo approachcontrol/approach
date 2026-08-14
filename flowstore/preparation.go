@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -24,10 +25,11 @@ type PreparationFinalizer interface {
 }
 
 type preparationFinalizer struct {
-	mu       sync.Mutex
-	store    *Store
-	flowID   string
-	consumed bool
+	mu        sync.Mutex
+	store     *Store
+	flowID    string
+	createdAt time.Time
+	consumed  bool
 }
 
 // CreatePreparation creates an ordinary receipt-less Flow and returns the sole
@@ -37,7 +39,7 @@ func (s *Store) CreatePreparation(record FlowRecord, opts CreateOptions) (FlowRe
 	if err != nil {
 		return FlowRecord{}, nil, err
 	}
-	return created, &preparationFinalizer{store: s, flowID: created.FlowID}, nil
+	return created, &preparationFinalizer{store: s, flowID: created.FlowID, createdAt: created.CreatedAt}, nil
 }
 
 // Finalize runs bootstrap exactly once and stamps the receipt only after the
@@ -45,7 +47,7 @@ func (s *Store) CreatePreparation(record FlowRecord, opts CreateOptions) (FlowRe
 // a visible receipt is success, a visible nil receipt is incomplete, and an
 // unreadable result is unknown.
 func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, error) {
-	if f == nil || f.store == nil || strings.TrimSpace(f.flowID) == "" {
+	if f == nil || f.store == nil || strings.TrimSpace(f.flowID) == "" || f.createdAt.IsZero() {
 		return FlowRecord{}, errors.New("invalid flow preparation finalizer")
 	}
 	f.mu.Lock()
@@ -55,6 +57,13 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 	}
 	f.consumed = true
 	f.mu.Unlock()
+	current, err := f.store.Read(f.flowID)
+	if err != nil {
+		return FlowRecord{}, errors.Join(ErrPreparationUnknown, fmt.Errorf("read flow generation before preparation: %w", err))
+	}
+	if !current.CreatedAt.Equal(f.createdAt) {
+		return current, errors.Join(ErrPreparationIncomplete, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
+	}
 
 	if bootstrap != nil {
 		if err := bootstrap(); err != nil {
@@ -70,6 +79,9 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 			return FlowRecord{}, flowNotFoundError(f.flowID)
 		}
 		record := stored.record
+		if !record.CreatedAt.Equal(f.createdAt) {
+			return FlowRecord{}, fmt.Errorf("flow %q generation changed before preparation finalization", record.FlowID)
+		}
 		if record.PreparedAt != nil {
 			return FlowRecord{}, fmt.Errorf("flow %q already has a preparation receipt", record.FlowID)
 		}
@@ -100,6 +112,9 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 	authoritative, readErr := f.store.Read(f.flowID)
 	if readErr != nil {
 		return FlowRecord{}, errors.Join(ErrPreparationUnknown, err, fmt.Errorf("read preparation receipt: %w", readErr))
+	}
+	if !authoritative.CreatedAt.Equal(f.createdAt) {
+		return authoritative, errors.Join(ErrPreparationIncomplete, err, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
 	}
 	if authoritative.PreparedAt != nil {
 		return authoritative, nil

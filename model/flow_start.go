@@ -125,20 +125,6 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 			return flowstore.FlowRecord{}, fmt.Errorf("flow starter missing CreateFlow")
 		}
 	}
-	if starter.createPreparation == nil {
-		// Compatibility for direct FlowStarter callers that predate preparation
-		// receipts. This adapter runs the callback but cannot certify persistence;
-		// production Model wiring always supplies Store.CreatePreparation. The
-		// receipt check in PrepareFlow turns this adapter into an explicit failure
-		// after bootstrap rather than allowing a receipt-less Flow to launch.
-		starter.createPreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
-			created, err := starter.createFlow(record, createOpts)
-			if err != nil {
-				return flowstore.FlowRecord{}, nil, err
-			}
-			return created, callbackPreparationFinalizer{flow: created}, nil
-		}
-	}
 	if starter.createWorktree == nil {
 		starter.createWorktree = actions.CreateFlowWorktree
 	}
@@ -309,6 +295,9 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	if agent.NormalizeStored(req.AgentCommand) != agent.Normalize(req.AgentCommand) {
 		return FlowStartResult{}, agent.Validate(req.AgentCommand)
 	}
+	if s.createPreparation == nil {
+		return FlowStartResult{}, fmt.Errorf("flow starter missing CreatePreparation")
+	}
 	flow, finalizer, err := s.createPreparation(flowstore.FlowRecord{
 		Title:        req.Title,
 		Instructions: req.Instructions,
@@ -382,19 +371,6 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	result.Flow = finalized
 
 	return result, nil
-}
-
-type callbackPreparationFinalizer struct {
-	flow flowstore.FlowRecord
-}
-
-func (f callbackPreparationFinalizer) Finalize(callback func() error) (flowstore.FlowRecord, error) {
-	if callback != nil {
-		if err := callback(); err != nil {
-			return f.flow, err
-		}
-	}
-	return f.flow, nil
 }
 
 // EnsureWorktree gives a worktree-less Flow the worktree its launch contract

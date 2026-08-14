@@ -736,10 +736,14 @@ allocates the final Flow ID before it checks exact-ID sessions; allocation is
 non-durable and does not reserve or create a record, so exact-ID creation is the
 collision authority. After creation the lifecycle holds its in-memory attempt
 and the cross-process launch/close reservation across worktree setup, bootstrap,
-launch-ID persistence, metadata, and embedded installation or recovery. The
-first canonical launchable root starts; parallel roots remain available unless
-startup recovery must block the captured root set. A graph with no launchable
-root is parked after metadata without a launch ID.
+launch-ID persistence, metadata, and embedded installation or recovery. Worktree,
+branch, and commit metadata are persisted immediately after worktree creation,
+before bootstrap or launch-ID persistence, so an interrupted bootstrap retains
+the artifact identity for recovery. The first canonical launchable root starts;
+parallel roots remain available unless startup recovery must block the captured
+root set. A graph with no launchable root is parked after metadata without a
+launch ID. Embedders that explicitly provide `Options.StartFlowPlan` override
+this default Plan Now lifecycle with that compatibility seam.
 
 On a Flow row or an expanded phase row:
 

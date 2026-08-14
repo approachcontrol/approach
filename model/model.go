@@ -164,6 +164,7 @@ type Model struct {
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
+	customStartFlowPlan       bool
 	ensureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
@@ -834,6 +835,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		createFlowForRepo = starter.PrepareFlow
 	}
 	startFlowPlan := opts.StartFlowPlan
+	customStartFlowPlan := startFlowPlan != nil
 	if startFlowPlan == nil {
 		startFlowPlan = starter.StartPlan
 	}
@@ -918,6 +920,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
 		startFlowPlan:             startFlowPlan,
+		customStartFlowPlan:       customStartFlowPlan,
 		ensureFlowWorktree:        ensureFlowWorktree,
 		setFlowPhase:              setFlowPhase,
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,

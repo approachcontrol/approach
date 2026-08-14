@@ -1024,8 +1024,11 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 			}() {
 				t.Fatalf("Plan Now failed: %#v", msg)
 			}
+			if injected == "StartFlowPlan" {
+				wantCalls = "start"
+			}
 			if got := strings.Join(calls, ","); got != wantCalls {
-				t.Fatalf("legacy adapter calls after createPhase intent = %q, want %q", got, wantCalls)
+				t.Fatalf("explicit adapter calls after Plan Now = %q, want %q", got, wantCalls)
 			}
 		})
 	}

@@ -337,7 +337,7 @@ func TestCreateFlowLaunchOwnsExactIdentityAndStartupOrdering(t *testing.T) {
 
 	want := []string{
 		"allocate", "sessions:" + h.record.FlowID, "create:" + h.record.FlowID, "reserve:" + h.record.FlowID,
-		"worktree", "commit", "bootstrap", "reread:" + h.record.FlowID,
+		"worktree", "commit", "metadata", "bootstrap", "reread:" + h.record.FlowID,
 		"launch-id:" + h.record.FlowID + ":plan:launch-create-1", "metadata", "terminal",
 	}
 	if !reflect.DeepEqual(h.order, want) {
@@ -401,15 +401,14 @@ func TestCreateFlowLaunchAddFailureProofControlsRecovery(t *testing.T) {
 		}
 	})
 
-	t.Run("unreadable joins independent recovery failures", func(t *testing.T) {
+	t.Run("unreadable joins block failure after metadata", func(t *testing.T) {
 		h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 		h.addErr = errors.New("write failed")
 		h.readErrs = map[int]error{2: errors.New("database busy")}
-		h.metadataErr = errors.New("disk full")
 		h.phaseErrs = map[string]error{"plan": errors.New("database busy")}
 		m := h.start(t, h.model(t))
 
-		want := "Flow " + h.record.FlowID + ": AddPhaseLaunchID: write failed; reread flow after AddPhaseLaunchID: database busy; record start metadata: disk full; block phase plan: database busy"
+		want := "Flow " + h.record.FlowID + ": AddPhaseLaunchID: write failed; reread flow after AddPhaseLaunchID: database busy; block phase plan: database busy"
 		if m.status.Text != want {
 			t.Fatalf("joined recovery status = %q, want %q", m.status.Text, want)
 		}
@@ -644,7 +643,7 @@ func TestCreateFlowLaunchRevalidatesLaunchProofAfterMetadata(t *testing.T) {
 	if len(h.contexts) != 0 || strings.Contains(strings.Join(h.order, ","), "terminal") {
 		t.Fatalf("metadata proof drift spawned an agent: contexts=%#v order=%#v", h.contexts, h.order)
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "launch proof changed before embedded install") {
+	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "validate startup root: no longer launchable") {
 		t.Fatalf("metadata proof result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
 	}
 }
@@ -658,7 +657,7 @@ func TestCreateFlowLaunchRejectsSameIDReplacementAtPostBootstrapReread(t *testin
 	m := h.start(t, h.model(t))
 
 	joined := strings.Join(h.order, ",")
-	for _, forbidden := range []string{"launch-id:", "metadata", "terminal", "block:"} {
+	for _, forbidden := range []string{"launch-id:", "terminal", "block:"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("replacement reread performed %q: %#v", forbidden, h.order)
 		}
@@ -680,7 +679,7 @@ func TestCreateFlowLaunchRejectsGenerationLossDuringLaunchIDProofReread(t *testi
 	m := h.start(t, h.model(t))
 
 	joined := strings.Join(h.order, ",")
-	for _, forbidden := range []string{"metadata", "terminal", "block:"} {
+	for _, forbidden := range []string{"terminal", "block:"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("proof reread generation loss performed %q: %#v", forbidden, h.order)
 		}
@@ -719,7 +718,7 @@ func TestCreateFlowLaunchCancellationDoesNotRecoverAfterGenerationLoss(t *testin
 			m, cmd = m.handleFlowLaunchEvent(event)
 			m = drainCreateLaunch(t, m, cmd)
 
-			if len(h.phaseUpdates) != 0 || strings.Contains(strings.Join(h.order, ","), "metadata") {
+			if len(h.phaseUpdates) != 0 {
 				t.Fatalf("stale generation loss recovered replacement: order=%#v updates=%#v", h.order, h.phaseUpdates)
 			}
 			if h.releases != 1 || m.status.Text != "newer creation status" || m.activeFlowCreate == 0 {

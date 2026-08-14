@@ -484,7 +484,7 @@ func TestFlowStarterStartPlanParksFlowWhenNoPhaseIsLaunchable(t *testing.T) {
 	}
 }
 
-func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
+func TestFlowStarterStartPlanRequiresCreatePreparation(t *testing.T) {
 	starter := newFlowStarterForTest(model.FlowStarterOptions{
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
 			t.Fatal("worktree should not be created without a Flow persistence adapter")
@@ -496,8 +496,8 @@ func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	if err == nil {
 		t.Fatal("StartPlan returned nil error, want missing adapter failure")
 	}
-	if !strings.Contains(err.Error(), "missing CreateFlow") {
-		t.Fatalf("error = %q, want missing CreateFlow", err)
+	if !strings.Contains(err.Error(), "missing CreatePreparation") {
+		t.Fatalf("error = %q, want missing CreatePreparation", err)
 	}
 }
 
@@ -583,43 +583,27 @@ func TestFlowStarterPrepareFlowCreatesLaunchableFlowWithoutLaunchID(t *testing.T
 }
 
 func TestFlowStarterStartPlanRefusesFinalizerWithoutPreparationReceipt(t *testing.T) {
-	flow := flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		Title:        "Receipt required",
-		Instructions: "Do not launch without durable preparation.",
-		RepoPath:     "/dev/alpha",
-		Phases: []flowstore.FlowPhase{{
-			PhaseID: "plan",
-			Title:   "Plan",
-			Kind:    flowstore.KindPlan,
-			Status:  flowstore.PhaseReady,
-		}},
-	}
-	launchRecorded := false
-	var blocked flowstore.PhaseUpdate
+	sideEffects := 0
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateFlow: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			return flow, nil
+			sideEffects++
+			return flowstore.FlowRecord{FlowID: "flow-1"}, nil
 		},
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			return actions.FlowWorktreeCreateResult{
-				WorktreePath: "/dev/alpha-worktrees/flow-receipt-required",
-				Branch:       "flow/receipt-required",
-			}, nil
+			sideEffects++
+			return actions.FlowWorktreeCreateResult{}, nil
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			started := flow
-			started.WorktreePath = update.WorktreePath
-			started.Branch = update.Branch
-			return started, nil
+			sideEffects++
+			return flowstore.FlowRecord{}, nil
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			blocked = update
-			return flow, nil
+			sideEffects++
+			return flowstore.FlowRecord{}, nil
 		},
 		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			launchRecorded = true
-			return flow, nil
+			sideEffects++
+			return flowstore.FlowRecord{}, nil
 		},
 	})
 
@@ -629,14 +613,11 @@ func TestFlowStarterStartPlanRefusesFinalizerWithoutPreparationReceipt(t *testin
 		Instructions: "Do not launch without durable preparation.",
 		AgentCommand: "codex",
 	})
-	if err == nil || !strings.Contains(err.Error(), "preparation receipt") {
-		t.Fatalf("StartPlan() error = %v, want missing preparation receipt refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "missing CreatePreparation") {
+		t.Fatalf("StartPlan() error = %v, want missing CreatePreparation refusal", err)
 	}
-	if launchRecorded {
-		t.Fatal("StartPlan() recorded a launch without a preparation receipt")
-	}
-	if blocked.FlowID != flow.FlowID || blocked.PhaseID != "plan" || blocked.Status != flowstore.PhaseBlocked {
-		t.Fatalf("blocked phase update = %#v, want plan phase blocked", blocked)
+	if sideEffects != 0 {
+		t.Fatalf("missing CreatePreparation performed %d side effects", sideEffects)
 	}
 }
 

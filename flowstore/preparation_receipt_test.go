@@ -101,6 +101,48 @@ func TestPreparationFinalizerFailureLeavesReceiptAbsentAndConsumesCapability(t *
 	}
 }
 
+func TestPreparationFinalizerRejectsReplacementFlowGenerationBeforeCallback(t *testing.T) {
+	now := time.Date(2026, 8, 14, 13, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repo := filepath.Join(t.TempDir(), "repo")
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "reused-id", Title: "Original", Instructions: "Test.", RepoPath: repo,
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(created.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Second)
+	replacement, err := store.Create(flowstore.FlowRecord{
+		FlowID: created.FlowID, Title: "Replacement", Instructions: "Do not certify.", RepoPath: repo,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: replacement.FlowID, WorktreePath: filepath.Join(t.TempDir(), "replacement"), Branch: "flow/replacement",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	callbacks := 0
+	if _, err := finalizer.Finalize(func() error { callbacks++; return nil }); !flowstore.IsPreparationIncomplete(err) || !strings.Contains(err.Error(), "generation changed") {
+		t.Fatalf("Finalize() error = %v, want incomplete generation refusal", err)
+	}
+	if callbacks != 0 {
+		t.Fatalf("stale finalizer ran %d callbacks, want 0", callbacks)
+	}
+	authoritative, err := store.Read(replacement.FlowID)
+	if err != nil || authoritative.PreparedAt != nil || authoritative.Title != replacement.Title {
+		t.Fatalf("replacement after stale finalizer = %#v, err %v", authoritative, err)
+	}
+}
+
 func TestPreparationReceiptProtectsStartIdentityButAllowsUnrelatedMetadata(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(t.TempDir(), "repo")
