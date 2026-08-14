@@ -1170,9 +1170,11 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if ctx.WorkingDir != "" {
 		cmd.Dir = ctx.WorkingDir
 	}
-	commit := ResolveWorktreeCommit(cmd.Dir)
-	if commit == "" {
-		commit = ctx.Commit
+	commit := ctx.Commit
+	if !ctx.FlowSavedSessionResume {
+		if resolved := ResolveWorktreeCommit(cmd.Dir); resolved != "" {
+			commit = resolved
+		}
 	}
 	overrides := []envVar{
 		{key: "APPROACH_AGENT", value: command},

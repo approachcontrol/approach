@@ -247,6 +247,10 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			event.Err = tmuxSessionLiveWindowRefusal
 			return event
 		}
+		if m.tmuxAutofixAgentStillRunning(record, refreshed.WorktreePath) {
+			event.Err = tmuxFlowLiveWindowRefusal
+			return event
+		}
 		stored, err := seams.ListFlowSessions(msg.FlowID)
 		if err != nil {
 			event.Err = err.Error()

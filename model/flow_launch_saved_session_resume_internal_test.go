@@ -485,6 +485,61 @@ func TestSavedSessionResumeRechecksFinalTmuxLaunchUnderReservation(t *testing.T)
 	}
 }
 
+func TestSavedSessionResumeRechecksFinalTmuxAutofixUnderReservation(t *testing.T) {
+	session := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1",
+		RepoPath: "/repo", WorktreePath: "/repo/worktree", Status: "ended", LaunchID: "session-ended",
+	}
+	flow := flowstore.FlowRecord{
+		FlowID: "flow-1", RepoPath: session.RepoPath, WorktreePath: session.WorktreePath,
+		Status: flowstore.StatusInProgress,
+	}
+	started := false
+	released := false
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) {
+			return session, nil
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() { released = true }, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.launchBackend = "tmux"
+	m.tmuxLaunchAvailable = func() bool { return true }
+	m = m.withFlowAutofixTmuxLaunch(flow.FlowID, "autofix-live")
+	var probes [][]string
+	m.repoTmuxLaunchWindowLive = func(repoPath string, launchIDs ...string) bool {
+		if repoPath != flow.RepoPath {
+			t.Fatalf("tmux probe repo = %q, want %q", repoPath, flow.RepoPath)
+		}
+		probes = append(probes, append([]string(nil), launchIDs...))
+		return len(launchIDs) == 1 && launchIDs[0] == "autofix-live"
+	}
+	m.launchSeams.NewLaunchID = func() string { return "token" }
+
+	m, cmd := m.routeSavedSessionResume(session, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || started || !released || m.status.Text != tmuxFlowLiveWindowRefusal {
+		t.Fatalf("final autofix recheck: cmd=%v started=%v released=%v status=%q probes=%#v", cmd != nil, started, released, m.status.Text, probes)
+	}
+	if len(probes) != 3 || len(probes[2]) != 1 || probes[2][0] != "autofix-live" {
+		t.Fatalf("tmux probes = %#v, want two session probes followed by final autofix probe", probes)
+	}
+	if m.flowLaunchAttemptOccupied(flow.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("final autofix refusal retained lifecycle ownership")
+	}
+}
+
 func TestSavedSessionResumeEmbeddedStartFailureNeverFallsBackExternal(t *testing.T) {
 	session := sessions.SessionRecord{
 		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1",

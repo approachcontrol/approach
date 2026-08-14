@@ -3054,6 +3054,43 @@ func TestAgentCommandFlowSavedSessionResumePreservesRawIDAndFlowIdentity(t *test
 	}
 }
 
+func TestAgentCommandFlowSavedSessionResumePreservesRefreshedCommit(t *testing.T) {
+	repoPath := setupRepo(t)
+	savedCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+	mustRun(t, repoPath, "git", "commit", "--allow-empty", "-m", "advance worktree")
+	currentCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+	if currentCommit == savedCommit {
+		t.Fatal("test setup did not advance worktree HEAD")
+	}
+
+	for _, tc := range []struct {
+		name        string
+		savedCommit string
+	}{
+		{name: "historical commit", savedCommit: savedCommit},
+		{name: "intentionally absent commit", savedCommit: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+				Command:                "codex",
+				RepoPath:               repoPath,
+				WorktreePath:           repoPath,
+				Commit:                 tc.savedCommit,
+				ResumeSessionID:        "session-1",
+				FlowID:                 "flow-1",
+				FlowSavedSessionResume: true,
+				Embedded:               true,
+			})
+			if err != nil {
+				t.Fatalf("AgentCommand() error = %v", err)
+			}
+			if got := envMap(cmd.Env)["APPROACH_COMMIT"]; got != tc.savedCommit {
+				t.Fatalf("APPROACH_COMMIT = %q, want refreshed saved value %q (worktree HEAD %q)", got, tc.savedCommit, currentCommit)
+			}
+		})
+	}
+}
+
 func TestAgentCommandRejectsIncompatibleFlowSavedSessionResumeRole(t *testing.T) {
 	base := actions.AgentLaunchContext{
 		Command:                "codex",
