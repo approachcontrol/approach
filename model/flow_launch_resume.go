@@ -228,6 +228,10 @@ func phaseResumeFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent
 			event.Err = flowPhaseResumeNoWorktreeStatus
 			return event
 		}
+		if err := seams.inspectWorktreeDirectory(record.WorktreePath); err != nil {
+			event.Err = recordedFlowWorktreeUnusableError(record.WorktreePath, err).Error()
+			return event
+		}
 		repoPath := record.RepoPath
 		if repoPath == "" {
 			repoPath = intent.FallbackRepoPath

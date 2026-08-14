@@ -152,6 +152,7 @@ func TestGenericWorktreeAgentPressTimeRefusalsUseGenericContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			record := genericFlowAgentRecord(t)
 			h := newManualLaunchHarness(t, record)
+			h.inspectFunc = inspectWorktreeDirectory
 			m := h.model()
 			if tc.command == "__empty__" {
 				m.agentCommand = ""
@@ -225,6 +226,7 @@ func TestGenericWorktreeAgentSKeyUsesBothFlowSurfaces(t *testing.T) {
 		t.Run(map[bool]string{false: "flows", true: "active flows"}[active], func(t *testing.T) {
 			record := genericFlowAgentRecord(t)
 			h := newManualLaunchHarness(t, record)
+			h.inspectFunc = inspectWorktreeDirectory
 			m := h.model()
 			m.activePane = m.contentPane
 			if active {
@@ -536,6 +538,7 @@ func TestGenericWorktreeAgentProtectedRevalidationRejectsFreshOccupancyAndPaths(
 		t.Run(tc.name, func(t *testing.T) {
 			record := genericFlowAgentRecord(t)
 			h := newManualLaunchHarness(t, record)
+			h.inspectFunc = inspectWorktreeDirectory
 			m := h.model()
 			next, readCmd := m.handleStartSelectedFlowWorktreeAgent()
 			m = next.(Model)

@@ -91,9 +91,12 @@ type manualLaunchHarness struct {
 
 	// ensureRecords counts what the worktree-creation seam was asked to create,
 	// so "the git work never happened" is assertable rather than inferred.
-	ensureRecords []flowstore.FlowRecord
-	ensureErr     error
-	ensured       flowstore.FlowRecord
+	ensureRecords  []flowstore.FlowRecord
+	ensureErr      error
+	ensured        flowstore.FlowRecord
+	inspectedPaths []string
+	inspectErr     error
+	inspectFunc    func(string) error
 
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
@@ -294,6 +297,13 @@ func (h *manualLaunchHarness) model() Model {
 func (h *manualLaunchHarness) modelWith(repos []scanner.Repo, opts Options) Model {
 	h.t.Helper()
 	m := NewWithOptions(repos, opts)
+	m.launchSeams.InspectWorktreeDirectory = func(path string) error {
+		h.inspectedPaths = append(h.inspectedPaths, path)
+		if h.inspectFunc != nil {
+			return h.inspectFunc(path)
+		}
+		return h.inspectErr
+	}
 	m.contentPane = ui.PaneBottom
 	m.bottomMode = ui.ModeFlows
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{h.record})

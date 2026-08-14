@@ -68,6 +68,11 @@ func ClearFlowEmbeddedTerminalsForTest(m Model) Model {
 	return m
 }
 
+func WithFlowWorktreeInspectionForTest(m Model, inspect func(string) error) Model {
+	m.launchSeams.InspectWorktreeDirectory = inspect
+	return m
+}
+
 func AutoAdvanceResultForTest(m Model, flows []flowstore.FlowRecord) (Model, tea.Cmd) {
 	m.autoAdvanceInFlight = 1
 	return m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: flows, Request: 1})

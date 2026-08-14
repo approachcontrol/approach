@@ -27,6 +27,7 @@ import (
 
 func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
+	m = model.WithFlowWorktreeInspectionForTest(m, func(string) error { return nil })
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -172,6 +173,7 @@ func flowStartRequestHeadless(req model.FlowStartRequest) bool {
 
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
+	m = model.WithFlowWorktreeInspectionForTest(m, func(string) error { return nil })
 	if m.ActivePane() == ui.PaneRepos {
 		m = inRightPane(m)
 	}

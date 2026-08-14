@@ -121,25 +121,29 @@ type FlowPhaseLauncher struct {
 	// has none, returning the updated record. Nil means "refuse worktree-less
 	// launches" — it never means "fall back to the repository root".
 	EnsureWorktree func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	// InspectWorktreeDirectory validates a non-empty recorded worktree path.
+	// Nil means "use the real filesystem inspector", never "skip validation".
+	InspectWorktreeDirectory func(string) error
 }
 
 func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return FlowPhaseLauncher{
-		Backend:              m.launchBackend,
-		TmuxAvailable:        m.tmuxAvailable,
-		CurrentRepoPath:      m.currentRepoPath,
-		PlanMarkdownPath:     m.planMarkdownPath,
-		ReadPlan:             m.readPlan,
-		AddFlowPhaseLaunchID: m.addFlowPhaseLaunchID,
-		NewLaunchID:          newLaunchID,
-		SessionStateRoot:     m.sessionStateRoot,
-		AgentPreferences:     m.agentPreferences(),
-		AgentCommand:         command,
-		Model:                model,
-		ReasoningEffort:      reasoningEffort,
-		PromptTemplates:      m.flowPromptTemplates,
-		EnsureWorktree:       m.ensureFlowWorktree,
+		Backend:                  m.launchBackend,
+		TmuxAvailable:            m.tmuxAvailable,
+		CurrentRepoPath:          m.currentRepoPath,
+		PlanMarkdownPath:         m.planMarkdownPath,
+		ReadPlan:                 m.readPlan,
+		AddFlowPhaseLaunchID:     m.addFlowPhaseLaunchID,
+		NewLaunchID:              newLaunchID,
+		SessionStateRoot:         m.sessionStateRoot,
+		AgentPreferences:         m.agentPreferences(),
+		AgentCommand:             command,
+		Model:                    model,
+		ReasoningEffort:          reasoningEffort,
+		PromptTemplates:          m.flowPromptTemplates,
+		EnsureWorktree:           m.ensureFlowWorktree,
+		InspectWorktreeDirectory: m.launchSeams.inspectWorktreeDirectory,
 	}
 }
 
@@ -196,13 +200,17 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 	}, nil
 }
 
-// EnsureLaunchWorktree resolves a prepared request whose WorktreePath is still
-// empty. It is the only part of launch preparation that mutates the filesystem,
-// so callers must run it last: after every cheap refusal Preflight makes and
-// after the session-occupancy check, or a launch that is about to be refused
-// leaves an orphan branch and directory behind.
+// EnsureLaunchWorktree validates a prepared request's recorded worktree, or
+// provisions one when the record has no path. It is the only filesystem-aware
+// part of launch preparation, so callers must run it last: after every cheap
+// refusal Preflight makes and after the session-occupancy check, or a launch
+// that is about to be refused may inspect unnecessarily or leave an orphan
+// branch and directory behind.
 func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchPreparedRequest, error) {
 	if req.WorktreePath != "" {
+		if err := l.inspectWorktreeDirectory(req.WorktreePath); err != nil {
+			return req, recordedFlowWorktreeUnusableError(req.WorktreePath, err)
+		}
 		return req, nil
 	}
 	// Record.RepoPath, never req.RepoPath: the latter has already fallen back to
@@ -253,7 +261,25 @@ func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedReque
 	if !created {
 		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + "no worktree path was recorded"}
 	}
+	// EnsureWorktree may return a path another process recorded while this
+	// launch was waiting for the reservation. Validate every successfully
+	// ensured path before Prepare can persist a launch ID against it.
+	if err := l.inspectWorktreeDirectory(req.WorktreePath); err != nil {
+		return req, recordedFlowWorktreeUnusableError(req.WorktreePath, err)
+	}
 	return req, nil
+}
+
+func recordedFlowWorktreeUnusableError(path string, err error) FlowPhaseLaunchWorktreeError {
+	return FlowPhaseLaunchWorktreeError{Message: fmt.Sprintf(
+		"Recorded Flow worktree %q is unusable: %v", path, err)}
+}
+
+func (l FlowPhaseLauncher) inspectWorktreeDirectory(path string) error {
+	if l.InspectWorktreeDirectory != nil {
+		return l.InspectWorktreeDirectory(path)
+	}
+	return inspectWorktreeDirectory(path)
 }
 
 func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchResult, error) {

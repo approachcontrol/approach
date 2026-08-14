@@ -66,15 +66,20 @@ func TestFlowPhaseLauncherPreflightKeepsExistingWorktreePath(t *testing.T) {
 	}
 }
 
-func TestFlowPhaseLauncherEnsureLaunchWorktreeSkipsSeamWhenWorktreeExists(t *testing.T) {
+func TestFlowPhaseLauncherEnsureLaunchWorktreeInspectsExistingWorktreePath(t *testing.T) {
 	record := worktreelessLaunchRecord()
 	record.WorktreePath = "/dev/alpha-worktrees/flow-one"
-	calls := 0
+	ensureCalls := 0
+	var inspectedPaths []string
 	launcher := model.FlowPhaseLauncher{
 		AgentCommand: "codex",
 		NewLaunchID:  func() string { return "launch-1" },
+		InspectWorktreeDirectory: func(path string) error {
+			inspectedPaths = append(inspectedPaths, path)
+			return nil
+		},
 		EnsureWorktree: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			calls++
+			ensureCalls++
 			return flowstore.FlowRecord{}, nil
 		},
 	}
@@ -87,11 +92,125 @@ func TestFlowPhaseLauncherEnsureLaunchWorktreeSkipsSeamWhenWorktreeExists(t *tes
 	if err != nil {
 		t.Fatalf("EnsureLaunchWorktree() error = %v", err)
 	}
-	if calls != 0 {
-		t.Fatalf("ensure seam calls = %d, want 0 for a Flow that already has a worktree", calls)
+	if len(inspectedPaths) != 1 || inspectedPaths[0] != record.WorktreePath {
+		t.Fatalf("inspected paths = %#v, want the recorded path", inspectedPaths)
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("ensure seam calls = %d, want 0 for a Flow that already has a worktree", ensureCalls)
 	}
 	if ensured.WorktreePath != record.WorktreePath || ensured.CreatedWorktree {
 		t.Fatalf("ensured request = %#v, want it returned unchanged", ensured)
+	}
+}
+
+func TestFlowPhaseLauncherEnsureLaunchWorktreeUsesRealInspectorWhenNil(t *testing.T) {
+	record := worktreelessLaunchRecord()
+	record.WorktreePath = t.TempDir()
+	launcher := model.FlowPhaseLauncher{
+		AgentCommand: "codex",
+		NewLaunchID:  func() string { return "launch-1" },
+		EnsureWorktree: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			t.Fatal("a non-empty recorded path must not be provisioned")
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: record.Phases[0]})
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	ensured, err := launcher.EnsureLaunchWorktree(prepared)
+	if err != nil {
+		t.Fatalf("EnsureLaunchWorktree() error = %v", err)
+	}
+	if ensured.WorktreePath != record.WorktreePath || ensured.CreatedWorktree {
+		t.Fatalf("ensured request = %#v, want the real directory returned unchanged", ensured)
+	}
+}
+
+func TestFlowPhaseLauncherEnsureLaunchWorktreeRefusesNonDirectoryRecordedPath(t *testing.T) {
+	record := worktreelessLaunchRecord()
+	record.WorktreePath = "/dev/alpha-worktrees/not-a-directory"
+	inspectionErr := errors.New("/dev/alpha-worktrees/not-a-directory is not a directory")
+	var inspectedPaths []string
+	ensureCalls := 0
+	launcher := model.FlowPhaseLauncher{
+		AgentCommand: "codex",
+		NewLaunchID:  func() string { return "launch-1" },
+		InspectWorktreeDirectory: func(path string) error {
+			inspectedPaths = append(inspectedPaths, path)
+			return inspectionErr
+		},
+		EnsureWorktree: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			ensureCalls++
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: record.Phases[0]})
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	_, err = launcher.EnsureLaunchWorktree(prepared)
+	want := `Recorded Flow worktree "/dev/alpha-worktrees/not-a-directory" is unusable: /dev/alpha-worktrees/not-a-directory is not a directory`
+	if err == nil || err.Error() != want {
+		t.Fatalf("EnsureLaunchWorktree() error = %v, want %q", err, want)
+	}
+	var worktreeErr model.FlowPhaseLaunchWorktreeError
+	if !errors.As(err, &worktreeErr) {
+		t.Fatalf("EnsureLaunchWorktree() error type = %T, want FlowPhaseLaunchWorktreeError", err)
+	}
+	if worktreeErr.Transient || worktreeErr.Stale {
+		t.Fatalf("worktree error classification = transient %v stale %v, want permanent", worktreeErr.Transient, worktreeErr.Stale)
+	}
+	if len(inspectedPaths) != 1 || inspectedPaths[0] != record.WorktreePath {
+		t.Fatalf("inspected paths = %#v, want the recorded path", inspectedPaths)
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("ensure seam calls = %d, want 0 for a non-empty recorded path", ensureCalls)
+	}
+}
+
+func TestFlowPhaseLauncherEnsureLaunchWorktreeRefusesMissingRecordedPath(t *testing.T) {
+	record := worktreelessLaunchRecord()
+	record.WorktreePath = "/dev/alpha-worktrees/missing-flow"
+	inspectionErr := errors.New("stat /dev/alpha-worktrees/missing-flow: no such file or directory")
+	var inspectedPaths []string
+	ensureCalls := 0
+	launcher := model.FlowPhaseLauncher{
+		AgentCommand: "codex",
+		NewLaunchID:  func() string { return "launch-1" },
+		InspectWorktreeDirectory: func(path string) error {
+			inspectedPaths = append(inspectedPaths, path)
+			return inspectionErr
+		},
+		EnsureWorktree: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			ensureCalls++
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: record.Phases[0]})
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	_, err = launcher.EnsureLaunchWorktree(prepared)
+	want := `Recorded Flow worktree "/dev/alpha-worktrees/missing-flow" is unusable: stat /dev/alpha-worktrees/missing-flow: no such file or directory`
+	if err == nil || err.Error() != want {
+		t.Fatalf("EnsureLaunchWorktree() error = %v, want %q", err, want)
+	}
+	var worktreeErr model.FlowPhaseLaunchWorktreeError
+	if !errors.As(err, &worktreeErr) {
+		t.Fatalf("EnsureLaunchWorktree() error type = %T, want FlowPhaseLaunchWorktreeError", err)
+	}
+	if worktreeErr.Transient || worktreeErr.Stale {
+		t.Fatalf("worktree error classification = transient %v stale %v, want permanent", worktreeErr.Transient, worktreeErr.Stale)
+	}
+	if len(inspectedPaths) != 1 || inspectedPaths[0] != record.WorktreePath {
+		t.Fatalf("inspected paths = %#v, want the recorded path", inspectedPaths)
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("ensure seam calls = %d, want 0 for a non-empty recorded path", ensureCalls)
 	}
 }
 
@@ -105,6 +224,9 @@ func TestFlowPhaseLauncherEnsureLaunchWorktreeCreatesAndCarriesTheUpdatedRecord(
 	launcher := model.FlowPhaseLauncher{
 		AgentCommand: "codex",
 		NewLaunchID:  func() string { return "launch-1" },
+		InspectWorktreeDirectory: func(string) error {
+			return nil
+		},
 		EnsureWorktree: func(got flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 			seen = append(seen, got)
 			return updated, nil
@@ -144,6 +266,48 @@ func TestFlowPhaseLauncherEnsureLaunchWorktreeCreatesAndCarriesTheUpdatedRecord(
 		result.Context.Branch != "flow/flow-one" ||
 		result.Context.Commit != "abc123" {
 		t.Fatalf("launch context = %#v, want the ensured worktree, branch, and commit", result.Context)
+	}
+}
+
+func TestFlowPhaseLauncherEnsureLaunchWorktreeRefusesUnusableEnsuredPath(t *testing.T) {
+	record := worktreelessLaunchRecord()
+	updated := record
+	updated.WorktreePath = "/dev/alpha-worktrees/disappeared"
+	inspectionErr := errors.New("stat /dev/alpha-worktrees/disappeared: no such file or directory")
+	var inspectedPaths []string
+	launcher := model.FlowPhaseLauncher{
+		AgentCommand: "codex",
+		NewLaunchID:  func() string { return "launch-1" },
+		EnsureWorktree: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			return updated, nil
+		},
+		InspectWorktreeDirectory: func(path string) error {
+			inspectedPaths = append(inspectedPaths, path)
+			return inspectionErr
+		},
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: record.Phases[0]})
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	ensured, err := launcher.EnsureLaunchWorktree(prepared)
+	want := `Recorded Flow worktree "/dev/alpha-worktrees/disappeared" is unusable: stat /dev/alpha-worktrees/disappeared: no such file or directory`
+	if err == nil || err.Error() != want {
+		t.Fatalf("EnsureLaunchWorktree() error = %v, want %q", err, want)
+	}
+	var worktreeErr model.FlowPhaseLaunchWorktreeError
+	if !errors.As(err, &worktreeErr) {
+		t.Fatalf("EnsureLaunchWorktree() error type = %T, want FlowPhaseLaunchWorktreeError", err)
+	}
+	if worktreeErr.Transient || worktreeErr.Stale {
+		t.Fatalf("worktree error classification = transient %v stale %v, want permanent", worktreeErr.Transient, worktreeErr.Stale)
+	}
+	if len(inspectedPaths) != 1 || inspectedPaths[0] != updated.WorktreePath {
+		t.Fatalf("inspected paths = %#v, want the ensured path", inspectedPaths)
+	}
+	if ensured.WorktreePath != updated.WorktreePath || ensured.Record.WorktreePath != updated.WorktreePath || !ensured.CreatedWorktree {
+		t.Fatalf("refused request = %#v, want the persisted ensured worktree carried forward", ensured)
 	}
 }
 
@@ -287,6 +451,9 @@ func TestFlowPhaseLauncherEnsureLaunchWorktreeCarriesBlankBranchAndCommit(t *tes
 	launcher := model.FlowPhaseLauncher{
 		AgentCommand: "codex",
 		NewLaunchID:  func() string { return "launch-1" },
+		InspectWorktreeDirectory: func(string) error {
+			return nil
+		},
 		EnsureWorktree: func(got flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{
 				FlowID:       got.FlowID,

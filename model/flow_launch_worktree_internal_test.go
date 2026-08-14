@@ -63,6 +63,39 @@ func TestManualFlowLaunchLeavesAWorktreedFlowUntouched(t *testing.T) {
 	}
 }
 
+func TestManualFlowLaunchRefusesMissingRecordedWorktree(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	record.WorktreePath = "/dev/alpha-worktrees/missing-flow"
+	h := newManualLaunchHarness(t, record)
+	h.inspectErr = errors.New("stat /dev/alpha-worktrees/missing-flow: no such file or directory")
+
+	m := h.launch(h.model())
+
+	want := `Recorded Flow worktree "/dev/alpha-worktrees/missing-flow" is unusable: stat /dev/alpha-worktrees/missing-flow: no such file or directory`
+	if m.status.Text != want {
+		t.Fatalf("status = %q, want %q", m.status.Text, want)
+	}
+	if len(h.inspectedPaths) != 1 || h.inspectedPaths[0] != record.WorktreePath {
+		t.Fatalf("inspected paths = %#v, want the recorded path once", h.inspectedPaths)
+	}
+	if len(h.ensureRecords) != 0 {
+		t.Fatalf("ensure calls = %#v, want none for a non-empty recorded path", h.ensureRecords)
+	}
+	if len(h.phaseUpdates) != 0 || len(h.launchUpdates) != 0 {
+		t.Fatalf("a refused manual launch persisted something: phases=%#v launches=%#v", h.phaseUpdates, h.launchUpdates)
+	}
+	if h.launchReservations != 0 {
+		t.Fatalf("launch reservations = %d, want 0 before prepare", h.launchReservations)
+	}
+	if len(h.agentContexts) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatalf("a refused manual launch spawned something: agents=%#v terminals=%#v tmux=%#v",
+			h.agentContexts, h.launchContexts, h.tmuxContexts)
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("a refused manual launch must release its attempt")
+	}
+}
+
 // A keypress that is refused must not mutate Flow state as a side effect.
 func TestManualFlowLaunchWorktreeFailureRefusesWithoutWriting(t *testing.T) {
 	record := worktreelessFlowRecord()
@@ -217,6 +250,94 @@ func TestAutoFlowLaunchCreatesTheMissingWorktreeAndLaunches(t *testing.T) {
 	}
 	if h.drainArmed(m, record.FlowID) {
 		t.Fatal("a successful auto launch must leave the drain disarmed")
+	}
+}
+
+func TestAutoFlowLaunchBlocksMissingRecordedWorktree(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		phase       flowstore.FlowPhase
+		planID      string
+		planPath    string
+		wantOutcome string
+	}{
+		{
+			name: "implementation",
+			phase: flowstore.FlowPhase{
+				PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation,
+				Status: flowstore.PhaseReady, Order: 1,
+			},
+		},
+		{
+			name: "plan review",
+			phase: flowstore.FlowPhase{
+				PhaseID: "plan-review", Title: "Plan review", Kind: flowstore.KindPlanReview,
+				Status: flowstore.PhaseReady, Order: 1,
+			},
+			planID:      "plan-1",
+			planPath:    "/state/approach/plans/plan-1/plan.md",
+			wantOutcome: flowstore.OutcomeBlocked,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := autoLaunchFlowRecord()
+			record.WorktreePath = "/dev/alpha-worktrees/missing-flow"
+			record.PlanID = tt.planID
+			record.PlanPath = tt.planPath
+			record.Phases = []flowstore.FlowPhase{tt.phase}
+			h := newManualLaunchHarness(t, record)
+			h.inspectErr = errors.New("stat /dev/alpha-worktrees/missing-flow: no such file or directory")
+
+			m := h.autoDrain(h.model(), record)
+
+			reason := `Recorded Flow worktree "/dev/alpha-worktrees/missing-flow" is unusable: stat /dev/alpha-worktrees/missing-flow: no such file or directory`
+			if len(h.phaseUpdates) != 1 {
+				t.Fatalf("phase updates = %#v, want exactly one blocked write", h.phaseUpdates)
+			}
+			update := h.phaseUpdates[0]
+			if update.FlowID != record.FlowID ||
+				update.PhaseID != tt.phase.PhaseID ||
+				update.Status != flowstore.PhaseBlocked ||
+				update.Notes != "Auto-advance blocked: "+reason ||
+				update.Outcome != tt.wantOutcome {
+				t.Fatalf("phase update = %#v", update)
+			}
+			if len(h.inspectedPaths) != 1 || h.inspectedPaths[0] != record.WorktreePath {
+				t.Fatalf("inspected paths = %#v, want the recorded path once", h.inspectedPaths)
+			}
+			if len(h.ensureRecords) != 0 || len(h.launchUpdates) != 0 {
+				t.Fatalf("a blocked launch provisioned or persisted a launch ID: ensures=%#v launches=%#v",
+					h.ensureRecords, h.launchUpdates)
+			}
+			if h.launchReservations != 0 {
+				t.Fatalf("launch reservations = %d, want 0 before prepare", h.launchReservations)
+			}
+			if len(h.agentContexts) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+				t.Fatalf("a blocked launch spawned something: agents=%#v terminals=%#v tmux=%#v",
+					h.agentContexts, h.launchContexts, h.tmuxContexts)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("the blocked write must release the attempt once it lands")
+			}
+			if h.drainArmed(m, record.FlowID) {
+				t.Fatal("a blocked phase must not re-arm the drain")
+			}
+			if m.status.Text != reason {
+				t.Fatalf("status = %q, want %q", m.status.Text, reason)
+			}
+
+			blocked := record
+			blocked.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+			blocked.Phases[0].Status = flowstore.PhaseBlocked
+			m = h.autoDrain(m, blocked)
+			if len(h.inspectedPaths) != 1 || h.launchReservations != 0 ||
+				len(h.phaseUpdates) != 1 || len(h.launchUpdates) != 0 ||
+				len(h.agentContexts) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+				t.Fatalf("blocked phase retried work: inspections=%#v reservations=%d phases=%#v launches=%#v agents=%#v terminals=%#v tmux=%#v",
+					h.inspectedPaths, h.launchReservations, h.phaseUpdates, h.launchUpdates,
+					h.agentContexts, h.launchContexts, h.tmuxContexts)
+			}
+		})
 	}
 }
 

@@ -635,6 +635,15 @@ was written — never launches in the repository root. Pressing `g` creates the
 worktree first, announcing it in the status line, and only then starts the
 agent.
 
+A Flow that records a non-empty worktree path takes a different route: Approach
+inspects that exact path before persisting a phase launch ID or preparing an
+agent process. If the path is missing or is not a directory, a `g` phase launch
+or `r` phase resume is refused with the recorded path and inspection reason,
+while AutoMode blocks the candidate phase with the same reason in its notes.
+Approach does not clear the path, prune Git metadata, recreate the worktree, or
+fall back to the repository root; those cases can require different recovery
+choices.
+
 A record that already names a local branch gets a worktree for that branch, so
 the name prompts render as the push target keeps meaning what it said. If that
 branch already has a healthy linked worktree, the Flow adopts it rather than
@@ -665,16 +674,15 @@ that reason in its notes rather than retrying every second, when:
   HEAD under a record that keeps naming a branch;
 - the recorded branch is checked out in the repository's own working tree,
   which is the launch this whole path exists to prevent;
-- `git worktree add` fails for any other reason, including a registration left
-  behind by a directory deleted without `git worktree prune`.
+- `git worktree add` fails for any other reason.
 
 Most of those refusals write nothing, but two happen after `git worktree add`
 has already run. A store that will not record the new worktree leaves a branch
 and directory on disk that no record names; the status line names the path. A
 bootstrap-hook failure comes after the start metadata is persisted, so the Flow
 does keep the worktree it just gained, and its status says so — note that a
-second `g` then takes the worktree as given and launches the agent into it even
-though the hook never completed.
+second `g` validates the recorded directory and launches the agent into it when
+it remains usable, even though the hook never completed.
 
 After the active subview settles, `enter` on its visible selected row
 asynchronously loads the raw human-readable output of
