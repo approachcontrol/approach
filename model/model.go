@@ -1307,6 +1307,8 @@ func (m Model) View() string {
 		BeadsOpenAvailable:           beadsAvailable,
 		BeadsOpenPending:             beadsPending,
 		ReadyBeadFlowCreateAvailable: m.canCreateReadyBeadFlow(),
+		ReadyBeadFlowStartAvailable:  m.canStartReadyBeadFlow(),
+		ReadyBeadFlowKeysOwned:       m.readyBeadFlowKeysOwned(),
 		BeadsError:                   beadsError,
 		BeadsQuery:                   beadsQuery,
 		BeadsSourceCount:             beadsSourceCount,
@@ -1963,27 +1965,27 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
-		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
-			releaseFlowLaunchReservation(msg.LaunchRelease)
-			return m, nil
+		var accepted bool
+		var rejectionCmd tea.Cmd
+		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		if !accepted {
+			return m, rejectionCmd
 		}
-		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentForBackend(msg.LaunchContext, msg.LaunchRelease)
-		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
+		if msg.LaunchContext.FlowID != "" && next.flowRefreshSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
-		if msg.Request != 0 {
-			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
-				releaseFlowLaunchReservation(msg.LaunchRelease)
-				return m, nil
-			}
-			m = m.clearFlowCreateRequest(msg.Request)
+		var accepted bool
+		var rejectionCmd tea.Cmd
+		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		if !accepted {
+			return m, rejectionCmd
 		}
 		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
-		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
+		if msg.LaunchContext.FlowID != "" && next.flowRefreshSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}

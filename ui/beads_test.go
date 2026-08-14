@@ -637,7 +637,7 @@ func TestRender_BeadsOpenShortcutsAdvertiseArrowAndSubviewNavigation(t *testing.
 	}
 }
 
-func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.T) {
+func TestRender_BeadsReadyFlowShortcutsUseIndependentAvailabilitySnapshots(t *testing.T) {
 	base := RenderParams{
 		Repos:                        []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:                     0,
@@ -646,6 +646,9 @@ func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.
 		ActivePane:                   PaneTop,
 		BeadsOpen:                    []beadsquery.Bead{{ID: "bd-1", Title: "One"}},
 		ReadyBeadFlowCreateAvailable: true,
+		ReadyBeadFlowStartAvailable:  true,
+		ReadyBeadFlowKeysOwned:       true,
+		PullAvailable:                true,
 	}
 
 	base.Width = 80
@@ -653,11 +656,33 @@ func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.
 	if !strings.Contains(footerView, "f: new flow") {
 		t.Fatalf("Ready footer missing executable Flow shortcut:\n%s", footerView)
 	}
+	if !strings.Contains(footerView, "F: new flow + start") || strings.Contains(footerView, "F: pull") {
+		t.Fatalf("Ready footer did not replace pull with start:\n%s", footerView)
+	}
 
 	base.Width = 140
 	pane := ansi.Strip(shortcutPaneText(Render(base)))
 	if !strings.Contains(pane, "f      new flow") {
 		t.Fatalf("Ready shortcut pane missing executable Flow shortcut:\n%s", pane)
+	}
+	if !strings.Contains(pane, "F      new flow + start") || strings.Contains(pane, "F      pull") {
+		t.Fatalf("Ready shortcut pane did not replace pull with start:\n%s", pane)
+	}
+
+	createOnly := base
+	createOnly.ReadyBeadFlowStartAvailable = false
+	createOnlyView := ansi.Strip(Render(createOnly))
+	if !strings.Contains(createOnlyView, "new flow") || strings.Contains(createOnlyView, "new flow + start") || strings.Contains(createOnlyView, "pull") {
+		t.Fatalf("owned Ready create-only shortcuts are wrong:\n%s", createOnlyView)
+	}
+
+	pull := base
+	pull.ReadyBeadFlowCreateAvailable = false
+	pull.ReadyBeadFlowStartAvailable = false
+	pull.ReadyBeadFlowKeysOwned = false
+	pullView := ansi.Strip(Render(pull))
+	if strings.Contains(pullView, "new flow") || !strings.Contains(pullView, "pull") {
+		t.Fatalf("unowned Ready context did not retain pull:\n%s", pullView)
 	}
 
 	for _, tt := range []struct {
@@ -676,6 +701,9 @@ func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.
 			params := base
 			params.Width = 140
 			params.ReadyBeadFlowCreateAvailable = false
+			params.ReadyBeadFlowStartAvailable = false
+			params.ReadyBeadFlowKeysOwned = false
+			params.PullAvailable = false
 			if tt.mutate != nil {
 				tt.mutate(&params)
 			}

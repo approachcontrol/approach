@@ -102,7 +102,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
 | `u` | Unlock a locked worktree (worktrees view) |
 | `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview |
-| `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
+| `F` | Create and immediately start the selected Bead's Flow in a focused, settled Ready subview; pull with `--ff-only` outside that owned Ready selection (including eligible worktrees and checked-out branches) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
@@ -364,8 +364,9 @@ What does not change:
   which is always headless) stay embedded. `claude --print` buffers all output
   until it exits, so a self-closing tmux window would render nothing and then
   discard it.
-- **The plan launch that Flow creation performs** stays embedded. It shares its
-  spawn path with repair, which must stay in the dock.
+- **The plan launch that Flow creation performs** — whether Plan Now or Ready
+  `F` — stays embedded for CLI agents. It shares its spawn path with repair,
+  which must stay in the dock.
 
 Lifecycle and ownership:
 
@@ -543,31 +544,57 @@ Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
 
-In Ready only, `f` is available when the content pane is focused, the query is
-settled and available, a filtered visible Bead with a non-empty ID is selected,
-and no Ready Flow creation is already in flight. It asynchronously creates
-exactly one Approach Flow in the selected repo. The record title is
+In Ready only, `f` and `F` belong to a focused content pane whose query is
+settled and available and whose filtered visible selection has a non-empty Bead
+ID. Lowercase `f` is executable whenever no Ready Flow request is in flight;
+uppercase `F` additionally requires a configured launch agent. The footer and
+shortcut pane advertise the actions separately as `f: new flow` and
+`F: new flow + start`. An owned Ready selection consumes `F` even when the agent
+is missing or either Ready action is busy, so it cannot fall through to pull;
+outside that ownership context uppercase `F` keeps its normal pull binding.
+
+Both keys asynchronously create exactly one Approach Flow in the selected repo.
+The record title is
 `<trimmed bead ID>: <trimmed bead title>` and its instructions are
 ``Use Bead <id> as the durable source of requirements. Read it with `bd show <id>` before planning or implementation.`` The configured Flow preset seeds the
-phase graph and normal Flow creation defaults apply. The shortcut prepares the
+phase graph and normal Flow creation defaults apply. Both shortcuts prepare the
 Flow exactly like an `n` form submission with Plan Now off: it creates the
 `flow/<slug>` branch and worktree from the repository's current HEAD, records
 the worktree, branch, and commit start metadata, and runs the repository's
-bootstrap hook. It does not link a plan or issue, start a Flow phase, launch an
-agent, or invoke `bd`, so the selected Bead and all other tracker state remain
-untouched. The shortcut is hidden in every context where that exact action
-cannot run; duplicate keypresses are ignored until the current creation request
-finishes, and any repo change — cursor move or rescan — releases the shortcut
-and discards the pending result.
+bootstrap hook. Lowercase `f` stops there: it does not link a plan or issue,
+start a Flow phase, or launch an agent. Uppercase `F` continues through the
+existing `StartPlan` backend, which selects the first actionable phase and uses
+the configured agent, model, reasoning effort, Flow prompt-template snapshot,
+session state root, and an explicit default-on headless setting. `codex` and
+`claude` creation-time launches use the tracked embedded path even when
+`[launch].backend = "tmux"`; external-only agents keep the existing external
+backend route. Neither action invokes `bd`, so the selected Bead and all other
+tracker state remain untouched.
 
-The result is the same parked Flow a successful `n` form submission produces,
+The two keys share one admission token. Repeated or mixed presses cannot create
+duplicate Flows. A repository change — cursor move or rescan — invalidates a
+pending result; a stale start handoff never spawns and releases its launch
+reservation. Once a valid `F` handoff transfers ownership to the normal launch
+lifecycle, later terminal or spawn failure cannot clear a newer Ready request.
+Every preparation result returns through the Ready handler, which refreshes a
+visible Flow surface and includes a persisted Flow ID in any post-creation error.
+
+Lowercase `f` produces the same parked Flow as a successful `n` form submission,
 so `g` on its first phase launches the agent inside the Flow's isolated
-worktree. If worktree creation fails, the persisted Flow record keeps its
+worktree. An initial store failure leaves no Flow. If worktree creation fails,
+the persisted Flow record keeps its
 launchable phases blocked with the failure noted, the Flows pane renders the
 worktree-less record with the `missing-worktree` branch label and a
 `recover-worktree` phase state, and the error is reported in the status line. A
-bootstrap-hook failure comes after the start metadata is persisted, so that
-record does have a worktree; only its launchable phases are blocked.
+start-metadata failure occurs after the directory and branch exist but before
+the Flow records them; it reports the persisted Flow ID without inventing a
+blocked phase. A bootstrap-hook failure comes after the start metadata is
+persisted, so that record does have a worktree and its launchable phases are
+blocked. Reservation refusal or launch-ID persistence failure retains the
+prepared Flow without spawning or leaking the reservation. Embedded-open,
+prefill, external-construction, terminal-spawn, and later agent failures use the
+existing launch-failure persistence and recovery behavior; the Flow remains
+available and the status line shows the failure.
 
 A Flow that has no worktree at all — one created by `approach flow create`
 without `--worktree-path`, or left behind by a failure before the start metadata
@@ -640,7 +667,9 @@ default and immediately launches the first ready root phase after creating the
 Flow; uncheck it to create a parked Flow whose ready root phase can be
 launched later from the Flow row. The Headless checkbox is persisted on the
 new Flow in either case, so a parked Flow uses the same choice when launched
-later. Ready-Bead and command-line creation retain the default-on setting.
+later. Ready-Bead creation retains the default-on setting: lowercase `f`
+persists it for the parked Flow, while uppercase `F` also uses it for the
+immediate start. Command-line creation retains the same default.
 
 On a Flow row or an expanded phase row:
 

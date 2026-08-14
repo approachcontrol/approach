@@ -12331,9 +12331,11 @@ func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
+func TestModel_NewFlowStaleLaunchRecoversPhaseAfterRepoChange(t *testing.T) {
 	embeddedStarts := 0
 	externalLaunches := 0
+	releases := 0
+	var phaseUpdates []flowstore.PhaseUpdate
 	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
@@ -12354,7 +12356,11 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 				Branch:       "flow/stale",
 				FlowID:       "flow-1",
 				FlowPhaseID:  "plan",
-			}}, nil
+			}, LaunchRelease: func() { releases++ }}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			externalLaunches++
@@ -12380,12 +12386,19 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged FlowEmbeddedLaunchRequestedMsg", staleMsg)
 	}
-	_, cmd := update(m, staleMsg)
-	if cmd != nil {
-		t.Fatalf("stale launch returned command %T, want nil", cmd)
+	m, cmd := update(m, staleMsg)
+	if cmd == nil {
+		t.Fatal("stale launch returned no phase recovery command")
 	}
+	if releases != 0 {
+		t.Fatalf("reservation released before stale phase recovery: %d", releases)
+	}
+	m, _ = update(m, cmd())
 	if embeddedStarts != 0 || externalLaunches != 0 {
 		t.Fatalf("stale flow creation launch should be ignored after repo change; embedded=%d external=%d", embeddedStarts, externalLaunches)
+	}
+	if releases != 1 || len(phaseUpdates) != 1 || phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("stale embedded recovery: releases=%d updates=%#v", releases, phaseUpdates)
 	}
 
 	requestless := model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{

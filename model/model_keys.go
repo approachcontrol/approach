@@ -539,10 +539,13 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleUnlock()
 	case "f":
 		if mode == ui.ModeBeadsReady {
-			return m.handleReadyBeadFlowCreate()
+			return m.handleReadyBeadFlowCreate(readyBeadFlowCreateOnly)
 		}
 		return m.handleFetch()
 	case "F":
+		if m.readyBeadFlowKeysOwned() {
+			return m.handleReadyBeadFlowCreate(readyBeadFlowCreateAndStart)
+		}
 		return m.handlePull()
 	case "t":
 		return m.handleOpenTerminal()
@@ -561,10 +564,17 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) canCreateReadyBeadFlow() bool {
+type readyBeadFlowIntent uint8
+
+const (
+	readyBeadFlowCreateOnly readyBeadFlowIntent = iota
+	readyBeadFlowCreateAndStart
+)
+
+func (m Model) readyBeadFlowKeysOwned() bool {
 	terminalInputFocused := m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
 	if m.modal.IsOpen() || m.searchActive || terminalInputFocused ||
-		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
+		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady {
 		return false
 	}
 	if _, ok := m.currentRepoPath(); !ok {
@@ -576,8 +586,20 @@ func (m Model) canCreateReadyBeadFlow() bool {
 	return ok && strings.TrimSpace(bead.ID) != ""
 }
 
-func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
+func (m Model) canCreateReadyBeadFlow() bool {
+	return m.readyBeadFlowKeysOwned() && m.activeReadyBeadFlowCreate == 0
+}
+
+func (m Model) canStartReadyBeadFlow() bool {
 	if !m.canCreateReadyBeadFlow() {
+		return false
+	}
+	command, _, _ := m.flowLaunchAgentSettings()
+	return agent.Normalize(command) != ""
+}
+
+func (m Model) handleReadyBeadFlowCreate(intent readyBeadFlowIntent) (Model, tea.Cmd) {
+	if !m.canCreateReadyBeadFlow() || (intent == readyBeadFlowCreateAndStart && !m.canStartReadyBeadFlow()) {
 		return m, nil
 	}
 	repoPath, _ := m.currentRepoPath()
@@ -587,7 +609,7 @@ func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
 	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
 	var request uint64
 	m, request = m.nextReadyBeadFlowCreateRequest()
-	return m, m.createReadyBeadFlow(repoPath, title, instructions, request)
+	return m, m.createReadyBeadFlow(repoPath, title, instructions, request, intent)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
@@ -2076,6 +2098,9 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 	if errText == "" {
 		errText = "Unable to create flow"
 	}
+	if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
+		errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
+	}
 	m = m.setStatus(statusOther, errText)
 	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
@@ -2877,7 +2902,7 @@ func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Mo
 
 // launchTrackedFlowEmbedded opens a tracked embedded Flow launch. It is what is
 // left of the pre-lifecycle embedded opener now that repair routes through the
-// lifecycle; Plan Now is its only production caller.
+// lifecycle; only creation-time Flow starts call it directly.
 func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchReserved bool) (Model, tea.Cmd) {
 	ctx.Embedded = true
 	ctx.FlowLaunchTracked = true
@@ -3092,7 +3117,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		errText += "update flow phase: " + msg.PersistErr.Error()
 	}
 	m = m.setStatus(statusOther, errText)
-	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
+	if msg.LaunchContext.FlowID != "" && m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
