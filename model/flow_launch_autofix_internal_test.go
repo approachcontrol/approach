@@ -365,7 +365,7 @@ func TestAutofixAdmissionRefusesUnusableAgentCommands(t *testing.T) {
 		status  string
 	}{
 		{command: "", status: flowLaunchNoAgentCommandStatus},
-		{command: agent.CommandCodexApp, status: flowAutofixCodexAppStatus},
+		{command: "codex-app", status: `unsupported agent "codex-app"; choose codex or claude`},
 	}
 	for _, tc := range cases {
 		t.Run("agent_"+tc.command, func(t *testing.T) {
@@ -373,6 +373,10 @@ func TestAutofixAdmissionRefusesUnusableAgentCommands(t *testing.T) {
 			opts := h.options()
 			opts.AgentCommand = tc.command
 			m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			// Construction maps retired stored spellings to their supported
+			// replacement. Set the raw value after construction to exercise the
+			// launch admission input boundary itself.
+			m.agentCommand = tc.command
 
 			next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
 				Kind:   flowLaunchKindAutofix,
@@ -1406,75 +1410,5 @@ func TestToggleFlowHeadlessRefusedWhilePendingRepairHoldsTheFlow(t *testing.T) {
 	}
 	if toggledModel.flowHeadlessWritePending(record.FlowID) {
 		t.Fatal("a refused toggle must leave no pending write")
-	}
-}
-
-// TestCodexAppPhaseResumeStillProbesTheAutofixWindow pins the one probe a
-// codex-app resume may not skip. The phase probe above it is exempt because a
-// codex-app resume opens no tmux window of its own, but this probe asks the
-// opposite question — whether an autofix window is *already* open — and that
-// does not depend on the route the resume takes.
-//
-// It is also the case that most needs asking: admitPhaseResumeFlowLaunch returns
-// the codex-app navigation command before its occupancy check, so no attempt, no
-// slot, and no admission refusal stands between `r` and a worktree the autofix
-// agent is still editing.
-func TestCodexAppPhaseResumeStillProbesTheAutofixWindow(t *testing.T) {
-	record := autofixFlowRecord()
-	// A completed phase carrying a codex session is what `r` resumes; with
-	// codex-app as the preference it resolves to the app deep link.
-	for i := range record.Phases {
-		if record.Phases[i].PhaseID != "implementation" {
-			continue
-		}
-		record.Phases[i].LaunchIDs = []string{"launch-old"}
-		record.Phases[i].Sessions = []flowstore.Session{{
-			Provider:  "codex",
-			SessionID: "codex-session",
-			LaunchID:  "launch-old",
-			Status:    "ended",
-		}}
-	}
-	h := newManualLaunchHarness(t, record)
-	h.launchBackend = config.LaunchBackendTmux
-	h.tmuxAvailable = true
-	h.agentCommand = agent.CommandCodexApp
-
-	m := h.model()
-	m.expandedFlowID = record.FlowID
-	m.selectedFlowPhaseID = "implementation"
-	// The autofix window was opened while a CLI agent was selected; the user has
-	// since switched the preference to codex-app. U itself refuses codex-app, so
-	// this ordering is the only way the two can coexist.
-	m = m.withFlowAutofixTmuxLaunch(record.FlowID, "autofix-launch")
-
-	var probed []string
-	h.windowLive = func(_ string, launchIDs []string) bool {
-		probed = append(probed, launchIDs...)
-		return true
-	}
-
-	next, cmd := m.handleResumeFlowPhaseSession()
-	blocked := next.(Model)
-
-	if cmd != nil {
-		t.Fatal("a live autofix window must start no codex-app resume")
-	}
-	if got := blocked.status.Text; got != tmuxFlowLiveWindowRefusal {
-		t.Fatalf("status = %q, want %q", got, tmuxFlowLiveWindowRefusal)
-	}
-	if len(probed) != 1 || probed[0] != "autofix-launch" {
-		t.Fatalf("probed = %#v, want the autofix window asked about", probed)
-	}
-
-	// The refusal lasts exactly as long as the window does: once it closes, the
-	// codex-app resume navigates as before.
-	h.windowLive = func(string, []string) bool { return false }
-	next, cmd = m.handleResumeFlowPhaseSession()
-	if cmd == nil {
-		t.Fatal("a closed window must let the codex-app resume navigate")
-	}
-	if got := next.(Model).status.Text; got != "" {
-		t.Fatalf("status = %q, want no refusal once the window closed", got)
 	}
 }

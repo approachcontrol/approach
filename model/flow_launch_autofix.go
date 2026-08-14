@@ -25,7 +25,6 @@ import (
 const (
 	flowAutofixTerminalStatus    = "Close or dismiss the existing Flow terminal before running autofix"
 	flowAutofixInFlightStatus    = "A Flow launch is already in flight"
-	flowAutofixCodexAppStatus    = "Flow autofix requires codex or claude; press A to choose one"
 	flowAutofixDriftStatus       = "Flow changed; refresh and try again"
 	flowAutofixLiveSessionStatus = "Flow already has a running agent session"
 	flowAutofixCanceledStatus    = "Flow agent launch canceled because a repair terminal is already open for this Flow"
@@ -145,13 +144,8 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 	}
 	command, _, _ := m.flowLaunchAgentSettings()
 	command = agent.Normalize(command)
-	switch {
-	case command == "":
+	if command == "" {
 		return m.setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
-	case command == agent.CommandCodexApp:
-		// A codex-app deep link carries neither a prompt nor approach launch
-		// metadata, so it cannot run autofix at all.
-		return m.setStatus(statusOther, flowAutofixCodexAppStatus), nil, false
 	}
 	if err := agent.Validate(command); err != nil {
 		return m.setStatus(statusOther, err.Error()), nil, false

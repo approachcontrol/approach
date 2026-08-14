@@ -23,12 +23,6 @@ Flow's in-process owner and cannot be detached; it remains occupancy after the
 agent exits until the slot is dismissed. `U` autofix is a separate prompted
 intent whose headless/tmux routing remains unchanged.
 
-`codex-app` opens via macOS deep link instead; Approach scrubs inherited
-`APPROACH_*` from `open` and includes prompt-only launch metadata with copyable
-`--state-root` command examples. New `codex-app` threads use the repo path for
-Codex App project identity when Approach knows it, while the selected worktree
-remains available in the prompt metadata.
-
 ## Manual Hook Setup
 
 For agent sessions that are not launched by Approach, configure Claude Code or

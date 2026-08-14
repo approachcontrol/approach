@@ -14,7 +14,6 @@ import (
 
 const (
 	flowWorktreeAgentChooseStatus  = "Press A to choose codex or claude before starting a Flow worktree agent"
-	flowWorktreeAgentCLIStatus     = "Flow worktree agents require an embedded CLI; press A to choose codex or claude"
 	flowWorktreeAgentPathStatus    = "Flow worktree agent requires the Flow's exact existing worktree directory"
 	flowWorktreeAgentPendingStatus = "Another launch or session is already pending for this Flow"
 	flowWorktreeAgentChangedStatus = "Configured agent changed while the Flow worktree launch was pending; try again"
@@ -89,8 +88,6 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	switch command {
 	case "":
 		return m.setStatus(statusOther, flowWorktreeAgentChooseStatus), nil, false
-	case agent.CommandCodexApp:
-		return m.setStatus(statusOther, flowWorktreeAgentCLIStatus), nil, false
 	case agent.CommandCodex, agent.CommandClaude:
 	default:
 		return m.setStatus(statusOther, fmt.Sprintf("Flow worktree agents do not support agent %q; press A to choose codex or claude", command)), nil, false

@@ -81,7 +81,7 @@ func TestGenericWorktreeAgentPressTimeRefusalsUseGenericContract(t *testing.T) {
 		status  string
 	}{
 		{name: "unconfigured", command: "__empty__", status: flowWorktreeAgentChooseStatus},
-		{name: "codex app", command: agent.CommandCodexApp, status: flowWorktreeAgentCLIStatus},
+		{name: "retired codex app", command: "codex-app", status: `Flow worktree agents do not support agent "codex-app"; press A to choose codex or claude`},
 		{name: "unsupported", command: "other", status: `Flow worktree agents do not support agent "other"; press A to choose codex or claude`},
 		{name: "blank worktree", mutate: func(r *flowstore.FlowRecord, _ *Model) { r.WorktreePath = "" }, status: flowWorktreeAgentPathStatus},
 		{name: "missing worktree", mutate: func(r *flowstore.FlowRecord, _ *Model) { r.WorktreePath = missing }, status: flowWorktreeAgentPathStatus},
