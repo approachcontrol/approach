@@ -36,7 +36,16 @@ const databaseSchemaVersion = 2
 // the one the message already states: upgrade approach.
 var errDatabaseFromNewerBuild = errors.New("flow database was written by a newer version of approach")
 
-const flowSchemaSQL = `
+const flowTableSchemaV1 = `
+CREATE TABLE IF NOT EXISTS flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL
+)`
+
+const flowTableSchemaV2 = `
 CREATE TABLE IF NOT EXISTS flows (
     flow_id TEXT PRIMARY KEY,
     repo_path TEXT NOT NULL,
@@ -45,7 +54,9 @@ CREATE TABLE IF NOT EXISTS flows (
     record BLOB NOT NULL,
     bead_id TEXT NOT NULL DEFAULT '',
     epic_id TEXT NOT NULL DEFAULT ''
-);
+ )`
+
+const flowSchemaSQL = flowTableSchemaV2 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
@@ -266,16 +277,22 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	if tables == 0 {
 		return fmt.Errorf("flow database is empty or was never initialized")
 	}
-	rows, err := db.Query("PRAGMA table_info(flows)")
+	if err := validateSQLiteSchemaObjects(db); err != nil {
+		return err
+	}
+	if err := validateSQLiteFlowTableDefinition(db, version); err != nil {
+		return err
+	}
+	rows, err := db.Query("PRAGMA table_xinfo(flows)")
 	if err != nil {
 		return fmt.Errorf("validate flow database schema: %w", err)
 	}
 	var columns []string
 	for rows.Next() {
-		var cid, notNull, primaryKey int
+		var cid, notNull, primaryKey, hidden int
 		var name, columnType string
 		var defaultValue any
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey, &hidden); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("validate flow database schema columns: %w", err)
 		}
@@ -283,7 +300,7 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		if defaultValue != nil {
 			defaultText = fmt.Sprint(defaultValue)
 		}
-		columns = append(columns, name+":"+strings.ToUpper(columnType)+":"+strconv.Itoa(notNull)+":"+strconv.Itoa(primaryKey)+":"+defaultText)
+		columns = append(columns, name+":"+strings.ToUpper(columnType)+":"+strconv.Itoa(notNull)+":"+strconv.Itoa(primaryKey)+":"+defaultText+":"+strconv.Itoa(hidden))
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -295,28 +312,128 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	var wantColumns []string
 	switch version {
 	case 1:
-		wantColumns = []string{"flow_id:TEXT:0:1:<nil>", "repo_path:TEXT:1:0:<nil>", "status:TEXT:1:0:<nil>", "updated_at:TEXT:1:0:<nil>", "record:BLOB:1:0:<nil>"}
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0"}
 	case 2:
-		wantColumns = []string{"flow_id:TEXT:0:1:<nil>", "repo_path:TEXT:1:0:<nil>", "status:TEXT:1:0:<nil>", "updated_at:TEXT:1:0:<nil>", "record:BLOB:1:0:<nil>", "bead_id:TEXT:1:0:''", "epic_id:TEXT:1:0:''"}
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
 	if !equalStrings(columns, wantColumns) {
 		return fmt.Errorf("flow database has incompatible flows columns: got %v, want %v", columns, wantColumns)
 	}
-	wantIndexes := map[string][]string{
-		"idx_flows_updated":        {"updated_at:1", "flow_id:0"},
-		"idx_flows_repo_updated":   {"repo_path:0", "updated_at:1", "flow_id:0"},
-		"idx_flows_status_updated": {"status:0", "updated_at:1", "flow_id:0"},
+	return validateSQLiteIndexes(db)
+}
+
+func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='table' AND name='flows'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database table definition: %w", err)
 	}
-	for index, wantColumns := range wantIndexes {
-		var found int
-		if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=? AND tbl_name='flows'", index).Scan(&found); err != nil {
-			return fmt.Errorf("validate flow database index %q: %w", index, err)
+	var want string
+	switch version {
+	case 1:
+		want = flowTableSchemaV1
+	case 2:
+		want = flowTableSchemaV2
+	default:
+		return fmt.Errorf("no flow database table contract for version %d", version)
+	}
+	got = normalizeSQLiteSchemaSQL(got)
+	want = normalizeSQLiteSchemaSQL(want)
+	if got != want {
+		return fmt.Errorf("flow database has incompatible flows table definition: got %q, want %q", got, want)
+	}
+	return nil
+}
+
+func normalizeSQLiteSchemaSQL(statement string) string {
+	normalized := strings.Join(strings.Fields(statement), " ")
+	normalized = strings.Replace(normalized, "CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
+	for _, spacing := range [][2]string{{" (", "("}, {"( ", "("}, {" )", ")"}, {" ,", ","}, {", ", ","}} {
+		normalized = strings.ReplaceAll(normalized, spacing[0], spacing[1])
+	}
+	return normalized
+}
+
+func validateSQLiteSchemaObjects(db *sql.DB) error {
+	rows, err := db.Query("SELECT type, name, tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
+	if err != nil {
+		return fmt.Errorf("validate flow database schema objects: %w", err)
+	}
+	var objects []string
+	for rows.Next() {
+		var objectType, name, tableName string
+		if err := rows.Scan(&objectType, &name, &tableName); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan flow database schema objects: %w", err)
 		}
-		if found != 1 {
-			return fmt.Errorf("flow database is missing required index %q", index)
+		objects = append(objects, objectType+":"+name+":"+tableName)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate flow database schema objects: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close flow database schema object rows: %w", err)
+	}
+	want := []string{
+		"index:idx_flows_repo_updated:flows",
+		"index:idx_flows_status_updated:flows",
+		"index:idx_flows_updated:flows",
+		"table:flows:flows",
+	}
+	if !equalStrings(objects, want) {
+		return fmt.Errorf("flow database has incompatible schema objects: got %v, want %v", objects, want)
+	}
+	return nil
+}
+
+func validateSQLiteIndexes(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA index_list(flows)")
+	if err != nil {
+		return fmt.Errorf("validate flow database indexes: %w", err)
+	}
+	properties := make(map[string]string)
+	for rows.Next() {
+		var sequence, unique, partial int
+		var name, origin string
+		if err := rows.Scan(&sequence, &name, &unique, &origin, &partial); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan flow database indexes: %w", err)
 		}
+		properties[name] = strconv.Itoa(unique) + ":" + origin + ":" + strconv.Itoa(partial)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate flow database indexes: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close flow database index rows: %w", err)
+	}
+	wantProperties := map[string]string{
+		"idx_flows_updated":        "0:c:0",
+		"idx_flows_repo_updated":   "0:c:0",
+		"idx_flows_status_updated": "0:c:0",
+		"sqlite_autoindex_flows_1": "1:pk:0",
+	}
+	if len(properties) != len(wantProperties) {
+		return fmt.Errorf("flow database has incompatible index properties: got %v, want %v", properties, wantProperties)
+	}
+	for name, want := range wantProperties {
+		if properties[name] != want {
+			return fmt.Errorf("flow database index %q has properties %q, want %q", name, properties[name], want)
+		}
+	}
+	indexContracts := []struct {
+		name    string
+		columns []string
+	}{
+		{name: "idx_flows_updated", columns: []string{"updated_at:1:BINARY", "flow_id:0:BINARY"}},
+		{name: "idx_flows_repo_updated", columns: []string{"repo_path:0:BINARY", "updated_at:1:BINARY", "flow_id:0:BINARY"}},
+		{name: "idx_flows_status_updated", columns: []string{"status:0:BINARY", "updated_at:1:BINARY", "flow_id:0:BINARY"}},
+	}
+	for _, contract := range indexContracts {
+		index := contract.name
 		indexRows, err := db.Query("PRAGMA index_xinfo('" + index + "')")
 		if err != nil {
 			return fmt.Errorf("validate flow database index %q columns: %w", index, err)
@@ -330,7 +447,11 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 				return fmt.Errorf("scan flow database index %q: %w", index, err)
 			}
 			if key == 1 {
-				gotColumns = append(gotColumns, name.String+":"+strconv.Itoa(descending))
+				collationName := "<nil>"
+				if collation.Valid {
+					collationName = strings.ToUpper(collation.String)
+				}
+				gotColumns = append(gotColumns, name.String+":"+strconv.Itoa(descending)+":"+collationName)
 			}
 		}
 		if err := indexRows.Err(); err != nil {
@@ -340,8 +461,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		if err := indexRows.Close(); err != nil {
 			return fmt.Errorf("close flow database index %q rows: %w", index, err)
 		}
-		if !equalStrings(gotColumns, wantColumns) {
-			return fmt.Errorf("flow database index %q has columns %v, want %v", index, gotColumns, wantColumns)
+		if !equalStrings(gotColumns, contract.columns) {
+			return fmt.Errorf("flow database index %q has columns %v, want %v", index, gotColumns, contract.columns)
 		}
 	}
 	return nil

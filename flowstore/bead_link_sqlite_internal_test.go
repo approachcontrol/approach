@@ -314,3 +314,109 @@ func TestSQLiteRejectsMalformedV0AndV1WithoutPartialUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestSQLiteRejectsNonExactV0AndV1SchemaWithoutPartialUpgrade(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate string
+	}{
+		{
+			name: "partial index",
+			mutate: `
+DROP INDEX idx_flows_status_updated;
+CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id ASC) WHERE status <> '';`,
+		},
+		{
+			name: "unique index",
+			mutate: `
+DROP INDEX idx_flows_status_updated;
+CREATE UNIQUE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id ASC);`,
+		},
+		{
+			name: "non-binary collation",
+			mutate: `
+DROP INDEX idx_flows_status_updated;
+CREATE INDEX idx_flows_status_updated ON flows(status COLLATE NOCASE, updated_at DESC, flow_id ASC);`,
+		},
+		{
+			name:   "hidden generated column",
+			mutate: `ALTER TABLE flows ADD COLUMN hidden_status TEXT GENERATED ALWAYS AS (status) VIRTUAL;`,
+		},
+		{
+			name:   "unexpected table",
+			mutate: `CREATE TABLE unexpected_metadata (value TEXT);`,
+		},
+		{
+			name: "unexpected table constraint",
+			mutate: `
+ALTER TABLE flows RENAME TO original_flows;
+CREATE TABLE flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status = 'pending'),
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL
+);
+INSERT INTO flows(flow_id, repo_path, status, updated_at, record)
+    SELECT flow_id, repo_path, status, updated_at, record FROM original_flows;
+DROP TABLE original_flows;
+CREATE INDEX idx_flows_updated ON flows(updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_repo_updated ON flows(repo_path, updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id ASC);`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, version := range []int64{0, 1} {
+				t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+					root := t.TempDir()
+					seedPredecessorDatabase(t, root, version)
+					path := filepath.Join(root, databaseFilename)
+					db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rw"}}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := db.Exec(tt.mutate); err != nil {
+						_ = db.Close()
+						t.Fatal(err)
+					}
+					if err := db.Close(); err != nil {
+						t.Fatal(err)
+					}
+
+					if _, err := NewStore(StoreOptions{Root: root}); err == nil {
+						t.Fatal("NewStore() error = nil, want exact predecessor schema rejection")
+					}
+
+					db, err = sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"ro"}}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer db.Close()
+					if got := readDatabaseVersionForBeadTest(t, db); got != version {
+						t.Fatalf("user_version = %d, want unchanged %d", got, version)
+					}
+					rows, err := db.Query("PRAGMA table_xinfo(flows)")
+					if err != nil {
+						t.Fatal(err)
+					}
+					var columns []string
+					for rows.Next() {
+						var cid, notNull, primaryKey, hidden int
+						var name, columnType string
+						var defaultValue any
+						if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey, &hidden); err != nil {
+							t.Fatal(err)
+						}
+						columns = append(columns, name)
+					}
+					if err := rows.Close(); err != nil {
+						t.Fatal(err)
+					}
+					if strings.Contains(strings.Join(columns, ","), "bead_id") || strings.Contains(strings.Join(columns, ","), "epic_id") {
+						t.Fatalf("columns changed after rejected migration: %v", columns)
+					}
+				})
+			}
+		})
+	}
+}
