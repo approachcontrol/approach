@@ -3025,6 +3025,110 @@ func TestAgentCommandTrimsResumeSessionID(t *testing.T) {
 	}
 }
 
+func TestAgentCommandFlowSavedSessionResumePreservesRawIDAndFlowIdentity(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			ctx := actions.AgentLaunchContext{
+				Command:                command,
+				WorktreePath:           "/repo/worktree",
+				ResumeSessionID:        " raw-session-id ",
+				FlowID:                 "flow-1",
+				FlowSavedSessionResume: true,
+				Embedded:               true,
+			}
+			cmd, err := actions.AgentCommand(ctx)
+			if err != nil {
+				t.Fatalf("AgentCommand() error = %v", err)
+			}
+			if got := cmd.Args[len(cmd.Args)-1]; got != ctx.ResumeSessionID {
+				t.Fatalf("resume ID argv = %q, want raw %q; argv=%#v", got, ctx.ResumeSessionID, cmd.Args)
+			}
+			env := envMap(cmd.Env)
+			if env["APPROACH_FLOW_ID"] != "flow-1" || env["APPROACH_FLOW_PHASE_ID"] != "" {
+				t.Fatalf("Flow environment = id %q phase %q", env["APPROACH_FLOW_ID"], env["APPROACH_FLOW_PHASE_ID"])
+			}
+			if actions.ShouldPrefillEmbeddedPrompt(ctx) {
+				t.Fatal("saved-session resume must not prefill a prompt")
+			}
+		})
+	}
+}
+
+func TestAgentCommandFlowSavedSessionResumePreservesRefreshedCommit(t *testing.T) {
+	repoPath := setupRepo(t)
+	savedCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+	mustRun(t, repoPath, "git", "commit", "--allow-empty", "-m", "advance worktree")
+	currentCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+	if currentCommit == savedCommit {
+		t.Fatal("test setup did not advance worktree HEAD")
+	}
+
+	for _, tc := range []struct {
+		name        string
+		savedCommit string
+	}{
+		{name: "historical commit", savedCommit: savedCommit},
+		{name: "intentionally absent commit", savedCommit: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+				Command:                "codex",
+				RepoPath:               repoPath,
+				WorktreePath:           repoPath,
+				Commit:                 tc.savedCommit,
+				ResumeSessionID:        "session-1",
+				FlowID:                 "flow-1",
+				FlowSavedSessionResume: true,
+				Embedded:               true,
+			})
+			if err != nil {
+				t.Fatalf("AgentCommand() error = %v", err)
+			}
+			if got := envMap(cmd.Env)["APPROACH_COMMIT"]; got != tc.savedCommit {
+				t.Fatalf("APPROACH_COMMIT = %q, want refreshed saved value %q (worktree HEAD %q)", got, tc.savedCommit, currentCommit)
+			}
+		})
+	}
+}
+
+func TestAgentCommandRejectsIncompatibleFlowSavedSessionResumeRole(t *testing.T) {
+	base := actions.AgentLaunchContext{
+		Command:                "codex",
+		WorktreePath:           "/repo/worktree",
+		ResumeSessionID:        "session-1",
+		FlowID:                 "flow-1",
+		FlowSavedSessionResume: true,
+		Embedded:               true,
+	}
+	tests := []struct {
+		name string
+		mut  func(*actions.AgentLaunchContext)
+	}{
+		{"missing flow", func(ctx *actions.AgentLaunchContext) { ctx.FlowID = "" }},
+		{"phase set", func(ctx *actions.AgentLaunchContext) { ctx.FlowPhaseID = "implementation" }},
+		{"tracked", func(ctx *actions.AgentLaunchContext) { ctx.FlowLaunchTracked = true }},
+		{"phase kind", func(ctx *actions.AgentLaunchContext) { ctx.FlowPhaseKind = "implementation" }},
+		{"auto launch", func(ctx *actions.AgentLaunchContext) { ctx.FlowAutoLaunch = true }},
+		{"terminal phase", func(ctx *actions.AgentLaunchContext) { ctx.FlowPhaseTerminal = true }},
+		{"not embedded", func(ctx *actions.AgentLaunchContext) { ctx.Embedded = false }},
+		{"headless", func(ctx *actions.AgentLaunchContext) { ctx.Headless = true }},
+		{"blank resume ID", func(ctx *actions.AgentLaunchContext) { ctx.ResumeSessionID = "  " }},
+		{"repair role", func(ctx *actions.AgentLaunchContext) { ctx.FlowRepair = true }},
+		{"generic agent role", func(ctx *actions.AgentLaunchContext) { ctx.FlowAgent = true }},
+		{"autofix role", func(ctx *actions.AgentLaunchContext) { ctx.FlowAutofix = true }},
+		{"prompt", func(ctx *actions.AgentLaunchContext) { ctx.InitialPrompt = "do work" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := base
+			tc.mut(&ctx)
+			if _, err := actions.AgentCommand(ctx); err == nil || !strings.Contains(err.Error(), "saved-session resume") {
+				t.Fatalf("AgentCommand(%#v) error = %v, want saved-session role error", ctx, err)
+			}
+		})
+	}
+}
+
 func TestAgentCommandResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",

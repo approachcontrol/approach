@@ -98,22 +98,23 @@ const (
 )
 
 type embeddedTerminalSlot struct {
-	Number         int
-	Scope          embeddedTerminalScope
-	Provider       string
-	Identity       string
-	RepoPath       string
-	WorktreePath   string
-	WorkingDir     string
-	FlowID         string
-	FlowPhaseID    string
-	FlowRepair     bool
-	FlowAgent      bool
-	DetachPolicy   embeddedTerminalDetachPolicy
-	LaunchID       string
-	Terminal       EmbeddedTerminal
-	ID             embeddedTerminalID
-	PrefillPending bool
+	Number                 int
+	Scope                  embeddedTerminalScope
+	Provider               string
+	Identity               string
+	RepoPath               string
+	WorktreePath           string
+	WorkingDir             string
+	FlowID                 string
+	FlowPhaseID            string
+	FlowRepair             bool
+	FlowAgent              bool
+	FlowSavedSessionResume bool
+	DetachPolicy           embeddedTerminalDetachPolicy
+	LaunchID               string
+	Terminal               EmbeddedTerminal
+	ID                     embeddedTerminalID
+	PrefillPending         bool
 }
 
 type embeddedSessionPickerSelectedMsg struct {
@@ -439,22 +440,23 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 	m.nextEmbeddedTerminalID++
 	id := embeddedTerminalID(m.nextEmbeddedTerminalID)
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
-		Number:         number,
-		Scope:          scope,
-		Provider:       provider,
-		Identity:       identity,
-		RepoPath:       cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
-		WorktreePath:   cleanEmbeddedTerminalPath(ctx.WorktreePath),
-		WorkingDir:     cleanEmbeddedTerminalPath(ctx.WorkingDir),
-		FlowID:         flowID,
-		FlowPhaseID:    flowPhaseID,
-		FlowRepair:     ctx.FlowRepair,
-		FlowAgent:      ctx.FlowAgent,
-		DetachPolicy:   flowEmbeddedTerminalDetachPolicy(ctx),
-		LaunchID:       strings.TrimSpace(ctx.LaunchID),
-		Terminal:       term,
-		ID:             id,
-		PrefillPending: actions.ShouldPrefillEmbeddedPrompt(ctx),
+		Number:                 number,
+		Scope:                  scope,
+		Provider:               provider,
+		Identity:               identity,
+		RepoPath:               cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
+		WorktreePath:           cleanEmbeddedTerminalPath(ctx.WorktreePath),
+		WorkingDir:             cleanEmbeddedTerminalPath(ctx.WorkingDir),
+		FlowID:                 flowID,
+		FlowPhaseID:            flowPhaseID,
+		FlowRepair:             ctx.FlowRepair,
+		FlowAgent:              ctx.FlowAgent,
+		FlowSavedSessionResume: ctx.FlowSavedSessionResume,
+		DetachPolicy:           flowEmbeddedTerminalDetachPolicy(ctx),
+		LaunchID:               strings.TrimSpace(ctx.LaunchID),
+		Terminal:               term,
+		ID:                     id,
+		PrefillPending:         actions.ShouldPrefillEmbeddedPrompt(ctx),
 	})
 	if wasEmpty {
 		m = m.reflowForTerminalDock()
@@ -664,6 +666,9 @@ func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
 	}
 	if ctx.FlowAgent {
 		return "agent"
+	}
+	if ctx.FlowSavedSessionResume {
+		return "session " + shortSessionID(ctx.ResumeSessionID)
 	}
 	for _, value := range []string{
 		ctx.FlowPhaseID,
@@ -885,7 +890,7 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 }
 
 func flowEmbeddedTerminalDetachPolicy(ctx actions.AgentLaunchContext) embeddedTerminalDetachPolicy {
-	if ctx.FlowAgent {
+	if ctx.FlowAgent || ctx.FlowSavedSessionResume {
 		return embeddedTerminalDetachNever
 	}
 	return embeddedTerminalDetachAllowed
@@ -931,7 +936,7 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 	ids := make([]embeddedTerminalID, 0)
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.Terminal == nil {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.FlowSavedSessionResume || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -946,7 +951,7 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 
 func (m Model) hasExitedFlowEmbeddedTerminalAutoClose() bool {
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.Terminal == nil {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.FlowSavedSessionResume || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -1144,11 +1149,7 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 		return m.setStatus(statusOther, "Selected session is unavailable"), nil
 	}
 	record := msg.Record
-	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
-	if !ok {
-		return next, nil
-	}
-	return next.resumeSessionForBackend(ctx, record, release)
+	return m.routeSavedSessionResume(record, flowLaunchOriginEmbeddedSessionPicker)
 }
 
 // resumeSessionInEmbeddedTerminal owns the resume reservation from here on. The

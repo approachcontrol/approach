@@ -880,6 +880,10 @@ type AgentLaunchContext struct {
 	// Like repair it carries no phase ID, so provider hooks keep Flow
 	// discoverability without attaching the session to a phase attempt.
 	FlowAgent bool
+	// FlowSavedSessionResume marks a phase-untracked resume whose authoritative
+	// saved session belongs to a Flow. It is embedded-only and preserves the raw
+	// provider session ID byte-for-byte.
+	FlowSavedSessionResume bool
 	// FlowAutofix marks the distinct prompted, PR-gated untracked agent started
 	// by U. It shares prompt delivery mechanics with FlowAgent but not policy.
 	FlowAutofix bool
@@ -1129,7 +1133,7 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if err := agent.Validate(command); err != nil {
 		return nil, nil, err
 	}
-	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
+	resumeSessionID, err := resumeSessionIDForContext(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1166,9 +1170,11 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if ctx.WorkingDir != "" {
 		cmd.Dir = ctx.WorkingDir
 	}
-	commit := ResolveWorktreeCommit(cmd.Dir)
-	if commit == "" {
-		commit = ctx.Commit
+	commit := ctx.Commit
+	if !ctx.FlowSavedSessionResume {
+		if resolved := ResolveWorktreeCommit(cmd.Dir); resolved != "" {
+			commit = resolved
+		}
 	}
 	overrides := []envVar{
 		{key: "APPROACH_AGENT", value: command},
@@ -1190,6 +1196,28 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	}
 	cmd.Env = envWithOverrides(overrides...)
 	return cmd, overrides, nil
+}
+
+func resumeSessionIDForContext(ctx AgentLaunchContext) (string, error) {
+	if !ctx.FlowSavedSessionResume {
+		return resumeSessionIDForLaunch(ctx.ResumeSessionID)
+	}
+	if strings.TrimSpace(ctx.FlowID) == "" ||
+		strings.TrimSpace(ctx.FlowPhaseID) != "" ||
+		strings.TrimSpace(ctx.FlowPhaseKind) != "" ||
+		ctx.FlowLaunchTracked ||
+		ctx.FlowAutoLaunch ||
+		ctx.FlowPhaseTerminal ||
+		!ctx.Embedded ||
+		ctx.Headless ||
+		ctx.FlowRepair ||
+		ctx.FlowAgent ||
+		ctx.FlowAutofix ||
+		ctx.InitialPrompt != "" ||
+		strings.TrimSpace(ctx.ResumeSessionID) == "" {
+		return "", fmt.Errorf("invalid Flow saved-session resume role")
+	}
+	return ctx.ResumeSessionID, nil
 }
 
 // resumeSessionIDForLaunch trims a resume session ID and rejects resume

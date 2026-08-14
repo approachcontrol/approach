@@ -73,6 +73,118 @@ func TestStoreSavesAndListsSessionsByRepoPath(t *testing.T) {
 	}
 }
 
+func TestStoreReadUsesExactProviderAndRawSessionID(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	for _, record := range []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "session", Summary: "codex exact"},
+		{Provider: sessions.ProviderCodex, SessionID: "session-long", Summary: "codex prefix-like"},
+		{Provider: sessions.ProviderClaude, SessionID: "session", Summary: "claude variant"},
+	} {
+		if err := store.Upsert(record); err != nil {
+			t.Fatalf("Upsert(%#v) error = %v", record, err)
+		}
+	}
+
+	tests := []struct {
+		provider sessions.Provider
+		id       string
+		want     string
+	}{
+		{sessions.ProviderCodex, "session", "codex exact"},
+		{sessions.ProviderCodex, "session-long", "codex prefix-like"},
+		{sessions.ProviderClaude, "session", "claude variant"},
+	}
+	for _, tc := range tests {
+		got, err := store.Read(tc.provider, tc.id)
+		if err != nil {
+			t.Fatalf("Read(%q, %q) error = %v", tc.provider, tc.id, err)
+		}
+		if got.Provider != tc.provider || got.SessionID != tc.id || got.Summary != tc.want {
+			t.Fatalf("Read(%q, %q) = %#v", tc.provider, tc.id, got)
+		}
+	}
+}
+
+func TestStoreReadRejectsInvalidMissingCorruptAndMismatchedMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	for _, tc := range []struct {
+		name     string
+		provider sessions.Provider
+		id       string
+		wantErr  string
+	}{
+		{"blank ID", sessions.ProviderCodex, "  ", "required"},
+		{"unsupported provider", sessions.Provider("other"), "session", "unsupported"},
+		{"missing metadata", sessions.ProviderCodex, "missing", "not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.Read(tc.provider, tc.id); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Read(%q, %q) error = %v, want %q", tc.provider, tc.id, err, tc.wantErr)
+			}
+		})
+	}
+
+	if err := store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "corrupt"}); err != nil {
+		t.Fatalf("Upsert(corrupt) error = %v", err)
+	}
+	corruptPath := singleSessionFile(t, root, sessions.ProviderCodex, "meta.json")
+	if err := os.WriteFile(corruptPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write corrupt metadata: %v", err)
+	}
+	if _, err := store.Read(sessions.ProviderCodex, "corrupt"); err == nil || !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("Read(corrupt) error = %v, want decode error", err)
+	}
+
+	root = t.TempDir()
+	store, err = sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore(mismatch) error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "requested"}); err != nil {
+		t.Fatalf("Upsert(requested) error = %v", err)
+	}
+	mismatchPath := singleSessionFile(t, root, sessions.ProviderCodex, "meta.json")
+	if err := os.WriteFile(mismatchPath, []byte(`{"provider":"claude","session_id":"other"}`), 0o600); err != nil {
+		t.Fatalf("write mismatched metadata: %v", err)
+	}
+	if _, err := store.Read(sessions.ProviderCodex, "requested"); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Read(mismatch) error = %v, want key mismatch", err)
+	}
+}
+
+func TestIsActiveUsesStatusThenLegacyEndedAt(t *testing.T) {
+	endedAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		status  string
+		endedAt time.Time
+		want    bool
+	}{
+		{"blank zero", "", time.Time{}, true},
+		{"whitespace zero", "  ", time.Time{}, true},
+		{"blank ended", "", endedAt, false},
+		{"whitespace ended", "  ", endedAt, false},
+		{"explicit ended", "ended", time.Time{}, false},
+		{"padded ended", " ended ", time.Time{}, false},
+		{"running ignores legacy end", "running", endedAt, true},
+		{"last seen ignores legacy end", "last_seen", endedAt, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessions.IsActive(tc.status, tc.endedAt); got != tc.want {
+				t.Fatalf("IsActive(%q, %v) = %v, want %v", tc.status, tc.endedAt, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStoreUpsertUpdatesExistingSession(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

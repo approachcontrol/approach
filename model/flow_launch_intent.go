@@ -1,12 +1,15 @@
 package model
 
+import (
+	"fmt"
+	"strings"
+
+	"github.com/approachcontrol/approach/sessions"
+)
+
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
-// to run. Every kind is declared now so later beads add implementations rather
-// than constants; flowLaunchKindManualPhase, flowLaunchKindAutoPhase,
-// flowLaunchKindPhaseResume, flowLaunchKindRepair, flowLaunchKindAutofix, and
-// flowLaunchKindWorktreeAgent are implemented today. The last one is the
-// generic, phase-untracked Flow-worktree agent.
-// refuses the rest.
+// to run. Create-phase is reserved for later migration; every other declared
+// kind is implemented today.
 type flowLaunchKind int
 
 const (
@@ -20,9 +23,9 @@ const (
 	flowLaunchKindSavedSessionResume
 )
 
-// flowLaunchOrigin records which surface submitted the intent. Nothing branches
-// on it yet; preserving it at admission lets routing tests distinguish the two
-// manual entry points and gives later lifecycle kinds explicit provenance.
+// flowLaunchOrigin records which surface submitted the intent. Saved-session
+// resume uses it only when an authoritative non-Flow refresh delegates back to
+// the surface's established route; Flow-associated policy never branches on it.
 type flowLaunchOrigin int
 
 const (
@@ -30,7 +33,35 @@ const (
 	flowLaunchOriginActiveFlows
 	flowLaunchOriginAutoMode
 	flowLaunchOriginRepair
+	flowLaunchOriginSessionsPane
+	flowLaunchOriginEmbeddedSessionPicker
+	flowLaunchOriginInlineWorktreeSession
 )
+
+// flowLaunchSavedSessionKey is the exact identity shared by the session store
+// and the lifecycle's duplicate fence. Provider values are validated once;
+// session IDs are thereafter compared byte-for-byte.
+type flowLaunchSavedSessionKey struct {
+	Provider  sessions.Provider
+	SessionID string
+}
+
+func newFlowLaunchSavedSessionKey(provider sessions.Provider, sessionID string) (flowLaunchSavedSessionKey, error) {
+	switch provider {
+	case sessions.ProviderCodex, sessions.ProviderClaude:
+	default:
+		return flowLaunchSavedSessionKey{}, fmt.Errorf("unsupported session provider %q", provider)
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return flowLaunchSavedSessionKey{}, fmt.Errorf("session provider session ID is required")
+	}
+	return flowLaunchSavedSessionKey{Provider: provider, SessionID: sessionID}, nil
+}
+
+func (key flowLaunchSavedSessionKey) valid() bool {
+	_, err := newFlowLaunchSavedSessionKey(key.Provider, key.SessionID)
+	return err == nil
+}
 
 // flowLaunchRoute selects the handoff the prepared context takes.
 type flowLaunchRoute int
@@ -77,6 +108,11 @@ type flowLaunchIntent struct {
 	// because the read command has no Model. The read stage uses the record's
 	// repo path when it has one and this otherwise.
 	FallbackRepoPath string
+	// SavedSession is the cached row that caused saved-session admission. It is
+	// intentionally not authoritative; SessionKey is the only identity carried
+	// into the exact refresh.
+	SavedSession sessions.SessionRecord
+	SessionKey   flowLaunchSavedSessionKey
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way

@@ -209,14 +209,14 @@ func (m Model) tmuxPhaseAgentStillRunning(record flowstore.FlowRecord, phase flo
 // it is what stops a resume from starting a second process on a provider session
 // that is still open in a tmux window.
 //
-// The Flow-phase resume has its own phase-scoped guard, but the resumes that
-// start from a session record — sessions view, the inline worktree session list,
-// and the dock's session picker — carry no phase, mint a fresh launch ID, and
-// deliberately drop Flow identity, so that guard can never see them. The record's
-// own LaunchID is the one thing that ties it back to the window its agent is
-// running in. Codex makes this ordinary rather than exotic: its Stop hook records
-// an `ended` session after each turn while the CLI stays open, so the record a
-// user resumes from is routinely one whose agent is still live.
+// The Flow-phase resume has its own phase-scoped guard, but record-based resumes
+// cannot use it: ordinary non-Flow routes carry no phase and deliberately drop
+// Flow identity, while the Flow-associated lifecycle keeps Flow identity but is
+// still phase-untracked. The record's own LaunchID is the one thing that ties
+// either route back to the window its agent is running in. Codex makes this
+// ordinary rather than exotic: its Stop hook records an `ended` session after
+// each turn while the CLI stays open, so the record a user resumes from is
+// routinely one whose agent is still live.
 func (m Model) tmuxSessionAgentStillRunning(record sessions.SessionRecord, command string) bool {
 	if !tmuxRouteEligible(actions.AgentLaunchContext{Command: command}) {
 		return false

@@ -10,6 +10,7 @@ type flowLaunchState int
 
 const (
 	flowLaunchStateReserved flowLaunchState = iota + 1
+	flowLaunchStateReadingSession
 	flowLaunchStateReading
 	flowLaunchStatePreparing
 	flowLaunchStateHandoffPending
@@ -20,6 +21,8 @@ func (state flowLaunchState) String() string {
 	switch state {
 	case flowLaunchStateReserved:
 		return "reserved"
+	case flowLaunchStateReadingSession:
+		return "readingSession"
 	case flowLaunchStateReading:
 		return "reading"
 	case flowLaunchStatePreparing:
@@ -48,6 +51,7 @@ type flowLaunchAttempt struct {
 	Origin              flowLaunchOrigin
 	Settings            flowLaunchAgentSettingsSnapshot
 	AutoRetrySuppressed bool
+	SessionKey          flowLaunchSavedSessionKey
 	// MutatedPhase records that AddPhaseLaunchID succeeded, so a later failure
 	// has a persisted running phase to correct. Without it a failure between
 	// phase resolution and persistence would clobber a still-ready phase.
@@ -117,8 +121,65 @@ func (m Model) reserveFlowLaunchAttempt(attempt flowLaunchAttempt, state flowLau
 	if m.flowLaunchAttemptOccupied(attempt.FlowID) {
 		return m, false
 	}
+	if attempt.Kind == flowLaunchKindSavedSessionResume {
+		if !attempt.SessionKey.valid() {
+			return m, false
+		}
+		if _, occupied := m.flowLaunchSessionOwners[attempt.SessionKey]; occupied {
+			return m, false
+		}
+	}
 	attempt.State = state
-	return m.withFlowLaunchAttempt(attempt), true
+	m = m.withFlowLaunchAttempt(attempt)
+	if attempt.Kind == flowLaunchKindSavedSessionResume {
+		owners := make(map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner, len(m.flowLaunchSessionOwners)+1)
+		for key, owner := range m.flowLaunchSessionOwners {
+			owners[key] = owner
+		}
+		owners[attempt.SessionKey] = flowLaunchSavedSessionOwner{Token: attempt.Token, FlowID: attempt.FlowID}
+		m.flowLaunchSessionOwners = owners
+	}
+	return m, true
+}
+
+type flowLaunchSavedSessionOwner struct {
+	Token  string
+	FlowID string
+}
+
+// transferSavedSessionFlowLaunchAttempt moves both ownership indexes in one
+// returned Model after the authoritative session read changes Flow identity.
+func (m Model) transferSavedSessionFlowLaunchAttempt(fromFlowID, token string, key flowLaunchSavedSessionKey, destinationFlowID string) (Model, bool) {
+	fromFlowID = strings.TrimSpace(fromFlowID)
+	destinationFlowID = strings.TrimSpace(destinationFlowID)
+	attempt, ok := m.matchingFlowLaunchAttempt(fromFlowID, token, flowLaunchKindSavedSessionResume, flowLaunchStateReadingSession)
+	if !ok || destinationFlowID == "" || attempt.SessionKey != key {
+		return m, false
+	}
+	owner, ok := m.flowLaunchSessionOwners[key]
+	if !ok || owner.Token != attempt.Token || owner.FlowID != fromFlowID {
+		return m, false
+	}
+	if destinationFlowID != fromFlowID && m.flowLaunchAdmissionOccupied(destinationFlowID) {
+		return m, false
+	}
+	attempt.FlowID = destinationFlowID
+	attempt.State = flowLaunchStateReading
+	attempts := make(map[string]flowLaunchAttempt, len(m.flowLaunchAttempts))
+	for flowID, existing := range m.flowLaunchAttempts {
+		if flowID != fromFlowID {
+			attempts[flowID] = existing
+		}
+	}
+	attempts[destinationFlowID] = attempt
+	owners := make(map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner, len(m.flowLaunchSessionOwners))
+	for existingKey, existingOwner := range m.flowLaunchSessionOwners {
+		owners[existingKey] = existingOwner
+	}
+	owners[key] = flowLaunchSavedSessionOwner{Token: attempt.Token, FlowID: destinationFlowID}
+	m.flowLaunchAttempts = attempts
+	m.flowLaunchSessionOwners = owners
+	return m, true
 }
 
 // transitionFlowLaunchAttempt advances an attempt from one state to another.
@@ -173,6 +234,20 @@ func (m Model) releaseFlowLaunchAttempt(flowID, token string) Model {
 		attempts = nil
 	}
 	m.flowLaunchAttempts = attempts
+	if attempt.SessionKey.valid() {
+		if owner, owned := m.flowLaunchSessionOwners[attempt.SessionKey]; owned && owner.Token == attempt.Token && owner.FlowID == flowID {
+			owners := make(map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner, len(m.flowLaunchSessionOwners)-1)
+			for key, existing := range m.flowLaunchSessionOwners {
+				if key != attempt.SessionKey {
+					owners[key] = existing
+				}
+			}
+			if len(owners) == 0 {
+				owners = nil
+			}
+			m.flowLaunchSessionOwners = owners
+		}
+	}
 	return m
 }
 

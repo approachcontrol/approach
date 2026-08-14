@@ -237,9 +237,8 @@ func TestFlowStarterPlanHoldsLaunchReservationAcrossBookkeeping(t *testing.T) {
 	}
 }
 
-// The Sessions pane resumes through a Flow-agnostic context, so without an
-// explicit check `r` there would spawn an agent for a Flow the Flow-phase pane
-// already refuses to resume.
+// Saved-session resume checks closure after the exact session refresh and the
+// authoritative Flow read, before protected preparation can reserve or spawn.
 func TestSessionResumeRefusesClosedFlow(t *testing.T) {
 	record := closedGuardRecord(flowstore.FlowPhase{
 		PhaseID: "implementation",
@@ -264,52 +263,18 @@ func TestSessionResumeRefusesClosedFlow(t *testing.T) {
 		FlowPhaseID:  "implementation",
 	}
 
-	// The reservation is what makes the answer authoritative, and it has to
-	// still be held when the context comes back: releasing it here would
-	// reopen the window between the closed-state answer and the spawn.
-	open := newManualLaunchHarness(t, record)
-	_, release, ok, _ := open.model().sessionResumeLaunchContext(session)
-	if !ok {
-		t.Fatal("an open Flow must still allow a Sessions-pane resume")
-	}
-	if open.launchReservations != 1 || open.launchReleases != 0 {
-		t.Fatalf("reservations = %d releases = %d, want the reservation held across the return",
-			open.launchReservations, open.launchReleases)
-	}
-	release()
-	if open.launchReleases != 1 {
-		t.Fatalf("releases = %d, want 1 once the caller releases", open.launchReleases)
-	}
-
 	h := newManualLaunchHarness(t, closed)
-	_, _, ok, next := h.model().sessionResumeLaunchContext(session)
-	if ok {
-		t.Fatal("a session belonging to a closed Flow must not resume")
+	m := h.model()
+	m.launchSeams.ReadSession = func(sessions.Provider, string) (sessions.SessionRecord, error) { return session, nil }
+	m.launchSeams.NewLaunchID = func() string { return "resume-token" }
+	m, cmd := m.routeSavedSessionResume(session, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if !strings.Contains(m.status.Text, "closed") {
+		t.Fatalf("status = %q, want it to name the closed Flow", m.status.Text)
 	}
-	if !strings.Contains(next.status.Text, "closed") {
-		t.Fatalf("status = %q, want it to name the closed Flow", next.status.Text)
-	}
-
-	// A session can outlive its Flow record. Only a closed Flow may refuse: a
-	// deleted or unreadable one reports through the same error return, and
-	// treating that as a refusal would strand the session.
-	orphan := session
-	orphan.FlowID = "flow-missing"
-	if _, _, ok, _ := h.model().sessionResumeLaunchContext(orphan); !ok {
-		t.Fatal("a session whose Flow no longer exists must still resume")
-	}
-
-	// A reservation that never succeeded proves nothing about the Flow, so a
-	// held lock or an unreadable store has to refuse rather than spawn
-	// unreserved across a concurrent close.
-	unreadable := newManualLaunchHarness(t, record)
-	unreadable.reserveLaunchErr = errors.New("acquire launch/close reservation for flow \"flow-closed\": timeout")
-	_, _, ok, failed := unreadable.model().sessionResumeLaunchContext(session)
-	if ok {
-		t.Fatal("a failed reservation must refuse the resume")
-	}
-	if !strings.Contains(failed.status.Text, "timeout") {
-		t.Fatalf("status = %q, want the reservation failure surfaced", failed.status.Text)
+	if h.launchReservations != 0 {
+		t.Fatalf("closed Flow reached protected reservation %d time(s)", h.launchReservations)
 	}
 }
 

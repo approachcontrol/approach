@@ -218,6 +218,7 @@ type Model struct {
 	// bounded by how many times one Flow was launched in one TUI session.
 	flowAutofixTmuxLaunches map[string][]string
 	flowLaunchAttempts      map[string]flowLaunchAttempt
+	flowLaunchSessionOwners map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
 	launchSeams             flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
@@ -285,6 +286,7 @@ type Options struct {
 	CreateRepo                func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
 	FetchRepo                 func(string) error
 	ListSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	ReadSession               func(sessions.Provider, string) (sessions.SessionRecord, error)
 	ReadTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	ListPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
@@ -433,6 +435,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listSessions := opts.ListSessions
 	if listSessions == nil {
 		listSessions = func(sessions.SessionFilter) ([]sessions.SessionRecord, error) { return nil, nil }
+	}
+	readSession := opts.ReadSession
+	if readSession == nil {
+		readSession = func(provider sessions.Provider, sessionID string) (sessions.SessionRecord, error) {
+			return sessions.SessionRecord{}, fmt.Errorf("session %q/%q not found", provider, sessionID)
+		}
 	}
 	readTranscript := opts.ReadTranscript
 	if readTranscript == nil {
@@ -800,6 +808,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
 		launchSeams: newFlowLaunchSeams(
 			readFlow,
+			readSession,
 			listSessions,
 			addFlowPhaseLaunchID,
 			setFlowPhase,

@@ -50,7 +50,7 @@ func (m Model) hasKnownActiveFlowSession(flowID string) bool {
 	}
 	for _, records := range [][]sessions.SessionRecord{m.sessions.Items(), m.worktreeSessions.Items()} {
 		for _, record := range records {
-			if strings.TrimSpace(record.FlowID) == flowID && flowSessionLive(record.Status, record.EndedAt) {
+			if strings.TrimSpace(record.FlowID) == flowID && sessions.IsActive(record.Status, record.EndedAt) {
 				return true
 			}
 		}
@@ -160,7 +160,7 @@ func genericFlowRuntimeOccupancyReason(record flowstore.FlowRecord) string {
 
 func activeFlowSession(records []sessions.SessionRecord) bool {
 	for _, record := range records {
-		if flowSessionLive(record.Status, record.EndedAt) {
+		if sessions.IsActive(record.Status, record.EndedAt) {
 			return true
 		}
 	}

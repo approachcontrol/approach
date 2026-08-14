@@ -999,15 +999,8 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
-			ctx, release, ok, next := m.sessionResumeLaunchContext(record)
-			if !ok {
-				return next, nil
-			}
-			// Unlike r, this resume opens an external terminal on the default
-			// backend rather than the embedded dock, so it routes the same way
-			// the other external-terminal launches do: to a repo tmux window in
-			// tmux mode, and unchanged otherwise.
-			return next.launchAgentForBackend(ctx, release)
+			next, cmd := m.routeSavedSessionResume(record, flowLaunchOriginInlineWorktreeSession)
+			return next, cmd
 		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
@@ -2546,11 +2539,8 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
-	if !ok {
-		return next, nil
-	}
-	return next.resumeSessionForBackend(ctx, record, release)
+	next, cmd := m.routeSavedSessionResume(record, flowLaunchOriginSessionsPane)
+	return next, cmd
 }
 
 // resumeSessionForBackend routes a CLI-agent resume to the repo's tmux session
@@ -2625,36 +2615,9 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
-// reserveSessionResume holds the cross-process launch/close reservation for the
-// Flow that owns this session, so a peer process cannot commit a close between
-// the closed-state answer and the spawn. The caller releases once the spawn has
-// happened or failed.
-//
-// A missing Flow is the one error that still permits the resume: a session
-// outlives its Flow, so a deleted record must not strand it. Every other
-// failure — a held lock, an unreadable store — means the reservation was never
-// obtained, and resuming anyway would spawn across a concurrent close.
-func (m Model) reserveSessionResume(record sessions.SessionRecord) (func(), string, bool) {
-	flowID := strings.TrimSpace(record.FlowID)
-	if flowID == "" || m.reserveFlowLaunch == nil {
-		return func() {}, "", true
-	}
-	_, release, err := m.reserveFlowLaunch(flowID)
-	switch {
-	case err == nil:
-		return release, "", true
-	case flowstore.IsNotFound(err):
-		return func() {}, "", true
-	case flowstore.IsFlowClosed(err):
-		return func() {}, "Flow is closed; reopen it to resume this session", false
-	default:
-		return func() {}, err.Error(), false
-	}
-}
-
-// sessionResumeLaunchContext returns the launch context for resuming a session
-// from the Sessions pane, plus the launch/close reservation the caller must
-// release after spawning.
+// sessionResumeLaunchContext builds the established non-Flow resume route.
+// Flow-associated records are refreshed and reserved by the launch lifecycle
+// before they can reach this helper.
 func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, func(), bool, Model) {
 	sessionID := strings.TrimSpace(record.SessionID)
 	if sessionID == "" {
@@ -2679,15 +2642,6 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		m = m.setStatus(statusOther, tmuxSessionLiveWindowRefusal)
 		return actions.AgentLaunchContext{}, nil, false, m
 	}
-	// The launch context below is deliberately Flow-agnostic, so the launch
-	// paths it feeds cannot apply the closed-Flow guard the Flow-phase pane
-	// applies. Resuming still spawns an agent for the Flow that owns the
-	// session, so the refusal has to happen here instead.
-	release, refusal, allowed := m.reserveSessionResume(record)
-	if !allowed {
-		m = m.setStatus(statusOther, refusal)
-		return actions.AgentLaunchContext{}, nil, false, m
-	}
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
 		LaunchID:         newLaunchID(),
@@ -2701,7 +2655,7 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
 	}
-	return ctx, release, true, m
+	return ctx, func() {}, true, m
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
@@ -2942,7 +2896,7 @@ func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchR
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
-	if ctx.FlowAgent {
+	if ctx.FlowAgent || ctx.FlowSavedSessionResume {
 		return m.focusEmbeddedTerminalInput()
 	}
 	if !m.flowSurfaceVisible() {
