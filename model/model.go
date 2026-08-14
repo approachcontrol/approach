@@ -1985,6 +1985,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return next.reconcileBeadExpansion()
 	case beadExpansionResultMsg:
 		return m.handleBeadExpansionResult(msg), nil
+	case beadProgressionResultMsg:
+		return m.handleBeadProgressionResult(msg), nil
 	case epicProgressionToggleResultMsg:
 		return m.handleEpicProgressionToggleResult(msg)
 	case BeadDetailResultMsg:

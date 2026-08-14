@@ -71,7 +71,7 @@ func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *tes
 	if expansionCmd == nil {
 		t.Fatal("epic selection did not load expansion")
 	}
-	m, _ = update(m, expansionCmd())
+	m, _ = applyTestCommand(m, expansionCmd)
 
 	m, toggleCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if toggleCmd == nil {
@@ -128,7 +128,7 @@ func TestEpicAutoProgressionDisableDoesNotConsultChildrenOrFlows(t *testing.T) {
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
-	m, _ = update(m, expansionCmd())
+	m, _ = applyTestCommand(m, expansionCmd)
 	if !strings.Contains(ansi.Strip(m.View()), "[epic]  [auto]") {
 		t.Fatalf("enabled marker hidden by child failure:\n%s", ansi.Strip(m.View()))
 	}
@@ -174,7 +174,7 @@ func TestEpicAutoProgressionEnableWithNoReadyChildCreatesNothing(t *testing.T) {
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
-	m, _ = update(m, expansionCmd())
+	m, _ = applyTestCommand(m, expansionCmd)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
 		t.Fatal("no-ready enable returned nil command instead of status result")
@@ -285,7 +285,7 @@ func TestEpicAutoProgressionDeterministicEnableRefusalsRemainKnownDisabled(t *te
 				RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 				Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 			})
-			m, _ = update(m, expansionCmd())
+			m, _ = applyTestCommand(m, expansionCmd)
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 			if cmd == nil {
 				t.Fatal("initial enable returned nil command")
@@ -328,7 +328,7 @@ func TestEpicAutoProgressionUnknownPreparationRefreshesVisibleFlow(t *testing.T)
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
-	m, _ = update(m, expansionCmd())
+	m, _ = applyTestCommand(m, expansionCmd)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m, refreshCmd := update(m, cmd())
 	if refreshCmd == nil {
@@ -515,7 +515,7 @@ func loadEpicProgressionTestModel(t *testing.T, opts model.Options) model.Model 
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
-	m, _ = update(m, expansionCmd())
+	m, _ = applyTestCommand(m, expansionCmd)
 	return m
 }
 
@@ -561,7 +561,7 @@ func TestEpicAutoProgressionToggleOwnsAInEveryBeadsSubview(t *testing.T) {
 			if expansionCmd == nil {
 				t.Fatal("epic result did not start expansion")
 			}
-			m, _ = update(m, expansionCmd())
+			m, _ = applyTestCommand(m, expansionCmd)
 			m, toggleCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 			if toggleCmd == nil {
 				t.Fatal("epic toggle did not own a")

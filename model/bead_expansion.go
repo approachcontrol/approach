@@ -11,14 +11,18 @@ import (
 )
 
 type beadExpansionResultMsg struct {
-	target           beadExpansionTarget
-	children         []beadsquery.Bead
-	childrenErr      error
-	ready            []beadsquery.Bead
-	readyErr         error
-	progression      flowstore.EpicProgression
-	progressionFound bool
-	progressionErr   error
+	target      beadExpansionTarget
+	children    []beadsquery.Bead
+	childrenErr error
+	ready       []beadsquery.Bead
+	readyErr    error
+}
+
+type beadProgressionResultMsg struct {
+	target      beadExpansionTarget
+	progression flowstore.EpicProgression
+	found       bool
+	err         error
 }
 
 func isEpicBead(bead beadsquery.Bead) bool {
@@ -71,43 +75,71 @@ func (m Model) reconcileBeadExpansion() (Model, tea.Cmd) {
 	listChildren := m.listChildrenBeads
 	listReady := m.listReadyBeads
 	readProgression := m.readEpicProgression
-	return m, func() tea.Msg {
+	progressionCmd := func() tea.Msg {
+		progression, found, err := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
+		return beadProgressionResultMsg{target: target, progression: progression, found: found, err: err}
+	}
+	expansionCmd := func() tea.Msg {
 		children, childrenErr := listChildren(target.repoPath, target.epicID)
 		ready, readyErr := listReady(target.repoPath)
-		progression, progressionFound, progressionErr := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
 		return beadExpansionResultMsg{
 			target: target, children: children, childrenErr: childrenErr,
 			ready: ready, readyErr: readyErr,
-			progression: progression, progressionFound: progressionFound, progressionErr: progressionErr,
 		}
 	}
+	return m, batchNonNil(progressionCmd, expansionCmd)
 }
 
-func (m Model) handleBeadExpansionResult(msg beadExpansionResultMsg) Model {
+func (m Model) beadExpansionTargetCurrent(target beadExpansionTarget) bool {
 	if m.activeFlowSurfaceVisible() {
-		return m
+		return false
 	}
-	if msg.target.token == 0 || msg.target != m.beadExpansion.target {
-		return m
+	if target.token == 0 || target != m.beadExpansion.target {
+		return false
 	}
-	index, ok := beadSubviewIndex(msg.target.mode)
-	if !ok || m.topMode != msg.target.mode {
-		return m
+	index, ok := beadSubviewIndex(target.mode)
+	if !ok || m.topMode != target.mode {
+		return false
 	}
 	state := m.beads[index]
 	selected, selectedOK := state.pane.Selected()
 	if !state.available || state.pending || state.error != "" ||
-		state.repoPath != msg.target.repoPath || !selectedOK ||
-		selected.ID != msg.target.epicID || !isEpicBead(selected) {
+		state.repoPath != target.repoPath || !selectedOK ||
+		selected.ID != target.epicID || !isEpicBead(selected) {
+		return false
+	}
+	return true
+}
+
+func (m Model) handleBeadProgressionResult(msg beadProgressionResultMsg) Model {
+	if !m.beadExpansionTargetCurrent(msg.target) {
 		return m
 	}
-	projection := ui.BeadExpansion{EpicID: msg.target.epicID}
-	if msg.progressionErr != nil {
-		projection.ProgressionDetail = msg.progressionErr.Error()
+	projection := cloneBeadExpansion(m.beadExpansion.projection)
+	projection.ProgressionKnown = false
+	projection.ProgressionEnabled = false
+	projection.ProgressionDetail = ""
+	if msg.err != nil {
+		projection.ProgressionDetail = msg.err.Error()
 	} else {
 		projection.ProgressionKnown = true
-		projection.ProgressionEnabled = msg.progressionFound && msg.progression.Enabled
+		projection.ProgressionEnabled = msg.found && msg.progression.Enabled
 	}
+	m.beadExpansion.projection = projection
+	return m.reflowBeadExpansionPane()
+}
+
+func (m Model) handleBeadExpansionResult(msg beadExpansionResultMsg) Model {
+	if !m.beadExpansionTargetCurrent(msg.target) {
+		return m
+	}
+	projection := cloneBeadExpansion(m.beadExpansion.projection)
+	projection.EpicID = msg.target.epicID
+	projection.State = ui.BeadExpansionLoading
+	projection.Children = nil
+	projection.ReadinessKnown = false
+	projection.ReadyIDs = nil
+	projection.Detail = ""
 	if msg.childrenErr != nil {
 		projection.State = ui.BeadExpansionError
 		projection.Detail = msg.childrenErr.Error()

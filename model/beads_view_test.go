@@ -106,7 +106,7 @@ func TestSelectedEpicExpansionQueriesDeferredAndRendersReadyFirst(t *testing.T) 
 		t.Fatalf("loading expansion missing from view:\n%s", view)
 	}
 
-	m, _ = update(m, cmd())
+	m, _ = applyTestCommand(m, cmd)
 	if childrenCalls != 1 || readyCalls != 1 {
 		t.Fatalf("query calls = %d/%d, want 1/1", childrenCalls, readyCalls)
 	}
@@ -161,7 +161,7 @@ func TestBeadExpansionPartialFailuresRemainLocal(t *testing.T) {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 			m, cmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{{ID: "bd-epic", Title: "Epic", IssueType: "epic"}}})
-			m, _ = update(m, cmd())
+			m, _ = applyTestCommand(m, cmd)
 			view := ansi.Strip(m.View())
 			if !strings.Contains(view, tt.want) || strings.Contains(view, "beads not configured\n") || strings.Contains(view, "Could not load open beads") {
 				t.Fatalf("partial failure escaped local expansion state:\n%s", view)
@@ -198,11 +198,11 @@ func TestBeadExpansionRejectsStaleResultAfterCursorAndFilterChanges(t *testing.T
 	if replacementCmd == nil || childrenFor != "" || !strings.Contains(ansi.Strip(m.View()), "epic-b") {
 		t.Fatalf("cursor transition did not synchronously replace expansion: cmd=%T called=%q\n%s", replacementCmd, childrenFor, ansi.Strip(m.View()))
 	}
-	m, _ = update(m, oldCmd())
+	m, _ = applyTestCommand(m, oldCmd)
 	if strings.Contains(ansi.Strip(m.View()), "epic-a-child") {
 		t.Fatalf("stale cursor result restored old expansion:\n%s", ansi.Strip(m.View()))
 	}
-	m, _ = update(m, replacementCmd())
+	m, _ = applyTestCommand(m, replacementCmd)
 	if !strings.Contains(ansi.Strip(m.View()), "epic-b-child") {
 		t.Fatalf("replacement result missing:\n%s", ansi.Strip(m.View()))
 	}
@@ -238,7 +238,7 @@ func TestBeadExpansionFilterEditRestartsUnchangedSelectedEpic(t *testing.T) {
 	if replacementCmd == nil {
 		t.Fatal("filter edit retaining the selected epic did not restart expansion")
 	}
-	m, _ = update(m, oldCmd())
+	m, _ = applyTestCommand(m, oldCmd)
 	if strings.Contains(ansi.Strip(m.View()), "epic-alpha-child") {
 		t.Fatalf("pre-filter result restored after same-selection filter edit:\n%s", ansi.Strip(m.View()))
 	}
@@ -268,7 +268,7 @@ func TestProgrammaticTopModeExitClearsPendingBeadExpansion(t *testing.T) {
 	if m.Mode() != ui.ModeBranches || strings.Contains(ansi.Strip(m.View()), "loading direct children") {
 		t.Fatalf("programmatic top-mode exit retained expansion:\n%s", ansi.Strip(m.View()))
 	}
-	m, _ = update(m, staleCmd())
+	m, _ = applyTestCommand(m, staleCmd)
 	if strings.Contains(ansi.Strip(m.View()), "epic-child") {
 		t.Fatalf("stale result was accepted after programmatic top-mode exit:\n%s", ansi.Strip(m.View()))
 	}
@@ -302,7 +302,7 @@ func TestReturningFromActiveFlowsRestartsSelectedEpicExpansion(t *testing.T) {
 	if m.Mode() != ui.ModeBeadsOpen || returnCmd == nil || childrenCalls != 0 {
 		t.Fatalf("return from Active Flows = mode %v cmd %T calls %d, want Beads/Open deferred restart", m.Mode(), returnCmd, childrenCalls)
 	}
-	m, _ = update(m, staleCmd())
+	m, _ = applyTestCommand(m, staleCmd)
 	if strings.Contains(ansi.Strip(m.View()), "epic-child") {
 		t.Fatalf("pre-takeover result restored after return:\n%s", ansi.Strip(m.View()))
 	}
@@ -312,7 +312,7 @@ func TestReturningFromActiveFlowsRestartsSelectedEpicExpansion(t *testing.T) {
 		t.Fatalf("return command = %T, want batch with Flow refresh and expansion", returnCmd())
 	}
 	for _, cmd := range batch {
-		m, _ = update(m, cmd())
+		m, _ = applyTestCommand(m, cmd)
 	}
 	if childrenCalls != 2 || !strings.Contains(ansi.Strip(m.View()), "epic-child") {
 		t.Fatalf("return expansion calls/view = %d:\n%s", childrenCalls, ansi.Strip(m.View()))
@@ -359,7 +359,7 @@ func TestActiveFlowsTakeoverInvalidatesBottomFocusedBeadExpansion(t *testing.T) 
 	if backgroundCmd != nil {
 		t.Fatalf("background Beads result started expansion during takeover: %T", backgroundCmd)
 	}
-	m, _ = update(m, staleCmd())
+	m, _ = applyTestCommand(m, staleCmd)
 	if childrenCalls != 1 {
 		t.Fatalf("stale command calls = %d, want one executed query", childrenCalls)
 	}
@@ -371,7 +371,7 @@ func TestActiveFlowsTakeoverInvalidatesBottomFocusedBeadExpansion(t *testing.T) 
 	result := returnCmd()
 	if batch, ok := result.(tea.BatchMsg); ok {
 		for _, cmd := range batch {
-			m, _ = update(m, cmd())
+			m, _ = applyTestCommand(m, cmd)
 		}
 	} else {
 		m, _ = update(m, result)
@@ -401,12 +401,14 @@ func TestBeadExpansionFilterClearInvalidatesFilteredEpicAndRestartsTopEpic(t *te
 	if bravoCmd == nil {
 		t.Fatal("filter edit returned nil replacement expansion command")
 	}
-	m, _ = update(m, oldAlphaCmd())
+	m, _ = applyTestCommand(m, oldAlphaCmd)
 	if strings.Contains(ansi.Strip(m.View()), "epic-alpha-child") {
 		t.Fatalf("pre-filter result restored stale alpha expansion:\n%s", ansi.Strip(m.View()))
 	}
-	bravoResult := bravoCmd()
-	m, _ = update(m, bravoResult)
+	bravoResults := testCommandMessages(bravoCmd)
+	for _, result := range bravoResults {
+		m, _ = update(m, result)
+	}
 	if !strings.Contains(ansi.Strip(m.View()), "epic-bravo-child") {
 		t.Fatalf("filtered bravo expansion missing:\n%s", ansi.Strip(m.View()))
 	}
@@ -415,7 +417,9 @@ func TestBeadExpansionFilterClearInvalidatesFilteredEpicAndRestartsTopEpic(t *te
 	if alphaCmd == nil || strings.Contains(ansi.Strip(m.View()), "epic-bravo-child") {
 		t.Fatalf("filter clear did not synchronously replace bravo: cmd=%T\n%s", alphaCmd, ansi.Strip(m.View()))
 	}
-	m, _ = update(m, bravoResult)
+	for _, result := range bravoResults {
+		m, _ = update(m, result)
+	}
 	if strings.Contains(ansi.Strip(m.View()), "epic-bravo-child") {
 		t.Fatalf("stale filtered result restored after clear:\n%s", ansi.Strip(m.View()))
 	}
@@ -454,7 +458,7 @@ func TestBeadExpansionUsesStoredTopPaneWhileBottomFocused(t *testing.T) {
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %v, want bottom Flows focus", m.Mode())
 	}
-	m, _ = update(m, cmd())
+	m, _ = applyTestCommand(m, cmd)
 	view := ansi.Strip(m.View())
 	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 3 {
 		t.Fatalf("stored top expansion scroll = %d, want 3 while bottom focused:\n%s", got, view)
@@ -564,7 +568,7 @@ func TestBeadExpansionLifecycleInvalidatesAcrossSubviewRepoAndRefresh(t *testing
 			if transitionCmd == nil || childrenCalls != 0 || strings.Contains(ansi.Strip(m.View()), "old-epic-child") {
 				t.Fatalf("transition did not synchronously invalidate without querying: cmd=%T calls=%d\n%s", transitionCmd, childrenCalls, ansi.Strip(m.View()))
 			}
-			m, _ = update(m, oldCmd())
+			m, _ = applyTestCommand(m, oldCmd)
 			if strings.Contains(ansi.Strip(m.View()), "old-epic-child") {
 				t.Fatalf("stale result restored old expansion:\n%s", ansi.Strip(m.View()))
 			}
@@ -597,7 +601,7 @@ func TestBeadExpansionHeightDrivesVisualScrollingPastExpandedEpic(t *testing.T) 
 	m, cmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{
 		{ID: "epic", Title: "Epic", IssueType: "epic"}, {ID: "after", Title: "After"},
 	}})
-	m, _ = update(m, cmd())
+	m, _ = applyTestCommand(m, cmd)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 1 {
 		t.Fatalf("scroll = %d, want visual offset accounting for expanded epic", got)
@@ -634,7 +638,7 @@ func TestSingleBeadExpansionKeepsBottomScrollAtBoundary(t *testing.T) {
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}},
 	})
-	m, _ = update(m, cmd())
+	m, _ = applyTestCommand(m, cmd)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 2 {
