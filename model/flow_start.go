@@ -204,6 +204,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 
 	if persistedPhase, ok := findFlowPhaseByID(flow, phaseID); ok {
 		phase = persistedPhase
+		phaseID = persistedPhase.PhaseID
 	}
 	settings, err := resolveFlowStartPhaseAgentSettings(req, phase)
 	if err != nil {
@@ -471,12 +472,7 @@ func initialFlowLaunchPhase(flow flowstore.FlowRecord, requestedPhaseID string) 
 }
 
 func findFlowPhaseByID(flow flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
-	for _, phase := range flow.Phases {
-		if phase.PhaseID == phaseID {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
+	return flowPhaseByID(flow, phaseID)
 }
 
 func initialFlowLaunchPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates) string {

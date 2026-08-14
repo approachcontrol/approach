@@ -51,6 +51,72 @@ func TestFlowPhaseLauncherUsesAuthoritativeStampedSettings(t *testing.T) {
 	}
 }
 
+func TestFlowPhaseLauncherKeepsNonPhaseMetadataFromPreparedSnapshot(t *testing.T) {
+	phase := flowstore.FlowPhase{PhaseID: "qa", Title: "QA", Status: flowstore.PhaseReady}
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/repo",
+		WorktreePath: "/worktree-a",
+		Branch:       "flow/a",
+		Commit:       "commit-a",
+		PlanID:       "plan-a",
+		PlanPath:     "/plans/a.md",
+		Phases:       []flowstore.FlowPhase{phase},
+	}
+	authoritativePhase := phase
+	authoritativePhase.Status = flowstore.PhaseRunning
+	authoritativePhase.Agent = agent.CommandClaude
+	launcher := model.FlowPhaseLauncher{
+		AgentPreferences: agent.Preferences{
+			Command:      agent.CommandCodex,
+			ClaudeModel:  agent.ModelClaudeSonnet5,
+			ClaudeEffort: agent.ReasoningEffortMax,
+		},
+		ReadPlan: func(planID string) (string, error) {
+			if planID != record.PlanID {
+				t.Fatalf("ReadPlan(%q), want %q", planID, record.PlanID)
+			}
+			return "plan A body", nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       record.FlowID,
+				WorktreePath: "/worktree-b",
+				Branch:       "flow/b",
+				Commit:       "commit-b",
+				PlanID:       "plan-b",
+				PlanPath:     "/plans/b.md",
+				Phases:       []flowstore.FlowPhase{authoritativePhase},
+				UpdatedAt:    time.Unix(1, 0),
+			}, nil
+		},
+		PromptTemplates: model.FlowPromptTemplates{Generic: "plan={plan_id} path={plan_path} body={plan_body}"},
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: phase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := launcher.Prepare(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := result.Context
+	if ctx.Command != agent.CommandClaude {
+		t.Fatalf("Command = %q, want authoritative phase command %q", ctx.Command, agent.CommandClaude)
+	}
+	if ctx.WorktreePath != record.WorktreePath || ctx.Branch != record.Branch || ctx.Commit != record.Commit ||
+		ctx.PlanID != record.PlanID || ctx.PlanPath != record.PlanPath {
+		t.Fatalf("launch context mixed Flow snapshots: %#v", ctx)
+	}
+	wantPrompt := "plan=plan-a path=/plans/a.md body=plan A body"
+	if !strings.HasPrefix(ctx.InitialPrompt, wantPrompt) {
+		t.Fatalf("InitialPrompt = %q, want prefix %q", ctx.InitialPrompt, wantPrompt)
+	}
+}
+
 func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
 	record := flowstore.FlowRecord{

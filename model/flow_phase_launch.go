@@ -292,13 +292,11 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		return FlowPhaseLaunchResult{}, FlowPhaseLaunchValidationError{Message: err.Error()}
 	}
 	command := settings.Command
+	// AddFlowPhaseLaunchID is the linearization point for the target phase only.
+	// Keep every other launch input on the prepared snapshot: the linked plan
+	// body and path were already read from it, and mixing later record metadata
+	// into that context could identify a different plan or worktree.
 	launchRecord := req.Record
-	// A real store record always carries UpdatedAt. Tests and legacy injected
-	// seams may return a deliberately partial record containing only the phase;
-	// keep the request metadata in that compatibility case.
-	if !updated.UpdatedAt.IsZero() && strings.TrimSpace(updated.WorktreePath) != "" {
-		launchRecord = updated
-	}
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
 		Model:            settings.Model,
