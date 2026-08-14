@@ -116,6 +116,39 @@ func TestRenderBeadsPanePreservesReadyMarkerAtNarrowWidths(t *testing.T) {
 	}
 }
 
+func TestRenderBeadsPaneStylesSelectedExpansionLines(t *testing.T) {
+	t.Parallel()
+
+	const width = 60
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Children: []beadsquery.Bead{{ID: "bd-child", Priority: 1, Title: "Child"}},
+		Detail:   "bd ready failed",
+	}
+	selectedLines := expansionVisualLines(epic, true, width, expansion)
+	plainLines := []string{
+		"     ↳ bd-child  P1  Child",
+		"     Readiness unavailable: bd ready failed",
+	}
+	if len(selectedLines) != 3 {
+		t.Fatalf("selected expansion lines = %d, want parent, child, and warning", len(selectedLines))
+	}
+	for i, plain := range plainLines {
+		want := renderStyledRow(stashSelStyle.Render(plain), stashSelStyle, width)
+		if got := selectedLines[i+1]; got != want {
+			t.Fatalf("selected expansion line %d = %q, want selection-styled %q", i, got, want)
+		}
+	}
+
+	unfocusedLines := expansionVisualLines(epic, false, width, expansion)
+	for i, want := range plainLines {
+		if got := unfocusedLines[i+1]; got != want {
+			t.Fatalf("unfocused expansion line %d = %q, want plain %q", i, got, want)
+		}
+	}
+}
+
 func TestRenderBeadsPaneEmptyChildrenStillShowsReadinessFailure(t *testing.T) {
 	t.Parallel()
 

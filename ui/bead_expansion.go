@@ -65,8 +65,15 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 		return lines
 	}
 
+	appendExpansionLine := func(line string) {
+		line = truncateToWidth(line, width)
+		if selected {
+			line = renderStyledRow(stashSelStyle.Render(line), stashSelStyle, width)
+		}
+		lines = append(lines, line)
+	}
 	stateLine := func(text string) {
-		lines = append(lines, truncateToWidth("     "+terminalSafeSingleLine(text), width))
+		appendExpansionLine("     " + terminalSafeSingleLine(text))
 	}
 	switch expansion.State {
 	case BeadExpansionLoading:
@@ -87,7 +94,7 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 				}
 				const indent = "     "
 				body = truncateToWidth(body, width-ansi.StringWidth(indent)-ansi.StringWidth(marker))
-				lines = append(lines, truncateToWidth(indent+body+marker, width))
+				appendExpansionLine(indent + body + marker)
 			}
 		}
 		if !expansion.ReadinessKnown {
