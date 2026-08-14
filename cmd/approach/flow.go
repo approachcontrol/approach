@@ -68,6 +68,7 @@ Commands:
   phase reset      Recover a stale running phase back to ready.
   phase set        Advance a Flow phase with explicit status.
   phase add-child  Add or update an implementation child phase.
+  phase agent set  Replace or clear a phase's agent settings stamp.
   plan set         Link a saved plan artifact to a Flow.
   issue set        Record GitHub issue metadata.
   pr set           Record pull request metadata.
@@ -83,6 +84,7 @@ Examples:
   approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --agent claude --model claude-opus-5
   approach flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
   approach flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
   approach flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
@@ -473,8 +475,10 @@ func runFlowPhaseAgentSet(args []string, deps runDeps) error {
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase agent set requires --phase-id")
 	}
+	provided := make(map[string]bool)
+	flags.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 	if *clear {
-		if strings.TrimSpace(*agentCommand) != "" || strings.TrimSpace(*model) != "" || strings.TrimSpace(*effort) != "" {
+		if provided["agent"] || provided["model"] || provided["reasoning-effort"] {
 			return fmt.Errorf("flow phase agent set --clear cannot be combined with --agent, --model, or --reasoning-effort")
 		}
 	} else if strings.TrimSpace(*agentCommand) == "" {

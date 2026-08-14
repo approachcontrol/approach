@@ -39,6 +39,7 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		"approach flow phase restart --flow-id",
 		"approach flow phase reset --flow-id",
 		"approach flow phase set --flow-id",
+		"approach flow phase agent set --flow-id",
 		"approach flow issue set --flow-id",
 		"approach flow pr set --flow-id",
 		"approach flow merge set --flow-id",
@@ -555,6 +556,15 @@ func TestRunFlowPhaseAgentSetReplacesAndClearsStamp(t *testing.T) {
 		"--state-root", root,
 	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}})); err == nil {
 		t.Fatal("contradictory clear and agent flags succeeded")
+	}
+	if err := run([]string{
+		"approach", "flow", "phase", "agent", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", phaseID,
+		"--clear", "--model", "",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}})); err == nil {
+		t.Fatal("contradictory clear and explicitly empty model flag succeeded")
 	}
 }
 

@@ -1161,7 +1161,8 @@ func (m Model) handleFlowPhaseAgentSettingsSet(msg FlowPhaseAgentSettingsSetMsg)
 		return m.setStatus(statusOther, "Unable to update Flow phase agent settings")
 	}
 	record, phase, ok := m.selectedFlowPhaseAgentTarget()
-	if !ok || record.FlowID != msg.Flow.FlowID || artifacts.NormalizePhaseID(phase.PhaseID) != msg.PhaseIdentity {
+	if !ok || record.FlowID != msg.Flow.FlowID || phase.PhaseID != msg.PhaseID ||
+		artifacts.NormalizePhaseID(phase.PhaseID) != msg.PhaseIdentity {
 		return m.setStatus(statusOther, "Flow phase selection changed before agent settings were applied")
 	}
 	m = m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)

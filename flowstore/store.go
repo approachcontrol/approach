@@ -890,7 +890,13 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 		record.Phases[phaseIndex] = phase.withAgentSettings(settings)
 		record.Phases[phaseIndex].UpdatedAt = now
 		record.UpdatedAt = now
-		if err := sess.save(record); err != nil {
+		if err := sess.savePhaseAgentSettings(phaseAgentSettingsSave{
+			PhaseIndex:      phaseIndex,
+			PhaseID:         phase.PhaseID,
+			Settings:        settings,
+			PhaseUpdatedAt:  now,
+			RecordUpdatedAt: now,
+		}); err != nil {
 			return FlowRecord{}, err
 		}
 		return record, nil

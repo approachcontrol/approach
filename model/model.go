@@ -1038,7 +1038,10 @@ func (m Model) flowLaunchAgentSettings() (string, string, string) {
 }
 
 func (m Model) flowModelLabel() string {
-	settings := m.effectiveSelectedFlowAgentSettings()
+	settings, valid := m.effectiveSelectedFlowAgentSettings()
+	if !valid {
+		return "invalid"
+	}
 	command := settings.Command
 	switch command {
 	case agent.CommandCodex:
@@ -1051,7 +1054,10 @@ func (m Model) flowModelLabel() string {
 }
 
 func (m Model) flowReasoningEffortLabel() string {
-	settings := m.effectiveSelectedFlowAgentSettings()
+	settings, valid := m.effectiveSelectedFlowAgentSettings()
+	if !valid {
+		return "effort: invalid"
+	}
 	command := settings.Command
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
@@ -1062,7 +1068,11 @@ func (m Model) flowReasoningEffortLabel() string {
 }
 
 func (m Model) flowAgentShortcutLabel() string {
-	switch command := m.effectiveSelectedFlowAgentSettings().Command; command {
+	settings, valid := m.effectiveSelectedFlowAgentSettings()
+	if !valid {
+		return "invalid settings"
+	}
+	switch command := settings.Command; command {
 	case agent.CommandCodex, agent.CommandClaude:
 		return command
 	default:
@@ -1070,15 +1080,17 @@ func (m Model) flowAgentShortcutLabel() string {
 	}
 }
 
-func (m Model) effectiveSelectedFlowAgentSettings() agent.Settings {
+func (m Model) effectiveSelectedFlowAgentSettings() (agent.Settings, bool) {
 	if m.flowPhaseAgentControlsSelected() {
 		if phase, ok := m.selectedFlowPhase(); ok {
-			if settings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings()); err == nil {
-				return settings
+			settings, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+			if err != nil {
+				return agent.Settings{}, false
 			}
+			return settings, true
 		}
 	}
-	return m.launchAgentSettings(m.agentCommand)
+	return m.launchAgentSettings(m.agentCommand), true
 }
 
 func (m Model) flowPhaseAgentControlsSelected() bool {
@@ -2297,7 +2309,7 @@ func flowRecordPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore
 }
 
 func flowRecordPhaseIndexByID(record flowstore.FlowRecord, phaseID string) (int, flowstore.FlowPhase, bool) {
-	requested := strings.TrimSpace(phaseID)
+	requested := phaseID
 	phases := flowstore.OrderedPhases(record.Phases)
 	for i, phase := range phases {
 		if phase.PhaseID == requested {

@@ -4,7 +4,7 @@
 
 ## Package Map
 
-- `cmd/approach/` — entrypoint. Handles `--version`, `session-hook --provider claude|codex`, the `plan save|list|read|phase set` and `flow create|list|read|phase complete|phase block|phase needs-attention|phase restart|phase reset|phase set|phase add-child|plan set|issue set|pr set|merge set` subcommands (`plan.go`, `flow.go`), and `serve` (`serve.go`), which hosts the read-only GraphQL API. Subcommands resolve the artifact root without starting the TUI; only `serve` scans repos, and it does so per request.
+- `cmd/approach/` — entrypoint. Handles `--version`, `session-hook --provider claude|codex`, the `plan save|list|read|phase set` and `flow create|list|read|phase complete|phase block|phase needs-attention|phase restart|phase reset|phase set|phase add-child|phase agent set|plan set|issue set|pr set|merge set` subcommands (`plan.go`, `flow.go`), and `serve` (`serve.go`), which hosts the read-only GraphQL API. Subcommands resolve the artifact root without starting the TUI; only `serve` scans repos, and it does so per request.
 - `config/` — optional TOML from `$XDG_CONFIG_HOME/approach/config.toml` or `~/.config/approach/config.toml`. Missing config is non-fatal; unreadable files, malformed TOML, wrong types for known keys, and invalid known values are startup-fatal, while unknown sections/keys are ignored for version compatibility.
 - `scanner/` — discovers repos under `WORKTREE_ROOT`, `[scan].root`, or `~/dev` (default depth 2, reducible via `[scan].max_depth`), excluding `*-worktrees`.
 - `gitquery/` — read-only git queries. `parse.go` is pure parsing; `runner.go` defines the `Runner` seam wrapped by a `Querier` (`NewQuerier` injects a fake `Runner` for tests).
