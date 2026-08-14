@@ -1214,6 +1214,7 @@ func TestBeadsReadyStartFlowHandoffTransfersAdmissionAndRejectsStaleRepo(t *test
 		t.Run(name, func(t *testing.T) {
 			releases := 0
 			embeddedStarts := 0
+			var phaseUpdates []flowstore.PhaseUpdate
 			m := inBeadsPane(newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
 				ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
@@ -1234,6 +1235,10 @@ func TestBeadsReadyStartFlowHandoffTransfersAdmissionAndRejectsStaleRepo(t *test
 					embeddedStarts++
 					return &fakeEmbeddedTerminal{state: "running"}, nil
 				},
+				SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+					phaseUpdates = append(phaseUpdates, update)
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
 			}))
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
@@ -1246,7 +1251,17 @@ func TestBeadsReadyStartFlowHandoffTransfersAdmissionAndRejectsStaleRepo(t *test
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 			}
-			m, _ = update(m, handoff)
+			var handoffCmd tea.Cmd
+			m, handoffCmd = update(m, handoff)
+			if stale {
+				if handoffCmd == nil {
+					t.Fatal("stale Ready handoff returned no phase recovery command")
+				}
+				if releases != 0 {
+					t.Fatalf("reservation released before stale phase recovery: %d", releases)
+				}
+				m, _ = update(m, handoffCmd())
+			}
 			if releases != 1 {
 				t.Fatalf("reservation releases = %d, want 1", releases)
 			}
@@ -1256,6 +1271,16 @@ func TestBeadsReadyStartFlowHandoffTransfersAdmissionAndRejectsStaleRepo(t *test
 			}
 			if embeddedStarts != wantStarts {
 				t.Fatalf("embedded starts = %d, want %d", embeddedStarts, wantStarts)
+			}
+			if stale {
+				if len(phaseUpdates) != 1 {
+					t.Fatalf("stale Ready phase updates = %#v, want one recovery update", phaseUpdates)
+				}
+				got := phaseUpdates[0]
+				if got.FlowID != "flow-1" || got.PhaseID != "plan" || got.Status != flowstore.PhaseNeedsAttention ||
+					!strings.Contains(got.Notes, "canceled") {
+					t.Fatalf("stale Ready phase update = %#v", got)
+				}
 			}
 			if !stale {
 				_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})

@@ -303,31 +303,45 @@ func (m Model) invalidateReadyBeadFlowCreateRequest() Model {
 // acceptCreationTimeFlowLaunch validates the mutually exclusive request
 // namespaces used by Plan Now and Ready-Bead F before either launch path may
 // spawn. A valid Ready handoff clears its admission token here; from that point
-// the held Flow reservation and launch lifecycle own success or failure.
-func (m Model) acceptCreationTimeFlowLaunch(repoPath string, flowCreateRequest, readyBeadRequest uint64, release func()) (Model, bool) {
+// the held Flow reservation and launch lifecycle own success or failure. A
+// stale handoff retains that reservation until its already-running phase has
+// been moved to launch failure.
+func (m Model) acceptCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, flowCreateRequest, readyBeadRequest uint64, release func()) (Model, bool, tea.Cmd) {
 	if flowCreateRequest != 0 && readyBeadRequest != 0 {
 		releaseFlowLaunchReservation(release)
-		return m, false
+		return m, false, nil
 	}
 	if flowCreateRequest != 0 {
-		if !m.isCurrentRepo(repoPath) || !m.isCurrentFlowCreateRequest(flowCreateRequest) {
-			releaseFlowLaunchReservation(release)
-			return m, false
+		if !m.isCurrentRepo(ctx.RepoPath) || !m.isCurrentFlowCreateRequest(flowCreateRequest) {
+			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release)
+			return m, false, cmd
 		}
-		return m.clearFlowCreateRequest(flowCreateRequest), true
+		return m.clearFlowCreateRequest(flowCreateRequest), true, nil
 	}
 	if readyBeadRequest != 0 {
 		if !m.isCurrentReadyBeadFlowCreateRequest(readyBeadRequest) {
-			releaseFlowLaunchReservation(release)
-			return m, false
+			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release)
+			return m, false, cmd
 		}
 		m = m.clearReadyBeadFlowCreateRequest(readyBeadRequest)
-		if !m.isCurrentRepo(repoPath) {
-			releaseFlowLaunchReservation(release)
-			return m, false
+		if !m.isCurrentRepo(ctx.RepoPath) {
+			m, cmd := m.rejectStaleCreationTimeFlowLaunch(ctx, release)
+			return m, false, cmd
 		}
 	}
-	return m, true
+	return m, true, nil
+}
+
+func (m Model) rejectStaleCreationTimeFlowLaunch(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
+	m, cmd := m.startFlowLaunchFailure(ctx, "Flow phase launch canceled because its creation request is stale")
+	if cmd == nil {
+		releaseFlowLaunchReservation(release)
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		defer releaseFlowLaunchReservation(release)
+		return cmd()
+	}
 }
 
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {

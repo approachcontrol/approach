@@ -1860,9 +1860,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		var accepted bool
-		m, accepted = m.acceptCreationTimeFlowLaunch(msg.LaunchContext.RepoPath, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		var rejectionCmd tea.Cmd
+		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
 		if !accepted {
-			return m, nil
+			return m, rejectionCmd
 		}
 		next, launchCmd := m.launchAgentForBackend(msg.LaunchContext, msg.LaunchRelease)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
@@ -1872,9 +1873,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
 		var accepted bool
-		m, accepted = m.acceptCreationTimeFlowLaunch(msg.LaunchContext.RepoPath, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
+		var rejectionCmd tea.Cmd
+		m, accepted, rejectionCmd = m.acceptCreationTimeFlowLaunch(msg.LaunchContext, msg.Request, msg.ReadyBeadRequest, msg.LaunchRelease)
 		if !accepted {
-			return m, nil
+			return m, rejectionCmd
 		}
 		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
