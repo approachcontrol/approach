@@ -160,6 +160,49 @@ func TestSavedSessionResumeAuthoritativeNonFlowUsesRefreshedEstablishedRoute(t *
 	}
 }
 
+func TestSavedSessionResumeMissingFlowUsesEstablishedRouteForEveryOrigin(t *testing.T) {
+	for _, origin := range []flowLaunchOrigin{
+		flowLaunchOriginSessionsPane,
+		flowLaunchOriginEmbeddedSessionPicker,
+		flowLaunchOriginInlineWorktreeSession,
+	} {
+		t.Run(originName(origin), func(t *testing.T) {
+			fresh := sessions.SessionRecord{
+				Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-missing",
+				RepoPath: "/repo", WorktreePath: "/repo/worktree", CWD: "/repo/worktree/subdir",
+			}
+			var started actions.AgentLaunchContext
+			m := savedSessionLifecycleModel(Options{
+				ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) { return fresh, nil },
+				ReadFlow: func(string) (flowstore.FlowRecord, error) {
+					return flowstore.FlowRecord{}, flowstore.ErrFlowNotFound
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+					started = ctx
+					return internalFakeEmbeddedTerminal{state: "running"}, nil
+				},
+				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+					started = ctx
+					return actions.TerminalLaunchSpec{}, nil
+				},
+			})
+			m.launchSeams.NewLaunchID = func() string { return "token" }
+			m, cmd := m.routeSavedSessionResume(fresh, origin)
+			m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+			m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+			if cmd == nil {
+				t.Fatal("missing Flow did not delegate to the established route")
+			}
+			if started.ResumeSessionID != fresh.SessionID || started.WorkingDir != fresh.CWD || started.FlowID != "" {
+				t.Fatalf("missing-Flow launch = %#v", started)
+			}
+			if m.flowLaunchAttemptOccupied(fresh.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+				t.Fatal("missing-Flow delegation retained lifecycle ownership")
+			}
+		})
+	}
+}
+
 func TestSavedSessionResumeFailuresAreStatusOnlyAndReleaseOwnership(t *testing.T) {
 	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-a"}
 	m := savedSessionLifecycleModel(Options{
@@ -176,6 +219,34 @@ func TestSavedSessionResumeFailuresAreStatusOnlyAndReleaseOwnership(t *testing.T
 	m, followup := m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
 	if followup != nil || m.status.Text != "read failed" || m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
 		t.Fatalf("failure result = status %q attempts %#v owners %#v", m.status.Text, m.flowLaunchAttempts, m.flowLaunchSessionOwners)
+	}
+}
+
+func TestSavedSessionResumeRejectsAuthoritativeLiveTmuxWindow(t *testing.T) {
+	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-a"}
+	fresh := cached
+	fresh.Status = "ended"
+	fresh.LaunchID = "launch-live"
+	fresh.RepoPath = "/repo"
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) { return fresh, nil },
+	})
+	m.launchBackend = "tmux"
+	m.tmuxLaunchAvailable = func() bool { return true }
+	m.repoTmuxLaunchWindowLive = func(repoPath string, launchIDs ...string) bool {
+		if repoPath != fresh.RepoPath || len(launchIDs) != 1 || launchIDs[0] != fresh.LaunchID {
+			t.Fatalf("tmux probe = %q %#v", repoPath, launchIDs)
+		}
+		return true
+	}
+	m.launchSeams.NewLaunchID = func() string { return "token-1" }
+	m, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || m.status.Text != tmuxSessionLiveWindowRefusal {
+		t.Fatalf("live tmux refusal: cmd=%v status=%q", cmd != nil, m.status.Text)
+	}
+	if m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("live tmux refusal retained lifecycle ownership")
 	}
 }
 
@@ -309,6 +380,142 @@ func TestSavedSessionResumeRevalidatesUnderReservation(t *testing.T) {
 	}
 	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
 		t.Fatal("failed protected revalidation retained ownership")
+	}
+}
+
+func TestSavedSessionResumeRevalidatesExactSessionUnderReservation(t *testing.T) {
+	initial := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1",
+		WorktreePath: "/repo/worktree", Branch: "flow/one",
+	}
+	moved := initial
+	moved.FlowID = "flow-2"
+	moved.WorktreePath = "/repo/other-worktree"
+	flow := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}
+	reads := 0
+	started := false
+	released := false
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(provider sessions.Provider, sessionID string) (sessions.SessionRecord, error) {
+			if provider != initial.Provider || sessionID != initial.SessionID {
+				t.Fatalf("ReadSession(%q, %q)", provider, sessionID)
+			}
+			reads++
+			if reads == 1 {
+				return initial, nil
+			}
+			return moved, nil
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() { released = true }, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.launchSeams.NewLaunchID = func() string { return "token" }
+	m, cmd := m.routeSavedSessionResume(initial, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || reads != 2 || started || !released || !strings.Contains(m.status.Text, "moved from Flow") {
+		t.Fatalf("session revalidation result: cmd=%v reads=%d started=%v released=%v status=%q", cmd != nil, reads, started, released, m.status.Text)
+	}
+	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("failed exact-session revalidation retained ownership")
+	}
+}
+
+func TestSavedSessionResumeRechecksFinalTmuxLaunchUnderReservation(t *testing.T) {
+	initial := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1",
+		RepoPath: "/repo", WorktreePath: "/repo/worktree", Status: "ended", LaunchID: "launch-old",
+	}
+	refreshed := initial
+	refreshed.LaunchID = "launch-live"
+	flow := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}
+	reads := 0
+	probes := 0
+	started := false
+	released := false
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) {
+			reads++
+			if reads == 1 {
+				return initial, nil
+			}
+			return refreshed, nil
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() { released = true }, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.launchBackend = "tmux"
+	m.tmuxLaunchAvailable = func() bool { return true }
+	m.repoTmuxLaunchWindowLive = func(repoPath string, launchIDs ...string) bool {
+		probes++
+		if repoPath != initial.RepoPath || len(launchIDs) != 1 {
+			t.Fatalf("tmux probe = %q %#v", repoPath, launchIDs)
+		}
+		return launchIDs[0] == refreshed.LaunchID
+	}
+	m.launchSeams.NewLaunchID = func() string { return "token" }
+	m, cmd := m.routeSavedSessionResume(initial, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || reads != 2 || probes != 2 || started || !released || m.status.Text != tmuxSessionLiveWindowRefusal {
+		t.Fatalf("final tmux recheck: cmd=%v reads=%d probes=%d started=%v released=%v status=%q", cmd != nil, reads, probes, started, released, m.status.Text)
+	}
+	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("final tmux refusal retained lifecycle ownership")
+	}
+}
+
+func TestSavedSessionResumeEmbeddedStartFailureNeverFallsBackExternal(t *testing.T) {
+	session := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1",
+		WorktreePath: "/repo/worktree",
+	}
+	flow := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}
+	externalCalls := 0
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) { return session, nil },
+		ReadFlow:    func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() {}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return nil, errors.New("embedded runtime unavailable")
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			externalCalls++
+			return actions.TerminalLaunchSpec{}, nil
+		},
+	})
+	m.launchSeams.NewLaunchID = func() string { return "token" }
+	m, cmd := m.routeSavedSessionResume(session, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || externalCalls != 0 || !strings.Contains(m.status.Text, "embedded runtime unavailable") {
+		t.Fatalf("embedded-only failure: cmd=%v external=%d status=%q", cmd != nil, externalCalls, m.status.Text)
 	}
 }
 

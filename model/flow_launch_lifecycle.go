@@ -138,8 +138,12 @@ type flowLaunchEventMsg struct {
 	// entirely by the read stage's drift check and nothing downstream reads it.
 	ProviderSessionID string
 	ResumeCommand     string
-	Err               string
-	Release           func()
+	// FlowMissing distinguishes the saved-session compatibility case from every
+	// other read failure: a saved session outlives a deleted Flow and resumes via
+	// its established non-Flow route instead of being stranded by stale linkage.
+	FlowMissing bool
+	Err         string
+	Release     func()
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -709,6 +713,10 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	case flowLaunchStageRead:
 		if msg.Kind == flowLaunchKindAutoPhase {
 			return m.handleAutoFlowLaunchRead(attempt, msg)
+		}
+		if msg.Kind == flowLaunchKindSavedSessionResume && msg.FlowMissing {
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+			return m.routeNonFlowSavedSessionResume(msg.Session, attempt.Origin)
 		}
 		if msg.Err != "" {
 			if msg.Kind == flowLaunchKindRepair {

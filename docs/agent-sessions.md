@@ -144,12 +144,17 @@ A record cached with a Flow association takes one lifecycle route from all
 three sources: Sessions-pane `r`, the embedded dock's global session picker,
 and Enter on an inline worktree session. The cached Flow is only the initial
 reservation hint. Approach first reads the exact provider plus raw session ID
-and verifies the decoded key. If the refreshed record moved from Flow A to Flow
-B, ownership transfers to B before B is read; if it is now non-Flow, ownership
-is released and the refreshed record returns to that source's existing
-non-Flow route. This preserves refreshed repo, worktree, `cwd`, branch, commit,
-plan path/ID, provider, and raw session ID instead of launching from the cached
-row.
+and verifies the decoded key. In tmux mode it also refuses if the launch window
+recorded by that refreshed row is still live, even when the row says `ended`.
+If the refreshed record moved from Flow A to Flow B, ownership transfers to B
+before B is read; if it is now non-Flow, ownership is released and the refreshed
+record returns to that source's existing non-Flow route. A missing B is treated
+the same way because saved sessions can outlive deleted Flow records; other read
+failures still refuse. Protected preparation re-reads the exact session under
+B's launch reservation and refuses if its Flow association moved again or its
+final launch window is live. This preserves final repo, worktree, `cwd`, branch,
+commit, plan path/ID, provider, and raw session ID instead of launching from the
+cached row.
 
 An authoritatively Flow-associated CLI resume is interactive and embedded-only,
 regardless of tmux mode or the Flow's headless preference. It exports the

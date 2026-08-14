@@ -269,8 +269,9 @@ exact provider/session record and routes it through the Flow launch lifecycle.
 An authoritative Flow resume is interactive, embedded-only, phase-untracked
 (empty phase ID), nondetachable, and retained as exact-Flow occupancy after
 exit. If refresh removes the Flow association, the refreshed record follows
-the ordinary Sessions-pane route instead. Rows initially without a Flow keep
-their existing embedded/tmux/external behavior.
+the ordinary Sessions-pane route instead. The same is true when the referenced
+Flow was deleted, because saved sessions outlive Flow records. Rows initially
+without a Flow keep their existing embedded/tmux/external behavior.
 
 How sessions are captured, where they are stored, and how resume picks its
 working directory are covered in `docs/agent-sessions.md`.
@@ -428,12 +429,14 @@ Limitations:
   three actions instead ask tmux whether a window for that work is still open,
   and refuse with "Flow phase still has an agent running in tmux" when one is.
   `x` and `r` check the selected phase's launches; `R` checks every launch the
-  Flow has made, since a repair is Flow-wide. Authoritatively non-Flow resumes
-  that start from a session record — sessions view `r`, the inline worktree
-  session list, and the dock's session picker — check the launch that produced
-  that record and refuse with "Session still has an agent running in tmux".
-  Flow-associated saved resumes do not take this route: their lifecycle-owned
-  retained dock slot is the occupancy boundary instead. Codex
+  Flow has made, since a repair is Flow-wide. Saved-session resumes that start
+  from a session record — sessions view `r`, the inline worktree session list,
+  and the dock's session picker — check the launch from the authoritative
+  refreshed record and refuse with "Session still has an agent running in
+  tmux". Flow-associated saved resumes repeat that check on the final record
+  read under the Flow launch reservation, then launch into a lifecycle-owned
+  retained dock slot; authoritatively non-Flow resumes use the configured route.
+  Codex
   makes that ordinary rather than rare: it records an `ended` session after each
   turn while its CLI stays open, so the record you resume from often still has a
   live agent. Consequences worth knowing:

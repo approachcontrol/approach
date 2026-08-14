@@ -119,6 +119,15 @@ func (m Model) handleSavedSessionFlowLaunchSessionRead(attempt flowLaunchAttempt
 	if msg.Err != "" {
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, msg.Err), nil
 	}
+	// The cached row may say ended while its provider is still live in a tmux
+	// window (Codex records an ended session after each turn). Probe only after
+	// the exact authoritative refresh so stale launch metadata cannot admit a
+	// duplicate process. The helper is backend-gated and runs only for this
+	// user-initiated resume hop.
+	if m.tmuxSessionAgentStillRunning(msg.Session, string(msg.Session.Provider)) {
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+			setStatus(statusOther, tmuxSessionLiveWindowRefusal), nil
+	}
 	authoritativeFlowID := strings.TrimSpace(msg.Session.FlowID)
 	if authoritativeFlowID == "" {
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
@@ -147,6 +156,7 @@ func savedSessionFlowLaunchFlowReadCmd(seams flowLaunchSeams, token string, key 
 		}
 		record, err := seams.ReadFlow(flowID)
 		if err != nil {
+			event.FlowMissing = flowstore.IsNotFound(err)
 			event.Err = err.Error()
 			return event
 		}
@@ -216,6 +226,27 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			event.Err = err.Error()
 			return event
 		}
+		if seams.ReadSession == nil {
+			event.Err = "saved session reader is unavailable"
+			return event
+		}
+		refreshed, err := seams.ReadSession(msg.SessionKey.Provider, msg.SessionKey.SessionID)
+		if err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		if refreshed.Provider != msg.SessionKey.Provider || refreshed.SessionID != msg.SessionKey.SessionID {
+			event.Err = fmt.Sprintf("saved session key changed from %q/%q to %q/%q", msg.SessionKey.Provider, msg.SessionKey.SessionID, refreshed.Provider, refreshed.SessionID)
+			return event
+		}
+		if refreshedFlowID := strings.TrimSpace(refreshed.FlowID); refreshedFlowID != msg.FlowID {
+			event.Err = fmt.Sprintf("saved session moved from Flow %q to %q during launch preparation", msg.FlowID, refreshedFlowID)
+			return event
+		}
+		if m.tmuxSessionAgentStillRunning(refreshed, string(refreshed.Provider)) {
+			event.Err = tmuxSessionLiveWindowRefusal
+			return event
+		}
 		stored, err := seams.ListFlowSessions(msg.FlowID)
 		if err != nil {
 			event.Err = err.Error()
@@ -225,27 +256,29 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			event.Err = err.Error()
 			return event
 		}
-		workingDir := msg.Session.CWD
+		workingDir := refreshed.CWD
 		if strings.TrimSpace(workingDir) == "" {
-			workingDir = msg.Session.WorktreePath
+			workingDir = refreshed.WorktreePath
 		}
 		if strings.TrimSpace(workingDir) == "" {
 			event.Err = "Session has no worktree path or cwd to resume from"
 			return event
 		}
 		event.Record = record
+		event.Session = refreshed
+		event.RepoPath = refreshed.RepoPath
 		event.Context = actions.AgentLaunchContext{
-			Command:                string(msg.Session.Provider),
+			Command:                string(refreshed.Provider),
 			LaunchID:               msg.Token,
-			RepoPath:               msg.Session.RepoPath,
-			WorktreePath:           msg.Session.WorktreePath,
+			RepoPath:               refreshed.RepoPath,
+			WorktreePath:           refreshed.WorktreePath,
 			WorkingDir:             workingDir,
-			Branch:                 msg.Session.Branch,
-			Commit:                 msg.Session.Commit,
+			Branch:                 refreshed.Branch,
+			Commit:                 refreshed.Commit,
 			SessionStateRoot:       sessionStateRoot,
-			ResumeSessionID:        msg.Session.SessionID,
-			PlanID:                 msg.Session.PlanID,
-			PlanPath:               msg.Session.PlanPath,
+			ResumeSessionID:        refreshed.SessionID,
+			PlanID:                 refreshed.PlanID,
+			PlanPath:               refreshed.PlanPath,
 			FlowID:                 record.FlowID,
 			FlowSavedSessionResume: true,
 			Embedded:               true,
