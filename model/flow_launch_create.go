@@ -719,7 +719,8 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		m = m.withFlowLaunchAttempt(attempt)
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateWorktree:
-		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
+		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"},
+			msg.Err == "" || msg.ErrOp == "record start metadata", true)
 	case flowLaunchStageCreateBootstrap:
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, true, true)
 	case flowLaunchStageCreateLaunchID:

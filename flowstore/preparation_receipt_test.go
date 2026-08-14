@@ -118,9 +118,9 @@ func TestPreparationFinalizerRejectsReplacementFlowGenerationBeforeCallback(t *t
 	if err := store.Delete(created.FlowID); err != nil {
 		t.Fatal(err)
 	}
-	now = now.Add(time.Second)
 	replacement, err := store.Create(flowstore.FlowRecord{
 		FlowID: created.FlowID, Title: "Replacement", Instructions: "Do not certify.", RepoPath: repo,
+		CreatedAt: created.CreatedAt, PreparationGeneration: created.PreparationGeneration,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestPreparationFinalizerRejectsReplacementFlowGenerationBeforeCallback(t *t
 		t.Fatalf("stale finalizer ran %d callbacks, want 0", callbacks)
 	}
 	authoritative, err := store.Read(replacement.FlowID)
-	if err != nil || authoritative.PreparedAt != nil || authoritative.Title != replacement.Title {
+	if err != nil || authoritative.PreparedAt != nil || authoritative.Title != replacement.Title || authoritative.PreparationGeneration != "" {
 		t.Fatalf("replacement after stale finalizer = %#v, err %v", authoritative, err)
 	}
 }

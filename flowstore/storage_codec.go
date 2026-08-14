@@ -46,14 +46,15 @@ type storedFlowDTO struct {
 	// Closed is omitzero, deliberately unlike its omitempty neighbours:
 	// omitempty does not omit a zero struct, and this struct is what the
 	// default_seed golden is marshalled from.
-	Closed        Closure               `json:"closed,omitzero"`
-	AutoMode      bool                  `json:"auto_mode,omitempty"`
-	Headless      bool                  `json:"headless"`
-	Phases        []FlowPhase           `json:"phases"`
-	PreparedAt    string                `json:"prepared_at,omitempty"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
-	GraphRecovery *storageGraphRecovery `json:"graph_recovery,omitempty"`
+	Closed                Closure               `json:"closed,omitzero"`
+	AutoMode              bool                  `json:"auto_mode,omitempty"`
+	Headless              bool                  `json:"headless"`
+	Phases                []FlowPhase           `json:"phases"`
+	PreparationGeneration string                `json:"preparation_generation,omitempty"`
+	PreparedAt            string                `json:"prepared_at,omitempty"`
+	CreatedAt             time.Time             `json:"created_at"`
+	UpdatedAt             time.Time             `json:"updated_at"`
+	GraphRecovery         *storageGraphRecovery `json:"graph_recovery,omitempty"`
 }
 
 // storageGraphRecoveryStatusEncodable lists the statuses encode understands.
@@ -72,29 +73,30 @@ func storageGraphRecoveryStatusPersisted(status string) bool {
 
 func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 	dto := storedFlowDTO{
-		SchemaVersion: record.SchemaVersion,
-		FlowID:        record.FlowID,
-		Title:         record.Title,
-		Instructions:  record.Instructions,
-		Status:        record.Status,
-		RepoPath:      record.RepoPath,
-		WorktreePath:  record.WorktreePath,
-		Branch:        record.Branch,
-		BaseRef:       record.BaseRef,
-		Commit:        record.Commit,
-		PresetName:    record.PresetName,
-		PlanID:        record.PlanID,
-		PlanPath:      record.PlanPath,
-		Bead:          record.Bead,
-		Issue:         record.Issue,
-		PR:            record.PR,
-		Merge:         record.Merge,
-		Closed:        record.Closed,
-		AutoMode:      record.AutoMode,
-		Headless:      record.Headless,
-		Phases:        record.Phases,
-		CreatedAt:     record.CreatedAt,
-		UpdatedAt:     record.UpdatedAt,
+		SchemaVersion:         record.SchemaVersion,
+		FlowID:                record.FlowID,
+		Title:                 record.Title,
+		Instructions:          record.Instructions,
+		Status:                record.Status,
+		RepoPath:              record.RepoPath,
+		WorktreePath:          record.WorktreePath,
+		Branch:                record.Branch,
+		BaseRef:               record.BaseRef,
+		Commit:                record.Commit,
+		PresetName:            record.PresetName,
+		PlanID:                record.PlanID,
+		PlanPath:              record.PlanPath,
+		Bead:                  record.Bead,
+		Issue:                 record.Issue,
+		PR:                    record.PR,
+		Merge:                 record.Merge,
+		Closed:                record.Closed,
+		AutoMode:              record.AutoMode,
+		Headless:              record.Headless,
+		Phases:                record.Phases,
+		PreparationGeneration: record.PreparationGeneration,
+		CreatedAt:             record.CreatedAt,
+		UpdatedAt:             record.UpdatedAt,
 	}
 	if record.PreparedAt != nil {
 		dto.PreparedAt = formatStorageTimeUnchecked(*record.PreparedAt)
@@ -107,29 +109,30 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 
 func (dto storedFlowDTO) record() FlowRecord {
 	record := FlowRecord{
-		SchemaVersion: dto.SchemaVersion,
-		FlowID:        dto.FlowID,
-		Title:         dto.Title,
-		Instructions:  dto.Instructions,
-		Status:        dto.Status,
-		RepoPath:      dto.RepoPath,
-		WorktreePath:  dto.WorktreePath,
-		Branch:        dto.Branch,
-		BaseRef:       dto.BaseRef,
-		Commit:        dto.Commit,
-		PresetName:    dto.PresetName,
-		PlanID:        dto.PlanID,
-		PlanPath:      dto.PlanPath,
-		Bead:          dto.Bead,
-		Issue:         dto.Issue,
-		PR:            dto.PR,
-		Merge:         dto.Merge,
-		Closed:        dto.Closed,
-		AutoMode:      dto.AutoMode,
-		Headless:      dto.Headless,
-		Phases:        dto.Phases,
-		CreatedAt:     dto.CreatedAt,
-		UpdatedAt:     dto.UpdatedAt,
+		SchemaVersion:         dto.SchemaVersion,
+		FlowID:                dto.FlowID,
+		Title:                 dto.Title,
+		Instructions:          dto.Instructions,
+		Status:                dto.Status,
+		RepoPath:              dto.RepoPath,
+		WorktreePath:          dto.WorktreePath,
+		Branch:                dto.Branch,
+		BaseRef:               dto.BaseRef,
+		Commit:                dto.Commit,
+		PresetName:            dto.PresetName,
+		PlanID:                dto.PlanID,
+		PlanPath:              dto.PlanPath,
+		Bead:                  dto.Bead,
+		Issue:                 dto.Issue,
+		PR:                    dto.PR,
+		Merge:                 dto.Merge,
+		Closed:                dto.Closed,
+		AutoMode:              dto.AutoMode,
+		Headless:              dto.Headless,
+		Phases:                dto.Phases,
+		PreparationGeneration: dto.PreparationGeneration,
+		CreatedAt:             dto.CreatedAt,
+		UpdatedAt:             dto.UpdatedAt,
 	}
 	if dto.GraphRecovery != nil {
 		record.GraphRecovery.Status = dto.GraphRecovery.Status

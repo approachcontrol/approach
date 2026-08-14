@@ -577,8 +577,12 @@ func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallba
 		}
 	}
 	for _, phase := range phases {
-		if _, err := s.setPhase(blockedPhaseUpdate(flow.FlowID, phase, notes)); err != nil {
+		updated, err := s.setPhase(blockedPhaseUpdate(flow.FlowID, phase, notes))
+		if err != nil {
 			return flow, fmt.Errorf("%s; mark flow blocked: %v", resultErr, err)
+		}
+		if updated.FlowID == flow.FlowID {
+			flow = updated
 		}
 	}
 	return flow, fmt.Errorf("%s", resultErr)

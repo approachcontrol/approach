@@ -1130,27 +1130,38 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksFirstLaunchablePhase(t *test
 
 func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
+	authoritative := flowstore.FlowRecord{
+		FlowID: "flow-1",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+			{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
+			{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+		},
+	}
 
 	starter := newFlowStarterForTest(model.FlowStarterOptions{
 		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{
-				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
-				{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
-				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
-			}
-			return record, nil
+			authoritative.Title = record.Title
+			authoritative.Instructions = record.Instructions
+			authoritative.RepoPath = record.RepoPath
+			return authoritative, nil
 		},
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
 			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
-			return flowstore.FlowRecord{}, nil
+			for i := range authoritative.Phases {
+				if authoritative.Phases[i].PhaseID == update.PhaseID {
+					authoritative.Phases[i].Status = update.Status
+					authoritative.Phases[i].Notes = update.Notes
+				}
+			}
+			return authoritative, nil
 		},
 	})
 
-	_, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Research Flow", Instructions: "Plan research"})
+	result, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Research Flow", Instructions: "Plan research"})
 	if err == nil {
 		t.Fatal("PrepareFlow returned nil error, want worktree failure")
 	}
@@ -1167,6 +1178,9 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *t
 			!strings.Contains(update.Notes, "branch exists") {
 			t.Fatalf("phase update %d = %#v, want blocked %s", i, update, wantPhaseID)
 		}
+	}
+	if result.Flow.Phases[0].Status != flowstore.PhaseBlocked || result.Flow.Phases[1].Status != flowstore.PhaseBlocked {
+		t.Fatalf("compensated result Flow = %#v, want both roots blocked", result.Flow)
 	}
 }
 

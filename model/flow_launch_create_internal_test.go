@@ -783,6 +783,31 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 	}
 }
 
+func TestCreateFlowLaunchCancellationRetriesFailedWorktreeMetadata(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.metadataErr = errors.New("database busy")
+	m, cmd := h.admit(t, h.model(t))
+	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWorktree)
+	if event.ErrOp != "record start metadata" || event.Worktree.WorktreePath == "" {
+		t.Fatalf("worktree metadata failure event = %#v", event)
+	}
+	h.metadataErr = nil
+	m.flowCreateSeq++
+	m.activeFlowCreate = m.flowCreateSeq
+	m, cmd = m.handleFlowLaunchEvent(event)
+	_ = drainCreateLaunch(t, m, cmd)
+
+	metadataCalls := 0
+	for _, call := range h.order {
+		if call == "metadata" {
+			metadataCalls++
+		}
+	}
+	if metadataCalls != 2 || h.record.WorktreePath != event.Worktree.WorktreePath || h.record.Branch != event.Worktree.Branch {
+		t.Fatalf("metadata recovery calls/record = %d/%#v", metadataCalls, h.record)
+	}
+}
+
 func TestCreateFlowLaunchAllocatedIDRefusesRetainedFlowSlots(t *testing.T) {
 	for _, repair := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "repair"}[repair], func(t *testing.T) {
