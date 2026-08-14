@@ -16,6 +16,12 @@ type preparedFlowFinalizerForTest struct {
 	latest *flowstore.FlowRecord
 }
 
+type preparationFinalizerFuncForTest func(func() error) (flowstore.FlowRecord, error)
+
+func (f preparationFinalizerFuncForTest) Finalize(callback func() error) (flowstore.FlowRecord, error) {
+	return f(callback)
+}
+
 func (f preparedFlowFinalizerForTest) Finalize(callback func() error) (flowstore.FlowRecord, error) {
 	if callback != nil {
 		if err := callback(); err != nil {
@@ -631,6 +637,72 @@ func TestFlowStarterStartPlanRefusesFinalizerWithoutPreparationReceipt(t *testin
 	}
 	if blocked.FlowID != flow.FlowID || blocked.PhaseID != "plan" || blocked.Status != flowstore.PhaseBlocked {
 		t.Fatalf("blocked phase update = %#v, want plan phase blocked", blocked)
+	}
+}
+
+func TestFlowStarterPreparationFailureDoesNotBlockFreshRunningPhase(t *testing.T) {
+	created := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Title:        "Concurrent launch",
+		Instructions: "Preserve the live phase.",
+		RepoPath:     "/dev/alpha",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "plan",
+			Title:   "Plan",
+			Kind:    flowstore.KindPlan,
+			Status:  flowstore.PhaseReady,
+		}},
+	}
+	running := created
+	running.Phases = append([]flowstore.FlowPhase(nil), created.Phases...)
+	running.Phases[0].Status = flowstore.PhaseRunning
+	released := false
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, preparationFinalizerFuncForTest(func(callback func() error) (flowstore.FlowRecord, error) {
+				if callback != nil {
+					if err := callback(); err != nil {
+						return flowstore.FlowRecord{}, err
+					}
+				}
+				return created, errors.Join(flowstore.ErrPreparationIncomplete, errors.New("flow is no longer pending"))
+			}), nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{
+				WorktreePath: "/dev/alpha-worktrees/flow-concurrent-launch",
+				Branch:       "flow/concurrent-launch",
+			}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			started := created
+			started.WorktreePath = update.WorktreePath
+			started.Branch = update.Branch
+			return started, nil
+		},
+		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != created.FlowID {
+				t.Fatalf("ReserveLaunch(%q), want %q", flowID, created.FlowID)
+			}
+			return running, func() { released = true }, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("SetPhase(%#v) must not overwrite a freshly running phase", update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	result, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: "Concurrent launch", Instructions: "Preserve the live phase.",
+	})
+	if !flowstore.IsPreparationIncomplete(err) && (err == nil || !strings.Contains(err.Error(), "flow preparation is incomplete")) {
+		t.Fatalf("PrepareFlow() error = %v, want confirmed incomplete preparation", err)
+	}
+	if !released {
+		t.Fatal("PrepareFlow() did not release the compensation launch reservation")
+	}
+	if len(result.Flow.Phases) != 1 || result.Flow.Phases[0].Status != flowstore.PhaseRunning {
+		t.Fatalf("PrepareFlow() result = %#v, want authoritative running phase", result.Flow)
 	}
 }
 

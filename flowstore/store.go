@@ -1019,6 +1019,9 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 			return record, nil
 		}
 		now := s.now()
+		if record.PreparedAt != nil && now.Before(*record.PreparedAt) {
+			now = *record.PreparedAt
+		}
 		record.Phases[phaseIndex] = phase.withAgentSettings(settings)
 		record.Phases[phaseIndex].UpdatedAt = now
 		record.UpdatedAt = now
