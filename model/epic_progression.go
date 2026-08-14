@@ -115,6 +115,8 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		}
 	}
 	listFlows := m.listFlows
+	listChildren := m.listChildrenBeads
+	listReady := m.listReadyBeads
 	claimBead := m.claimBead
 	createFlow := m.createFlow
 	reserveFlow := m.reserveFlowLaunch
@@ -141,18 +143,49 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				status: fmt.Sprintf("Multiple Flows exist for child %s; auto-progression remains off", childID)}
 		}
 		var flow flowstore.FlowRecord
+		claimed := false
 		if len(matches) == 1 {
 			flow = matches[0]
 			if detail := rejectEpicProgressionCandidate(flow); detail != "" {
 				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove, status: detail}
 			}
 		} else {
+			children, err := listChildren(target.repoPath, target.epicID)
+			if err != nil {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not revalidate child %s before claim; auto-progression remains off: %v", childID, err)}
+			}
+			ready, err := listReady(target.repoPath)
+			if err != nil {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not revalidate child %s before claim; auto-progression remains off: %v", childID, err)}
+			}
+			direct := false
+			for _, child := range children {
+				if strings.TrimSpace(child.ID) == childID {
+					direct = true
+					childTitle = strings.TrimSpace(child.Title)
+					break
+				}
+			}
+			readyNow := false
+			for _, bead := range ready {
+				if strings.TrimSpace(bead.ID) == childID {
+					readyNow = true
+					break
+				}
+			}
+			if !direct || !readyNow {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Child %s is no longer a ready direct child of epic %s; auto-progression remains off", childID, target.epicID)}
+			}
 			if err := claimBead(target.repoPath, childID); err != nil {
 				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
 					status: fmt.Sprintf("Could not claim child %s; auto-progression remains off: %v", childID, err), presentStatusOnStale: true}
 			}
+			claimed = true
 			title := childID + ": " + childTitle
-			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", childID, childID)
+			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show -- %s` before planning or implementation.", childID, childID)
 			result, createErr := createFlow(FlowStartRequest{
 				RepoPath: target.repoPath, Title: title, Instructions: instructions, Bead: link,
 				AgentCommand: command, Model: launchModel, ReasoningEffort: reasoningEffort,
@@ -162,28 +195,29 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			if createErr != nil {
 				if strings.TrimSpace(flow.FlowID) == "" {
 					return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
-						status: fmt.Sprintf("Could not prepare Flow for child %s: %v", childID, createErr)}
+						status: fmt.Sprintf("Could not prepare Flow for child %s: %v", childID, createErr), presentStatusOnStale: claimed}
 				}
 				authoritative, readErr := readFlow(flow.FlowID)
 				if readErr != nil {
 					return epicProgressionToggleResultMsg{target: target, flow: flow, baselineDisposition: epicProgressionBaselineRemove,
-						status: fmt.Sprintf("Could not confirm preparation for Flow %s; auto-progression state is unknown", flow.FlowID)}
+						status: fmt.Sprintf("Could not confirm preparation for Flow %s; auto-progression state is unknown", flow.FlowID), presentStatusOnStale: claimed}
 				}
 				if authoritative.PreparedAt == nil {
 					return epicProgressionToggleResultMsg{target: target, flow: authoritative, known: true, baselineDisposition: epicProgressionBaselineRemove,
-						status: fmt.Sprintf("Flow %s exists but preparation is incomplete; auto-progression remains off", flow.FlowID)}
+						status: fmt.Sprintf("Flow %s exists but preparation is incomplete; auto-progression remains off", flow.FlowID), presentStatusOnStale: claimed}
 				}
 				flow = authoritative
 			}
 			if detail := rejectEpicProgressionCandidate(flow); detail != "" {
-				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove, status: detail}
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail, presentStatusOnStale: claimed}
 			}
 		}
 
 		authoritative, release, err := reserveFlow(flow.FlowID)
 		if err != nil {
 			return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
-				status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", flow.FlowID, err)}
+				status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", flow.FlowID, err), presentStatusOnStale: claimed}
 		}
 		progression, enabledFlow, err := enableProgression(flowstore.PreparedEpicProgressionUpdate{
 			FlowID: authoritative.FlowID,
@@ -193,7 +227,7 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		if err == nil {
 			return epicProgressionToggleResultMsg{target: target, progression: progression, flow: enabledFlow,
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
-				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, enabledFlow.FlowID)}
+				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, enabledFlow.FlowID), presentStatusOnStale: claimed}
 		}
 		resultFlow := enabledFlow
 		if strings.TrimSpace(resultFlow.FlowID) == "" {
@@ -202,21 +236,21 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		confirmed, found, readErr := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
 		if readErr != nil {
 			return epicProgressionToggleResultMsg{target: target, flow: resultFlow, release: release,
-				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
+				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr), presentStatusOnStale: claimed}
 		}
 		if found && confirmed.Enabled {
 			if !flowstore.IsPreparedEpicProgressionCommitUnknown(err) {
 				return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 					enabled: true, known: true, release: release,
-					status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err)}
+					status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err), presentStatusOnStale: claimed}
 			}
 			return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
-				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, resultFlow.FlowID)}
+				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, resultFlow.FlowID), presentStatusOnStale: claimed}
 		}
 		return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 			baselineDisposition: epicProgressionBaselineRemove, known: true, release: release,
-			status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err)}
+			status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err), presentStatusOnStale: claimed}
 	}
 }
 

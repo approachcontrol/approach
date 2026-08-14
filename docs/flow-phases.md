@@ -363,16 +363,19 @@ restart installs no baseline and performs no catch-up; live-edge advancement is
 owned by the later sequential-advance slice.
 
 When no exact-link Flow exists, epic enablement first runs the sole sanctioned
-Beads mutation, `bd update --claim -- <child-id>`, and waits for success before it
-calls `PrepareFlow`. A claim error therefore aborts before any new Flow record
-or worktree side effect from that attempt. Beads and Approach storage do not
-share a transaction: an error after the process starts may leave ownership
-uncertain or already claimed, so Approach does not probe or automatically
-unclaim. Retry deliberately preserves `BEADS_ACTOR` and relies on same-actor
-claim idempotency. After a confirmed claim, `PrepareFlow` keeps its existing
-partial-failure contract described above; failures may leave only the claim, or
-the claim plus an incomplete/blocked Flow or worktree. Adoption of an already
-prepared exact-link Flow and manual Ready `f`/`F` creation remain claim-free.
+Beads mutation, it refreshes the epic's direct children and the repository Ready
+set and aborts without mutation if the selected child is no longer in both. It
+then runs `bd update --claim -- <child-id>` and waits for success before it calls
+`PrepareFlow`. Generated Flow instructions use `bd show -- <child-id>`. A claim
+error therefore aborts before any new Flow record or worktree side effect from
+that attempt. Beads and Approach storage do not share a transaction: an error
+after the process starts may leave ownership uncertain or already claimed, so
+Approach does not probe or automatically unclaim. Retry deliberately preserves
+`BEADS_ACTOR` and relies on same-actor claim idempotency. After a confirmed
+claim, `PrepareFlow` keeps its existing partial-failure contract described above;
+failures may leave only the claim, or the claim plus an incomplete/blocked Flow
+or worktree. Adoption of an already prepared exact-link Flow and manual Ready
+`f`/`F` creation remain claim-free.
 
 ## Per-phase agent settings
 

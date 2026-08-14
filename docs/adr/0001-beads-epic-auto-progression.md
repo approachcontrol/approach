@@ -26,12 +26,13 @@ launch.
   from success-terminal transitions observed while the TUI is running. Startup
   performs no catch-up for completions that occurred while Approach was down.
 - A progression-created child Flow is claimed synchronously immediately before
-  `FlowStarter.PrepareFlow`. There is no cross-system transaction: an uncertain
-  claim error or a later Approach failure is never compensated with an
-  automatic unclaim. Already-prepared exact-link adoption and manual Ready Flow
-  creation remain claim-free. This slice does not start a phase or launch an
-  agent. Child launching is deferred to `approach-y7g.9`; selecting and
-  advancing subsequent children is deferred to `approach-y7g.5`.
+  `FlowStarter.PrepareFlow`, after a fresh check that it remains both a direct
+  child and Ready. There is no cross-system transaction: an uncertain claim
+  error or a later Approach failure is never compensated with an automatic
+  unclaim. Already-prepared exact-link adoption and manual Ready Flow creation
+  remain claim-free. This slice does not start a phase or launch an agent. Child
+  launching is deferred to `approach-y7g.9`; selecting and advancing subsequent
+  children is deferred to `approach-y7g.5`.
 
 ## Concurrency boundary
 

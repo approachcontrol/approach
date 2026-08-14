@@ -193,14 +193,16 @@ it claims a child before preparing that child's new Flow.
   carrying a persisted preparation receipt. Partial listings, multiple exact
   matches, missing receipts, running state, deliberate closure, failure
   terminals, success terminals, and unknown statuses all refuse enablement.
-  Before new-Flow preparation, it claims the child through the isolated
-  `beadsmutate` adapter. Any claim error aborts before `PrepareFlow`, surfaces
-  the child-specific cause, and leaves progression known off; an error after
-  process start may mean ownership is uncertain or already applied, so the
-  claim is never compensated and same-actor retry is intentional. Exact-link
-  adoption remains claim-free. Preparation uses the Ready create-only title,
-  durable-requirements prompt, Bead/epic link, and captured agent settings. It
-  does not start a phase or launch an agent.
+  Before new-Flow preparation, it refreshes both direct children and Ready state
+  and refuses a selected child that is no longer in both sets. It then claims
+  the child through the isolated `beadsmutate` adapter. Any claim error aborts
+  before `PrepareFlow`, surfaces the child-specific cause, and leaves progression
+  known off; an error after process start may mean ownership is uncertain or
+  already applied, so the claim is never compensated and same-actor retry is
+  intentional. Exact-link adoption remains claim-free. Preparation uses the
+  Ready create-only title, a durable-requirements prompt containing
+  `bd show -- <id>`, the Bead/epic link, and captured agent settings. It does not
+  start a phase or launch an agent.
 - One in-process admission ticket is shared by epic enable/disable and Ready
   `f`/`F`. Navigation invalidates source projection/status identity but does not
   release the ticket. A prepared/adopted Flow stays under its launch/close
