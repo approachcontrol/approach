@@ -147,6 +147,45 @@ func TestEpicProgressionAdvanceRetriesOwnedSuccessorBeforeLaterReadyChild(t *tes
 	}
 }
 
+func TestEpicProgressionAdvanceRotatesRetryingEpics(t *testing.T) {
+	repo := "/repo"
+	firstEpic, secondEpic := "epic-a", "epic-b"
+	firstKey := epicProgressionBaselineKey(repo, firstEpic)
+	secondKey := epicProgressionBaselineKey(repo, secondEpic)
+	firstSource := progressionAdvanceFlow("flow-a", repo, "epic-a.1", firstEpic, flowstore.StatusPending)
+	secondSource := progressionAdvanceFlow("flow-b", repo, "epic-b.1", secondEpic, flowstore.StatusPending)
+	firstTerminal := cloneFlowRecord(firstSource)
+	firstTerminal.Status = flowstore.StatusCompleted
+	secondTerminal := cloneFlowRecord(secondSource)
+	secondTerminal.Status = flowstore.StatusCompleted
+
+	m := Model{
+		autoAdvanceInFlight: 1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{
+			firstKey:  firstSource,
+			secondKey: secondSource,
+		},
+		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{}, false, errors.New("store unavailable for " + key.EpicID)
+		},
+	}
+	terminalFlows := []flowstore.FlowRecord{firstTerminal, secondTerminal}
+
+	next, firstCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: terminalFlows, Request: 1})
+	first := epicProgressionAdvanceMessage(t, firstCmd)
+	if first.epicKey != firstKey || first.disposition != epicProgressionAdvanceRetryable {
+		t.Fatalf("first advance = key %q disposition %v, want retryable %q", first.epicKey, first.disposition, firstKey)
+	}
+	next, _ = updateFlowRefreshTest(next, first)
+
+	next.autoAdvanceInFlight = 2
+	_, secondCmd := updateFlowRefreshTest(next, AutoAdvanceResultMsg{Flows: terminalFlows, Request: 2})
+	second := epicProgressionAdvanceMessage(t, secondCmd)
+	if second.epicKey != secondKey {
+		t.Fatalf("second advance key = %q, want rotation to %q", second.epicKey, secondKey)
+	}
+}
+
 func TestEpicProgressionRuntimeBaselineLifecycle(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)

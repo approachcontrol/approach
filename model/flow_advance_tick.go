@@ -112,7 +112,17 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord) (Mo
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	for _, key := range keys {
+	start := 0
+	if m.epicProgressionAdvanceCursor != "" {
+		start = sort.Search(len(keys), func(i int) bool {
+			return keys[i] > m.epicProgressionAdvanceCursor
+		})
+		if start == len(keys) {
+			start = 0
+		}
+	}
+	for offset := range keys {
+		key := keys[(start+offset)%len(keys)]
 		baseline := m.epicProgressionBaselines[key]
 		observed, ok := currentByID[baseline.FlowID]
 		if !ok {
@@ -131,6 +141,7 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord) (Mo
 		var cmd tea.Cmd
 		m, cmd = m.startEpicProgressionAdvance(key, baseline)
 		if cmd != nil {
+			m.epicProgressionAdvanceCursor = key
 			return m, cmd
 		}
 	}

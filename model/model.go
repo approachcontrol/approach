@@ -214,6 +214,7 @@ type Model struct {
 	epicProgressionOwnedSuccessors map[string]epicProgressionOwnedSuccessor
 	epicProgressionAdvanceSeq      uint64
 	activeEpicProgressionAdvance   epicProgressionAdvanceRequest
+	epicProgressionAdvanceCursor   string
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	// flowAutofixTmuxLaunches maps a Flow ID to every autofix tmux
