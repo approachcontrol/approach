@@ -372,7 +372,7 @@ func normalizeSQLiteSchemaSQL(statement string) string {
 }
 
 func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
-	rows, err := db.Query("SELECT type, name, tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
+	rows, err := db.Query("SELECT type, name, tbl_name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name")
 	if err != nil {
 		return fmt.Errorf("validate flow database schema objects: %w", err)
 	}

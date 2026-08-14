@@ -472,6 +472,10 @@ CREATE INDEX idx_flows_status_updated ON flows(status COLLATE NOCASE, updated_at
 			mutate: `CREATE TABLE unexpected_metadata (value TEXT);`,
 		},
 		{
+			name:   "unexpected table resembling reserved SQLite prefix",
+			mutate: `CREATE TABLE sqliteXextra (value TEXT);`,
+		},
+		{
 			name: "unexpected table constraint",
 			mutate: `
 ALTER TABLE flows RENAME TO original_flows;
