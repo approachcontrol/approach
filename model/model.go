@@ -201,7 +201,7 @@ type Model struct {
 	autoAdvanceDrainFlows     map[string]struct{}
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
-	// flowWorktreeAgentTmuxLaunches maps a Flow ID to every worktree-agent tmux
+	// flowAutofixTmuxLaunches maps a Flow ID to every autofix tmux
 	// launch it made in this process. A phase-untracked launch writes no phase,
 	// so on the tmux route this is the only in-process record that the Flow
 	// already has an agent window open.
@@ -216,9 +216,9 @@ type Model struct {
 	// It needs no expiry: the probe asks whether those windows are still live,
 	// so closed ones re-enable the shortcut on their own, and the slice is
 	// bounded by how many times one Flow was launched in one TUI session.
-	flowWorktreeAgentTmuxLaunches map[string][]string
-	flowLaunchAttempts            map[string]flowLaunchAttempt
-	launchSeams                   flowLaunchSeams
+	flowAutofixTmuxLaunches map[string][]string
+	flowLaunchAttempts      map[string]flowLaunchAttempt
+	launchSeams             flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
 	flowRefreshTickGen      uint64
@@ -1327,6 +1327,7 @@ func (m Model) View() string {
 		FlowModel:                    m.flowModelLabel(),
 		FlowReasoningEffort:          m.flowReasoningEffortLabel(),
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
+		FlowWorktreeAgentReady:       m.selectedFlowWorktreeAgentReady(),
 		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
 		FlowAutofixReadySelected:     m.selectedFlowAutofixReady(),
@@ -2289,7 +2290,7 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 	return ok
 }
 
-// withFlowWorktreeAgentTmuxLaunch appends a worktree-agent tmux launch to the
+// withFlowAutofixTmuxLaunch appends an autofix tmux launch to the
 // ones already retained for a Flow. It clones the map and the Flow's own slice
 // rather than mutating either, like every other per-Flow map on the value-typed
 // Model, so a copy taken before the write is unaffected — appending in place
@@ -2298,21 +2299,21 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 // A launch already retained is not appended twice: the same token can reach a
 // handoff more than once, and a duplicate would only widen the probe's argument
 // list without changing its answer.
-func (m Model) withFlowWorktreeAgentTmuxLaunch(flowID, launchID string) Model {
+func (m Model) withFlowAutofixTmuxLaunch(flowID, launchID string) Model {
 	flowID = strings.TrimSpace(flowID)
 	launchID = strings.TrimSpace(launchID)
 	if flowID == "" || launchID == "" {
 		return m
 	}
-	if slices.Contains(m.flowWorktreeAgentTmuxLaunches[flowID], launchID) {
+	if slices.Contains(m.flowAutofixTmuxLaunches[flowID], launchID) {
 		return m
 	}
-	launches := make(map[string][]string, len(m.flowWorktreeAgentTmuxLaunches)+1)
-	for existingFlowID, existingLaunchIDs := range m.flowWorktreeAgentTmuxLaunches {
+	launches := make(map[string][]string, len(m.flowAutofixTmuxLaunches)+1)
+	for existingFlowID, existingLaunchIDs := range m.flowAutofixTmuxLaunches {
 		launches[existingFlowID] = existingLaunchIDs
 	}
 	launches[flowID] = append(slices.Clone(launches[flowID]), launchID)
-	m.flowWorktreeAgentTmuxLaunches = launches
+	m.flowAutofixTmuxLaunches = launches
 	return m
 }
 

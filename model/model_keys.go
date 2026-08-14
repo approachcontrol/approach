@@ -432,6 +432,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.handleCopyHash()
 	case "s":
+		if m.flowSurfaceVisible() {
+			return m.handleStartSelectedFlowWorktreeAgent()
+		}
 		return m.handleShowSessionSummary()
 	case "r":
 		if m.flowSurfaceVisible() {
@@ -784,6 +787,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleLaunchNextFlowPhase()
 	case "R":
 		return m.handleRepairSelectedFlow()
+	case "s":
+		return m.handleStartSelectedFlowWorktreeAgent()
 	case "enter":
 		return m.handleFlowEnter()
 	case "o":
@@ -1078,20 +1083,23 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 	// launch is past admission, which is the only ordering the launch side
 	// cannot see coming.
 	//
-	// It covers the two phase-untracked kinds, and only those: each resolves
+	// It covers the two headless-aware phase-untracked kinds, and only those:
+	// each resolves
 	// headless in its prepare stage from a record read under the launch/close
-	// lock — the worktree agent from ReserveAgentLaunch, repair from
+	// lock — autofix from ReserveAgentLaunch, repair from
 	// ReserveRepairLaunch by way of refreshFlowRepairLaunchContext. SetHeadless
 	// writes under the Flow store's own lock and so is ordered against neither,
-	// leaving both free to observe either value; for the worktree agent the
+	// leaving both free to observe either value; for autofix the
 	// route turns on it too, since a headless launch is never tmux-eligible.
+	// Generic s ignores the persisted preference and always launches an
+	// interactive embedded terminal, so it needs no headless fence.
 	//
 	// Every tracked kind is deliberately left free to toggle: it resolves
 	// headless from the record its own phase write returns, and that write
 	// contends with SetHeadless on the store's write lock, so whichever lands
 	// second wins and the launcher sees a consistent record either way.
 	switch m.flowLaunchAttemptKind(record.FlowID) {
-	case flowLaunchKindWorktreeAgent, flowLaunchKindRepair:
+	case flowLaunchKindAutofix, flowLaunchKindRepair:
 		return m.setStatus(statusOther, flowHeadlessLaunchInFlightStatus), nil
 	}
 	// A write is already outstanding for this Flow. Commands run concurrently, so
@@ -2335,12 +2343,12 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
-	// A worktree agent (U) writes no phase, so in tmux mode nothing admission can
+	// An autofix agent (U) writes no phase, so in tmux mode nothing admission can
 	// see reports that its agent is still working in this Flow's worktree. The
 	// probe goes here rather than in admission for repair's reason — it shells
 	// out — and it asks only about that agent: a phase's own live window is
 	// already the business of the phase state admission reads.
-	if m.tmuxWorktreeAgentStillRunning(record, "") {
+	if m.tmuxAutofixAgentStillRunning(record, "") {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	// Manual launch surfaces the refusal through the returned Model's status,
@@ -2601,14 +2609,14 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	if m.tmuxPhaseAgentStillRunning(record, phase, record.WorktreePath) {
 		return m.setStatus(statusOther, tmuxPhaseLiveWindowRefusal), nil
 	}
-	// A resumed agent lands in the same worktree a phase-untracked worktree agent
+	// A resumed agent lands in the same worktree a phase-untracked autofix agent
 	// is working in, and no phase records that one, so it needs the Flow-scoped
 	// half too.
 	//
 	// The subprocess stays off the common path regardless:
-	// tmuxWorktreeAgentStillRunning reads the registry first and only shells out
-	// for a Flow that actually launched a worktree agent in this process.
-	if m.tmuxWorktreeAgentStillRunning(record, record.WorktreePath) {
+	// tmuxAutofixAgentStillRunning reads the registry first and only shells out
+	// for a Flow that actually launched an autofix agent in this process.
+	if m.tmuxAutofixAgentStillRunning(record, record.WorktreePath) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
 	intent.Origin = m.flowLaunchOrigin()
@@ -2933,6 +2941,9 @@ func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchR
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
+	if ctx.FlowAgent {
+		return m.focusEmbeddedTerminalInput()
+	}
 	if !m.flowSurfaceVisible() {
 		return m
 	}

@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/approachcontrol/approach/flowstore"
@@ -11,13 +13,14 @@ import (
 // writes through. It is built once in NewWithOptions and stored on the Model so
 // the lifecycle never reaches for a pane snapshot or a package-level store.
 type flowLaunchSeams struct {
-	ReadFlow         func(flowID string) (flowstore.FlowRecord, error)
-	ListFlowSessions func(flowID string) ([]sessions.SessionRecord, error)
-	AddPhaseLaunchID func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
-	SetPhase         func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
-	PlanMarkdownPath func(planID string) (string, error)
-	ReadPlan         func(planID string) (string, error)
-	NewLaunchID      func() string
+	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
+	ListFlowSessions         func(flowID string) ([]sessions.SessionRecord, error)
+	AddPhaseLaunchID         func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	SetPhase                 func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	PlanMarkdownPath         func(planID string) (string, error)
+	ReadPlan                 func(planID string) (string, error)
+	InspectWorktreeDirectory func(path string) error
+	NewLaunchID              func() string
 }
 
 // newFlowLaunchSeams wires the lifecycle onto the already-resolved Model seams.
@@ -50,10 +53,29 @@ func newFlowLaunchSeams(
 			}
 			return out, nil
 		},
-		AddPhaseLaunchID: addPhaseLaunchID,
-		SetPhase:         setPhase,
-		PlanMarkdownPath: planMarkdownPath,
-		ReadPlan:         readPlan,
-		NewLaunchID:      newLaunchID,
+		AddPhaseLaunchID:         addPhaseLaunchID,
+		SetPhase:                 setPhase,
+		PlanMarkdownPath:         planMarkdownPath,
+		ReadPlan:                 readPlan,
+		InspectWorktreeDirectory: inspectWorktreeDirectory,
+		NewLaunchID:              newLaunchID,
 	}
+}
+
+func (seams flowLaunchSeams) inspectWorktreeDirectory(path string) error {
+	if seams.InspectWorktreeDirectory != nil {
+		return seams.InspectWorktreeDirectory(path)
+	}
+	return inspectWorktreeDirectory(path)
+}
+
+func inspectWorktreeDirectory(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", path)
+	}
+	return nil
 }

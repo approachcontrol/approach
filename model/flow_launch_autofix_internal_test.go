@@ -61,6 +61,23 @@ func TestAutofixPromptForPRIsTheBeadsLiteralText(t *testing.T) {
 	}
 }
 
+func TestAutofixUsesItsOwnLifecycleIntentKind(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+
+	next, cmd := h.model().handleAutofixSelectedFlowPR()
+	if cmd == nil {
+		t.Fatal("U did not submit an autofix lifecycle intent")
+	}
+	attempt, ok := next.(Model).flowLaunchAttempt(record.FlowID)
+	if !ok {
+		t.Fatal("U did not reserve the selected Flow")
+	}
+	if attempt.Kind != flowLaunchKindAutofix {
+		t.Fatalf("U intent kind = %v, want autofix", attempt.Kind)
+	}
+}
+
 func TestSelectedFlowAutofixTargetGate(t *testing.T) {
 	mergeCompleted := func(record flowstore.FlowRecord, mergeStatus string) flowstore.FlowRecord {
 		phases := append([]flowstore.FlowPhase{}, record.Phases...)
@@ -213,7 +230,7 @@ func autofixOccupancyCases() []autofixOccupancyCase {
 				}, flowLaunchStateReading)
 				return next
 			},
-			status: flowWorktreeAgentInFlightStatus,
+			status: flowAutofixInFlightStatus,
 		},
 		{
 			name: "phase resume holds the Flow",
@@ -237,7 +254,7 @@ func autofixOccupancyCases() []autofixOccupancyCase {
 				})
 				return m
 			},
-			status: flowWorktreeAgentTerminalStatus,
+			status: flowAutofixTerminalStatus,
 		},
 		{
 			name: "repair terminal is retained",
@@ -250,7 +267,7 @@ func autofixOccupancyCases() []autofixOccupancyCase {
 				})
 				return m
 			},
-			status: flowWorktreeAgentTerminalStatus,
+			status: flowAutofixTerminalStatus,
 		},
 		{
 			name: "repair launch is pending",
@@ -300,14 +317,14 @@ func TestSelectedFlowAutofixReadyWithdrawsForEveryOccupancySignal(t *testing.T) 
 	}
 }
 
-func TestWorktreeAgentAdmissionRefusesEveryOccupancySignal(t *testing.T) {
+func TestAutofixAdmissionRefusesEveryOccupancySignal(t *testing.T) {
 	record := autofixFlowRecord()
 	for _, tc := range autofixOccupancyCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newManualLaunchHarness(t, record)
 			m := tc.install(h.model(), record)
 			next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
-				Kind:   flowLaunchKindWorktreeAgent,
+				Kind:   flowLaunchKindAutofix,
 				FlowID: record.FlowID,
 			})
 			if admitted || cmd != nil {
@@ -320,14 +337,14 @@ func TestWorktreeAgentAdmissionRefusesEveryOccupancySignal(t *testing.T) {
 	}
 }
 
-func TestWorktreeAgentAdmissionRefusesTheRecordShapedGateSilently(t *testing.T) {
+func TestAutofixAdmissionRefusesTheRecordShapedGateSilently(t *testing.T) {
 	record := autofixFlowRecord()
 	record.WorktreePath = ""
 	h := newManualLaunchHarness(t, record)
 	m := h.model()
 
 	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
-		Kind:   flowLaunchKindWorktreeAgent,
+		Kind:   flowLaunchKindAutofix,
 		FlowID: record.FlowID,
 	})
 	if admitted || cmd != nil {
@@ -341,13 +358,14 @@ func TestWorktreeAgentAdmissionRefusesTheRecordShapedGateSilently(t *testing.T) 
 	}
 }
 
-func TestWorktreeAgentAdmissionRefusesUnusableAgentCommands(t *testing.T) {
+func TestAutofixAdmissionRefusesUnusableAgentCommands(t *testing.T) {
 	record := autofixFlowRecord()
 	cases := []struct {
 		command string
 		status  string
 	}{
 		{command: "", status: flowLaunchNoAgentCommandStatus},
+		{command: "codex-app", status: `unsupported agent "codex-app"; choose codex or claude`},
 	}
 	for _, tc := range cases {
 		t.Run("agent_"+tc.command, func(t *testing.T) {
@@ -355,9 +373,13 @@ func TestWorktreeAgentAdmissionRefusesUnusableAgentCommands(t *testing.T) {
 			opts := h.options()
 			opts.AgentCommand = tc.command
 			m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			// Construction maps retired stored spellings to their supported
+			// replacement. Set the raw value after construction to exercise the
+			// launch admission input boundary itself.
+			m.agentCommand = tc.command
 
 			next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
-				Kind:   flowLaunchKindWorktreeAgent,
+				Kind:   flowLaunchKindAutofix,
 				FlowID: record.FlowID,
 			})
 			if admitted || cmd != nil {
@@ -370,13 +392,13 @@ func TestWorktreeAgentAdmissionRefusesUnusableAgentCommands(t *testing.T) {
 	}
 }
 
-func TestWorktreeAgentAdmissionReservesAnUntrackedAttempt(t *testing.T) {
+func TestAutofixAdmissionReservesAnUntrackedAttempt(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	m := h.model()
 
 	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
-		Kind:   flowLaunchKindWorktreeAgent,
+		Kind:   flowLaunchKindAutofix,
 		FlowID: record.FlowID,
 		Origin: flowLaunchOriginActiveFlows,
 	})
@@ -387,7 +409,7 @@ func TestWorktreeAgentAdmissionReservesAnUntrackedAttempt(t *testing.T) {
 	if !ok {
 		t.Fatal("an admitted launch must hold the Flow")
 	}
-	if attempt.Kind != flowLaunchKindWorktreeAgent {
+	if attempt.Kind != flowLaunchKindAutofix {
 		t.Fatalf("attempt kind = %v, want worktreeAgent", attempt.Kind)
 	}
 	if attempt.PhaseID != "" {
@@ -432,7 +454,7 @@ func liveFlowSession(flowID, launchID, sessionID string) sessions.SessionRecord 
 	}
 }
 
-func TestWorktreeAgentLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
+func TestAutofixLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 
@@ -450,7 +472,7 @@ func TestWorktreeAgentLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
 		ctx.Branch != record.Branch ||
 		ctx.Commit != record.Commit ||
 		ctx.InitialPrompt != "autofix pr #116" ||
-		!ctx.FlowAgent ||
+		!ctx.FlowAutofix || ctx.FlowAgent ||
 		!ctx.Embedded ||
 		ctx.Headless ||
 		ctx.FlowPhaseID != "" ||
@@ -480,7 +502,7 @@ func TestWorktreeAgentLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
 	}
 }
 
-func TestWorktreeAgentLaunchHonorsModelAndEffortAndHeadless(t *testing.T) {
+func TestAutofixLaunchHonorsModelAndEffortAndHeadless(t *testing.T) {
 	record := autofixFlowRecord()
 	record.Headless = true
 	h := newManualLaunchHarness(t, record)
@@ -506,7 +528,7 @@ func TestWorktreeAgentLaunchHonorsModelAndEffortAndHeadless(t *testing.T) {
 	}
 }
 
-func TestWorktreeAgentReadStageRefusals(t *testing.T) {
+func TestAutofixReadStageRefusals(t *testing.T) {
 	cases := []struct {
 		name      string
 		persisted func(flowstore.FlowRecord) flowstore.FlowRecord
@@ -529,7 +551,7 @@ func TestWorktreeAgentReadStageRefusals(t *testing.T) {
 				record.Status = flowstore.StatusMerged
 				return record
 			},
-			status: flowWorktreeAgentDriftStatus,
+			status: flowAutofixDriftStatus,
 		},
 		{
 			name: "drift: worktree lost",
@@ -537,7 +559,7 @@ func TestWorktreeAgentReadStageRefusals(t *testing.T) {
 				record.WorktreePath = ""
 				return record
 			},
-			status: flowWorktreeAgentDriftStatus,
+			status: flowAutofixDriftStatus,
 		},
 		{
 			name: "drift: PR number lost",
@@ -545,7 +567,7 @@ func TestWorktreeAgentReadStageRefusals(t *testing.T) {
 				record.PR.Number = 0
 				return record
 			},
-			status: flowWorktreeAgentDriftStatus,
+			status: flowAutofixDriftStatus,
 		},
 	}
 
@@ -575,7 +597,7 @@ func TestWorktreeAgentReadStageRefusals(t *testing.T) {
 	}
 }
 
-func TestWorktreeAgentReadStageLiveSessionRule(t *testing.T) {
+func TestAutofixReadStageLiveSessionRule(t *testing.T) {
 	cases := []struct {
 		name     string
 		phaseID  string
@@ -616,8 +638,8 @@ func TestWorktreeAgentReadStageLiveSessionRule(t *testing.T) {
 			m := h.autofix(h.model())
 
 			if tc.refuses {
-				if got := m.status.Text; got != flowWorktreeAgentLiveSessionStatus {
-					t.Fatalf("status = %q, want %q", got, flowWorktreeAgentLiveSessionStatus)
+				if got := m.status.Text; got != flowAutofixLiveSessionStatus {
+					t.Fatalf("status = %q, want %q", got, flowAutofixLiveSessionStatus)
 				}
 				if len(h.launchContexts) != 0 {
 					t.Fatal("a refused read must start no agent")
@@ -631,7 +653,7 @@ func TestWorktreeAgentReadStageLiveSessionRule(t *testing.T) {
 	}
 }
 
-func TestWorktreeAgentReadStageIgnoresSessionsOutsideEveryPhase(t *testing.T) {
+func TestAutofixReadStageIgnoresSessionsOutsideEveryPhase(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	// One live session from a previous autofix run and one carrying this
@@ -651,10 +673,10 @@ func TestWorktreeAgentReadStageIgnoresSessionsOutsideEveryPhase(t *testing.T) {
 	}
 }
 
-// stageWorktreeAgentLaunch presses U and stops between the read stage and
+// stageAutofixLaunch presses U and stops between the read stage and
 // prepare, so a test can land a store write in exactly the window the
 // reservation exists to close.
-func (h *manualLaunchHarness) stageWorktreeAgentLaunch(m Model) (Model, tea.Cmd) {
+func (h *manualLaunchHarness) stageAutofixLaunch(m Model) (Model, tea.Cmd) {
 	h.t.Helper()
 	next, readCmd := m.handleAutofixSelectedFlowPR()
 	m = next.(Model)
@@ -673,19 +695,19 @@ func (h *manualLaunchHarness) stageWorktreeAgentLaunch(m Model) (Model, tea.Cmd)
 	return m, prepareCmd
 }
 
-// TestWorktreeAgentPrepareResolvesHeadlessFromTheReservation pins the reason
+// TestAutofixPrepareResolvesHeadlessFromTheReservation pins the reason
 // prepare uses the reservation's record rather than the read stage's: this kind
 // writes no phase, so that record is its only fresh read of the Flow before the
 // spawn. A headless toggle landing in between would otherwise launch in the
 // previous mode — and on the wrong route with it, since a headless launch is
 // never tmux-eligible.
-func TestWorktreeAgentPrepareResolvesHeadlessFromTheReservation(t *testing.T) {
+func TestAutofixPrepareResolvesHeadlessFromTheReservation(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
 	h.tmuxAvailable = true
 
-	m, prepareCmd := h.stageWorktreeAgentLaunch(h.model())
+	m, prepareCmd := h.stageAutofixLaunch(h.model())
 	// h lands while the launch is between stages: the store now says headless.
 	h.record.Headless = true
 	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
@@ -708,10 +730,10 @@ func TestWorktreeAgentPrepareResolvesHeadlessFromTheReservation(t *testing.T) {
 	}
 }
 
-// TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation is the same
+// TestAutofixPrepareRefusesDriftSeenOnlyByTheReservation is the same
 // window as above for eligibility: nothing else re-reads the Flow after the read
 // stage, so a Flow that stops qualifying in it would launch anyway.
-func TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation(t *testing.T) {
+func TestAutofixPrepareRefusesDriftSeenOnlyByTheReservation(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		drift func(*flowstore.FlowRecord)
@@ -724,7 +746,7 @@ func TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation(t *testing.T) 
 			record := autofixFlowRecord()
 			h := newManualLaunchHarness(t, record)
 
-			m, prepareCmd := h.stageWorktreeAgentLaunch(h.model())
+			m, prepareCmd := h.stageAutofixLaunch(h.model())
 			tc.drift(&h.record)
 			preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
 			if !ok {
@@ -735,8 +757,8 @@ func TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation(t *testing.T) 
 			if len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
 				t.Fatalf("a drifted Flow must start no agent: %#v %#v", h.launchContexts, h.tmuxContexts)
 			}
-			if got := m.status.Text; got != flowWorktreeAgentDriftStatus {
-				t.Fatalf("status = %q, want %q", got, flowWorktreeAgentDriftStatus)
+			if got := m.status.Text; got != flowAutofixDriftStatus {
+				t.Fatalf("status = %q, want %q", got, flowAutofixDriftStatus)
 			}
 			if len(h.phaseUpdates) != 0 {
 				t.Fatalf("a prepare failure of an untracked launch must persist nothing: %#v", h.phaseUpdates)
@@ -751,7 +773,7 @@ func TestWorktreeAgentPrepareRefusesDriftSeenOnlyByTheReservation(t *testing.T) 
 	}
 }
 
-func TestWorktreeAgentPrepareRefusesAFlowClosedBetweenReadAndPrepare(t *testing.T) {
+func TestAutofixPrepareRefusesAFlowClosedBetweenReadAndPrepare(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.reserveLaunchErr = errors.New("cannot launch an agent for flow \"flow-1\" because it is closed")
@@ -772,7 +794,7 @@ func TestWorktreeAgentPrepareRefusesAFlowClosedBetweenReadAndPrepare(t *testing.
 	}
 }
 
-func TestWorktreeAgentPostPrepareFailureLeavesThePhaseAloneAndReportsIt(t *testing.T) {
+func TestAutofixPostPrepareFailureLeavesThePhaseAloneAndReportsIt(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.startTerminalErr = errors.New("terminal boom")
@@ -796,7 +818,7 @@ func TestWorktreeAgentPostPrepareFailureLeavesThePhaseAloneAndReportsIt(t *testi
 	}
 }
 
-func TestWorktreeAgentInstallBackstopNamesNoPhase(t *testing.T) {
+func TestAutofixInstallBackstopNamesNoPhase(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	m := h.model()
@@ -808,7 +830,7 @@ func TestWorktreeAgentInstallBackstopNamesNoPhase(t *testing.T) {
 	})
 	attempt := flowLaunchAttempt{
 		Token:  "autofix-token",
-		Kind:   flowLaunchKindWorktreeAgent,
+		Kind:   flowLaunchKindAutofix,
 		FlowID: record.FlowID,
 		State:  flowLaunchStatePreparing,
 	}
@@ -823,8 +845,8 @@ func TestWorktreeAgentInstallBackstopNamesNoPhase(t *testing.T) {
 	})
 	m = h.drain(next, cmd, 0)
 
-	if got := m.status.Text; got != flowWorktreeAgentCanceledStatus {
-		t.Fatalf("status = %q, want %q", got, flowWorktreeAgentCanceledStatus)
+	if got := m.status.Text; got != flowAutofixCanceledStatus {
+		t.Fatalf("status = %q, want %q", got, flowAutofixCanceledStatus)
 	}
 }
 
@@ -882,13 +904,13 @@ func TestAutofixKeyIsBoundOnBothFlowSurfacesAndInertElsewhere(t *testing.T) {
 		if len(h.launchContexts) != 0 {
 			t.Fatalf("U must refuse while a launch holds the Flow: %#v", h.launchContexts)
 		}
-		if got := m.status.Text; got != flowWorktreeAgentInFlightStatus {
-			t.Fatalf("status = %q, want %q", got, flowWorktreeAgentInFlightStatus)
+		if got := m.status.Text; got != flowAutofixInFlightStatus {
+			t.Fatalf("status = %q, want %q", got, flowAutofixInFlightStatus)
 		}
 	})
 }
 
-func TestWorktreeAgentTmuxHandoffIsProbeableBySubsequentPresses(t *testing.T) {
+func TestAutofixTmuxHandoffIsProbeableBySubsequentPresses(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
@@ -929,7 +951,7 @@ func TestWorktreeAgentTmuxHandoffIsProbeableBySubsequentPresses(t *testing.T) {
 		t.Fatalf("status = %q, want %q", got, tmuxFlowLiveWindowRefusal)
 	}
 	if len(probed) != 1 || probed[0] != h.tmuxContexts[0].LaunchID {
-		t.Fatalf("probed launch IDs = %#v, want the worktree agent's own launch", probed)
+		t.Fatalf("probed launch IDs = %#v, want the autofix agent's own launch", probed)
 	}
 
 	// Once the window is gone the shortcut is available again, with no expiry
@@ -941,11 +963,11 @@ func TestWorktreeAgentTmuxHandoffIsProbeableBySubsequentPresses(t *testing.T) {
 	}
 }
 
-// TestWorktreeAgentTmuxWindowBlocksRepairToo pins the reason the registry is
+// TestAutofixTmuxWindowBlocksRepairToo pins the reason the registry is
 // unioned into the shared Flow-wide probe rather than a probe of U's own: a
 // repair agent lands in the same worktree as the autofix agent, so it has to see
 // that window too.
-func TestWorktreeAgentTmuxWindowBlocksRepairToo(t *testing.T) {
+func TestAutofixTmuxWindowBlocksRepairToo(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
@@ -964,18 +986,18 @@ func TestWorktreeAgentTmuxWindowBlocksRepairToo(t *testing.T) {
 	// No phase carries the autofix launch ID, so a phase-IDs-only probe here
 	// would let R start a second agent in the worktree the first is mid-run in.
 	if !m.tmuxFlowAgentStillRunning(record, record.RepoPath) {
-		t.Fatal("the Flow-wide probe must see the worktree agent's window")
+		t.Fatal("the Flow-wide probe must see the autofix agent's window")
 	}
 	if len(probed) != 1 || probed[0] != h.tmuxContexts[0].LaunchID {
-		t.Fatalf("probed launch IDs = %#v, want the worktree agent's own launch", probed)
+		t.Fatalf("probed launch IDs = %#v, want the autofix agent's own launch", probed)
 	}
 }
 
-// TestWorktreeAgentTmuxWindowBlocksThePhaseLaunchToo covers the other half of
+// TestAutofixTmuxWindowBlocksThePhaseLaunchToo covers the other half of
 // the same hazard: the autofix agent holds the worktree but no phase, and the
 // Flow's merge phase stays ready, so without the probe g would put a second
 // agent into the worktree the first is mid-run in.
-func TestWorktreeAgentTmuxWindowBlocksThePhaseLaunchToo(t *testing.T) {
+func TestAutofixTmuxWindowBlocksThePhaseLaunchToo(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
@@ -999,11 +1021,11 @@ func TestWorktreeAgentTmuxWindowBlocksThePhaseLaunchToo(t *testing.T) {
 	if got := blocked.status.Text; got != tmuxFlowLiveWindowRefusal {
 		t.Fatalf("status = %q, want %q", got, tmuxFlowLiveWindowRefusal)
 	}
-	// Only the worktree agent's own launch is asked about. Probing every phase's
+	// Only the autofix agent's own launch is asked about. Probing every phase's
 	// launch ID here would refuse g for a finished agent whose window was left
 	// open, which is not this rule's business.
 	if len(probed) != 1 || probed[0] != h.tmuxContexts[0].LaunchID {
-		t.Fatalf("probed launch IDs = %#v, want the worktree agent's own launch", probed)
+		t.Fatalf("probed launch IDs = %#v, want the autofix agent's own launch", probed)
 	}
 	if len(h.tmuxContexts) != 1 || len(h.launchUpdates) != 0 {
 		t.Fatalf("a refused phase launch must persist and spawn nothing: %#v %#v", h.tmuxContexts, h.launchUpdates)
@@ -1018,11 +1040,11 @@ func TestWorktreeAgentTmuxWindowBlocksThePhaseLaunchToo(t *testing.T) {
 	}
 }
 
-// TestWorktreeAgentProbeIgnoresPhaseWindows pins the split between the two
+// TestAutofixProbeIgnoresPhaseWindows pins the split between the two
 // probes: the Flow-wide one repair uses covers every phase, and the one the
-// phase launch and resume use covers only the worktree agent, whose window no
+// phase launch and resume use covers only the autofix agent, whose window no
 // phase knows about.
-func TestWorktreeAgentProbeIgnoresPhaseWindows(t *testing.T) {
+func TestAutofixProbeIgnoresPhaseWindows(t *testing.T) {
 	record := autofixFlowRecord()
 	for i := range record.Phases {
 		if record.Phases[i].PhaseID == "implementation" {
@@ -1035,21 +1057,21 @@ func TestWorktreeAgentProbeIgnoresPhaseWindows(t *testing.T) {
 	m := h.model()
 	h.windowLive = func(string, []string) bool { return true }
 
-	if m.tmuxWorktreeAgentStillRunning(record, record.RepoPath) {
-		t.Fatal("a Flow with no worktree agent must not probe, let alone refuse")
+	if m.tmuxAutofixAgentStillRunning(record, record.RepoPath) {
+		t.Fatal("a Flow with no autofix agent must not probe, let alone refuse")
 	}
 	if !m.tmuxFlowAgentStillRunning(record, record.RepoPath) {
 		t.Fatal("the Flow-wide probe still covers a phase's own live window")
 	}
 }
 
-// TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux pins the probe's gate: an
+// TestAutofixOwnedFlowRefusesWithoutProbingTmux pins the probe's gate: an
 // already-owned Flow is refused by admission, which names the obstacle, instead
 // of by the live-window probe, which would name the wrong one and fork tmux to
 // do it. The gate is sound only because every state the footer predicate
 // withdraws for is one admission refuses too, so this also guards against a
 // display-only condition being added to that predicate.
-func TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux(t *testing.T) {
+func TestAutofixOwnedFlowRefusesWithoutProbingTmux(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
@@ -1084,7 +1106,7 @@ func TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux(t *testing.T) {
 	if probes != 0 {
 		t.Fatalf("tmux probes = %d, want none for a press a cheaper refusal answers", probes)
 	}
-	if got := blocked.status.Text; got != flowWorktreeAgentTerminalStatus {
+	if got := blocked.status.Text; got != flowAutofixTerminalStatus {
 		t.Fatalf("status = %q, want the obstacle that actually holds the Flow", got)
 	}
 	if len(h.tmuxContexts) != 1 {
@@ -1092,10 +1114,10 @@ func TestWorktreeAgentOwnedFlowRefusesWithoutProbingTmux(t *testing.T) {
 	}
 }
 
-// TestWorktreeAgentTmuxSpecFailureRecordsNoWindow pins the ordering claim in the
+// TestAutofixTmuxSpecFailureRecordsNoWindow pins the ordering claim in the
 // handoff: the registry entry is written after the spec builds, so a build that
 // never produced a window leaves nothing for a later probe to ask about.
-func TestWorktreeAgentTmuxSpecFailureRecordsNoWindow(t *testing.T) {
+func TestAutofixTmuxSpecFailureRecordsNoWindow(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
@@ -1107,8 +1129,8 @@ func TestWorktreeAgentTmuxSpecFailureRecordsNoWindow(t *testing.T) {
 	if got := m.status.Text; got != "tmux boom" {
 		t.Fatalf("status = %q, want the spec-build failure", got)
 	}
-	if len(m.flowWorktreeAgentTmuxLaunches) != 0 {
-		t.Fatalf("registry = %#v, want no entry for a window that was never opened", m.flowWorktreeAgentTmuxLaunches)
+	if len(m.flowAutofixTmuxLaunches) != 0 {
+		t.Fatalf("registry = %#v, want no entry for a window that was never opened", m.flowAutofixTmuxLaunches)
 	}
 	if len(h.phaseUpdates) != 0 {
 		t.Fatalf("an untracked launch must write no phase status: %#v", h.phaseUpdates)
@@ -1127,61 +1149,61 @@ func TestWorktreeAgentTmuxSpecFailureRecordsNoWindow(t *testing.T) {
 	}
 }
 
-// TestWithFlowWorktreeAgentTmuxLaunchClonesTheRegistry pins the copy-on-write
+// TestWithFlowAutofixTmuxLaunchClonesTheRegistry pins the copy-on-write
 // rule every per-Flow map on the value-typed Model follows: a Model taken before
 // the write must not observe it, or a launch that failed after being copied
 // would still block the next press through the older copy.
-func TestWithFlowWorktreeAgentTmuxLaunchClonesTheRegistry(t *testing.T) {
+func TestWithFlowAutofixTmuxLaunchClonesTheRegistry(t *testing.T) {
 	base := newManualLaunchHarness(t, autofixFlowRecord()).model()
 
-	first := base.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-1")
-	second := first.withFlowWorktreeAgentTmuxLaunch("flow-2", "launch-2")
+	first := base.withFlowAutofixTmuxLaunch("flow-1", "launch-1")
+	second := first.withFlowAutofixTmuxLaunch("flow-2", "launch-2")
 
-	if len(base.flowWorktreeAgentTmuxLaunches) != 0 {
-		t.Fatalf("the pre-write Model saw the write: %#v", base.flowWorktreeAgentTmuxLaunches)
+	if len(base.flowAutofixTmuxLaunches) != 0 {
+		t.Fatalf("the pre-write Model saw the write: %#v", base.flowAutofixTmuxLaunches)
 	}
-	if _, ok := first.flowWorktreeAgentTmuxLaunches["flow-2"]; ok {
-		t.Fatalf("the first copy saw the second write: %#v", first.flowWorktreeAgentTmuxLaunches)
+	if _, ok := first.flowAutofixTmuxLaunches["flow-2"]; ok {
+		t.Fatalf("the first copy saw the second write: %#v", first.flowAutofixTmuxLaunches)
 	}
-	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1"}) {
+	if got := second.flowAutofixTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1"}) {
 		t.Fatalf("flow-1 entry = %#v, want the earlier write carried forward", got)
 	}
 	// Retention, not replacement: a second launch is appended, and the copy taken
 	// before it must still see only the first — an append through a shared
 	// backing array would reach back into it.
-	third := second.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-3")
-	if got := third.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
+	third := second.withFlowAutofixTmuxLaunch("flow-1", "launch-3")
+	if got := third.flowAutofixTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
 		t.Fatalf("flow-1 entry = %#v, want both launches retained oldest first", got)
 	}
-	if got := second.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1"}) {
+	if got := second.flowAutofixTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1"}) {
 		t.Fatalf("the append reached an older copy: %#v", got)
 	}
 	// A launch already retained adds nothing: the same token can reach a handoff
 	// twice, and a duplicate would only widen the probe's argument list.
-	if got := third.withFlowWorktreeAgentTmuxLaunch("flow-1", "launch-3").
-		flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
+	if got := third.withFlowAutofixTmuxLaunch("flow-1", "launch-3").
+		flowAutofixTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
 		t.Fatalf("flow-1 entry = %#v, want a duplicate launch ignored", got)
 	}
-	if next := third.withFlowWorktreeAgentTmuxLaunch("", "launch-4"); len(next.flowWorktreeAgentTmuxLaunches) != 2 {
-		t.Fatalf("an empty Flow ID must record nothing: %#v", next.flowWorktreeAgentTmuxLaunches)
+	if next := third.withFlowAutofixTmuxLaunch("", "launch-4"); len(next.flowAutofixTmuxLaunches) != 2 {
+		t.Fatalf("an empty Flow ID must record nothing: %#v", next.flowAutofixTmuxLaunches)
 	}
-	if next := third.withFlowWorktreeAgentTmuxLaunch("flow-4", " "); len(next.flowWorktreeAgentTmuxLaunches) != 2 {
-		t.Fatalf("a blank launch ID must record nothing: %#v", next.flowWorktreeAgentTmuxLaunches)
+	if next := third.withFlowAutofixTmuxLaunch("flow-4", " "); len(next.flowAutofixTmuxLaunches) != 2 {
+		t.Fatalf("a blank launch ID must record nothing: %#v", next.flowAutofixTmuxLaunches)
 	}
 	// The accessor must not hand out the registry's own array either: the Flow-wide
-	// probe appends the worktree-agent IDs onto the phase ones.
-	ids := third.flowWorktreeAgentTmuxLaunchIDs("flow-1")
+	// probe appends the autofix launch IDs onto the phase ones.
+	ids := third.flowAutofixTmuxLaunchIDs("flow-1")
 	ids[0] = "launch-5"
-	if got := third.flowWorktreeAgentTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
+	if got := third.flowAutofixTmuxLaunches["flow-1"]; !slices.Equal(got, []string{"launch-1", "launch-3"}) {
 		t.Fatalf("writing to the accessor's result reached the registry: %#v", got)
 	}
 }
 
-// TestWorktreeAgentPrefillFailureCorrectsNoPhase covers the path FlowAgent newly
+// TestAutofixPrefillFailureCorrectsNoPhase covers the path FlowAutofix
 // reaches in ShouldPrefillEmbeddedPrompt: the dock is filled for this launch, so
 // its prefill can fail, and the correction that follows must stay as untracked
 // as the launch was.
-func TestWorktreeAgentPrefillFailureCorrectsNoPhase(t *testing.T) {
+func TestAutofixPrefillFailureCorrectsNoPhase(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 
@@ -1191,7 +1213,7 @@ func TestWorktreeAgentPrefillFailureCorrectsNoPhase(t *testing.T) {
 	}
 	slot := m.embeddedTerminals[0]
 	ctx := h.launchContexts[0]
-	if !ctx.FlowAgent || ctx.FlowPhaseID != "" || ctx.FlowLaunchTracked {
+	if !ctx.FlowAutofix || ctx.FlowAgent || ctx.FlowPhaseID != "" || ctx.FlowLaunchTracked {
 		t.Fatalf("the launch under test must be the untracked Flow agent: %#v", ctx)
 	}
 	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
@@ -1249,14 +1271,14 @@ func TestAutofixHintReachesTheRenderedView(t *testing.T) {
 	}
 }
 
-// TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID pins why the registry keeps
+// TestAutofixTmuxRegistryRetainsEveryLaunchID pins why the registry keeps
 // every launch a Flow made rather than the newest alone. The probe is advisory
 // in one direction only — a timed-out `list-windows` answers false for a window
 // that is still open — so a second U press is admitted while the first agent
 // runs. Dropping the older ID there would leave that agent unprobed the moment
 // the newer window exits, and the next U, g, r, or R would put a third agent in
 // a worktree two are already editing.
-func TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID(t *testing.T) {
+func TestAutofixTmuxRegistryRetainsEveryLaunchID(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = config.LaunchBackendTmux
@@ -1286,7 +1308,7 @@ func TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID(t *testing.T) {
 		probed = append(probed, launchIDs...)
 		return false
 	}
-	if m.tmuxWorktreeAgentStillRunning(record, "") {
+	if m.tmuxAutofixAgentStillRunning(record, "") {
 		t.Fatal("the probe answered false, so nothing must read as live")
 	}
 	for _, want := range tokens {
@@ -1308,7 +1330,7 @@ func TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID(t *testing.T) {
 	}
 }
 
-// TestToggleFlowHeadlessRefusedWhileWorktreeAgentAttemptHoldsTheFlow pins the
+// TestToggleFlowHeadlessRefusedWhileAutofixAttemptHoldsTheFlow pins the
 // half of the headless fence admission cannot cover. Admission refuses U while a
 // headless write is outstanding, but the user can press h after the attempt is
 // already reading. This kind resolves headless from ReserveAgentLaunch's record,
@@ -1316,11 +1338,11 @@ func TestWorktreeAgentTmuxRegistryRetainsEveryLaunchID(t *testing.T) {
 // store's own — the two are not serialized, so a toggle started here would leave
 // the reservation free to read either value, and a headless launch is never
 // tmux-eligible. Refuse the toggle for as long as the attempt holds the Flow.
-func TestToggleFlowHeadlessRefusedWhileWorktreeAgentAttemptHoldsTheFlow(t *testing.T) {
+func TestToggleFlowHeadlessRefusedWhileAutofixAttemptHoldsTheFlow(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 
-	m, prepareCmd := h.stageWorktreeAgentLaunch(h.model())
+	m, prepareCmd := h.stageAutofixLaunch(h.model())
 	if prepareCmd == nil {
 		t.Fatal("the staged press must have produced the prepare command")
 	}
@@ -1348,7 +1370,7 @@ func TestToggleFlowHeadlessRefusedWhileWorktreeAgentAttemptHoldsTheFlow(t *testi
 // same launch/close lock, and the same lack of ordering against SetHeadless —
 // before refreshFlowRepairLaunchContext resolves ctx.Headless from that record.
 // So the toggle has to stand off for a repair attempt exactly as it does for a
-// worktree agent, or the repair runs interactively or headlessly depending on
+// autofix agent, or the repair runs interactively or headlessly depending on
 // which command finished first.
 func TestToggleFlowHeadlessRefusedWhilePendingRepairHoldsTheFlow(t *testing.T) {
 	record := manualLaunchFlowRecord()

@@ -90,6 +90,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `E` | Choose the global CLI effort on a Flow row, or the selected expanded phase's effort override/fallback in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
+| `s` | Start the selected CLI agent in the selected Flow's exact existing worktree in Flows or Active Flows; page the selected summary in Sessions |
 | `R` | Launch an embedded repair agent for a genuinely stalled selected Flow in flows or Active Flows view |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -110,7 +111,6 @@ title, and assignee; repo filtering remains available from the left pane.
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or recover a selected Flow phase after confirmation — reset it to ready when it is recoverable, otherwise release an unfinished session that is blocking it |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
-| `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch, or open the linked GitHub issue (flows and active flows views, when issue metadata exists) |
@@ -687,6 +687,23 @@ On a Flow row or an expanded phase row:
   Flow, and while a live session is attached to the phase being launched.
   Dismiss or detach the Flow's terminal before launching its next phase. Both
   `g` bindings (flows view and Active Flows) behave identically.
+- `s` starts the configured `codex` or `claude` CLI in the selected Flow's
+  exact existing worktree from either Flow surface. The key submits only a
+  `worktreeAgent` intent with the trimmed exact Flow ID. The lifecycle reads
+  that exact Flow and its exact-Flow sessions, then repeats those reads and the
+  worktree-directory check under the launch/close reservation immediately
+  before startup. A running phase, live phase session, any active persisted
+  Flow session, competing attempt, retained terminal, missing/non-directory
+  worktree, command drift, or unresolved linked-plan path refuses the launch.
+
+  This generic agent is always interactive and embedded: it ignores the
+  Flow's headless preference and tmux backend, carries no prompt, and schedules
+  no prompt prefill. It is Flow-scoped but phase-untracked, so it writes no
+  launch ID or phase status and hook capture cannot attach it to phase history.
+  Ownership transfers directly from the lifecycle attempt to a retained dock
+  slot. That slot is nondetachable and keeps the exact Flow occupied even after
+  the process exits, until it is closed or dismissed. Outside Flow surfaces,
+  `s` keeps its existing selected-session-summary behavior.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal
@@ -750,7 +767,7 @@ On a Flow row or an expanded phase row:
   cannot make the Merge phase someone else's responsibility. Ownership is
   therefore the embedded slot on the embedded route, or — on the tmux route,
   where no slot and no running phase exist — an in-process record of every
-  worktree-agent window the Flow has opened, which a second `U`, a phase launch
+  autofix window the Flow has opened, which a second `U`, a phase launch
   (`g`), a phase resume (`r`), and a repair (`R`) all probe before launching,
   because every one of them would land a second agent in the same worktree.
   Every window is retained rather than the newest alone, because the tmux probe
@@ -1016,14 +1033,17 @@ unchanged.
 
 The toggle and launches fence each other in both directions. A launch started
 while a headless write is still settling is refused with `Applying headless mode
-change; retry the launch in a moment`. In the other direction the `U` worktree
-agent and an `R` repair block the toggle — they are the two phase-untracked
-kinds, and each resolves the preference in its prepare stage from a record taken
-under the launch/close lock, which is not ordered against the write — so
+change; retry the launch in a moment`. In the other direction the `U` autofix
+agent and an `R` repair block the toggle — they are the two headless-aware
+phase-untracked kinds, and each resolves the preference in its prepare stage
+from a record taken under the launch/close lock, which is not ordered against
+the write — so
 pressing `h` while either attempt holds the Flow is refused with `A Flow launch
 is in flight; retry the headless change in a moment`. Tracked phase launches are
 not fenced: they read headless from the record their own phase write returns,
-which is ordered against the toggle.
+which is ordered against the toggle. Generic `s` ignores the persisted headless
+preference and always opens an interactive dock terminal, so it does not need
+this fence.
 
 On a Flow row, `A`, `M`, and `E` continue to edit the global agent preferences.
 On a selected expanded phase row in Flows or Active Flows, the same keys show

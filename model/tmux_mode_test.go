@@ -183,7 +183,7 @@ func TestModel_WorktreeAgentFallbackNoteReportedOnInteractiveLaunch(t *testing.T
 	}
 }
 
-func TestModel_WorktreeAgentTmuxLaunchFailureReportsError(t *testing.T) {
+func TestModel_AutofixTmuxLaunchFailureReportsError(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, tmuxErr: errors.New("tmux server refused")}
 	m := worktreeModel(t, spy.options("tmux"))
 
