@@ -114,6 +114,7 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		}
 	}
 	listFlows := m.listFlows
+	claimBead := m.claimBead
 	createFlow := m.createFlow
 	reserveFlow := m.reserveFlowLaunch
 	enableProgression := m.enableEpicProgression
@@ -145,6 +146,10 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove, status: detail}
 			}
 		} else {
+			if err := claimBead(target.repoPath, childID); err != nil {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not claim child %s; auto-progression remains off: %v", childID, err)}
+			}
 			title := childID + ": " + childTitle
 			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", childID, childID)
 			result, createErr := createFlow(FlowStartRequest{

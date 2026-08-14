@@ -495,9 +495,10 @@ plans. v1 has no TUI plan deletion.
 
 With the top content pane focused, press `2` to enter the selected repository's
 Beads group at its last-used subview, defaulting to Ready before first use.
-Beads queries and detail reads are read-only, and no action in this group
-mutates tracker state. Pressing `2` while already in any Beads subview is a
-no-op. Press `r` for
+Beads queries and detail reads are read-only. Manual Ready Flow creation is
+also claim-free; the only tracker mutation in this group is the child claim
+performed when epic auto-progression prepares a new Flow. Pressing `2` while
+already in any Beads subview is a no-op. Press `r` for
 Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
 pressing the already-active letter is also a no-op. Top-pane `←`/`→` switches
 between Git and Beads at their remembered subviews. The five Beads modes keep
@@ -603,6 +604,19 @@ session state root, and an explicit default-on headless setting. `codex` and
 `[launch].backend = "tmux"`; external-only agents keep the existing external
 backend route. Neither action invokes `bd`, calls `bd show`, claims the issue,
 or otherwise changes tracker state.
+
+For a selected epic with loaded children and readiness, `a: auto on` enables
+progression from the first ready direct child. After a complete Flow listing
+rules out ambiguous or unusable candidates, a new-Flow path runs
+`bd update <child-id> --claim` and waits for it to finish before the first Flow record or
+worktree side effect. Any claim error is shown with the child ID and underlying
+cause, progression remains known off, and no Flow is prepared by that attempt.
+Because a process-started error can leave ownership uncertain or already
+claimed, Approach neither probes nor unclaims; retry uses the same actor. A
+successful claim is likewise retained if later Flow preparation, reservation,
+or progression enablement fails. If one exact-link pending Flow is already
+prepared, enablement adopts it without claiming again. This action prepares or
+adopts only; it does not start a phase or launch an agent.
 
 The two keys share one admission token. Repeated or mixed presses cannot create
 duplicate Flows. A repository change — cursor move or rescan — invalidates a

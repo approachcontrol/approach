@@ -14,6 +14,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/beadsmutate"
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
@@ -155,6 +156,7 @@ type Model struct {
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
 	listChildrenBeads         func(string, string) ([]beadsquery.Bead, error)
 	listReadyBeads            func(string) ([]beadsquery.Bead, error)
+	claimBead                 func(repoPath, beadID string) error
 	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	enableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
@@ -298,6 +300,7 @@ type Options struct {
 	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
+	ClaimBead                 func(repoPath, beadID string) error
 	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	EnableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
@@ -470,6 +473,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listChildrenBeads := opts.ListChildrenBeads
 	if listChildrenBeads == nil {
 		listChildrenBeads = beadsquery.ListChildren
+	}
+	claimBead := opts.ClaimBead
+	if claimBead == nil {
+		claimBead = beadsmutate.Claim
 	}
 	readEpicProgression := opts.ReadEpicProgression
 	if readEpicProgression == nil {
@@ -903,6 +910,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		},
 		listChildrenBeads:         listChildrenBeads,
 		listReadyBeads:            listReadyBeads,
+		claimBead:                 claimBead,
 		readEpicProgression:       readEpicProgression,
 		setEpicProgression:        setEpicProgression,
 		enableEpicProgression:     enableEpicProgression,

@@ -92,8 +92,10 @@ plans, Flows, embedded terminals, recovery states — is in
 
 With the top pane focused, press `2` to enter the selected repository's Beads
 group at its last-used subview, defaulting to Ready on first entry.
-All Beads queries and detail reads are read-only, and Approach never mutates
-tracker state. Pressing `2` again inside Beads is a no-op. While Beads is active,
+All Beads queries and detail reads are read-only. The only tracker mutation is
+the explicit claim performed when epic auto-progression prepares a new child
+Flow; ordinary browsing and manual Ready Flow creation never mutate Beads.
+Pressing `2` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
 Closed, and `←`/`→` step and wrap through those five subviews. The letters
 remain scoped to Beads, so Git and other views keep their existing meanings.
@@ -157,11 +159,15 @@ state alongside the direct-child and Ready snapshots. Press `a` when the
 footer shows `a: auto on` to prepare the first ready direct child's Flow and
 enable progression, or `a: auto off` to disable it. Enabled rows show
 `[epic]  [auto]`. Enablement reuses the Ready ordering and exact create-only
-request mapping, may adopt one already-prepared pending Flow with the exact
-Bead/epic link, and refuses partial listings, ambiguity, incomplete preparation,
-running Flows, and terminal Flows. It never claims the Bead, starts a phase, or
-launches an agent. With no ready child it reports that progression remains off
-and writes neither a Flow nor progression state.
+request mapping. Before preparing a new child Flow it claims that child with
+`bd update <id> --claim`; a claim error is shown with its cause and stops the
+attempt before any Flow record or worktree is created. Retrying uses the same
+Beads actor because a post-start claim error may mean the claim already landed.
+Enablement may instead adopt one already-prepared pending Flow with the exact
+Bead/epic link without claiming again, and refuses partial listings, ambiguity,
+incomplete preparation, running Flows, and terminal Flows. It does not start a
+phase or launch an agent. With no ready child it reports that progression
+remains off and writes neither a claim, Flow, nor progression state.
 
 The Ready selection owns both keys while either request is in flight, preventing
 repeated or mixed presses from creating duplicates. `F` is advertised only when

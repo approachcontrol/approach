@@ -362,6 +362,18 @@ reservation, but does not dispatch a phase or advance to another child. A
 restart installs no baseline and performs no catch-up; live-edge advancement is
 owned by the later sequential-advance slice.
 
+When no exact-link Flow exists, epic enablement first runs the sole sanctioned
+Beads mutation, `bd update <child-id> --claim`, and waits for success before it
+calls `PrepareFlow`. A claim error therefore aborts before any new Flow record
+or worktree side effect from that attempt. Beads and Approach storage do not
+share a transaction: an error after the process starts may leave ownership
+uncertain or already claimed, so Approach does not probe or automatically
+unclaim. Retry deliberately preserves `BEADS_ACTOR` and relies on same-actor
+claim idempotency. After a confirmed claim, `PrepareFlow` keeps its existing
+partial-failure contract described above; failures may leave only the claim, or
+the claim plus an incomplete/blocked Flow or worktree. Adoption of an already
+prepared exact-link Flow and manual Ready `f`/`F` creation remain claim-free.
+
 ## Per-phase agent settings
 
 Every phase persists three optional fields — `agent`, `model`, and
