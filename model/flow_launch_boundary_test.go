@@ -14,8 +14,9 @@ import (
 )
 
 type flowLaunchFunctionContract struct {
-	calls       map[string]bool
-	identifiers map[string]bool
+	calls              map[string]bool
+	identifiers        map[string]bool
+	callableReferences map[string]bool
 }
 
 type flowLaunchFunctionKey struct {
@@ -72,7 +73,9 @@ func TestGenericAgentLaunchRequestRejectsEveryFlowContextMarker(t *testing.T) {
 }
 
 func flowLaunchFunctionContractForBody(body *ast.BlockStmt) flowLaunchFunctionContract {
-	contract := flowLaunchFunctionContract{calls: make(map[string]bool), identifiers: make(map[string]bool)}
+	contract := flowLaunchFunctionContract{
+		calls: make(map[string]bool), identifiers: make(map[string]bool), callableReferences: make(map[string]bool),
+	}
 	aliases := make(map[string]map[string]bool)
 	addAlias := func(name string, value ast.Expr) {
 		if name == "" {
@@ -87,6 +90,7 @@ func flowLaunchFunctionContractForBody(body *ast.BlockStmt) flowLaunchFunctionCo
 		}
 		for target := range targets {
 			aliases[name][target] = true
+			contract.callableReferences[target] = true
 		}
 	}
 	// Collect local function-value aliases first. Alias scopes are deliberately
@@ -115,9 +119,12 @@ func flowLaunchFunctionContractForBody(body *ast.BlockStmt) flowLaunchFunctionCo
 		switch node := node.(type) {
 		case *ast.Ident:
 			contract.identifiers[node.Name] = true
+		case *ast.SelectorExpr:
+			contract.callableReferences[node.Sel.Name] = true
 		case *ast.CallExpr:
 			for called := range flowLaunchCallableNames(node.Fun, aliases) {
 				contract.calls[called] = true
+				contract.callableReferences[called] = true
 			}
 		}
 		return true
@@ -334,7 +341,7 @@ func declaredFlowLaunchKinds(t *testing.T) map[string]bool {
 func contractSinkReferences(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, sink string) map[flowLaunchFunctionKey]bool {
 	references := make(map[flowLaunchFunctionKey]bool)
 	for key, contract := range contracts {
-		if contract.identifiers[sink] {
+		if contract.callableReferences[sink] {
 			references[key] = true
 		}
 	}
@@ -356,6 +363,15 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		{name: "handleAutofixSelectedFlowPR", kind: "flowLaunchKindAutofix"},
 	}
 	sinks := map[string]bool{
+		"addFlowPhaseLaunchID":                      true,
+		"reserveFlowLaunch":                         true,
+		"reserveFlowRepairLaunch":                   true,
+		"startEmbeddedTerminal":                     true,
+		"launchAgent":                               true,
+		"launchRepoTmuxAgent":                       true,
+		"AgentLaunch":                               true,
+		"RepoTmuxAgentLaunch":                       true,
+		"defaultEmbeddedTerminalStarter":            true,
 		"CreateWithOptions":                         true,
 		"CreateFlow":                                true,
 		"ReserveAgentLaunch":                        true,
@@ -381,13 +397,21 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	// Adding a new wrapper or source fails even when it declares no intent kind.
 	wiring := flowLaunchFunctionKey{name: "NewWithOptions"}
 	creatorWiring := flowLaunchFunctionKey{name: "newFlowCreator"}
-	lifecycleWiring := flowLaunchFunctionKey{name: "newFlowLaunchSeams"}
 	expectedSinkReferences := map[string]map[flowLaunchFunctionKey]bool{
+		"addFlowPhaseLaunchID":                      {modelFlowLaunchFunction("flowLaunchPreparation"): true, {receiver: "flowLaunchPreparation", name: "prepare"}: true},
+		"reserveFlowLaunch":                         {modelFlowLaunchFunction("reserveFlowSpawn"): true, modelFlowLaunchFunction("reserveTrackedFlowLaunch"): true, modelFlowLaunchFunction("savedSessionFlowLaunchPrepareCmd"): true},
+		"reserveFlowRepairLaunch":                   {modelFlowLaunchFunction("repairFlowLaunchPrepareCmd"): true},
+		"startEmbeddedTerminal":                     {modelFlowLaunchFunction("openEmbeddedTerminalWithLabel"): true},
+		"launchAgent":                               {modelFlowLaunchFunction("launchAgentWithContextStatus"): true},
+		"launchRepoTmuxAgent":                       {modelFlowLaunchFunction("buildRepoTmuxAgentLaunch"): true},
+		"AgentLaunch":                               {wiring: true},
+		"RepoTmuxAgentLaunch":                       {wiring: true, modelFlowLaunchFunction("buildRepoTmuxAgentLaunch"): true},
+		"defaultEmbeddedTerminalStarter":            {wiring: true},
 		"CreateWithOptions":                         {wiring: true},
 		"CreateFlow":                                {wiring: true, creatorWiring: true, {name: "createFlowLaunchWriteCmd"}: true},
 		"ReserveAgentLaunch":                        {wiring: true},
 		"ReserveLaunch":                             {wiring: true, creatorWiring: true, {name: "createFlowLaunchReserveCmd"}: true},
-		"AddPhaseLaunchID":                          {wiring: true, lifecycleWiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("flowLaunchLauncher"): true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},
+		"AddPhaseLaunchID":                          {wiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("flowLaunchLauncher"): true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},
 		"SetStartMetadata":                          {wiring: true, creatorWiring: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
 		"openFlowEmbeddedTerminal":                  {},
 		"openFlowEmbeddedTerminalReserved":          {modelFlowLaunchFunction("openFlowEmbeddedTerminal"): true, modelFlowLaunchFunction("installFlowLaunchEmbedded"): true},

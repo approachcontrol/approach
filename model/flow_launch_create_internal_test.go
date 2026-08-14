@@ -634,25 +634,25 @@ func TestCreateFlowLaunchWorktreeFailureBlocksParallelRootsInCanonicalOrder(t *t
 	}
 }
 
-func TestCreateFlowLaunchRefusesOnlyLivePreexistingSessionsBeforeCreate(t *testing.T) {
+func TestCreateFlowLaunchRefusesEveryPreexistingSessionAssociationBeforeCreate(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		session    sessions.SessionRecord
-		wantCreate bool
+		name    string
+		session sessions.SessionRecord
+		status  string
 	}{
-		{name: "live", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "active"}},
-		{name: "ended", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "ended", EndedAt: time.Now()}, wantCreate: true},
+		{name: "live", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "active"}, status: "active session"},
+		{name: "ended", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "ended", EndedAt: time.Now()}, status: "saved session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 			h.sessions = []sessions.SessionRecord{tc.session}
 			m := h.start(t, h.model(t))
 			created := strings.Contains(strings.Join(h.order, ","), "create:"+h.record.FlowID)
-			if created != tc.wantCreate {
-				t.Fatalf("created = %v, want %v; order=%#v", created, tc.wantCreate, h.order)
+			if created {
+				t.Fatalf("preexisting %s crossed exact-ID creation: order=%#v", tc.name, h.order)
 			}
-			if !tc.wantCreate && (m.activeFlowCreate != 0 || h.releases != 0) {
-				t.Fatalf("live refusal ownership: active=%d releases=%d", m.activeFlowCreate, h.releases)
+			if m.activeFlowCreate != 0 || h.releases != 0 || !strings.Contains(m.status.Text, tc.status) {
+				t.Fatalf("%s refusal: status=%q active=%d releases=%d", tc.name, m.status.Text, m.activeFlowCreate, h.releases)
 			}
 		})
 	}

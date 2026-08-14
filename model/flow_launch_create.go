@@ -374,6 +374,9 @@ func createFlowLaunchSessionsCmd(seams flowLaunchSeams, attempt flowLaunchAttemp
 			event.Err = err.Error()
 			return event
 		}
+		if len(records) != 0 {
+			event.Err = "Flow ID is already associated with a saved session"
+		}
 		for _, record := range records {
 			if sessions.IsActive(record.Status, record.EndedAt) {
 				event.Err = "Flow ID has an active session"
