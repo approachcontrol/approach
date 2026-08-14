@@ -153,18 +153,19 @@ type flowLaunchEventMsg struct {
 	// FlowMissing distinguishes the saved-session compatibility case from every
 	// other read failure: a saved session outlives a deleted Flow and resumes via
 	// its established non-Flow route instead of being stranded by stale linkage.
-	FlowMissing  bool
-	Err          string
-	Release      func()
-	Create       flowLaunchCreateRequest
-	StartupRoots []flowstore.FlowPhase
-	Worktree     actions.FlowWorktreeCreateResult
-	Commit       string
-	Proof        flowLaunchCreateProof
-	Parked       bool
-	RecoveryErrs []string
-	Settings     flowLaunchAgentSettingsSnapshot
-	ErrOp        string
+	FlowMissing    bool
+	Err            string
+	Release        func()
+	Create         flowLaunchCreateRequest
+	StartupRoots   []flowstore.FlowPhase
+	Worktree       actions.FlowWorktreeCreateResult
+	Commit         string
+	Proof          flowLaunchCreateProof
+	GenerationLost bool
+	Parked         bool
+	RecoveryErrs   []string
+	Settings       flowLaunchAgentSettingsSnapshot
+	ErrOp          string
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission

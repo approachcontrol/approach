@@ -160,6 +160,10 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateBootstrap:
 		if msg.Err != "" {
+			if msg.GenerationLost {
+				releaseFlowLaunchReservation(msg.Release)
+				return m.finishCreateAfterWrite(attempt, msg.ErrOp+": "+msg.Err)
+			}
 			operation := msg.ErrOp
 			if operation == "" {
 				operation = "run bootstrap"
@@ -190,6 +194,10 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		return next, createFlowLaunchIDCmd(next.launchSeams, msg)
 
 	case flowLaunchStageCreateLaunchID:
+		if msg.GenerationLost {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "AddPhaseLaunchID: "+msg.Err)
+		}
 		if msg.Err != "" {
 			parts := []string{"AddPhaseLaunchID: " + msg.Err}
 			if len(msg.RecoveryErrs) > 0 {
@@ -237,6 +245,15 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 				return m.startFlowSurfaceFetch()
 			}
 			return m, nil
+		}
+		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed before embedded install")
+		}
+		root := msg.StartupRoots[0]
+		phase, ok := flowPhaseByID(msg.Record, root.PhaseID)
+		if !ok || phase.Status != flowstore.PhaseRunning || !flowPhaseContainsLaunch(phase, msg.Token) {
+			return m.failCreateFlowLaunchEmbedded(attempt, msg.Context, "launch proof changed before embedded install", msg.Release)
 		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStatePreparing)
 		if !ok {
@@ -373,7 +390,7 @@ func createFlowLaunchReserveCmd(seams flowLaunchSeams, attempt flowLaunchAttempt
 }
 
 func createFlowReservedRecordClaimed(created, reserved flowstore.FlowRecord) bool {
-	if created.FlowID == "" || reserved.FlowID != created.FlowID || flowstore.FlowClosed(reserved) || reserved.Status != created.Status {
+	if !createFlowSameGeneration(created, reserved) || flowstore.FlowClosed(reserved) || reserved.Status != created.Status {
 		return true
 	}
 	for _, pair := range [][2]string{
@@ -402,6 +419,27 @@ func createFlowReservedRecordClaimed(created, reserved flowstore.FlowRecord) boo
 		}
 	}
 	return false
+}
+
+func createFlowSameGeneration(created, current flowstore.FlowRecord) bool {
+	if created.FlowID == "" || current.FlowID != created.FlowID {
+		return false
+	}
+	if !created.CreatedAt.IsZero() && !current.CreatedAt.Equal(created.CreatedAt) {
+		return false
+	}
+	for _, pair := range [][2]string{
+		{created.RepoPath, current.RepoPath},
+		{created.Title, current.Title},
+		{created.Instructions, current.Instructions},
+		{created.BaseRef, current.BaseRef},
+		{created.PresetName, current.PresetName},
+	} {
+		if strings.TrimSpace(pair[0]) != strings.TrimSpace(pair[1]) {
+			return false
+		}
+	}
+	return true
 }
 
 func createFlowLaunchWorktreeCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, prior flowLaunchEventMsg) tea.Cmd {
@@ -457,6 +495,10 @@ func createFlowLaunchBootstrapCmd(seams flowLaunchSeams, attempt flowLaunchAttem
 			event.Err, event.ErrOp = fmt.Sprintf("returned flow %q", fresh.FlowID), "reread flow before AddPhaseLaunchID"
 			return event
 		}
+		if !createFlowSameGeneration(prior.CreatedRecord, fresh) {
+			event.Err, event.ErrOp, event.GenerationLost = "flow generation changed", "reread flow before AddPhaseLaunchID", true
+			return event
+		}
 		event.Record = fresh
 		return event
 	}
@@ -474,6 +516,10 @@ func createFlowLaunchIDCmd(seams flowLaunchSeams, prior flowLaunchEventMsg) tea.
 		record, err := seams.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: prior.FlowID, PhaseID: root.PhaseID, LaunchID: prior.Token})
 		if err == nil && record.FlowID != prior.FlowID {
 			err = fmt.Errorf("returned flow %q", record.FlowID)
+		}
+		if err == nil && !createFlowSameGeneration(prior.CreatedRecord, record) {
+			event.Err, event.Proof, event.GenerationLost = "flow generation changed", flowLaunchCreateProofUnknown, true
+			return event
 		}
 		if err == nil {
 			if phase, ok := flowPhaseByID(record, root.PhaseID); ok && flowPhaseContainsLaunch(phase, prior.Token) {

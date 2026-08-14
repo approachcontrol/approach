@@ -17,25 +17,27 @@ import (
 )
 
 type createLaunchHarness struct {
-	record       flowstore.FlowRecord
-	allocatedID  string
-	order        []string
-	contexts     []actions.AgentLaunchContext
-	phaseUpdates []flowstore.PhaseUpdate
-	sessions     []sessions.SessionRecord
-	addErr       error
-	addPersists  bool
-	createErr    error
-	reserveErr   error
-	worktreeErr  error
-	bootstrapErr error
-	metadataErr  error
-	phaseErrs    map[string]error
-	readErrs     map[int]error
-	readCalls    int
-	terminalErr  error
-	terminal     EmbeddedTerminal
-	releases     int
+	record         flowstore.FlowRecord
+	allocatedID    string
+	order          []string
+	contexts       []actions.AgentLaunchContext
+	phaseUpdates   []flowstore.PhaseUpdate
+	sessions       []sessions.SessionRecord
+	addErr         error
+	addPersists    bool
+	createErr      error
+	reserveErr     error
+	worktreeErr    error
+	bootstrapErr   error
+	metadataErr    error
+	metadataMutate func(*flowstore.FlowRecord)
+	phaseErrs      map[string]error
+	readErrs       map[int]error
+	readMutate     func(*flowstore.FlowRecord)
+	readCalls      int
+	terminalErr    error
+	terminal       EmbeddedTerminal
+	releases       int
 }
 
 func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRecord(t *testing.T) {
@@ -199,6 +201,9 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 			if err := h.readErrs[h.readCalls]; err != nil {
 				return flowstore.FlowRecord{}, err
 			}
+			if h.readMutate != nil {
+				h.readMutate(&h.record)
+			}
 			return h.record, nil
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
@@ -207,6 +212,9 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 				return flowstore.FlowRecord{}, h.metadataErr
 			}
 			h.record.WorktreePath, h.record.Branch, h.record.Commit = update.WorktreePath, update.Branch, update.Commit
+			if h.metadataMutate != nil {
+				h.metadataMutate(&h.record)
+			}
 			return h.record, nil
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
@@ -599,6 +607,63 @@ func TestCreateFlowLaunchRejectsRecordClaimedBeforeTrackedReservation(t *testing
 	}
 	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "claimed by another launch") {
 		t.Fatalf("contention result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchRejectsSameIDReplacementBeforeTrackedReservation(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.CreatedAt = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	m, cmd := h.admit(t, h.model(t))
+	m, written := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWritten)
+	m, reserveCmd := m.handleFlowLaunchEvent(written)
+	if reserveCmd == nil {
+		t.Fatal("proven create did not request tracked reservation")
+	}
+
+	// A delete/recreate can preserve the exact ID and immutable form fields; the
+	// creation timestamp is the generation marker that distinguishes the row.
+	h.record.CreatedAt = h.record.CreatedAt.Add(time.Second)
+	reserved := reserveCmd().(flowLaunchEventMsg)
+	m, cmd = m.handleFlowLaunchEvent(reserved)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if strings.Contains(strings.Join(h.order, ","), "worktree") || h.releases != 1 || m.activeFlowCreate != 0 {
+		t.Fatalf("replacement result: order=%#v releases=%d active=%d", h.order, h.releases, m.activeFlowCreate)
+	}
+}
+
+func TestCreateFlowLaunchRevalidatesLaunchProofAfterMetadata(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.metadataMutate = func(record *flowstore.FlowRecord) {
+		record.Phases[0].Status = flowstore.PhaseBlocked
+		record.Phases[0].LaunchIDs = nil
+	}
+	m := h.start(t, h.model(t))
+
+	if len(h.contexts) != 0 || strings.Contains(strings.Join(h.order, ","), "terminal") {
+		t.Fatalf("metadata proof drift spawned an agent: contexts=%#v order=%#v", h.contexts, h.order)
+	}
+	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "launch proof changed before embedded install") {
+		t.Fatalf("metadata proof result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchRejectsSameIDReplacementAtPostBootstrapReread(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.CreatedAt = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	h.readMutate = func(record *flowstore.FlowRecord) {
+		record.CreatedAt = record.CreatedAt.Add(time.Second)
+	}
+	m := h.start(t, h.model(t))
+
+	joined := strings.Join(h.order, ",")
+	for _, forbidden := range []string{"launch-id:", "metadata", "terminal", "block:"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("replacement reread performed %q: %#v", forbidden, h.order)
+		}
+	}
+	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
+		t.Fatalf("replacement reread result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
 	}
 }
 

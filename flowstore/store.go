@@ -2228,11 +2228,18 @@ func launchPrecedes(launchIDs []string, candidate, current string) bool {
 	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
-// Delete removes only the requested Flow row.
+// Delete removes only the requested Flow row. It takes the launch/close
+// reservation so a delete and same-ID recreate cannot replace a Flow while an
+// admitted launch still owns that identity.
 func (s *Store) Delete(flowID string) error {
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
+	release, err := s.acquireLaunchCloseLock(flowID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.backend.delete(flowID)
 }
 
