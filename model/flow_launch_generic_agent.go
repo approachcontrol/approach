@@ -80,7 +80,7 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 		return m, nil, false
 	}
 	record, ok := m.cachedGenericWorktreeAgentRecord(intent.FlowID)
-	if !ok || strings.TrimSpace(record.FlowID) != intent.FlowID {
+	if !ok || strings.TrimSpace(record.FlowID) != intent.FlowID || flowstore.FlowClosed(record) {
 		return m, nil, false
 	}
 	command, _, _ := m.flowLaunchAgentSettings()
@@ -141,7 +141,9 @@ func (m Model) cachedGenericWorktreeAgentRecord(flowID string) (flowstore.FlowRe
 }
 
 func genericWorktreeAgentFlowEligible(record flowstore.FlowRecord) bool {
-	return strings.TrimSpace(record.FlowID) != "" && strings.TrimSpace(record.WorktreePath) != ""
+	return strings.TrimSpace(record.FlowID) != "" &&
+		strings.TrimSpace(record.WorktreePath) != "" &&
+		!flowstore.FlowClosed(record)
 }
 
 func genericFlowRuntimeOccupancyReason(record flowstore.FlowRecord) string {

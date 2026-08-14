@@ -67,6 +67,57 @@ func TestGenericWorktreeAgentHintUsesCachedReadiness(t *testing.T) {
 	}
 }
 
+func TestGenericWorktreeAgentClosedFlowDoesNotAdvertiseOrStart(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	closedAt := time.Now()
+	record.Closed = flowstore.Closure{Reason: "completed", ClosedAt: &closedAt}
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.activePane = m.contentPane
+	m.width = 180
+
+	if m.selectedFlowWorktreeAgentReady() {
+		t.Fatal("closed Flow should not advertise the generic agent")
+	}
+	if view := m.View(); strings.Contains(view, "start agent") {
+		t.Fatalf("closed Flow rendered the generic shortcut:\n%s", view)
+	}
+	next, cmd := m.handleStartSelectedFlowWorktreeAgent()
+	if cmd != nil {
+		t.Fatal("closed Flow started the generic-agent lifecycle")
+	}
+	if next.(Model).flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("closed Flow retained a generic-agent lifecycle attempt")
+	}
+}
+
+func TestGenericWorktreeAgentAuthoritativeReadRejectsNewlyClosedFlow(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	h := newManualLaunchHarness(t, record)
+	next, readCmd := h.model().handleStartSelectedFlowWorktreeAgent()
+	m := next.(Model)
+
+	closedAt := time.Now()
+	h.record.Closed = flowstore.Closure{Reason: "completed", ClosedAt: &closedAt}
+	readMsg, ok := runCommandWithoutWaiting(readCmd)
+	if !ok {
+		t.Fatal("authoritative read did not settle")
+	}
+	next, cmd := m.Update(readMsg)
+	m = next.(Model)
+
+	if m.status.Text != flowWorktreeAgentStaleStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowWorktreeAgentStaleStatus)
+	}
+	m = h.drain(m, cmd, 0)
+	if h.sessionListCalls != 0 || h.launchReservations != 0 || len(h.launchContexts) != 0 {
+		t.Fatalf("closed authoritative Flow reached later work: session reads=%d reservations=%d launches=%#v", h.sessionListCalls, h.launchReservations, h.launchContexts)
+	}
+	if m.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("closed authoritative Flow retained a generic-agent lifecycle attempt")
+	}
+}
+
 func TestGenericWorktreeAgentPressTimeRefusalsUseGenericContract(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	filePath := filepath.Join(t.TempDir(), "file")
