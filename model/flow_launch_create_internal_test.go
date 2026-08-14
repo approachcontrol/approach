@@ -13,6 +13,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 type createLaunchHarness struct {
@@ -69,6 +70,37 @@ func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRe
 	}
 	if record.FlowID != created.FlowID || len(record.Phases) != len(created.Phases) {
 		t.Fatalf("create reservation record = %#v, want authoritative created Flow", record)
+	}
+}
+
+func TestCreateFlowLaunchEmbeddedSuccessRefreshesVisibleUnfocusedFlowPane(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseRunning}})
+	m := h.model(t)
+	m.bottomMode = ui.ModeFlows
+	m.contentPane = ui.PaneTop
+	m.activePane = ui.PaneTop
+	if m.flowSurfaceVisible() || !m.flowRefreshSurfaceVisible() {
+		t.Fatalf("test surface predicates: focused=%v refresh-visible=%v", m.flowSurfaceVisible(), m.flowRefreshSurfaceVisible())
+	}
+
+	attempt := flowLaunchAttempt{
+		Token: "launch-create-1", Kind: flowLaunchKindCreatePhase, FlowID: h.record.FlowID,
+		Create: flowLaunchCreateRequest{Request: 1, RepoPath: h.record.RepoPath},
+	}
+	m.activeFlowCreate = attempt.Create.Request
+	m = m.withFlowLaunchAttempt(attempt)
+	beforeRequest := m.ListRequest(ui.ModeFlows)
+	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+		Context: actions.AgentLaunchContext{
+			Command: "codex", FlowID: h.record.FlowID, FlowPhaseID: "plan", LaunchID: attempt.Token, InitialPrompt: "Write the plan.",
+		},
+		Record: h.record,
+	})
+	if next.flowSurfaceVisible() {
+		t.Fatal("test launch unexpectedly focused the Flow pane before prefill completed")
+	}
+	if next.ListRequest(ui.ModeFlows) == beforeRequest {
+		t.Fatal("successful create launch did not refresh the visible unfocused Flow pane")
 	}
 }
 

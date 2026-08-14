@@ -1018,7 +1018,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		m, tickCmd = m.startEmbeddedTerminalTick()
 	}
 	var fetchCmd tea.Cmd
-	if ctx.FlowID != "" && m.flowSurfaceVisible() {
+	if ctx.FlowID != "" && m.flowRefreshSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()
 	}
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
