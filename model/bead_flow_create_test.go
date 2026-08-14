@@ -1291,6 +1291,120 @@ func TestBeadsReadyStartFlowHandoffTransfersAdmissionAndRejectsStaleRepo(t *test
 	}
 }
 
+// The Ready pane keeps focus across the whole `F` handoff, so the post-launch
+// refresh cannot ask whether Flows is focused; it has to ask the same question
+// the create-only completion asks — is any Flow surface displayed?
+func TestBeadsReadyStartFlowRefreshesVisibleFlowSurface(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		keys        []tea.KeyMsg
+		height      int
+		wantRefresh int
+	}{
+		{name: "beads ready with background flows visible", height: 30, wantRefresh: 1},
+		{name: "selected repo flows", height: 30, keys: []tea.KeyMsg{{Type: tea.KeyTab}, {Type: tea.KeyRunes, Runes: []rune{'3'}}}, wantRefresh: 1},
+		{name: "active flows", height: 30, keys: []tea.KeyMsg{{Type: tea.KeyCtrlA}}, wantRefresh: 1},
+		{name: "other surface with background flows hidden", height: 20, keys: []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune{'1'}}}, wantRefresh: 0},
+	} {
+		// `codex` and `claude` route the handoff to the embedded branch; any
+		// other command routes it to the external one. A failed external launch
+		// adds the failure-persistence hop, which refreshes a second time.
+		for _, route := range []struct {
+			name        string
+			command     string
+			launchErr   bool
+			perRefresh  int
+			wantStatus  string
+			wantPersist bool
+		}{
+			{name: "embedded", command: "codex", perRefresh: 1},
+			{name: "external", command: "aider", perRefresh: 1},
+			{name: "external launch failure", command: "aider", launchErr: true, perRefresh: 2, wantPersist: true, wantStatus: "launch failed"},
+		} {
+			t.Run(tt.name+"/"+route.name, func(t *testing.T) {
+				persisted := 0
+				listCalls := 0
+				m := inBeadsPane(newTestModel(testRepos(), model.Options{
+					AgentCommand: route.command,
+					ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+						return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+					},
+					ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+					ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+						listCalls++
+						return nil, nil
+					},
+					StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+						return model.FlowStartResult{
+							Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title},
+							LaunchContext: actions.AgentLaunchContext{
+								Command: req.AgentCommand, LaunchID: "launch-1", RepoPath: req.RepoPath,
+								WorktreePath: "/dev/alpha-worktrees/flow-1", FlowID: "flow-1", FlowPhaseID: "plan", Headless: true,
+							},
+							LaunchRelease: func() {},
+						}, nil
+					},
+					StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+						return &fakeEmbeddedTerminal{state: "running"}, nil
+					},
+					LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+						if route.launchErr {
+							return actions.TerminalLaunchSpec{}, errors.New("launch failed")
+						}
+						return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+					},
+					SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+						persisted++
+						return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+					},
+				}))
+				m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: tt.height})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+				m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m, _ = update(m, readyCmd())
+				m, startCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+				if startCmd == nil {
+					t.Fatal("Ready F returned nil command")
+				}
+				handoff := startCmd()
+				for _, key := range tt.keys {
+					m, _ = update(m, key)
+				}
+				m, cmd := update(m, handoff)
+				drain := func(cmd tea.Cmd) []tea.Msg {
+					if cmd == nil {
+						return nil
+					}
+					return immediateTestCommandMessages(cmd)
+				}
+				for _, msg := range drain(cmd) {
+					if msg == nil {
+						continue
+					}
+					// The launch-failure persist hop is the second half of this
+					// path; its refresh has to land on the visible surface too.
+					var followUp tea.Cmd
+					m, followUp = update(m, msg)
+					_ = drain(followUp)
+				}
+				// Guard the route table itself: without the persisted phase
+				// update, the failure route would silently stop covering the
+				// failure-persistence refresh.
+				if route.wantPersist != (persisted > 0) {
+					t.Fatalf("phase persists = %d, want persisted=%v", persisted, route.wantPersist)
+				}
+				if route.wantStatus != "" && !strings.Contains(m.TransientError(), route.wantStatus) {
+					t.Fatalf("status = %q, want it to contain %q", m.TransientError(), route.wantStatus)
+				}
+				if want := tt.wantRefresh * route.perRefresh; listCalls != want {
+					t.Fatalf("ListFlows calls = %d, want %d", listCalls, want)
+				}
+			})
+		}
+	}
+}
+
 func TestBeadsReadyStartFlowRejectsDualRequestIdentityWithoutClearingAdmission(t *testing.T) {
 	releases := 0
 	starts := 0

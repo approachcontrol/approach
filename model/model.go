@@ -1862,7 +1862,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, rejectionCmd
 		}
 		next, launchCmd := m.launchAgentForBackend(msg.LaunchContext, msg.LaunchRelease)
-		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
+		if msg.LaunchContext.FlowID != "" && next.flowRefreshSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
@@ -1875,7 +1875,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, rejectionCmd
 		}
 		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
-		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
+		if msg.LaunchContext.FlowID != "" && next.flowRefreshSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}

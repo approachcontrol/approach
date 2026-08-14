@@ -2972,7 +2972,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		errText += "update flow phase: " + msg.PersistErr.Error()
 	}
 	m = m.setStatus(statusOther, errText)
-	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
+	if msg.LaunchContext.FlowID != "" && m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
