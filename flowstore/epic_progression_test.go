@@ -184,3 +184,63 @@ func TestEnableEpicProgressionRefusesIncompleteClosedAndRunningFlows(t *testing.
 		})
 	}
 }
+
+func TestEpicProgressionUpdatesClampRegressingClock(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	repo := filepath.Join(t.TempDir(), "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: t.TempDir(),
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	link := flowstore.BeadLink{ID: "epic.1", EpicID: "epic"}
+	flow, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "progression-clock", Title: "Progression clock", Instructions: "Keep timestamps monotonic.", RepoPath: repo, Bead: link,
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: flow.FlowID, WorktreePath: filepath.Join(t.TempDir(), "worktree"), Branch: "flow/progression-clock",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finalizer.Finalize(nil); err != nil {
+		t.Fatal(err)
+	}
+	key := flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "epic"}
+	initial, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Minute)
+	enabled, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.UpdatedAt.After(initial.UpdatedAt) {
+		t.Fatalf("enabled updated_at = %s, want after %s", enabled.UpdatedAt, initial.UpdatedAt)
+	}
+
+	now = now.Add(-time.Minute)
+	disabled, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.UpdatedAt.Before(enabled.UpdatedAt) {
+		t.Fatalf("disabled updated_at regressed from %s to %s", enabled.UpdatedAt, disabled.UpdatedAt)
+	}
+	now = now.Add(-time.Minute)
+	atomicallyEnabled, _, err := store.EnableEpicProgressionForPreparedFlow(flowstore.PreparedEpicProgressionUpdate{
+		FlowID: flow.FlowID, Key: key, Bead: link,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atomicallyEnabled.UpdatedAt.Before(disabled.UpdatedAt) {
+		t.Fatalf("atomic enable updated_at regressed from %s to %s", disabled.UpdatedAt, atomicallyEnabled.UpdatedAt)
+	}
+}

@@ -199,3 +199,65 @@ func TestPreparationFinalizerRejectsClosedAndAlreadyRunningFlows(t *testing.T) {
 		})
 	}
 }
+
+func TestPreparedFlowMutationsClampRegressingClock(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: t.TempDir(),
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "clock-regression", Title: "Clock regression", Instructions: "Keep timestamps monotonic.", RepoPath: "/repo",
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: created.FlowID, WorktreePath: "/worktrees/clock-regression", Branch: "flow/clock-regression",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(-time.Hour)
+	prepared, err := finalizer.Finalize(nil)
+	if err != nil {
+		t.Fatalf("Finalize() with regressing clock error = %v", err)
+	}
+	if prepared.PreparedAt == nil || prepared.PreparedAt.Before(prepared.CreatedAt) || prepared.UpdatedAt.Before(*prepared.PreparedAt) {
+		t.Fatalf("prepared timestamps = created %s receipt %v updated %s", prepared.CreatedAt, prepared.PreparedAt, prepared.UpdatedAt)
+	}
+
+	autoMode, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: created.FlowID, Enabled: false})
+	if err != nil {
+		t.Fatalf("SetAutoMode() with regressing clock error = %v", err)
+	}
+	phaseID := flowstore.OrderedPhases(autoMode.Phases)[0].PhaseID
+	running, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: created.FlowID, PhaseID: phaseID, LaunchID: "launch-clock-regression",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() with regressing clock error = %v", err)
+	}
+	attention, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID: created.FlowID, PhaseID: phaseID, Status: flowstore.PhaseNeedsAttention, Notes: "clock moved backward",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase() with regressing clock error = %v", err)
+	}
+	for name, record := range map[string]flowstore.FlowRecord{
+		"auto mode": autoMode,
+		"launch":    running,
+		"phase":     attention,
+	} {
+		if record.PreparedAt == nil || record.UpdatedAt.Before(*record.PreparedAt) {
+			t.Fatalf("%s timestamps = receipt %v updated %s", name, record.PreparedAt, record.UpdatedAt)
+		}
+	}
+	if _, err := store.Read(created.FlowID); err != nil {
+		t.Fatalf("Read() after regressing-clock mutations error = %v", err)
+	}
+}

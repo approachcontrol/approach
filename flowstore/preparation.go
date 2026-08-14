@@ -85,7 +85,7 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 		if strings.TrimSpace(record.Branch) == "" {
 			return FlowRecord{}, fmt.Errorf("flow %q requires a branch before preparation can finalize", record.FlowID)
 		}
-		stamp := f.store.now().UTC()
+		stamp := flowMutationTime(record, f.store.now())
 		record.PreparedAt = &stamp
 		record.UpdatedAt = stamp
 		if err := f.store.saveSession(sess, record); err != nil {

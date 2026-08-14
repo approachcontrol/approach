@@ -172,6 +172,8 @@ func (s *Store) EnableEpicProgressionForPreparedFlow(update PreparedEpicProgress
 				EpicID:        key.EpicID,
 				CreatedAt:     stamp,
 			}
+		} else {
+			stamp = epicProgressionMutationTime(progression, stamp)
 		}
 		progression.Enabled = true
 		progression.Halt = nil
@@ -376,7 +378,7 @@ func (b *sqliteBackend) setEpicProgression(update EpicProgressionUpdate, now fun
 		}
 		current.Enabled = update.Enabled
 		current.Halt = halt
-		current.UpdatedAt = now().UTC()
+		current.UpdatedAt = epicProgressionMutationTime(current, now())
 	} else {
 		stamp := now().UTC()
 		current = EpicProgression{
@@ -413,4 +415,8 @@ func boolToSQLite(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func epicProgressionMutationTime(record EpicProgression, candidate time.Time) time.Time {
+	return monotonicMutationTime(candidate, record.CreatedAt, record.UpdatedAt)
 }

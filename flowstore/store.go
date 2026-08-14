@@ -913,7 +913,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		phase := record.Phases[phaseIndex]
 		priorStatus := phase.Status
 		if err := validatePhaseUpdate(phase, update); err != nil {
@@ -1018,10 +1018,7 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 		if phase.AgentSettings().Normalize() == settings && phase.AgentSettings() == settings {
 			return record, nil
 		}
-		now := s.now()
-		if record.PreparedAt != nil && now.Before(*record.PreparedAt) {
-			now = *record.PreparedAt
-		}
+		now := flowMutationTime(record, s.now())
 		record.Phases[phaseIndex] = phase.withAgentSettings(settings)
 		record.Phases[phaseIndex].UpdatedAt = now
 		record.UpdatedAt = now
@@ -1081,7 +1078,7 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 		// update's now would leave the compensated phase — and the record — at or
 		// behind a concurrent writer's timestamp, and the TUI drops a record whose
 		// UpdatedAt is behind the one it already holds.
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		compensated := record
 		compensated.Phases = append([]FlowPhase(nil), record.Phases...)
 		compensated.Phases[index] = markPhaseSyncNeedsAttention(compensated.Phases[index], syncErr, now)
@@ -1591,7 +1588,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		summary := strings.TrimSpace(update.Summary)
 		if summary == "" {
 			summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
@@ -1671,7 +1668,7 @@ func (s *Store) compensateManualMergeSyncFailure(flowID string, committed manual
 			!mergeEqual(record.Merge, committed.merge) {
 			return record, nil
 		}
-		now := s.now()
+		now := flowMutationTime(record, s.now())
 		record.Phases[index] = markPhaseSyncNeedsAttention(record.Phases[index], syncErr, now)
 		record.PR.Status = committed.previousPRStatus
 		record.Merge = Merge{Status: MergePending}
@@ -2281,7 +2278,7 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 				return FlowRecord{}, err
 			}
 		}
-		record, err = mutate(record, s.now())
+		record, err = mutate(record, flowMutationTime(record, s.now()))
 		if err != nil {
 			return FlowRecord{}, err
 		}
@@ -3098,6 +3095,28 @@ func defaultTime(value, fallback time.Time) time.Time {
 		return fallback
 	}
 	return value
+}
+
+func monotonicMutationTime(candidate time.Time, floors ...time.Time) time.Time {
+	stamp := candidate.UTC()
+	for _, floor := range floors {
+		if floor.IsZero() {
+			continue
+		}
+		floor = floor.UTC()
+		if stamp.Before(floor) {
+			stamp = floor
+		}
+	}
+	return stamp
+}
+
+func flowMutationTime(record FlowRecord, candidate time.Time) time.Time {
+	floors := []time.Time{record.CreatedAt, record.UpdatedAt}
+	if record.PreparedAt != nil {
+		floors = append(floors, *record.PreparedAt)
+	}
+	return monotonicMutationTime(candidate, floors...)
 }
 
 func normalizeRecord(record FlowRecord, selfHeal bool) FlowRecord {
