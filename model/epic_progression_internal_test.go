@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -122,6 +123,44 @@ func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testin
 	next, _ := m.handleEpicProgressionToggleResult(msg)
 	if got := next.epicProgressionBaselines[key]; got.FlowID != baseline.FlowID {
 		t.Fatalf("confirmed-active disable replaced baseline with %#v", got)
+	}
+}
+
+func TestEnableEpicProgressionRevalidationFailureDoesNotInstallIneligibleBaseline(t *testing.T) {
+	stamp := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	prepared := flowstore.FlowRecord{
+		FlowID: "flow-child", RepoPath: "/repo", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic.1", EpicID: "epic"}, PreparedAt: &stamp,
+	}
+	running := prepared
+	running.Status = flowstore.StatusInProgress
+	m := Model{
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{prepared}, nil
+		},
+		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return prepared, func() {}, nil
+		},
+		enableEpicProgression: func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			return flowstore.EpicProgression{}, running, errors.New("Flow is already running")
+		},
+		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
+		},
+	}
+	target := beadExpansionTarget{token: 1, repoPath: "/repo", mode: ui.ModeBeadsOpen, epicID: "epic"}
+	msg, ok := m.enableEpicProgressionCmd(target, ui.BeadExpansion{
+		Children: []beadsquery.Bead{{ID: "epic.1", Title: "Child"}},
+		ReadyIDs: map[string]bool{"epic.1": true},
+	})().(epicProgressionToggleResultMsg)
+	if !ok {
+		t.Fatal("enable command returned unexpected message")
+	}
+	if !msg.known || !msg.enabled || msg.baselineDisposition != epicProgressionBaselinePreserve {
+		t.Fatalf("revalidation result = %#v, want known active with preserved baseline", msg)
+	}
+	if !strings.Contains(msg.status, "enabling auto-progression failed") {
+		t.Fatalf("revalidation status = %q, want failure", msg.status)
 	}
 }
 

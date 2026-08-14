@@ -97,6 +97,8 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	missingEnabled := []byte(strings.Replace(string(validData), "  \"enabled\": false,\n", "", 1))
+	nullEnabled := []byte(strings.Replace(string(validData), "\"enabled\": false", "\"enabled\": null", 1))
 	for _, tt := range []struct {
 		name      string
 		enabled   int
@@ -104,6 +106,8 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 		data      []byte
 	}{
 		{name: "malformed blob", enabled: 0, updatedAt: validUpdatedAt, data: []byte("{")},
+		{name: "missing enabled", enabled: 0, updatedAt: validUpdatedAt, data: missingEnabled},
+		{name: "null enabled", enabled: 0, updatedAt: validUpdatedAt, data: nullEnabled},
 		{name: "projection mismatch", enabled: 1, updatedAt: validUpdatedAt, data: validData},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

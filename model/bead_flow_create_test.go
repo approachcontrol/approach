@@ -352,6 +352,7 @@ func TestEpicAutoProgressionEnableWriteReconciliation(t *testing.T) {
 		commitError bool
 		wantEnabled bool
 		wantKnown   bool
+		wantStatus  string
 	}{
 		{
 			name: "error but durable",
@@ -384,6 +385,7 @@ func TestEpicAutoProgressionEnableWriteReconciliation(t *testing.T) {
 			},
 			wantEnabled: true,
 			wantKnown:   true,
+			wantStatus:  "enabling auto-progression failed",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -420,6 +422,9 @@ func TestEpicAutoProgressionEnableWriteReconciliation(t *testing.T) {
 			view := ansi.Strip(m.View())
 			if got := strings.Contains(view, "[auto]"); got != tt.wantEnabled {
 				t.Fatalf("enabled marker = %t, want %t\n%s", got, tt.wantEnabled, view)
+			}
+			if tt.wantStatus != "" && !strings.Contains(m.TransientError(), tt.wantStatus) {
+				t.Fatalf("toggle status = %q, want substring %q", m.TransientError(), tt.wantStatus)
 			}
 			_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 			if gotKnown := retry != nil; gotKnown != tt.wantKnown {

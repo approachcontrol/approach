@@ -199,6 +199,11 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
 		}
 		if found && confirmed.Enabled {
+			if !flowstore.IsPreparedEpicProgressionCommitUnknown(err) {
+				return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
+					enabled: true, known: true, release: release,
+					status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err)}
+			}
 			return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
 				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, resultFlow.FlowID)}

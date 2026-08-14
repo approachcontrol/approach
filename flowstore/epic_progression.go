@@ -65,7 +65,7 @@ type storedEpicProgressionDTO struct {
 	SchemaVersion int                  `json:"schema_version"`
 	RepoPath      string               `json:"repo_path"`
 	EpicID        string               `json:"epic_id"`
-	Enabled       bool                 `json:"enabled"`
+	Enabled       *bool                `json:"enabled"`
 	Halt          *EpicProgressionHalt `json:"halt,omitempty"`
 	CreatedAt     string               `json:"created_at"`
 	UpdatedAt     string               `json:"updated_at"`
@@ -261,11 +261,12 @@ func encodeEpicProgression(record EpicProgression) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	enabled := record.Enabled
 	data, err := json.MarshalIndent(storedEpicProgressionDTO{
 		SchemaVersion: record.SchemaVersion,
 		RepoPath:      record.RepoPath,
 		EpicID:        record.EpicID,
-		Enabled:       record.Enabled,
+		Enabled:       &enabled,
 		Halt:          record.Halt,
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
@@ -281,6 +282,9 @@ func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt strin
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: %w", repoPath, epicID, err)
 	}
+	if dto.Enabled == nil {
+		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: enabled is required", repoPath, epicID)
+	}
 	created, err := parseCanonicalStorageTime(dto.CreatedAt)
 	if err != nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q created_at: %w", repoPath, epicID, err)
@@ -293,7 +297,7 @@ func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt strin
 		SchemaVersion: dto.SchemaVersion,
 		RepoPath:      dto.RepoPath,
 		EpicID:        dto.EpicID,
-		Enabled:       dto.Enabled,
+		Enabled:       *dto.Enabled,
 		Halt:          dto.Halt,
 		CreatedAt:     created,
 		UpdatedAt:     updated,
