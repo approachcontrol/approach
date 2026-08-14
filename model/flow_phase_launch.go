@@ -261,6 +261,12 @@ func (l FlowPhaseLauncher) EnsureLaunchWorktree(req FlowPhaseLaunchPreparedReque
 	if !created {
 		return req, FlowPhaseLaunchWorktreeError{Message: flowPhaseLaunchWorktreeFailed + "no worktree path was recorded"}
 	}
+	// EnsureWorktree may return a path another process recorded while this
+	// launch was waiting for the reservation. Validate every successfully
+	// ensured path before Prepare can persist a launch ID against it.
+	if err := l.inspectWorktreeDirectory(req.WorktreePath); err != nil {
+		return req, recordedFlowWorktreeUnusableError(req.WorktreePath, err)
+	}
 	return req, nil
 }
 
