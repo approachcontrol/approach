@@ -146,6 +146,67 @@ func (m Model) setCurrentListError(mode ui.Mode, detail string) Model {
 	return m
 }
 
+func (m Model) flowDegradation(mode ui.Mode) *flowstore.PartialListError {
+	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows {
+		return nil
+	}
+	state := m.flowDegradations[int(mode)]
+	if state.diagnostic == nil || len(state.diagnostic.Entries) == 0 {
+		return nil
+	}
+	if mode == ui.ModeFlows {
+		repoPath, ok := m.currentRepoPath()
+		if !ok || !sameRepoPath(repoPath, state.repoPath) {
+			return nil
+		}
+	}
+	return state.diagnostic
+}
+
+func (m Model) flowDegradationWarning(mode ui.Mode) string {
+	diagnostic := m.flowDegradation(mode)
+	if diagnostic == nil {
+		return ""
+	}
+	limit := min(3, len(diagnostic.Entries))
+	ids := make([]string, 0, limit+1)
+	for _, entry := range diagnostic.Entries[:limit] {
+		ids = append(ids, entry.DiagnosticFlowID())
+	}
+	if len(diagnostic.Entries) > limit {
+		ids = append(ids, "…")
+	}
+	return fmt.Sprintf("Skipped %d unreadable Flows (%s); run approach flow list --json",
+		len(diagnostic.Entries), strings.Join(ids, ", "))
+}
+
+func (m Model) setFlowDegradation(mode ui.Mode, repoPath string, diagnostic *flowstore.PartialListError) Model {
+	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows {
+		return m
+	}
+	beforeRows := m.paneFlowDegradationWarningRows(mode)
+	state := flowDegradationState{}
+	if diagnostic != nil && len(diagnostic.Entries) > 0 {
+		copied := &flowstore.PartialListError{Entries: append([]flowstore.PartialListEntry(nil), diagnostic.Entries...)}
+		state = flowDegradationState{diagnostic: copied}
+		if mode == ui.ModeFlows {
+			state.repoPath = repoPath
+		}
+	}
+	m.flowDegradations[int(mode)] = state
+	if m.paneFlowDegradationWarningRows(mode) != beforeRows {
+		m = m.reflowMode(mode)
+	}
+	return m
+}
+
+func (m Model) paneFlowDegradationWarningRows(mode ui.Mode) int {
+	if m.flowDegradationWarning(mode) == "" {
+		return 0
+	}
+	return 1
+}
+
 func (m Model) reflowMode(mode ui.Mode) Model {
 	switch mode {
 	case ui.ModeActiveFlows:
@@ -624,6 +685,7 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, head
 
 func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
+	preferences := m.agentPreferences()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
 			RepoPath:                    repoPath,
@@ -633,6 +695,8 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			AgentCommand:                command,
 			Model:                       model,
 			ReasoningEffort:             reasoningEffort,
+			AgentPreferences:            preferences,
+			AgentPreferencesProvided:    true,
 			SessionStateRoot:            m.sessionStateRoot,
 			FlowPromptTemplates:         m.flowPromptTemplates,
 			FlowPromptTemplatesProvided: true,
@@ -652,16 +716,19 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 
 func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
+	preferences := m.agentPreferences()
 	return func() tea.Msg {
 		result, err := m.createFlow(FlowStartRequest{
-			RepoPath:        repoPath,
-			Title:           title,
-			Instructions:    instructions,
-			BaseRef:         baseRef,
-			AgentCommand:    command,
-			Model:           model,
-			ReasoningEffort: reasoningEffort,
-			Headless:        flowHeadlessPointer(headless),
+			RepoPath:                 repoPath,
+			Title:                    title,
+			Instructions:             instructions,
+			BaseRef:                  baseRef,
+			AgentCommand:             command,
+			Model:                    model,
+			ReasoningEffort:          reasoningEffort,
+			AgentPreferences:         preferences,
+			AgentPreferencesProvided: true,
+			Headless:                 flowHeadlessPointer(headless),
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
@@ -672,15 +739,18 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 
 func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64, intent readyBeadFlowIntent) tea.Cmd {
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
+	preferences := m.agentPreferences()
 	if intent == readyBeadFlowCreateOnly {
 		return func() tea.Msg {
 			result, err := m.createFlow(FlowStartRequest{
-				RepoPath:        repoPath,
-				Title:           title,
-				Instructions:    instructions,
-				AgentCommand:    command,
-				Model:           launchModel,
-				ReasoningEffort: reasoningEffort,
+				RepoPath:                 repoPath,
+				Title:                    title,
+				Instructions:             instructions,
+				AgentCommand:             command,
+				Model:                    launchModel,
+				ReasoningEffort:          reasoningEffort,
+				AgentPreferences:         preferences,
+				AgentPreferencesProvided: true,
 			})
 			if err != nil {
 				return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
@@ -696,6 +766,8 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 			AgentCommand:                command,
 			Model:                       launchModel,
 			ReasoningEffort:             reasoningEffort,
+			AgentPreferences:            preferences,
+			AgentPreferencesProvided:    true,
 			SessionStateRoot:            m.sessionStateRoot,
 			FlowPromptTemplates:         m.flowPromptTemplates,
 			FlowPromptTemplatesProvided: true,

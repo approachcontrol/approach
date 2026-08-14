@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
@@ -1319,6 +1320,48 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 	}
 }
 
+func TestModel_FlowAutoLaunchUsesStampedCrossProviderSettings(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan": flowstore.PhaseCompleted, "plan-review": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan": flowstore.PhaseCompleted, "plan-review": flowstore.PhaseCompleted, "implementation": flowstore.PhaseReady,
+	})
+	for i := range current.Phases {
+		if current.Phases[i].PhaseID == "implementation" {
+			current.Phases[i].Agent = agent.CommandClaude
+			current.Phases[i].Model = agent.ModelClaudeOpus5
+		}
+	}
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand:          agent.CommandCodex,
+		CodexModel:            agent.ModelGPT55,
+		CodexReasoningEffort:  agent.ReasoningEffortMedium,
+		ClaudeModel:           agent.ModelClaudeSonnet5,
+		ClaudeReasoningEffort: agent.ReasoningEffortMax,
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launched := current
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+	})
+	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("auto-advance produced %d launches, want 1", len(launches))
+	}
+	ctx := launches[0].LaunchContext
+	if ctx.Command != agent.CommandClaude || ctx.Model != agent.ModelClaudeOpus5 || ctx.ReasoningEffort != agent.ReasoningEffortMax {
+		t.Fatalf("stamped auto launch context = %#v", ctx)
+	}
+}
+
 func TestModel_FlowAutoLaunchIsAlwaysHeadlessRegardlessOfStoredManualPreference(t *testing.T) {
 	for _, stored := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stored_%v", stored), func(t *testing.T) {
@@ -2091,8 +2134,179 @@ func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected Flow phase overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+	if view := m.View(); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
 		t.Fatalf("M on selected Flow phase did not open model picker:\n%s", view)
+	}
+}
+
+func TestModel_PhaseAgentPickerPersistsWithoutChangingGlobals(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	var got flowstore.PhaseAgentSettingsUpdate
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		CodexModel:   "gpt-5.5",
+		ClaudeModel:  "claude-sonnet-5",
+		SetFlowPhaseAgentSettings: func(update flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error) {
+			got = update
+			updated := flow
+			updated.Phases = append([]flowstore.FlowPhase(nil), flow.Phases...)
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Agent = update.Settings.Agent
+					updated.Phases[i].Model = update.Settings.Model
+					updated.Phases[i].ReasoningEffort = update.Settings.ReasoningEffort
+				}
+			}
+			updated.UpdatedAt = time.Now()
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "merge")
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	view := m.View()
+	if !strings.Contains(view, "inherit global settings") || !strings.Contains(view, "Choose agent for phase merge") {
+		t.Fatalf("phase agent picker contents:\n%s", view)
+	}
+	for range 2 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("phase agent selection returned no persistence command")
+	}
+	m, _ = update(m, cmd())
+	if got.FlowID != flow.FlowID || got.PhaseID != "merge" || got.Settings != (flowstore.PhaseAgentSettings{Agent: "claude"}) {
+		t.Fatalf("phase settings update = %#v", got)
+	}
+	if m.AgentCommand() != "codex" {
+		t.Fatalf("global agent changed to %q", m.AgentCommand())
+	}
+	if view := m.View(); !strings.Contains(view, "A      claude") || !strings.Contains(view, "M      sonnet-5") {
+		t.Fatalf("phase effective labels were not refreshed:\n%s", view)
+	}
+}
+
+func TestModel_PhaseAgentPickerTargetsExactWhitespaceDuplicate(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	canonical := flow.Phases[0]
+	canonical.PhaseID = "Implementation"
+	canonical.Title = "Canonical"
+	canonical.Agent = agent.CommandCodex
+	duplicate := canonical
+	duplicate.PhaseID = " Implementation "
+	duplicate.Title = "Whitespace duplicate"
+	duplicate.Agent = agent.CommandClaude
+	flow.Phases = []flowstore.FlowPhase{canonical, duplicate}
+
+	var got flowstore.PhaseAgentSettingsUpdate
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		SetFlowPhaseAgentSettings: func(update flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error) {
+			got = update
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Agent = update.Settings.Agent
+					updated.Phases[i].Model = update.Settings.Model
+					updated.Phases[i].ReasoningEffort = update.Settings.ReasoningEffort
+				}
+			}
+			updated.UpdatedAt = time.Now()
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, duplicate.PhaseID)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	if view := m.View(); !strings.Contains(view, "> claude") {
+		t.Fatalf("picker targeted the wrong normalized duplicate:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("phase agent selection returned no persistence command")
+	}
+	m, _ = update(m, cmd())
+	if got.PhaseID != duplicate.PhaseID {
+		t.Fatalf("phase settings targeted %q, want exact raw id %q", got.PhaseID, duplicate.PhaseID)
+	}
+	if selected := m.SelectedFlowPhaseID(); selected != duplicate.PhaseID {
+		t.Fatalf("selected phase after settle = %q, want %q", selected, duplicate.PhaseID)
+	}
+	items := m.Flows()
+	if len(items) != 1 || items[0].Phases[0].Agent != agent.CommandCodex || items[0].Phases[1].Agent != agent.CommandCodex {
+		t.Fatalf("exact duplicate cache update = %#v", items)
+	}
+}
+
+func TestModel_PhaseAgentPickerRejectsSettleAfterSwitchingExactDuplicate(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	canonical := flow.Phases[0]
+	canonical.PhaseID = "Implementation"
+	canonical.Agent = agent.CommandCodex
+	duplicate := canonical
+	duplicate.PhaseID = " Implementation "
+	duplicate.Agent = agent.CommandClaude
+	flow.Phases = []flowstore.FlowPhase{canonical, duplicate}
+
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		SetFlowPhaseAgentSettings: func(update flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error) {
+			updated := flow
+			updated.Phases = append([]flowstore.FlowPhase(nil), flow.Phases...)
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Agent = update.Settings.Agent
+				}
+			}
+			updated.UpdatedAt = time.Now()
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, duplicate.PhaseID)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp}) // codex
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("phase agent selection returned no persistence command")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.SelectedFlowPhaseID(); got != canonical.PhaseID {
+		t.Fatalf("selected phase before settle = %q, want %q", got, canonical.PhaseID)
+	}
+	m, _ = update(m, cmd())
+	if view := m.View(); !strings.Contains(view, "selection changed before agent settings were applied") {
+		t.Fatalf("stale exact-duplicate settle was accepted:\n%s", view)
+	}
+	items := m.Flows()
+	if len(items) != 1 || items[0].Phases[1].Agent != agent.CommandClaude {
+		t.Fatalf("stale settle changed cached duplicate: %#v", items)
+	}
+}
+
+func TestModel_MalformedPhaseAgentStampLabelsAreExplicitlyInvalid(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	flow.Phases = []flowstore.FlowPhase{{
+		PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady,
+		Model: agent.ModelGPT55, // Invalid raw model-only stamp must not look like global fallback.
+	}}
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand:         agent.CommandCodex,
+		CodexModel:           agent.ModelGPT55,
+		CodexReasoningEffort: agent.ReasoningEffortHigh,
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	view := m.View()
+	for _, want := range []string{"A      invalid settings", "M      invalid", "E      effort: invalid"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("malformed phase stamp did not render %q:\n%s", want, view)
+		}
 	}
 }
 
@@ -2283,7 +2497,7 @@ func TestModel_ShiftMOpensModelPickerOnSelectedActiveFlowPhaseRow(t *testing.T) 
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected active Flow phase overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+	if view := m.View(); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
 		t.Fatalf("M on selected active Flow phase did not open model picker:\n%s", view)
 	}
 }
@@ -5170,7 +5384,7 @@ func TestModel_RRejectsNonEmbeddedProvidersBeforeLaunch(t *testing.T) {
 				},
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{repairableFlowForShortcut()})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			m = repairFromKey(t, m)
 			if starts != 0 {
 				t.Fatalf("repair started %d terminals for provider %q", starts, tt.command)
 			}

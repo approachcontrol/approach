@@ -5,9 +5,117 @@ import (
 	"testing"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
 )
+
+func TestFlowPhaseLauncherUsesAuthoritativeStampedSettings(t *testing.T) {
+	cachedPhase := flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseReady, Agent: agent.CommandClaude}
+	authoritativePhase := cachedPhase
+	authoritativePhase.Status = flowstore.PhaseRunning
+	authoritativePhase.Model = agent.ModelClaudeOpus5
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/repo",
+		WorktreePath: "/worktree",
+		Phases:       []flowstore.FlowPhase{cachedPhase},
+	}
+	launcher := model.FlowPhaseLauncher{
+		AgentPreferences: agent.Preferences{
+			Command:      agent.CommandCodex,
+			CodexModel:   agent.ModelGPT55,
+			ClaudeModel:  agent.ModelClaudeSonnet5,
+			CodexEffort:  agent.ReasoningEffortMedium,
+			ClaudeEffort: agent.ReasoningEffortMax,
+		},
+		NewLaunchID: func() string { return "launch-1" },
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := record
+			updated.Phases[0] = authoritativePhase
+			return updated, nil
+		},
+	}
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: cachedPhase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := launcher.Prepare(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := agent.Settings{Command: agent.CommandClaude, Model: agent.ModelClaudeOpus5, ReasoningEffort: agent.ReasoningEffortMax}
+	got := agent.Settings{Command: result.Context.Command, Model: result.Context.Model, ReasoningEffort: result.Context.ReasoningEffort}
+	if got != want {
+		t.Fatalf("launch settings = %#v, want %#v", got, want)
+	}
+}
+
+func TestFlowPhaseLauncherKeepsNonPhaseMetadataFromPreparedSnapshot(t *testing.T) {
+	phase := flowstore.FlowPhase{PhaseID: "qa", Title: "QA", Status: flowstore.PhaseReady}
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/repo",
+		WorktreePath: "/worktree-a",
+		Branch:       "flow/a",
+		Commit:       "commit-a",
+		PlanID:       "plan-a",
+		PlanPath:     "/plans/a.md",
+		Phases:       []flowstore.FlowPhase{phase},
+	}
+	authoritativePhase := phase
+	authoritativePhase.Status = flowstore.PhaseRunning
+	authoritativePhase.Agent = agent.CommandClaude
+	launcher := model.FlowPhaseLauncher{
+		AgentPreferences: agent.Preferences{
+			Command:      agent.CommandCodex,
+			ClaudeModel:  agent.ModelClaudeSonnet5,
+			ClaudeEffort: agent.ReasoningEffortMax,
+		},
+		ReadPlan: func(planID string) (string, error) {
+			if planID != record.PlanID {
+				t.Fatalf("ReadPlan(%q), want %q", planID, record.PlanID)
+			}
+			return "plan A body", nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       record.FlowID,
+				WorktreePath: "/worktree-b",
+				Branch:       "flow/b",
+				Commit:       "commit-b",
+				PlanID:       "plan-b",
+				PlanPath:     "/plans/b.md",
+				Phases:       []flowstore.FlowPhase{authoritativePhase},
+				UpdatedAt:    time.Unix(1, 0),
+			}, nil
+		},
+		PromptTemplates: model.FlowPromptTemplates{Generic: "plan={plan_id} path={plan_path} body={plan_body}"},
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: phase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := launcher.Prepare(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := result.Context
+	if ctx.Command != agent.CommandClaude {
+		t.Fatalf("Command = %q, want authoritative phase command %q", ctx.Command, agent.CommandClaude)
+	}
+	if ctx.WorktreePath != record.WorktreePath || ctx.Branch != record.Branch || ctx.Commit != record.Commit ||
+		ctx.PlanID != record.PlanID || ctx.PlanPath != record.PlanPath {
+		t.Fatalf("launch context mixed Flow snapshots: %#v", ctx)
+	}
+	wantPrompt := "plan=plan-a path=/plans/a.md body=plan A body"
+	if !strings.HasPrefix(ctx.InitialPrompt, wantPrompt) {
+		t.Fatalf("InitialPrompt = %q, want prefix %q", ctx.InitialPrompt, wantPrompt)
+	}
+}
 
 func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}

@@ -6,7 +6,9 @@ per-subview filter/cursor preservation with refetch clamping, plus
 configured/not-configured/error classification are shipped, as are the
 newest-100 Closed cap with its plain/truncated header count, read-only detail
 paging, and parked-Flow creation (record
-plus worktree) from a settled Ready selection. Companion docs:
+plus worktree) from a settled Ready selection. Bead rows now also preserve the
+optional `issue_type` and `parent` fields, mark epics, and expand the selected
+epic with its direct children. Companion docs:
 `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
@@ -148,6 +150,29 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
   1–5. Numbers 1–9 keep their existing frozen meanings.
 - Row format: `<id>  P<n>  <title>`, appending assignee when set. Sections sort
   by priority then id; Closed sorts by most recent close first.
+- `issue_type` and `parent` are optional display metadata. Older `bd` JSON that
+  omits either field remains valid. An `issue_type` equal to `epic` after
+  trimming and case folding adds an `[epic]` row marker in every subview.
+- Selecting an epic starts one deferred, selection-scoped expansion request.
+  Direct children come from exactly
+  `bd children <parent-id> --json --readonly`; readiness comes from the same
+  uncapped read-only Ready query used by the Ready subview. Ready direct
+  children appear first in Ready's priority/natural-ID order. All remaining
+  direct children follow in the children query's deterministic
+  priority/natural-ID/raw-ID order. Only positively matched children receive a
+  `[ready]` marker; absence from Ready does not imply a waiting status.
+- The selected parent is followed by one loading, empty, or child-query-error
+  row. A successful non-empty query renders child rows and, when readiness could
+  not be loaded, one local warning after them. Child and state text uses the
+  same terminal sanitization, width bounding, viewport padding, and visual-line
+  scrolling as parent rows. A children failure or readiness warning never
+  changes the parent list's configured/available state.
+- Expansion state is one active snapshot keyed by repository, Beads subview,
+  selected epic ID, and a monotonically increasing request token. Cursor or
+  filter selection changes, subview switches, repo changes, refresh, and
+  leaving Beads clear it synchronously. Results for an old snapshot are
+  ignored. The stored top Beads pane owns expansion even while the bottom pane
+  has focus; no polling or cross-subview child cache is added.
 
 ## Testing Decisions
 
@@ -183,8 +208,8 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
 - A cross-repo aggregate beads view; the view is always scoped to the selected
   repo.
 - Configurability of the closed cap, row format, or sort order.
-- Dependency-graph visualization beyond what `bd show` prints in the detail
-  pager.
+- Dependency-graph visualization beyond the selected epic's direct-child list
+  and positive Ready markers. Full dependency details remain in `bd show`.
 - Initializing beads for a repo from inside the TUI.
 
 ## Further Notes

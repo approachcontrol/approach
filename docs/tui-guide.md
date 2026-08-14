@@ -86,8 +86,8 @@ title, and assignee; repo filtering remains available from the left pane.
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
 | `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane; grouped entries use their remembered subview. Active Flows is not in either cycle. |
 | `h` | Switch to the history subview inside the Git view; toggle the selected Flow's persisted headless/interactive preference in Flows or Active Flows |
-| `M` | Choose and persist model for the selected CLI agent in flows view |
-| `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
+| `M` | Choose the global CLI model on a Flow row, or the selected expanded phase's model override/fallback in flows view |
+| `E` | Choose the global CLI effort on a Flow row, or the selected expanded phase's effort override/fallback in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
 | `R` | Launch an embedded repair agent for a genuinely stalled selected Flow in flows or Active Flows view |
@@ -96,7 +96,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree (flows and active flows views) |
-| `A` | Choose and persist the coding agent from a picker (`codex` or `claude`) |
+| `A` | Choose and persist the global coding agent (`codex` or `claude`), or edit the selected expanded Flow phase's agent stamp |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
@@ -486,6 +486,32 @@ Ready is `bd`'s dependency-graph computation, not a status derived inside
 Approach. Ready and Open are independent results: an open bead with all
 blockers resolved intentionally appears in both. Rows render as
 `<id>  P<n>  <title>` and append two spaces plus the assignee when present.
+Rows whose optional `issue_type` is `epic` (case-insensitive, ignoring outer
+space) append `[epic]` in all five subviews; older `bd` output may omit both
+`issue_type` and `parent` without changing existing rows.
+
+Selecting an epic expands it inline in the stored top Beads pane, including
+while the bottom pane has focus. Approach asynchronously runs exactly
+`bd children <epic-id> --json --readonly` for direct children and the existing
+`bd ready --json --limit 0 --readonly` query as the readiness oracle. Ready
+direct children appear first in Ready's established priority/natural-ID order;
+the other direct children follow in the children query's stable
+priority/natural-ID order (with raw ID as the final tie-break). A child gets a
+`[ready]` marker only when it is positively present in Ready. Other children
+remain neutral because they may be blocked, closed, or already in progress.
+
+The parent row is followed by a single loading, empty, or child-query-error
+line, or by the ordered child rows. If children load but readiness does not,
+all children remain visible in stable order without status markers and a local
+`Readiness unavailable` warning follows them. These bounded local states do not
+change whether the parent Beads list is available. Up/down scroll through an
+expanded epic that exceeds the viewport before moving the selection away.
+Changing selection or filter, clearing a filter, switching Beads subviews,
+changing repos, refreshing, or leaving Beads clears the expansion and
+invalidates its request synchronously. A returning result must still match the
+same repository, subview, epic, and request token; switching away and back does
+not reuse child data. There is no child polling.
+
 For a settled Closed result, the active header item shows the unfiltered
 accepted row count: plain `closed 0` through `closed 100` when the stats total
 is not larger, or `closed 100 of <total>` when more rows exist. The two queries
@@ -820,12 +846,13 @@ reason `R` exists. This is the one repair refusal the footer cannot anticipate:
 it is decided against the session store during the authoritative read, so `R`
 stays advertised and the press reports the refusal.
 
-Repair is an embedded CLI operation and accepts only `codex` or `claude`.
-An unset or unsupported configured command produces guidance instead of
-launching an agent or changing Flow state. The launch reuses
-the selected provider's current model and reasoning effort plus that Flow's
-persisted `h` headless setting. The fresh pre-launch record read is
-authoritative, so a recently changed preference overrides a stale list row.
+Repair is an embedded CLI operation and accepts only effective `codex` or `claude`.
+An unset or unsupported effective agent produces guidance instead of launching
+an agent or changing Flow state. A phase-scoped
+obstruction uses that phase's effective agent/model/effort; a graph-wide
+obstruction falls back entirely to globals. The launch also uses that Flow's
+persisted `h` headless setting. The reserved pre-launch record is authoritative,
+so a phase settings edit committed before reservation is honored.
 Interactive repairs prefill their recovery prompt and
 focus terminal input; headless repairs submit it and keep list focus.
 
@@ -998,8 +1025,20 @@ is in flight; retry the headless change in a moment`. Tracked phase launches are
 not fenced: they read headless from the record their own phase write returns,
 which is ordered against the toggle.
 
-Press `M` to choose the selected CLI agent's model and `E` to choose its
-reasoning effort; the shortcut pane shows the current values. Codex CLI
+On a Flow row, `A`, `M`, and `E` continue to edit the global agent preferences.
+On a selected expanded phase row in Flows or Active Flows, the same keys show
+that phase's effective values and edit only its persisted stamp. The phase
+agent picker includes `inherit global settings`, which clears the whole stamp;
+choosing a provider writes an agent-only stamp so model and effort follow that
+provider's globals. Phase model and effort pickers include `inherit global`,
+which clears only that field, separately from the literal `default` provider
+choice. If the raw phase agent is empty, choosing an explicit model or effort
+also stamps the effective provider but does not materialize the unrelated
+fallback field. Repository focus and non-Flow panes keep the global controls.
+The equivalent whole-stamp CLI is `approach flow phase agent set`; pass
+`--clear` to remove it.
+
+Codex CLI
 launches use `--model <model>` and `--config model_reasoning_effort=<effort>`;
 Claude launches use `--model <model>` and `--effort <effort>`. Session resumes
 do not receive model or effort flags.

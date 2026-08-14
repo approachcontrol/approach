@@ -422,6 +422,8 @@ type RenderParams struct {
 	Flows                        []flowstore.FlowRecord
 	FlowSelected                 int
 	FlowScroll                   int
+	FlowDegradationWarning       string
+	ActiveFlowDegradationWarning string
 	BeadsOpen                    []beadsquery.Bead
 	BeadsOpenSelected            int
 	BeadsOpenScroll              int
@@ -434,6 +436,7 @@ type RenderParams struct {
 	BeadsQuery                   string
 	BeadsSourceCount             int
 	BeadsClosedTotal             int
+	BeadExpansion                BeadExpansion
 	FlowTerminalActivity         []FlowTerminalActivity
 	ExpandedPlanID               string
 	ExpandedFlowID               string
@@ -888,7 +891,7 @@ func renderApplication(p RenderParams) string {
 		message := "Could not load " + beadsModeLabel(p.Mode) + " beads: " + terminalSafeSingleLine(p.BeadsError)
 		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, message)
 	case IsBeadsMode(p.Mode) && len(p.BeadsOpen) > 0:
-		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight)
+		rightLines = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight, p.BeadExpansion)
 	case IsBeadsMode(p.Mode):
 		message := p.RightEmptyMessage
 		if message == "" {
@@ -989,8 +992,12 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	hasRows := stackedModePaneHasRows(p, mode, takeover)
 	_, sourceCount := paneItemFilterState(p, mode)
 	showCachedWarning := ShowsCachedListWarning(paneListError(p, mode), hasRows, sourceCount)
+	degradationWarning := paneFlowDegradationWarning(p, mode)
 	bodyRows := listRows
 	if showCachedWarning && bodyRows > 0 {
+		bodyRows--
+	}
+	if degradationWarning != "" && bodyRows > 0 {
 		bodyRows--
 	}
 	switch {
@@ -1021,7 +1028,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	case IsBeadsMode(mode) && p.BeadsError != "":
 		body = renderPlaceholderPane(width, bodyRows, "Could not load "+beadsModeLabel(mode)+" beads: "+terminalSafeSingleLine(p.BeadsError))
 	case IsBeadsMode(mode) && len(p.BeadsOpen) > 0:
-		body = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows)
+		body = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows, p.BeadExpansion)
 	case IsBeadsMode(mode):
 		message := "beads not configured"
 		if repoPath == "" || p.BeadsOpenAvailable {
@@ -1031,9 +1038,16 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	default:
 		body = renderPlaceholderPane(width, bodyRows, paneEmptyMessage(p, mode, repoPath))
 	}
+	var warnings []string
+	if degradationWarning != "" {
+		warnings = append(warnings, truncateToWidth(aheadBehindStyle.Render(" "+degradationWarning), width))
+	}
 	if showCachedWarning {
 		warning := " Could not refresh " + modeDataLabel(mode) + "; showing cached data"
-		body = append([]string{truncateToWidth(dirtyRedStyle.Render(warning), width)}, body...)
+		warnings = append(warnings, truncateToWidth(dirtyRedStyle.Render(warning), width))
+	}
+	if len(warnings) > 0 {
+		body = append(warnings, body...)
 	}
 
 	lines := append(headerLines, body...)
@@ -1157,6 +1171,17 @@ func paneListError(p RenderParams, mode Mode) string {
 		return p.TopListError
 	case paneOK && pane == PaneBottom:
 		return p.BottomListError
+	default:
+		return ""
+	}
+}
+
+func paneFlowDegradationWarning(p RenderParams, mode Mode) string {
+	switch mode {
+	case ModeFlows:
+		return p.FlowDegradationWarning
+	case ModeActiveFlows:
+		return p.ActiveFlowDegradationWarning
 	default:
 		return ""
 	}
@@ -3081,22 +3106,7 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 }
 
 func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, height int) []string {
-	content := make([]string, 0, len(beads))
-	for i, bead := range beads {
-		id := terminalSafeSingleLine(bead.ID)
-		title := terminalSafeSingleLine(bead.Title)
-		assignee := terminalSafeSingleLine(bead.Assignee)
-		body := fmt.Sprintf("%s  P%d  %s", id, bead.Priority, title)
-		if assignee != "" {
-			body += "  " + assignee
-		}
-		line := "   " + body
-		if i == selected {
-			line = renderStyledRow(stashSelStyle.Render(" > "+body), stashSelStyle, width)
-		}
-		content = append(content, truncateToWidth(line, width))
-	}
-	return scrollAndPad(content, scroll, height)
+	return renderBeadsPane(beads, selected, scroll, width, height, BeadExpansion{})
 }
 
 func terminalSafeSingleLine(text string) string {

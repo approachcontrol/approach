@@ -6,6 +6,14 @@ type storedFlow struct {
 	record FlowRecord
 }
 
+type phaseAgentSettingsSave struct {
+	PhaseIndex      int
+	PhaseID         string
+	Settings        PhaseAgentSettings
+	PhaseUpdatedAt  time.Time
+	RecordUpdatedAt time.Time
+}
+
 // backend is the Flow storage seam. Implementations own record durability,
 // database-wide writer serialization, filtering, ordering, and record encoding.
 //
@@ -21,7 +29,9 @@ type backend interface {
 	get(flowID string) (storedFlow, bool, error)
 
 	// list applies the filter and returns records ordered by updated_at DESC,
-	// flow_id ASC. Any malformed authoritative row fails the whole call.
+	// flow_id ASC. A decodeStoredFlow failure after a successful row scan omits
+	// only that row and returns the healthy rows with a *PartialListError. Query,
+	// scan, iteration, and close failures are fatal and return no usable rows.
 	list(filter FlowFilter) ([]storedFlow, error)
 
 	// delete removes the record, serialized against update by whatever mechanism
@@ -42,9 +52,10 @@ type backend interface {
 	//      through the caller's shared phase array, so a second pass sees the
 	//      first pass's edges and takes a different validation branch. Retry
 	//      the acquisition if you must, but never a mutate that has begun.
-	//   2. Every sess.save performed by mutate is DURABLE once update returns,
-	//      REGARDLESS of whether mutate returned an error. A non-nil error from
-	//      mutate is a caller-visible outcome, NOT a rollback signal. The
+	//   2. Every sess.save or sess.savePhaseAgentSettings performed by mutate is
+	//      DURABLE once update returns, REGARDLESS of whether mutate returned an
+	//      error. A non-nil error from mutate is a caller-visible outcome, NOT a
+	//      rollback signal. The
 	//      transaction is therefore committed even when mutate returns an error.
 	//      This binds every implementation even though no production caller
 	//      currently exercises it: the linked-plan compensation that used to
@@ -54,7 +65,7 @@ type backend interface {
 	//      never replaced, never zeroed. errors.Is against errFlowNotFound /
 	//      ErrAutoLaunchOutdated plus the literal error substrings asserted
 	//      throughout store_test.go all depend on this clause.
-	//   4. sess.save may be called zero, one, or many times.
+	//   4. Session save operations may be called zero, one, or many times.
 	//   5. Writer acquisition happens before mutate. Updates are serialized
 	//      database-wide and readers remain available under WAL.
 	//
@@ -92,4 +103,9 @@ type flowSession interface {
 
 	// save persists one record inside the section without re-acquiring a writer.
 	save(record FlowRecord) error
+
+	// savePhaseAgentSettings patches only one raw phase object and the record
+	// timestamp. Unlike save, it preserves key presence and raw values on every
+	// unrelated legacy field.
+	savePhaseAgentSettings(update phaseAgentSettingsSave) error
 }
