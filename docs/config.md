@@ -431,11 +431,11 @@ and a five-second busy timeout by default; writers serialize database-wide while
 WAL readers continue. They appear in the TUI
 flows pane (bottom-pane keyboard `3`), which is stored at startup below
 Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
-toggle per-Flow auto mode and the per-Flow headless preference, resume attached phase sessions, record a manual
+toggle per-Flow auto mode, per-epic progression, and the per-Flow headless preference, resume attached phase sessions, record a manual
 GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
-Flow terminals are documented in `docs/tui-guide.md`. Other phase and
-progression mutation remains CLI/agent-driven in v1.
+Flow terminals are documented in `docs/tui-guide.md`. Other phase mutation
+remains CLI/agent-driven in v1.
 
 `FlowRecord.Bead` is independent of `FlowRecord.Issue`. `Bead` stores the Beads
 ID and, when the selected issue is a child with a known parent, its epic ID;
@@ -533,19 +533,27 @@ Migration failure modes:
 
 The database and its records have separate compatibility gates:
 
-- `PRAGMA user_version` covers the database as a whole. Version 2 adds the
+- `PRAGMA user_version` covers the database as a whole. Version 2 added the
   `flows.bead_id` and `flows.epic_id` non-null text projections, both defaulting
-  to the empty string. Under the bootstrap lease, existing version 0
+  to the empty string. Version 3 adds `flows.prepared_at TEXT NOT NULL DEFAULT
+  ''`, the exact protected-receipt trigger, and
+  `epic_progressions(repo_path, epic_id, enabled, updated_at, record)` with a
+  composite primary key and no enabled-scan index yet. Under the bootstrap
+  lease, existing version 0
   (unstamped v1 layout) and version 1 databases are validated against the exact
-  predecessor table-and-index contract, then upgraded transactionally in place.
+  predecessor table-and-index contract; version 2 is validated against its
+  exact columns, indexes, and Bead trigger. All upgrade transactionally in place
+  to version 3.
   Existing rows, JSON record blobs, earlier projections, and retained `flows/`
   files are not rewritten or removed. A malformed predecessor is rejected
-  before either column or the version stamp changes. Version 2 also installs an
+  before any column, table, trigger, or version stamp changes. Version 2 also installed an
   exact compatibility trigger: if an Approach process that was already running
   before the upgrade later tries to rewrite a linked Flow using the predecessor
   JSON shape, SQLite rejects the write instead of letting it strip `bead` while
   retaining the physical projections. Restart that older process with the
-  upgraded build before retrying its write. A value newer than this build
+  upgraded build before retrying its write. Version 3's receipt trigger likewise
+  rejects an older rewrite that removes or changes a prepared Flow's JSON
+  receipt while its projection remains protected. A value newer than this build
   supports prevents the store from opening and reports that Approach must be
   upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a
@@ -554,6 +562,13 @@ The database and its records have separate compatibility gates:
   successfully but Approach could not decode, preserve the normal
   `updated_at DESC, flow_id ASC` order for healthy rows, and report every
   skipped Flow ID. Query, scan, iteration, and close failures remain fatal.
+
+Progression records use their own codec v1. The key is a canonical absolute
+repository path plus trimmed epic ID; absence means normal disabled, while a
+malformed row is an error. Valid states are active `(enabled, no halt)`, normal
+off `(disabled, no halt)`, and halted `(disabled, complete child/status/message
+tuple)`. Redundant writes preserve both timestamps; enabling clears a sticky
+halt and disabling retains one.
 
 Point reads stay strict: `approach flow read --flow-id ID` returns the damaged
 row's decode, version, or physical-projection mismatch and never reports it as

@@ -543,6 +543,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleToggleFlowAutoMode()
 		}
+		if m.epicProgressionKeysOwned() {
+			return m.handleToggleEpicProgression()
+		}
 		return m.handleOpenAgent()
 	case "d":
 		return m.handleDelete()
@@ -598,7 +601,7 @@ func (m Model) readyBeadFlowKeysOwned() bool {
 }
 
 func (m Model) canCreateReadyBeadFlow() bool {
-	return m.readyBeadFlowKeysOwned() && m.activeReadyBeadFlowCreate == 0
+	return m.readyBeadFlowKeysOwned() && !m.flowPreparationAdmission
 }
 
 func (m Model) canStartReadyBeadFlow() bool {
@@ -2082,7 +2085,9 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+	current := m.isCurrentReadyBeadFlowCreateRequest(msg.Request)
+	m.flowPreparationAdmission = false
+	if !current {
 		return m, nil
 	}
 	// Release the request before the repo check so a repo change that bypassed
@@ -2103,7 +2108,9 @@ func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, t
 }
 
 func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+	current := m.isCurrentReadyBeadFlowCreateRequest(msg.Request)
+	m.flowPreparationAdmission = false
+	if !current {
 		return m, nil
 	}
 	m = m.clearReadyBeadFlowCreateRequest(msg.Request)

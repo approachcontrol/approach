@@ -146,10 +146,14 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		closeDB = false
 		return nil
 	}
-	if version != 0 && version != 1 {
+	if version != 0 && version != 1 && version != 2 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
-	if err := validateSQLiteSchemaVersion(db, 1); err != nil {
+	predecessor := int64(1)
+	if version == 2 {
+		predecessor = 2
+	}
+	if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
 		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
 	}
 	tx, err := db.Begin()
@@ -162,12 +166,21 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		}
 		return cause
 	}
-	for _, statement := range []string{
-		"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
-		flowBeadCompatibilityTrigger,
+	statements := make([]string, 0, 7)
+	if predecessor == 1 {
+		statements = append(statements,
+			"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
+			flowBeadCompatibilityTrigger,
+		)
+	}
+	statements = append(statements,
+		"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
+		epicProgressionTableSchema,
+		flowPreparedCompatibilityTrigger,
 		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
-	} {
+	)
+	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
 		}
@@ -548,7 +561,7 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 		return nil, nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -556,13 +569,13 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 	promoted := map[string]bool{}
 	var unresolved []string
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &data); err != nil {
 			return nil, nil, err
 		}
 		promoted[flowID] = true
-		stored, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, data)
+		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -942,21 +955,21 @@ func validateStagedDatabase(path string, expected []FlowRecord, compareRecords b
 		_ = db.Close()
 		return fmt.Errorf("staged flow database integrity check = %q, err=%v", integrity, err)
 	}
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		_ = db.Close()
 		return err
 	}
 	var actual []FlowRecord
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &data); err != nil {
 			_ = rows.Close()
 			_ = db.Close()
 			return err
 		}
-		stored, err := decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID, data)
+		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, data)
 		if err != nil {
 			_ = rows.Close()
 			_ = db.Close()

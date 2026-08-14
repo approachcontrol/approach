@@ -68,8 +68,9 @@ type FlowStartResult struct {
 // FlowStarterOptions groups the deeper orchestration adapters for starting a
 // Flow. Tests can replace these directly without widening Model.Options.
 type FlowStarterOptions struct {
-	CreateFlow     func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
-	CreateWorktree func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
+	CreateFlow        func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
+	CreatePreparation func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error)
+	CreateWorktree    func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	// AttachWorktree gives a branch the Flow already records a worktree of its
 	// own. It reports actions.ErrFlowBranchMissing when that branch does not
 	// exist, which is the only case CreateWorktree may answer instead.
@@ -89,6 +90,7 @@ type FlowStarterOptions struct {
 // for the initial Flow plan phase.
 type FlowStarter struct {
 	createFlow           func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
+	createPreparation    func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error)
 	createWorktree       func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	attachWorktree       func(repoPath, branch string) (actions.FlowWorktreeCreateResult, error)
 	setStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
@@ -105,6 +107,7 @@ type FlowStarter struct {
 func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 	starter := FlowStarter{
 		createFlow:           opts.CreateFlow,
+		createPreparation:    opts.CreatePreparation,
 		createWorktree:       opts.CreateWorktree,
 		attachWorktree:       opts.AttachWorktree,
 		setStartMetadata:     opts.SetStartMetadata,
@@ -120,6 +123,15 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 	if starter.createFlow == nil {
 		starter.createFlow = func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, fmt.Errorf("flow starter missing CreateFlow")
+		}
+	}
+	if starter.createPreparation == nil {
+		starter.createPreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			created, err := starter.createFlow(record, createOpts)
+			if err != nil {
+				return flowstore.FlowRecord{}, nil, err
+			}
+			return created, callbackPreparationFinalizer{flow: created}, nil
 		}
 	}
 	if starter.createWorktree == nil {
@@ -292,7 +304,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	if agent.NormalizeStored(req.AgentCommand) != agent.Normalize(req.AgentCommand) {
 		return FlowStartResult{}, agent.Validate(req.AgentCommand)
 	}
-	flow, err := s.createFlow(flowstore.FlowRecord{
+	flow, finalizer, err := s.createPreparation(flowstore.FlowRecord{
 		Title:        req.Title,
 		Instructions: req.Instructions,
 		Bead:         req.Bead,
@@ -332,12 +344,40 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	flow = startedFlow
 	result.Flow = flow
 
-	if err := s.runBootstrap(req.RepoPath, worktree); err != nil {
-		errText := "Bootstrap hook failed: " + err.Error()
+	var bootstrapErr error
+	finalized, err := finalizer.Finalize(func() error {
+		bootstrapErr = s.runBootstrap(req.RepoPath, worktree)
+		return bootstrapErr
+	})
+	if err != nil {
+		if flowstore.IsPreparationUnknown(err) {
+			return result, err
+		}
+		errText := "Preparation receipt persistence failed: " + err.Error()
+		if bootstrapErr != nil {
+			errText = "Bootstrap hook failed: " + bootstrapErr.Error()
+		}
 		return result, s.blockStartupFailurePhases(flow, phaseID, errText, errText)
+	}
+	if finalized.PreparedAt != nil {
+		flow = finalized
+		result.Flow = finalized
 	}
 
 	return result, nil
+}
+
+type callbackPreparationFinalizer struct {
+	flow flowstore.FlowRecord
+}
+
+func (f callbackPreparationFinalizer) Finalize(callback func() error) (flowstore.FlowRecord, error) {
+	if callback != nil {
+		if err := callback(); err != nil {
+			return f.flow, err
+		}
+	}
+	return f.flow, nil
 }
 
 // EnsureWorktree gives a worktree-less Flow the worktree its launch contract

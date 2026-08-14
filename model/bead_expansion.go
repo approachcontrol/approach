@@ -6,15 +6,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/beadsquery"
+	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/ui"
 )
 
 type beadExpansionResultMsg struct {
-	target      beadExpansionTarget
-	children    []beadsquery.Bead
-	childrenErr error
-	ready       []beadsquery.Bead
-	readyErr    error
+	target           beadExpansionTarget
+	children         []beadsquery.Bead
+	childrenErr      error
+	ready            []beadsquery.Bead
+	readyErr         error
+	progression      flowstore.EpicProgression
+	progressionFound bool
+	progressionErr   error
 }
 
 func isEpicBead(bead beadsquery.Bead) bool {
@@ -66,12 +70,15 @@ func (m Model) reconcileBeadExpansion() (Model, tea.Cmd) {
 
 	listChildren := m.listChildrenBeads
 	listReady := m.listReadyBeads
+	readProgression := m.readEpicProgression
 	return m, func() tea.Msg {
 		children, childrenErr := listChildren(target.repoPath, target.epicID)
 		ready, readyErr := listReady(target.repoPath)
+		progression, progressionFound, progressionErr := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
 		return beadExpansionResultMsg{
 			target: target, children: children, childrenErr: childrenErr,
 			ready: ready, readyErr: readyErr,
+			progression: progression, progressionFound: progressionFound, progressionErr: progressionErr,
 		}
 	}
 }
@@ -95,6 +102,12 @@ func (m Model) handleBeadExpansionResult(msg beadExpansionResultMsg) Model {
 		return m
 	}
 	projection := ui.BeadExpansion{EpicID: msg.target.epicID}
+	if msg.progressionErr != nil {
+		projection.ProgressionDetail = msg.progressionErr.Error()
+	} else {
+		projection.ProgressionKnown = true
+		projection.ProgressionEnabled = msg.progressionFound && msg.progression.Enabled
+	}
 	if msg.childrenErr != nil {
 		projection.State = ui.BeadExpansionError
 		projection.Detail = msg.childrenErr.Error()

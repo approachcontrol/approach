@@ -1,9 +1,11 @@
 package model
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/approachcontrol/approach/beadsquery"
+	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -47,5 +49,35 @@ func TestBeadExpansionResultRequiresCurrentTopSelection(t *testing.T) {
 	})
 	if next.beadExpansion.projection.State != ui.BeadExpansionLoading || len(next.beadExpansion.projection.Children) != 0 {
 		t.Fatalf("stale result mutated expansion after top-mode exit: %#v", next.beadExpansion.projection)
+	}
+}
+
+func TestBeadExpansionKeepsProgressionIndependentFromChildAndReadinessFailures(t *testing.T) {
+	index, _ := beadSubviewIndex(ui.ModeBeadsOpen)
+	target := beadExpansionTarget{token: 1, repoPath: "/repo", mode: ui.ModeBeadsOpen, epicID: "epic"}
+	base := Model{
+		topMode:       ui.ModeBeadsOpen,
+		beads:         newBeadSubviews(),
+		beadExpansion: beadExpansionSnapshot{target: target, projection: ui.BeadExpansion{EpicID: "epic", State: ui.BeadExpansionLoading}},
+	}
+	base.beads[index].available = true
+	base.beads[index].repoPath = "/repo"
+	base.beads[index].pane = base.beads[index].pane.SetItems([]beadsquery.Bead{{ID: "epic", IssueType: "epic"}})
+
+	enabled := flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Enabled: true}
+	next := base.handleBeadExpansionResult(beadExpansionResultMsg{
+		target: target, childrenErr: errors.New("children failed"), progression: enabled, progressionFound: true,
+	})
+	if next.beadExpansion.projection.State != ui.BeadExpansionError || !next.beadExpansion.projection.ProgressionKnown || !next.beadExpansion.projection.ProgressionEnabled {
+		t.Fatalf("child failure lost known progression: %#v", next.beadExpansion.projection)
+	}
+
+	next = base.handleBeadExpansionResult(beadExpansionResultMsg{
+		target:   target,
+		children: []beadsquery.Bead{{ID: "child"}}, ready: []beadsquery.Bead{{ID: "child"}},
+		progressionErr: errors.New("progression failed"),
+	})
+	if next.beadExpansion.projection.State != ui.BeadExpansionLoaded || !next.beadExpansion.projection.ReadinessKnown || next.beadExpansion.projection.ProgressionKnown {
+		t.Fatalf("progression failure damaged child/readiness projection: %#v", next.beadExpansion.projection)
 	}
 }

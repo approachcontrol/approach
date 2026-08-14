@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -18,6 +19,174 @@ import (
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
+
+func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	var preparedRequest model.FlowStartRequest
+	launches := 0
+	releases := 0
+	preparedFlow := flowstore.FlowRecord{
+		FlowID: "flow-child", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.2", EpicID: "epic-1"}, PreparedAt: &preparedAt,
+	}
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex", CodexModel: "gpt-test", CodexReasoningEffort: "high",
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(repoPath, epicID string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Blocked first", Priority: 0}, {ID: "epic-1.2", Title: "Ready child", Priority: 1}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ReadEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{}, false, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			preparedRequest = req
+			return model.FlowStartResult{Flow: preparedFlow}, nil
+		},
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			launches++
+			return model.FlowStartResult{}, nil
+		},
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != preparedFlow.FlowID {
+				t.Fatalf("reserved Flow = %q", flowID)
+			}
+			return preparedFlow, func() { releases++ }, nil
+		},
+		EnableEpicProgression: func(update flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			if update.FlowID != preparedFlow.FlowID || update.Bead != preparedFlow.Bead || update.Key.RepoPath != "/dev/alpha" || update.Key.EpicID != "epic-1" {
+				t.Fatalf("enable update = %#v", update)
+			}
+			return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, preparedFlow, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
+	})
+	if expansionCmd == nil {
+		t.Fatal("epic selection did not load expansion")
+	}
+	m, _ = update(m, expansionCmd())
+
+	m, toggleCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if toggleCmd == nil {
+		t.Fatal("epic a returned nil toggle command")
+	}
+	m, _ = update(m, toggleCmd())
+	if preparedRequest.Title != "epic-1.2: Ready child" || preparedRequest.Bead != preparedFlow.Bead {
+		t.Fatalf("prepared request = %#v", preparedRequest)
+	}
+	if preparedRequest.Instructions != "Use Bead epic-1.2 as the durable source of requirements. Read it with `bd show epic-1.2` before planning or implementation." {
+		t.Fatalf("prepared instructions = %q", preparedRequest.Instructions)
+	}
+	if preparedRequest.AgentCommand != "codex" || preparedRequest.Model != "gpt-test" || preparedRequest.ReasoningEffort != "high" || !preparedRequest.AgentPreferencesProvided {
+		t.Fatalf("prepared agent snapshot = %#v", preparedRequest)
+	}
+	if launches != 0 || releases != 1 {
+		t.Fatalf("launches/releases = %d/%d, want 0/1", launches, releases)
+	}
+	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-child is prepared" {
+		t.Fatalf("status = %q", got)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "[epic]  [auto]") {
+		t.Fatalf("enabled marker missing:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func TestEpicAutoProgressionDisableDoesNotConsultChildrenOrFlows(t *testing.T) {
+	sets := 0
+	flowCalls := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return nil, errors.New("children unavailable")
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, errors.New("ready unavailable") },
+		ReadEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
+		},
+		SetEpicProgression: func(update flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			sets++
+			return flowstore.EpicProgression{RepoPath: update.Key.RepoPath, EpicID: update.Key.EpicID}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			flowCalls++
+			return nil, nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			flowCalls++
+			return model.FlowStartResult{}, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
+	})
+	m, _ = update(m, expansionCmd())
+	if !strings.Contains(ansi.Strip(m.View()), "[epic]  [auto]") {
+		t.Fatalf("enabled marker hidden by child failure:\n%s", ansi.Strip(m.View()))
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("disable returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if sets != 1 || flowCalls != 0 {
+		t.Fatalf("set/Flow calls = %d/%d, want 1/0", sets, flowCalls)
+	}
+	if got := m.TransientError(); got != "Disabled auto-progression for epic epic-1" {
+		t.Fatalf("status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionEnableWithNoReadyChildCreatesNothing(t *testing.T) {
+	sideEffects := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Blocked"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ReadEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{}, false, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			sideEffects++
+			return nil, nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			sideEffects++
+			return model.FlowStartResult{}, nil
+		},
+		SetEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			sideEffects++
+			return flowstore.EpicProgression{}, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
+	})
+	m, _ = update(m, expansionCmd())
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("no-ready enable returned nil command instead of status result")
+	}
+	m, _ = update(m, cmd())
+	if sideEffects != 0 {
+		t.Fatalf("no-ready enable performed %d side effects", sideEffects)
+	}
+	if got := m.TransientError(); got != "No ready child for epic epic-1; auto-progression remains off" {
+		t.Fatalf("status = %q", got)
+	}
+}
 
 // A rescan-driven repo change never routes through handleRepoSelectionChanged,
 // so it must still release the Ready create token instead of stranding `f`.

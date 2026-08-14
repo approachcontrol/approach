@@ -341,6 +341,7 @@ func (m Model) clearFlowCreateRequest(request uint64) Model {
 func (m Model) nextReadyBeadFlowCreateRequest() (Model, uint64) {
 	m.readyBeadFlowCreateSeq++
 	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+	m.flowPreparationAdmission = true
 	return m, m.activeReadyBeadFlowCreate
 }
 
@@ -352,6 +353,7 @@ func (m Model) clearReadyBeadFlowCreateRequest(request uint64) Model {
 	if m.isCurrentReadyBeadFlowCreateRequest(request) {
 		m.activeReadyBeadFlowCreate = 0
 	}
+	m.flowPreparationAdmission = false
 	return m
 }
 

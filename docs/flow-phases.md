@@ -343,6 +343,25 @@ completion of an already-completed phase reports success even when the plan writ
 failed again, and so does an already-merged manual merge. Confirm the linked
 plan's own phase status rather than trusting either return value.
 
+## Prepared child Flows and epic progression
+
+`FlowStarter.PrepareFlow` creates the Flow and worktree, records start metadata,
+runs the repository bootstrap hook, and only then consumes its one-shot store
+finalizer. A successful finalizer stamps `PreparedAt`; callback failure keeps
+the existing startup-phase blocking behavior. If receipt persistence reports a
+commit error, the store reads the Flow back: a matching receipt is success, a
+confirmed nil receipt is incomplete and blocks launchable phases, and an
+unreadable result is unknown and is not compensated because the receipt may be
+durable.
+
+Epic enablement accepts only one open `pending` exact-link Flow with that
+receipt. The TUI holds its launch/close reservation while a single SQLite
+writer transaction re-reads the Flow and enables the epic progression row.
+This slice records the pending Flow as a runtime baseline before releasing the
+reservation, but does not dispatch a phase or advance to another child. A
+restart installs no baseline and performs no catch-up; live-edge advancement is
+owned by the later sequential-advance slice.
+
 ## Per-phase agent settings
 
 Every phase persists three optional fields — `agent`, `model`, and

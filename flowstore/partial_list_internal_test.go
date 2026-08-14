@@ -301,14 +301,15 @@ func partialFlowIDs(partial *PartialListError) []string {
 }
 
 type fakeFlowListRow struct {
-	flowID    string
-	repoPath  string
-	status    string
-	updatedAt string
-	beadID    string
-	epicID    string
-	record    []byte
-	scanErr   error
+	flowID     string
+	repoPath   string
+	status     string
+	updatedAt  string
+	beadID     string
+	epicID     string
+	preparedAt string
+	record     []byte
+	scanErr    error
 }
 
 type fakeFlowListRows struct {
@@ -337,7 +338,8 @@ func (r *fakeFlowListRows) Scan(dest ...any) error {
 	*dest[3].(*string) = row.updatedAt
 	*dest[4].(*string) = row.beadID
 	*dest[5].(*string) = row.epicID
-	*dest[6].(*[]byte) = row.record
+	*dest[6].(*string) = row.preparedAt
+	*dest[7].(*[]byte) = row.record
 	return nil
 }
 
@@ -351,13 +353,14 @@ func fakeListRowForRecord(t *testing.T, record FlowRecord) fakeFlowListRow {
 		t.Fatalf("encodeStoredFlow(%q) error = %v", record.FlowID, err)
 	}
 	return fakeFlowListRow{
-		flowID:    projection.flowID,
-		repoPath:  projection.repoPath,
-		status:    projection.status,
-		updatedAt: projection.updatedAt,
-		beadID:    projection.beadID,
-		epicID:    projection.epicID,
-		record:    data,
+		flowID:     projection.flowID,
+		repoPath:   projection.repoPath,
+		status:     projection.status,
+		updatedAt:  projection.updatedAt,
+		beadID:     projection.beadID,
+		epicID:     projection.epicID,
+		preparedAt: projection.preparedAt,
+		record:     data,
 	}
 }
 

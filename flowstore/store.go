@@ -557,6 +557,7 @@ type FlowRecord struct {
 	// stays distinguishable from a legacy record that predates the field.
 	Headless      bool               `json:"headless"`
 	Phases        []FlowPhase        `json:"phases"`
+	PreparedAt    *time.Time         `json:"prepared_at,omitempty"`
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
 	GraphRecovery GraphRecoveryState `json:"-"`
@@ -745,6 +746,9 @@ func (s *Store) AllocateID(title string) (string, error) {
 // CreateWithOptions writes a new flow record, optionally seeding empty phase
 // lists from a preset instead of the default graph.
 func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRecord, error) {
+	// A preparation receipt is a capability minted only by a successful
+	// preparation finalizer. General creation never trusts a caller-supplied one.
+	record.PreparedAt = nil
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, fmt.Errorf("flow title is required")
 	}
@@ -1828,6 +1832,14 @@ func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error)
 		return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", update.PlanPath)
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.PreparedAt != nil {
+			if value := strings.TrimSpace(update.WorktreePath); value != "" && filepath.Clean(value) != record.WorktreePath {
+				return FlowRecord{}, fmt.Errorf("flow %q preparation receipt protects worktree path %q", record.FlowID, record.WorktreePath)
+			}
+			if value := strings.TrimSpace(update.Branch); value != "" && value != record.Branch {
+				return FlowRecord{}, fmt.Errorf("flow %q preparation receipt protects branch %q", record.FlowID, record.Branch)
+			}
+		}
 		if value := strings.TrimSpace(update.WorktreePath); value != "" {
 			record.WorktreePath = filepath.Clean(value)
 		}

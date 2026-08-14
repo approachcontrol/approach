@@ -10,12 +10,13 @@ import (
 const storageTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 type flowProjection struct {
-	flowID    string
-	repoPath  string
-	status    string
-	updatedAt string
-	beadID    string
-	epicID    string
+	flowID     string
+	repoPath   string
+	status     string
+	updatedAt  string
+	beadID     string
+	epicID     string
+	preparedAt string
 }
 
 type storageGraphRecovery struct {
@@ -49,6 +50,7 @@ type storedFlowDTO struct {
 	AutoMode      bool                  `json:"auto_mode,omitempty"`
 	Headless      bool                  `json:"headless"`
 	Phases        []FlowPhase           `json:"phases"`
+	PreparedAt    string                `json:"prepared_at,omitempty"`
 	CreatedAt     time.Time             `json:"created_at"`
 	UpdatedAt     time.Time             `json:"updated_at"`
 	GraphRecovery *storageGraphRecovery `json:"graph_recovery,omitempty"`
@@ -94,6 +96,9 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 		CreatedAt:     record.CreatedAt,
 		UpdatedAt:     record.UpdatedAt,
 	}
+	if record.PreparedAt != nil {
+		dto.PreparedAt = formatStorageTimeUnchecked(*record.PreparedAt)
+	}
 	if record.GraphRecovery.Status == GraphRecoveryMissingEdgesUnresolved {
 		dto.GraphRecovery = &storageGraphRecovery{Status: record.GraphRecovery.Status}
 	}
@@ -129,6 +134,11 @@ func (dto storedFlowDTO) record() FlowRecord {
 	if dto.GraphRecovery != nil {
 		record.GraphRecovery.Status = dto.GraphRecovery.Status
 	}
+	if dto.PreparedAt != "" {
+		if parsed, err := time.Parse(storageTimeLayout, dto.PreparedAt); err == nil {
+			record.PreparedAt = &parsed
+		}
+	}
 	return record
 }
 
@@ -147,17 +157,28 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 	if err != nil {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
 	}
+	preparedAt := ""
+	if record.PreparedAt != nil {
+		preparedAt, err = formatStorageTime(*record.PreparedAt)
+		if err != nil {
+			return nil, flowProjection{}, fmt.Errorf("encode flow %q prepared_at: %w", record.FlowID, err)
+		}
+		if record.PreparedAt.Before(record.CreatedAt) || record.PreparedAt.After(record.UpdatedAt) {
+			return nil, flowProjection{}, fmt.Errorf("encode flow %q: prepared_at must be between created_at and updated_at", record.FlowID)
+		}
+	}
 	data, err := json.MarshalIndent(storageDTOFromRecord(record), "", "  ")
 	if err != nil {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
 	}
 	return data, flowProjection{
-		flowID:    record.FlowID,
-		repoPath:  filepath.Clean(record.RepoPath),
-		status:    record.Status,
-		updatedAt: updatedAt,
-		beadID:    record.Bead.ID,
-		epicID:    record.Bead.EpicID,
+		flowID:     record.FlowID,
+		repoPath:   filepath.Clean(record.RepoPath),
+		status:     record.Status,
+		updatedAt:  updatedAt,
+		beadID:     record.Bead.ID,
+		epicID:     record.Bead.EpicID,
+		preparedAt: preparedAt,
 	}, nil
 }
 
@@ -229,6 +250,10 @@ func patchStoredFlowPhaseAgentSettings(data []byte, update phaseAgentSettingsSav
 }
 
 func decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID string, data []byte) (storedFlow, error) {
+	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", data)
+}
+
+func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string, data []byte) (storedFlow, error) {
 	var dto storedFlowDTO
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
@@ -239,6 +264,13 @@ func decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID string
 		return storedFlow{}, fmt.Errorf("flow %q has unknown graph recovery status %q", flowID, dto.GraphRecovery.Status)
 	}
 	record := dto.record()
+	if dto.PreparedAt != "" {
+		parsed, err := parseCanonicalStorageTime(dto.PreparedAt)
+		if err != nil {
+			return storedFlow{}, fmt.Errorf("decode flow %q prepared_at: %w", flowID, err)
+		}
+		record.PreparedAt = &parsed
+	}
 	if err := validateBeadLink(record.Bead); err != nil {
 		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
 	}
@@ -262,6 +294,12 @@ func decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID string
 	}
 	if record.Bead.EpicID != epicID {
 		return storedFlow{}, fmt.Errorf("flow %q epic_id projection %q disagrees with record %q", flowID, epicID, record.Bead.EpicID)
+	}
+	if dto.PreparedAt != preparedAt {
+		return storedFlow{}, fmt.Errorf("flow %q prepared_at projection %q disagrees with record %q", flowID, preparedAt, dto.PreparedAt)
+	}
+	if record.PreparedAt != nil && (record.PreparedAt.Before(record.CreatedAt) || record.PreparedAt.After(record.UpdatedAt)) {
+		return storedFlow{}, fmt.Errorf("flow %q prepared_at must be between created_at and updated_at", flowID)
 	}
 	wantUpdatedAt, err := formatStorageTime(record.UpdatedAt)
 	if err != nil {

@@ -21,12 +21,15 @@ const (
 // BeadExpansion is the immutable rendering projection for one selected epic.
 // Request identity and query errors remain model concerns.
 type BeadExpansion struct {
-	EpicID         string
-	Children       []beadsquery.Bead
-	ReadyIDs       map[string]bool
-	ReadinessKnown bool
-	State          BeadExpansionState
-	Detail         string
+	EpicID             string
+	Children           []beadsquery.Bead
+	ReadyIDs           map[string]bool
+	ReadinessKnown     bool
+	State              BeadExpansionState
+	Detail             string
+	ProgressionKnown   bool
+	ProgressionEnabled bool
+	ProgressionDetail  string
 }
 
 // BeadVisualHeight is the visual-line contract shared with model scrolling.
@@ -60,7 +63,8 @@ func renderBeadsPane(beads []beadsquery.Bead, selected, scroll, width, height in
 }
 
 func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expansion BeadExpansion) []string {
-	lines := []string{renderBeadRow(bead, selected, width)}
+	autoEnabled := selected && bead.ID == expansion.EpicID && expansion.ProgressionKnown && expansion.ProgressionEnabled
+	lines := []string{renderBeadRow(bead, selected, width, autoEnabled)}
 	if expansion.EpicID == "" || bead.ID != expansion.EpicID {
 		return lines
 	}
@@ -104,7 +108,8 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 	return lines
 }
 
-func renderBeadRow(bead beadsquery.Bead, selected bool, width int) string {
+func renderBeadRow(bead beadsquery.Bead, selected bool, width int, autoProjection ...bool) string {
+	autoEnabled := len(autoProjection) > 0 && autoProjection[0]
 	id := terminalSafeSingleLine(bead.ID)
 	title := terminalSafeSingleLine(bead.Title)
 	assignee := terminalSafeSingleLine(bead.Assignee)
@@ -115,6 +120,9 @@ func renderBeadRow(bead beadsquery.Bead, selected bool, width int) string {
 	marker := ""
 	if strings.EqualFold(strings.TrimSpace(bead.IssueType), "epic") {
 		marker = "  [epic]"
+		if autoEnabled {
+			marker += "  [auto]"
+		}
 	}
 	prefix := "   "
 	if selected {
