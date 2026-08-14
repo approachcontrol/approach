@@ -36,6 +36,7 @@ const (
 	flowLaunchOriginSessionsPane
 	flowLaunchOriginEmbeddedSessionPicker
 	flowLaunchOriginInlineWorktreeSession
+	flowLaunchOriginNewFlow
 )
 
 // flowLaunchSavedSessionKey is the exact identity shared by the session store
@@ -113,6 +114,7 @@ type flowLaunchIntent struct {
 	// into the exact refresh.
 	SavedSession sessions.SessionRecord
 	SessionKey   flowLaunchSavedSessionKey
+	Create       flowLaunchCreateRequest
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way

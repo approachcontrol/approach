@@ -20,6 +20,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -78,6 +79,61 @@ func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) m
 		}
 	}
 	return m
+}
+
+func settleModelCommandsWithin(t *testing.T, m model.Model, cmd tea.Cmd, rounds int, timeout time.Duration) model.Model {
+	t.Helper()
+	pending := []tea.Cmd{cmd}
+	for range rounds {
+		var nextPending []tea.Cmd
+		for _, current := range pending {
+			for _, msg := range testCommandMessagesWithin(current, timeout) {
+				var next tea.Cmd
+				m, next = update(m, msg)
+				if next != nil {
+					nextPending = append(nextPending, next)
+				}
+			}
+		}
+		pending = nextPending
+		if len(pending) == 0 {
+			break
+		}
+	}
+	return m
+}
+
+func testCommandMessagesWithin(cmd tea.Cmd, timeout time.Duration) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	result := make(chan tea.Msg, 1)
+	go func() { result <- cmd() }()
+	var raw tea.Msg
+	select {
+	case raw = <-result:
+	case <-time.After(timeout):
+		return nil
+	}
+	batch, ok := raw.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{raw}
+	}
+	children := make(chan []tea.Msg, len(batch))
+	for _, child := range batch {
+		go func(child tea.Cmd) { children <- testCommandMessagesWithin(child, timeout) }(child)
+	}
+	var messages []tea.Msg
+	deadline := time.After(timeout)
+	for range batch {
+		select {
+		case childMessages := <-children:
+			messages = append(messages, childMessages...)
+		case <-deadline:
+			return messages
+		}
+	}
+	return messages
 }
 
 func immediateTestCommandMessages(cmd tea.Cmd) []tea.Msg {
@@ -9651,6 +9707,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 		name           string
 		term           *fakeEmbeddedTerminal
 		wantStatusText []string
+		wantRetained   bool
 	}{
 		{
 			name: "write error",
@@ -9680,6 +9737,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 				terminateErr: errors.New("terminate failed"),
 			},
 			wantStatusText: []string{"prefill embedded prompt", "input rejected", "terminate failed"},
+			wantRetained:   true,
 		},
 	}
 
@@ -9737,8 +9795,9 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 					t.Fatalf("status = %q, want to contain %q", m.TransientError(), want)
 				}
 			}
-			if strings.Contains(m.View(), "agent output") {
-				t.Fatalf("failed prefill should not append a terminal slot:\n%s", m.View())
+			retained := strings.Contains(m.View(), "agent output")
+			if retained != tt.wantRetained {
+				t.Fatalf("failed prefill retained=%v, want %v:\n%s", retained, tt.wantRetained, m.View())
 			}
 		})
 	}
@@ -11754,191 +11813,6 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
-	for _, command := range []string{"codex", "claude"} {
-		t.Run(command, func(t *testing.T) {
-			wantEffort := "xhigh"
-			if command == "claude" {
-				wantEffort = "max"
-			}
-			var startRequest model.FlowStartRequest
-			var started actions.AgentLaunchContext
-			var startWidth, startHeight int
-			var calls []string
-			m := newTestModel(testRepos(), model.Options{
-				AgentCommand:          command,
-				CodexReasoningEffort:  "xhigh",
-				ClaudeReasoningEffort: "max",
-				SessionStateRoot:      "/state/approach/sessions/v1",
-				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-					calls = append(calls, "start-flow")
-					startRequest = req
-					if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build\nthe thing" || req.BaseRef != "main" {
-						t.Fatalf("StartFlowPlan request = %#v", req)
-					}
-					if req.ReasoningEffort != wantEffort {
-						t.Fatalf("StartFlowPlan reasoning effort = %q, want %q", req.ReasoningEffort, wantEffort)
-					}
-					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-						Command:          req.AgentCommand,
-						LaunchID:         "launch-1",
-						RepoPath:         req.RepoPath,
-						WorktreePath:     "/dev/alpha-worktrees/flow-add-flow-mode",
-						Branch:           "flow/add-flow-mode",
-						Commit:           "abc123",
-						SessionStateRoot: req.SessionStateRoot,
-						PlanPhaseID:      "plan",
-						PlanPhaseTitle:   "Plan",
-						PlanPhaseStatus:  flowstore.PhaseRunning,
-						FlowID:           "flow-1",
-						FlowPhaseID:      "plan",
-						Headless:         flowStartRequestHeadless(req),
-						ReasoningEffort:  req.ReasoningEffort,
-						InitialPrompt:    "Use the approach-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with approach plan save, link it back with approach flow plan set.",
-					}}, nil
-				},
-				LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-					t.Fatal("new Flow CLI launch should start an embedded terminal, not external launcher")
-					return actions.TerminalLaunchSpec{}, nil
-				},
-				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-					calls = append(calls, "start-embedded")
-					started = ctx
-					startWidth = width
-					startHeight = height
-					return &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}, nil
-				},
-				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-					return nil, nil
-				},
-			})
-			m = inRightPane(m)
-			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
-			m, _ = switchTestMode(m, ui.ModeFlows)
-
-			m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
-			if cmd == nil {
-				t.Fatal("expected flow creation command")
-			}
-			msg := cmd()
-			launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-			if !ok {
-				t.Fatalf("creation command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-			}
-			if launchMsg.Request == 0 {
-				t.Fatal("embedded launch message should be tagged with the active create request")
-			}
-			m, cmd = update(m, launchMsg)
-			if cmd == nil {
-				t.Fatal("expected embedded launch repaint/fetch command")
-			}
-			if batch, ok := cmd().(tea.BatchMsg); !ok || len(batch) < 2 {
-				t.Fatalf("embedded Flow launch command = %T, %#v; want batched repaint and refresh", cmd, batch)
-			}
-
-			if strings.Join(calls, ",") != "start-flow,start-embedded" {
-				t.Fatalf("call order = %#v", calls)
-			}
-			if startRequest.AgentCommand != command ||
-				startRequest.SessionStateRoot != "/state/approach/sessions/v1" ||
-				startRequest.Headless == nil || !*startRequest.Headless ||
-				startRequest.PlanPhaseID != "" ||
-				startRequest.PlanPhaseTitle != "" ||
-				startRequest.PlanPhaseStatus != "" ||
-				startRequest.ReasoningEffort != wantEffort {
-				t.Fatalf("start request metadata = %#v", startRequest)
-			}
-			if started.Command != command ||
-				started.RepoPath != "/dev/alpha" ||
-				started.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
-				started.Branch != "flow/add-flow-mode" ||
-				started.Commit != "abc123" ||
-				started.SessionStateRoot != "/state/approach/sessions/v1" ||
-				started.FlowID != "flow-1" ||
-				started.FlowPhaseID != "plan" ||
-				started.PlanPhaseID != "plan" ||
-				started.PlanPhaseTitle != "Plan" ||
-				started.PlanPhaseStatus != flowstore.PhaseRunning ||
-				started.LaunchID != "launch-1" ||
-				started.ReasoningEffort != wantEffort ||
-				!started.Embedded ||
-				!started.Headless ||
-				!started.FlowLaunchTracked {
-				t.Fatalf("embedded launch context = %#v", started)
-			}
-			if startWidth <= 0 || startHeight <= 0 {
-				t.Fatalf("embedded terminal size = %dx%d, want positive", startWidth, startHeight)
-			}
-			prompt := strings.ToLower(started.InitialPrompt)
-			for _, want := range []string{"approach-flow", "build\nthe thing", "create and persist the plan", "approach plan save", "approach flow plan set"} {
-				if !strings.Contains(prompt, want) {
-					t.Fatalf("launch prompt missing %q: %q", want, started.InitialPrompt)
-				}
-			}
-			for _, unwanted := range []string{"flow-1", "flow/add-flow-mode", "/dev/alpha-worktrees/flow-add-flow-mode", "base ref", "add flow mode"} {
-				if strings.Contains(prompt, strings.ToLower(unwanted)) {
-					t.Fatalf("launch prompt should not include metadata %q: %q", unwanted, started.InitialPrompt)
-				}
-			}
-			if view := m.View(); !strings.Contains(view, "agent output") {
-				t.Fatalf("flow terminal view missing agent output:\n%s", view)
-			}
-		})
-	}
-}
-
-func TestModel_NewFlowPlanNowLetsStarterChooseCustomRootPhase(t *testing.T) {
-	var startRequest model.FlowStartRequest
-	var started actions.AgentLaunchContext
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			startRequest = req
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
-				RepoPath:     req.RepoPath,
-				WorktreePath: "/dev/alpha-worktrees/flow-research",
-				Branch:       "flow/research",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "research",
-				PlanPhaseID:  "research",
-			}}, nil
-		},
-		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-			started = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("CLI Flow launch should use embedded terminal")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	m, cmd := submitNewFlowPrompts(t, m, "Research Flow", "Plan research", "main")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	launchMsg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", launchMsg)
-	}
-	m, _ = update(m, launchMsg)
-
-	if startRequest.PlanPhaseID != "" || startRequest.PlanPhaseTitle != "" || startRequest.PlanPhaseStatus != "" {
-		t.Fatalf("TUI create path forced phase metadata: %#v", startRequest)
-	}
-	if started.FlowPhaseID != "research" || started.PlanPhaseID != "research" {
-		t.Fatalf("started phase IDs = flow %q plan %q, want research", started.FlowPhaseID, started.PlanPhaseID)
-	}
-}
-
 func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	var createRequest model.FlowStartRequest
 	embeddedCalls := 0
@@ -12019,189 +11893,91 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t *testing.T) {
-	var startRequest model.FlowStartRequest
+func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoPath, "init", "-b", "main")
+	mustGit(t, repoPath, "config", "user.email", "test@example.com")
+	mustGit(t, repoPath, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoPath, "add", "README.md")
+	mustGit(t, repoPath, "commit", "-m", "initial")
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: filepath.Join(root, "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	term := &fakeEmbeddedTerminal{lines: []string{"Codex ready", "agent output"}, state: "running"}
 	var started actions.AgentLaunchContext
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand:          "codex",
-		ClaudeReasoningEffort: "max",
-		SessionStateRoot:      "/state/approach/sessions/v1",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			startRequest = req
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:          req.AgentCommand,
-				LaunchID:         "launch-1",
-				RepoPath:         req.RepoPath,
-				WorktreePath:     "/dev/alpha-worktrees/flow-add-flow-mode",
-				Branch:           "flow/add-flow-mode",
-				SessionStateRoot: req.SessionStateRoot,
-				FlowID:           "flow-1",
-				FlowPhaseID:      "plan",
-				Headless:         flowStartRequestHeadless(req),
-				ReasoningEffort:  req.ReasoningEffort,
-			}}, nil
-		},
+	var startWidth, startHeight int
+	m := model.NewWithOptions([]scanner.Repo{{Path: repoPath, DisplayName: "repo"}}, model.Options{
+		AgentCommand:         "codex",
+		CodexModel:           "gpt-5.6-sol",
+		CodexReasoningEffort: "high",
+		SessionStateRoot:     filepath.Join(root, "sessions"),
+		FlowStore:            store,
+		LaunchBackend:        "tmux",
+		TmuxLaunchAvailable:  func() bool { return true },
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("new Flow CLI launch should start an embedded terminal, not external launcher")
+			t.Fatal("Plan Now must stay embedded when tmux is configured")
 			return actions.TerminalLaunchSpec{}, nil
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-			started = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
-		},
-	})
-	m, _ = update(m, model.AgentSetMsg{Command: " CLAUDE "})
-	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Add Flow Mode", "Build the thing", "main", true)
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, cmd = update(m, launchMsg)
-	if cmd == nil {
-		t.Fatal("expected embedded launch repaint/fetch command")
-	}
-
-	if startRequest.AgentCommand != "claude" || startRequest.ReasoningEffort != "max" {
-		t.Fatalf("start request agent settings = command %q effort %q, want claude/max", startRequest.AgentCommand, startRequest.ReasoningEffort)
-	}
-	if started.Command != "claude" || started.ReasoningEffort != "max" || !started.Embedded || !started.Headless {
-		t.Fatalf("embedded launch context = %#v, want normalized claude/max headless launch", started)
-	}
-}
-
-func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
-	for _, command := range []string{"codex", "claude"} {
-		t.Run(command, func(t *testing.T) {
-			var started actions.AgentLaunchContext
-			m := newTestModel(testRepos(), model.Options{
-				AgentCommand:     command,
-				SessionStateRoot: "/state/approach/sessions/v1",
-				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-						Command:          req.AgentCommand,
-						LaunchID:         "launch-1",
-						RepoPath:         req.RepoPath,
-						WorktreePath:     "/dev/alpha-worktrees/flow-interactive-plan",
-						Branch:           "flow/interactive-plan",
-						SessionStateRoot: req.SessionStateRoot,
-						FlowID:           "flow-1",
-						FlowPhaseID:      "plan",
-						Headless:         flowStartRequestHeadless(req),
-					}}, nil
-				},
-				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-					t.Fatalf("new Flow CLI launch should start an embedded terminal, not external launcher: %#v", ctx)
-					return actions.TerminalLaunchSpec{}, nil
-				},
-				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-					started = ctx
-					return &fakeEmbeddedTerminal{state: "running"}, nil
-				},
-				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-					return nil, nil
-				},
-			})
-			m = inRightPane(m)
-			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-			m, _ = switchTestMode(m, ui.ModeFlows)
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before new Flow launch returned command %T, want nil", cmd)
-			}
-
-			m, cmd = submitNewFlowPromptsWithOptions(t, m, "Headless Plan", "Write the plan", "main", true)
-			if cmd == nil {
-				t.Fatal("expected flow creation command")
-			}
-			msg := cmd()
-			launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-			if !ok {
-				t.Fatalf("creation command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-			}
-			m, cmd = update(m, launchMsg)
-			if cmd == nil {
-				t.Fatal("expected embedded launch repaint/fetch command")
-			}
-			if started.Command != command ||
-				started.FlowID != "flow-1" ||
-				started.FlowPhaseID != "plan" ||
-				!started.Embedded ||
-				!started.Headless ||
-				!started.FlowLaunchTracked {
-				t.Fatalf("headless new Flow plan launch context = %#v", started)
-			}
-		})
-	}
-}
-
-func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T) {
-	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	var started actions.AgentLaunchContext
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand:     "codex",
-		SessionStateRoot: "/state/approach/sessions/v1",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:          req.AgentCommand,
-				LaunchID:         "launch-1",
-				RepoPath:         req.RepoPath,
-				WorktreePath:     "/dev/alpha-worktrees/flow-interactive-plan",
-				Branch:           "flow/interactive-plan",
-				SessionStateRoot: req.SessionStateRoot,
-				FlowID:           "flow-1",
-				FlowPhaseID:      "plan",
-				Headless:         flowStartRequestHeadless(req),
-				InitialPrompt:    "Create and persist the plan.",
-			}}, nil
-		},
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatalf("new Flow CLI launch should start an embedded terminal, not external launcher: %#v", ctx)
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-			started = ctx
-			return fakeTerm, nil
-		},
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
+			started, startWidth, startHeight = ctx, width, height
+			return term, nil
 		},
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
+	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Lifecycle Flow", "Write\nthe plan", "main", false)
+	if cmd == nil || model.ActiveFlowCreateForTest(m) == 0 {
+		t.Fatalf("form submission did not start a create lifecycle: cmd=%v active=%d", cmd != nil, model.ActiveFlowCreateForTest(m))
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("creation command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	m = settleModelCommandsWithin(t, m, cmd, 20, 2*time.Second)
+
+	if started.Command != "codex" || started.Model != "gpt-5.6-sol" || started.ReasoningEffort != "high" {
+		t.Fatalf("normalized launch settings = %#v", started)
 	}
-	m, cmd = update(m, launchMsg)
-	if cmd == nil {
-		t.Fatal("expected embedded launch repaint/fetch command")
+	if started.FlowID == "" || started.FlowPhaseID != "plan" || started.PlanPhaseID != "plan" ||
+		started.RepoPath != repoPath || started.WorktreePath == "" || started.Branch == "" || started.Commit == "" ||
+		!started.Embedded || started.Headless || !started.FlowLaunchTracked {
+		t.Fatalf("embedded Plan Now context = %#v", started)
 	}
-	m = settleModelCommands(t, m, cmd, 2)
-	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
-		t.Fatalf("interactive new Flow plan launch context = %#v", started)
+	if startWidth <= 0 || startHeight <= 0 {
+		t.Fatalf("embedded terminal size = %dx%d", startWidth, startHeight)
 	}
+	prompt := strings.ToLower(started.InitialPrompt)
+	for _, want := range []string{"approach-flow", "write\nthe plan", "approach plan save", "approach flow plan set"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("Plan Now prompt missing %q: %q", want, started.InitialPrompt)
+		}
+	}
+	if model.ActiveFlowCreateForTest(m) != 0 || len(term.writes) != 1 || !strings.Contains(term.writes[0], "Write\nthe plan") {
+		t.Fatalf("prefill completion: active=%d writes=%#v", model.ActiveFlowCreateForTest(m), term.writes)
+	}
+	beforeWrites := len(term.writes)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	wantPrefill := "\x1b[200~Create and persist the plan.\x1b[201~"
-	if len(fakeTerm.writes) != 2 || fakeTerm.writes[0] != wantPrefill || fakeTerm.writes[1] != "z" {
-		t.Fatalf("interactive new Flow plan launch should focus terminal input: %#v", fakeTerm.writes)
+	if len(term.writes) != beforeWrites+1 || term.writes[len(term.writes)-1] != "z" {
+		t.Fatalf("interactive launch did not focus terminal input: %#v", term.writes)
+	}
+	if !strings.Contains(m.View(), "agent output") {
+		t.Fatalf("embedded Plan Now terminal is not visible:\n%s", m.View())
+	}
+	record, err := store.Read(started.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FlowID != started.FlowID || record.WorktreePath != started.WorktreePath || record.Headless {
+		t.Fatalf("persisted Flow identity/metadata = %#v", record)
 	}
 }
 
@@ -12250,179 +12026,34 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 	}
 }
 
-func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
-	var calls []string
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			calls = append(calls, "start-flow")
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
-				RepoPath:     req.RepoPath,
-				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
-				Branch:       "flow/add-flow-mode",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "plan",
-			}}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("new Flow CLI launch should start an embedded terminal, not external launcher")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			calls = append(calls, "start-embedded")
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = switchTestMode(m, ui.ModeFlows)
+func TestModel_NewFlowSubmissionIsSingleFlightAcrossPlanNowChoices(t *testing.T) {
+	for _, incumbentPlanNow := range []bool{true, false} {
+		for _, refusedPlanNow := range []bool{true, false} {
+			name := fmt.Sprintf("incumbent-%v-refused-%v", incumbentPlanNow, refusedPlanNow)
+			t.Run(name, func(t *testing.T) {
+				m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
+				m = inRightPane(m)
+				m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "main")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, _ = update(m, launchMsg)
-
-	if strings.Join(calls, ",") != "start-flow,start-embedded" {
-		t.Fatalf("call order = %#v", calls)
+				m, first := submitNewFlowPromptsWithCreateOptions(t, m, "First", "First instructions", "main", true, incumbentPlanNow)
+				if first == nil || model.ActiveFlowCreateForTest(m) == 0 {
+					t.Fatalf("first submission did not become active: cmd=%v active=%d", first != nil, model.ActiveFlowCreateForTest(m))
+				}
+				active := model.ActiveFlowCreateForTest(m)
+				m, second := submitNewFlowPromptsWithCreateOptions(t, m, "Second", "Second instructions", "main", true, refusedPlanNow)
+				_ = second // the model may keep its independent refresh-tick command alive
+				if got := model.ActiveFlowCreateForTest(m); got != active {
+					t.Fatalf("active request = %d, want incumbent %d", got, active)
+				}
+				if got := m.TransientError(); !strings.Contains(got, "already in progress") {
+					t.Fatalf("status = %q, want single-flight refusal", got)
+				}
+			})
+		}
 	}
 }
 
-func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{
-				Flow:          flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title},
-				LaunchSkipped: true,
-			}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("launch-skipped Flow should not launch an external agent")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			t.Fatal("launch-skipped Flow should not start an embedded terminal")
-			return &fakeEmbeddedTerminal{}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	_, cmd := submitNewFlowPrompts(t, m, "Merge-only Flow", "Track the merge", "main")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	raw := cmd()
-	msg, ok := raw.(model.FlowCreatedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowCreatedMsg", raw)
-	}
-	if msg.FlowID != "flow-parked" || msg.Title != "Merge-only Flow" || msg.Request == 0 {
-		t.Fatalf("FlowCreatedMsg = %#v", msg)
-	}
-}
-
-func TestModel_NewFlowStaleLaunchRecoversPhaseAfterRepoChange(t *testing.T) {
-	embeddedStarts := 0
-	externalLaunches := 0
-	releases := 0
-	var phaseUpdates []flowstore.PhaseUpdate
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
-			return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
-		},
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
-		},
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			if req.RepoPath != "/dev/alpha" {
-				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
-			}
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
-				RepoPath:     req.RepoPath,
-				WorktreePath: "/dev/alpha-worktrees/flow-stale",
-				Branch:       "flow/stale",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "plan",
-			}, LaunchRelease: func() { releases++ }}, nil
-		},
-		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdates = append(phaseUpdates, update)
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			externalLaunches++
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			embeddedStarts++
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
-	if createCmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	staleMsg := createCmd()
-	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
-		t.Fatalf("creation command returned %#v, want tagged FlowEmbeddedLaunchRequestedMsg", staleMsg)
-	}
-	m, cmd := update(m, staleMsg)
-	if cmd == nil {
-		t.Fatal("stale launch returned no phase recovery command")
-	}
-	if releases != 0 {
-		t.Fatalf("reservation released before stale phase recovery: %d", releases)
-	}
-	m, _ = update(m, cmd())
-	if embeddedStarts != 0 || externalLaunches != 0 {
-		t.Fatalf("stale flow creation launch should be ignored after repo change; embedded=%d external=%d", embeddedStarts, externalLaunches)
-	}
-	if releases != 1 || len(phaseUpdates) != 1 || phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
-		t.Fatalf("stale embedded recovery: releases=%d updates=%#v", releases, phaseUpdates)
-	}
-
-	requestless := model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
-		Command:      "codex",
-		LaunchID:     "launch-requestless",
-		RepoPath:     "/dev/bravo",
-		WorktreePath: "/dev/bravo-worktrees/flow-ready",
-		Branch:       "flow/ready",
-		FlowID:       "flow-ready",
-		FlowPhaseID:  "implementation",
-	}}
-	_, cmd = update(m, requestless)
-	if cmd == nil {
-		t.Fatal("requestless embedded launch should still start while a create request is pending")
-	}
-	if embeddedStarts != 1 {
-		t.Fatalf("requestless embedded launch starts = %d, want 1", embeddedStarts)
-	}
-	if externalLaunches != 0 {
-		t.Fatalf("external launches = %d, want 0", externalLaunches)
-	}
-}
-
-func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
+func TestModel_NewFlowStaleParkedCreateReleasesRequestAfterRepoChange(t *testing.T) {
 	listCalls := 0
 	m := newTestModel(testRepos(), model.Options{
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
@@ -12462,11 +12093,40 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("stale parked create returned command %T, want nil", cmd)
 	}
-	if got := model.ActiveFlowCreateForTest(next); got == 0 {
-		t.Fatal("stale parked create should leave current create request untouched")
+	if got := model.ActiveFlowCreateForTest(next); got != 0 {
+		t.Fatalf("active Flow create request = %d, want released stale request", got)
 	}
 	if listCalls != 0 {
 		t.Fatalf("list calls = %d, want stale result ignored", listCalls)
+	}
+}
+
+func TestModel_NewFlowStaleParkedCreateFailureReleasesRequestAfterRepoChange(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{}, errors.New("create failed")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeFlows)
+
+	m, createCmd := submitNewFlowPromptsWithCreateOptions(t, m, "Stale Failure", "Plan later", "main", false, false)
+	if createCmd == nil {
+		t.Fatal("expected parked Flow creation command")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	staleMsg := createCmd()
+	if failed, ok := staleMsg.(model.FlowCreateFailedMsg); !ok || failed.Request == 0 {
+		t.Fatalf("creation command returned %#v, want tagged FlowCreateFailedMsg", staleMsg)
+	}
+	next, cmd := update(m, staleMsg)
+	if cmd != nil {
+		t.Fatalf("stale parked create failure returned command %T, want nil", cmd)
+	}
+	if got := model.ActiveFlowCreateForTest(next); got != 0 {
+		t.Fatalf("active Flow create request = %d, want released stale request", got)
 	}
 }
 
@@ -12526,270 +12186,6 @@ func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
 	}
 	if createRequest.AgentCommand != "" || createRequest.ReasoningEffort != "" {
 		t.Fatalf("create request should not include agent settings: %#v", createRequest)
-	}
-}
-
-func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{}, errors.New("Bootstrap hook failed: missing env file")
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("agent should not launch after start failure")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg, ok := cmd().(model.FlowCreateFailedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowCreateFailedMsg", msg)
-	}
-
-	if !strings.Contains(msg.Err, "Bootstrap hook failed") || !strings.Contains(msg.Err, "missing env file") {
-		t.Fatalf("error = %q, want bootstrap failure", msg.Err)
-	}
-}
-
-func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			if req.RepoPath != "/dev/alpha" {
-				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
-			}
-			return model.FlowStartResult{}, errors.New("Bootstrap hook failed: missing env file")
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("agent should not launch after start failure")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			t.Fatal("embedded terminal should not start after start failure")
-			return &fakeEmbeddedTerminal{}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	m, createCmd := submitNewFlowPrompts(t, m, "Stale Failure", "Build the stale thing", "main")
-	if createCmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	staleMsg := createCmd()
-	failed, ok := staleMsg.(model.FlowCreateFailedMsg)
-	if !ok {
-		t.Fatalf("creation command returned %T, want FlowCreateFailedMsg", staleMsg)
-	}
-	if failed.Request == 0 {
-		t.Fatal("flow create failure should be tagged with the active create request")
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	next, cmd := update(m, staleMsg)
-	if cmd != nil {
-		t.Fatalf("stale flow create failure returned command %T, want nil", cmd)
-	}
-	if got := next.TransientError(); got != "" {
-		t.Fatalf("stale flow create failure set status %q, want empty", got)
-	}
-}
-
-func TestModel_NewFlowWorktreeFailureReportsStartFailure(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{}, errors.New("branch exists")
-		},
-	})
-	m = inRightPane(m)
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg := cmd()
-	failed, ok := msg.(model.FlowCreateFailedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowCreateFailedMsg", msg)
-	}
-
-	if !strings.Contains(failed.Err, "branch exists") {
-		t.Fatalf("error = %q, want worktree failure", failed.Err)
-	}
-}
-
-func TestModel_NewFlowWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing.T) {
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{}, errors.New("branch exists; mark flow blocked: disk full")
-		},
-	})
-	m = inRightPane(m)
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg, ok := cmd().(model.FlowCreateFailedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowCreateFailedMsg", msg)
-	}
-	if !strings.Contains(msg.Err, "branch exists") || !strings.Contains(msg.Err, "mark flow blocked: disk full") {
-		t.Fatalf("error = %q, want worktree and flow-update failures", msg.Err)
-	}
-}
-
-func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
-	var phaseUpdates []flowstore.PhaseUpdate
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
-				RepoPath:     req.RepoPath,
-				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
-				Branch:       "flow/add-flow-mode",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "plan",
-			}}, nil
-		},
-		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdates = append(phaseUpdates, update)
-			return flowstore.FlowRecord{}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("new Flow CLI launch should start an embedded terminal, not external launcher")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			return nil, errors.New("pty unavailable")
-		},
-	})
-	m = inRightPane(m)
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, asyncCmd := update(m, launchMsg)
-	m = settleModelCommands(t, m, asyncCmd, 2)
-
-	if len(phaseUpdates) != 1 {
-		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
-	}
-	update := phaseUpdates[0]
-	if update.FlowID != "flow-1" ||
-		update.PhaseID != "plan" ||
-		update.Status != flowstore.PhaseNeedsAttention ||
-		!strings.Contains(update.Notes, "pty unavailable") {
-		t.Fatalf("phase update = %#v", update)
-	}
-	if got := m.TransientError(); !strings.Contains(got, "pty unavailable") {
-		t.Fatalf("status = %q, want PTY error", got)
-	}
-}
-
-func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T) {
-	var phaseUpdates []flowstore.PhaseUpdate
-	starts := 0
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
-			return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
-		},
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
-		},
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:      req.AgentCommand,
-				LaunchID:     "launch-new-flow",
-				RepoPath:     req.RepoPath,
-				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
-				Branch:       "flow/add-flow-mode",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "plan",
-			}}, nil
-		},
-		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdates = append(phaseUpdates, update)
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("new Flow CLI launch should start an embedded terminal, not external launcher")
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			starts++
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	for i := 0; i < 9; i++ {
-		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
-			Command:      "codex",
-			LaunchID:     "launch-existing",
-			RepoPath:     "/dev/alpha",
-			WorktreePath: "/dev/alpha-worktrees/flow-existing",
-			FlowID:       "flow-existing",
-			FlowPhaseID:  "implementation",
-			Headless:     true,
-		}})
-	}
-	if starts != 9 {
-		t.Fatalf("embedded terminal starts = %d, want 9", starts)
-	}
-	if len(phaseUpdates) != 0 {
-		t.Fatalf("phase updates before cap = %#v, want none", phaseUpdates)
-	}
-
-	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
-	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
-	m, asyncCmd := update(m, launchMsg)
-	m = settleModelCommands(t, m, asyncCmd, 2)
-
-	if starts != 9 {
-		t.Fatalf("embedded terminal starts after cap = %d, want 9", starts)
-	}
-	if len(phaseUpdates) != 1 {
-		t.Fatalf("phase updates = %#v, want one needs_attention update", phaseUpdates)
-	}
-	if got := phaseUpdates[0]; got.FlowID != "flow-1" ||
-		got.PhaseID != "plan" ||
-		got.Status != flowstore.PhaseNeedsAttention ||
-		!strings.Contains(got.Notes, "Maximum embedded terminals") {
-		t.Fatalf("phase update = %#v", got)
-	}
-	if got := m.TransientError(); !strings.Contains(got, "Maximum embedded terminals") {
-		t.Fatalf("status = %q, want terminal cap message", got)
 	}
 }
 

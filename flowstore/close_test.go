@@ -690,3 +690,43 @@ func TestAgentLaunchReservationSerializesWithClose(t *testing.T) {
 		t.Fatalf("ReserveAgentLaunch(closed) error = %v, want closed rejection", err)
 	}
 }
+
+func TestAgentLaunchReservationSerializesWithDeleteAndSameIDRecreate(t *testing.T) {
+	root := t.TempDir()
+	launchStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(launch) error = %v", err)
+	}
+	deleteStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(delete) error = %v", err)
+	}
+	record := createCloseTestFlow(t, launchStore, root)
+
+	_, release, err := launchStore.ReserveAgentLaunch(record.FlowID)
+	if err != nil {
+		t.Fatalf("ReserveAgentLaunch() error = %v", err)
+	}
+	var once sync.Once
+	defer once.Do(release)
+	result := make(chan error, 1)
+	go func() { result <- deleteStore.Delete(record.FlowID) }()
+	select {
+	case err := <-result:
+		t.Fatalf("Delete() returned before launch reservation released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	once.Do(release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("Delete() after release error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Delete() did not proceed after launch reservation released")
+	}
+	if _, err := deleteStore.Create(record); err != nil {
+		t.Fatalf("same-ID recreate after serialized delete error = %v", err)
+	}
+}

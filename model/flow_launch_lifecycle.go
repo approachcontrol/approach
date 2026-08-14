@@ -55,6 +55,15 @@ const (
 	flowLaunchStageSessionRead flowLaunchStage = iota + 1
 	flowLaunchStageRead
 	flowLaunchStagePrepared
+	flowLaunchStageCreateAllocated
+	flowLaunchStageCreateSessionsRead
+	flowLaunchStageCreateWritten
+	flowLaunchStageCreateReserved
+	flowLaunchStageCreateWorktree
+	flowLaunchStageCreateBootstrap
+	flowLaunchStageCreateLaunchID
+	flowLaunchStageCreateMetadata
+	flowLaunchStageCreateRecovered
 )
 
 // flowLaunchOutcome classifies what an autoPhase read stage decided. It exists
@@ -99,9 +108,12 @@ type flowLaunchEventMsg struct {
 	Record     flowstore.FlowRecord
 	Session    sessions.SessionRecord
 	SessionKey flowLaunchSavedSessionKey
-	Context    actions.AgentLaunchContext
-	Route      flowLaunchRoute
-	Skipped    bool
+	// CreatedRecord is create-phase-only: the exact create result is retained
+	// across tracked reservation so the winner can detect a cross-process claim.
+	CreatedRecord flowstore.FlowRecord
+	Context       actions.AgentLaunchContext
+	Route         flowLaunchRoute
+	Skipped       bool
 	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.
@@ -141,9 +153,19 @@ type flowLaunchEventMsg struct {
 	// FlowMissing distinguishes the saved-session compatibility case from every
 	// other read failure: a saved session outlives a deleted Flow and resumes via
 	// its established non-Flow route instead of being stranded by stale linkage.
-	FlowMissing bool
-	Err         string
-	Release     func()
+	FlowMissing    bool
+	Err            string
+	Release        func()
+	Create         flowLaunchCreateRequest
+	StartupRoots   []flowstore.FlowPhase
+	Worktree       actions.FlowWorktreeCreateResult
+	Commit         string
+	Proof          flowLaunchCreateProof
+	GenerationLost bool
+	Parked         bool
+	RecoveryErrs   []string
+	Settings       flowLaunchAgentSettingsSnapshot
+	ErrOp          string
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -189,6 +211,8 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 	switch intent.Kind {
 	case flowLaunchKindManualPhase:
 		return m.admitManualFlowLaunch(intent)
+	case flowLaunchKindCreatePhase:
+		return m.admitCreateFlowLaunch(intent)
 	case flowLaunchKindAutoPhase:
 		return m.admitAutoFlowLaunch(intent)
 	case flowLaunchKindPhaseResume:
@@ -693,6 +717,9 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 // fence mismatch returns without touching anything: no phase write, no
 // terminal, no release, and no status replacement.
 func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	if msg.Kind == flowLaunchKindCreatePhase {
+		return m.handleCreateFlowLaunchEvent(msg)
+	}
 	want, validStage := flowLaunchStageState(msg.Stage)
 	if !validStage || msg.From != want {
 		releaseFlowLaunchReservation(msg.Release)
@@ -939,7 +966,9 @@ func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
 // that lives in its Update case, and only removes the attempt once the slot
 // that replaces it as the Flow's owner exists.
 func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
-	defer releaseFlowLaunchReservation(msg.Release)
+	if attempt.Kind != flowLaunchKindCreatePhase {
+		defer releaseFlowLaunchReservation(msg.Release)
+	}
 	ctx := msg.Context
 	ctx.Embedded = true
 	// All phase-untracked kinds stay untracked. A repair names no phase and must
@@ -952,6 +981,9 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		ctx.FlowLaunchTracked = true
 	}
 	if canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, ctx.FlowID); blocked {
+		if attempt.Kind == flowLaunchKindCreatePhase {
+			return m.failCreateFlowLaunchEmbedded(attempt, ctx, canceled, msg.Release)
+		}
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, canceled)
 	}
 	if attempt.Kind == flowLaunchKindWorktreeAgent && m.tmuxAutofixAgentStillRunning(msg.Record, msg.WorktreePath) {
@@ -964,9 +996,24 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		if err != nil {
 			errText = err.Error()
 		}
+		if attempt.Kind == flowLaunchKindCreatePhase {
+			return next.failCreateFlowLaunchEmbedded(attempt, ctx, errText, msg.Release)
+		}
 		return next.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
 	}
 	m = next
+	if attempt.Kind == flowLaunchKindCreatePhase && prefillCmd != nil {
+		create := attempt.Create
+		originalPrefillCmd := prefillCmd
+		prefillCmd = func() tea.Msg {
+			msg := originalPrefillCmd()
+			if result, ok := msg.(embeddedPromptPrefillResultMsg); ok {
+				result.Create = &create
+				return result
+			}
+			return msg
+		}
+	}
 	if prefillCmd == nil {
 		m = m.updateFlowTerminalFocusAfterLaunch(ctx)
 	}
@@ -975,10 +1022,19 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		m, tickCmd = m.startEmbeddedTerminalTick()
 	}
 	var fetchCmd tea.Cmd
-	if ctx.FlowID != "" && m.flowSurfaceVisible() {
+	if ctx.FlowID != "" && m.flowRefreshSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()
 	}
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+	if attempt.Kind == flowLaunchKindCreatePhase {
+		// Interactive launches keep their create request live until the prompt
+		// prefill result lands. That final asynchronous hop must not focus the old
+		// terminal or present its failure after a repo change/newer creation.
+		if prefillCmd == nil {
+			m = m.clearFlowCreateRequest(attempt.Create.Request)
+		}
+		releaseFlowLaunchReservation(msg.Release)
+	}
 	// Only a successful install reports these. A failed one has already returned
 	// above with its own message, which is the more useful one. The two compose
 	// rather than race for the slot: the worktree creation is the headline and
@@ -987,6 +1043,31 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		m = m.setStatus(statusOther, status)
 	}
 	return m, batchNonNil(prefillCmd, tickCmd, fetchCmd)
+}
+
+func (m Model) failCreateFlowLaunchEmbedded(attempt flowLaunchAttempt, ctx actions.AgentLaunchContext, errText string, release func()) (Model, tea.Cmd) {
+	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
+	if !ok {
+		releaseFlowLaunchReservation(release)
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+			clearFlowCreateRequest(attempt.Create.Request).
+			setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText), nil
+	}
+	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
+	if !ok {
+		releaseFlowLaunchReservation(release)
+		return m, nil
+	}
+	return next, func() tea.Msg {
+		_, err := next.launchSeams.SetPhase(update)
+		return flowLaunchFailurePersistedMsg{
+			LaunchContext: ctx,
+			OriginalErr:   "Flow " + attempt.FlowID + ": " + errText,
+			PersistErr:    err,
+			Release:       release,
+			Create:        &attempt.Create,
+		}
+	}
 }
 
 // handoffFlowLaunchTmux opens a window rather than an embedded slot, so the
@@ -1058,6 +1139,12 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 // The wording comes from the attempt's own kind, never from the prefill-failure
 // re-reservation, which labels every source manualPhase.
 func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (string, bool) {
+	if kind == flowLaunchKindCreatePhase {
+		if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
+			return "Flow creation launch canceled because a terminal is already open for this Flow", true
+		}
+		return "", false
+	}
 	if kind == flowLaunchKindWorktreeAgent {
 		if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
 			return flowWorktreeAgentSlotStatus, true
@@ -1179,27 +1266,75 @@ func flowLaunchFailurePersistCmd(
 func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg) (Model, tea.Cmd) {
 	ctx := msg.LaunchContext
 	errText := msg.Err.Error()
+	activateRetained := msg.Create == nil || m.createFlowLaunchOriginCurrent(*msg.Create)
+	finishSlot := func(next Model) Model {
+		if msg.RetainTerminal {
+			return next.retainEmbeddedTerminalAfterPrefillFailure(msg.ID, activateRetained)
+		}
+		return next.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+	}
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
-		m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+		m = finishSlot(m)
+		if msg.Create != nil {
+			present := m.createFlowLaunchOriginCurrent(*msg.Create)
+			m = m.clearFlowCreateRequest(msg.Create.Request)
+			if !present {
+				return m, nil
+			}
+			m = m.setStatus(statusOther, "Flow "+ctx.FlowID+": "+errText)
+			if m.flowRefreshSurfaceVisible() {
+				return m.startFlowSurfaceFetch()
+			}
+			return m, nil
+		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}
 	// The reservation consults the attempt map only. The slot being corrected
 	// is still installed, so full admission would refuse every time and the gap
 	// would never close.
-	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+	attempt := flowLaunchAttempt{
 		Token:        ctx.LaunchID,
 		Kind:         flowLaunchKindManualPhase,
 		FlowID:       ctx.FlowID,
 		PhaseID:      ctx.FlowPhaseID,
 		MutatedPhase: true,
-	}, flowLaunchStateFailurePersisting)
+	}
+	if msg.Create != nil {
+		attempt.Kind = flowLaunchKindCreatePhase
+		attempt.Origin = flowLaunchOriginNewFlow
+		attempt.Create = *msg.Create
+	}
+	next, reserved := m.reserveFlowLaunchAttempt(attempt, flowLaunchStateFailurePersisting)
 	if !reserved {
-		m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+		m = finishSlot(m)
+		if msg.Create != nil {
+			// A newer exact-Flow attempt owns phase recovery now. The stale create
+			// may release only its request and slot, never mutate the winner's phase.
+			return m.clearFlowCreateRequest(msg.Create.Request), nil
+		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}
-	m = next.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+	m = finishSlot(next)
+	if msg.Create != nil {
+		return m, flowLaunchFailurePersistCmdForCreate(m.launchSeams.SetPhase, update, ctx, errText, msg.Create)
+	}
 	return m, flowLaunchFailurePersistCmd(m.launchSeams.SetPhase, update, ctx, errText)
+}
+
+func flowLaunchFailurePersistCmdForCreate(
+	setPhase func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error),
+	update flowstore.PhaseUpdate,
+	ctx actions.AgentLaunchContext,
+	errText string,
+	create *flowLaunchCreateRequest,
+) tea.Cmd {
+	return func() tea.Msg {
+		msg := flowLaunchFailurePersistCmd(setPhase, update, ctx, errText)().(flowLaunchFailurePersistedMsg)
+		msg.OriginalErr = "Flow " + ctx.FlowID + ": " + errText
+		msg.Create = create
+		return msg
+	}
 }
 
 func (m Model) withFlowLaunchAttemptPhase(flowID, token, phaseID string) Model {

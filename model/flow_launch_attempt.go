@@ -1,6 +1,10 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/approachcontrol/approach/flowstore"
+)
 
 // flowLaunchState is the position of one launch attempt in the lifecycle. The
 // states are ordered but not all reachable for every kind: handoffPending only
@@ -15,6 +19,13 @@ const (
 	flowLaunchStatePreparing
 	flowLaunchStateHandoffPending
 	flowLaunchStateFailurePersisting
+	flowLaunchStateCreateSessionReading
+	flowLaunchStateCreateWriting
+	flowLaunchStateCreateReserving
+	flowLaunchStateCreateWorktree
+	flowLaunchStateCreateBootstrap
+	flowLaunchStateCreateLaunchID
+	flowLaunchStateCreateMetadata
 )
 
 func (state flowLaunchState) String() string {
@@ -31,6 +42,20 @@ func (state flowLaunchState) String() string {
 		return "handoffPending"
 	case flowLaunchStateFailurePersisting:
 		return "failurePersisting"
+	case flowLaunchStateCreateSessionReading:
+		return "createSessionReading"
+	case flowLaunchStateCreateWriting:
+		return "createWriting"
+	case flowLaunchStateCreateReserving:
+		return "createReserving"
+	case flowLaunchStateCreateWorktree:
+		return "createWorktree"
+	case flowLaunchStateCreateBootstrap:
+		return "createBootstrap"
+	case flowLaunchStateCreateLaunchID:
+		return "createLaunchID"
+	case flowLaunchStateCreateMetadata:
+		return "createMetadata"
 	default:
 		return "unknown"
 	}
@@ -56,6 +81,8 @@ type flowLaunchAttempt struct {
 	// has a persisted running phase to correct. Without it a failure between
 	// phase resolution and persistence would clobber a still-ready phase.
 	MutatedPhase bool
+	Create       flowLaunchCreateRequest
+	StartupRoots []flowstore.FlowPhase
 }
 
 // flowLaunchAttemptOccupied reports whether a lifecycle attempt currently holds

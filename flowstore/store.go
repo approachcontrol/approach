@@ -730,6 +730,18 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 	return s.CreateWithOptions(record, CreateOptions{})
 }
 
+// AllocateID returns the canonical timestamped Flow ID CreateWithOptions would
+// choose for title at this instant. Allocation is intentionally non-durable:
+// it does not create or reserve a record, and concurrent callers may receive
+// the same candidate. CreateWithOptions remains the atomic collision arbiter
+// when the caller supplies the returned ID in FlowRecord.FlowID.
+func (s *Store) AllocateID(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		return "", fmt.Errorf("flow title is required")
+	}
+	return s.backend.allocateID(title, s.now())
+}
+
 // CreateWithOptions writes a new flow record, optionally seeding empty phase
 // lists from a preset instead of the default graph.
 func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRecord, error) {
@@ -2216,11 +2228,18 @@ func launchPrecedes(launchIDs []string, candidate, current string) bool {
 	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
-// Delete removes only the requested Flow row.
+// Delete removes only the requested Flow row. It takes the launch/close
+// reservation so a delete and same-ID recreate cannot replace a Flow while an
+// admitted launch still owns that identity.
 func (s *Store) Delete(flowID string) error {
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
+	release, err := s.acquireLaunchCloseLock(flowID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.backend.delete(flowID)
 }
 

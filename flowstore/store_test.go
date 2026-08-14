@@ -128,6 +128,64 @@ func TestStoreCreateDefaultsAutoModeOnEvenWhenCallerPassesFalse(t *testing.T) {
 	}
 }
 
+func TestStoreAllocateIDIsNonDurableAndCreateWithOptionsArbitratesExactID(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 14, 12, 34, 56, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	for _, title := range []string{"", "  \t\n"} {
+		if id, err := store.AllocateID(title); err == nil || id != "" || !strings.Contains(err.Error(), "flow title is required") {
+			t.Fatalf("AllocateID(%q) = %q, %v, want empty ID and title error", title, id, err)
+		}
+	}
+
+	first, err := store.AllocateID("Lifecycle Flow")
+	if err != nil {
+		t.Fatalf("AllocateID() error = %v", err)
+	}
+	second, err := store.AllocateID("Lifecycle Flow")
+	if err != nil {
+		t.Fatalf("second AllocateID() error = %v", err)
+	}
+	if first != second {
+		t.Fatalf("pre-write allocations = %q/%q, want the same non-durable candidate", first, second)
+	}
+	listed, err := store.List(flowstore.FlowFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("AllocateID created records: %#v", listed)
+	}
+
+	created, err := store.CreateWithOptions(flowstore.FlowRecord{
+		FlowID: first, Title: "Lifecycle Flow", Instructions: "Exercise exact identity.", RepoPath: filepath.Join(root, "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateWithOptions(exact ID) error = %v", err)
+	}
+	if created.FlowID != first {
+		t.Fatalf("CreateWithOptions().FlowID = %q, want allocated %q", created.FlowID, first)
+	}
+	if _, err := store.CreateWithOptions(flowstore.FlowRecord{
+		FlowID: first, Title: "Collision", Instructions: "Must lose.", RepoPath: filepath.Join(root, "repo"),
+	}, flowstore.CreateOptions{}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("colliding CreateWithOptions() error = %v, want already exists", err)
+	}
+
+	next, err := store.AllocateID("Lifecycle Flow")
+	if err != nil {
+		t.Fatalf("AllocateID(after create) error = %v", err)
+	}
+	if next == first {
+		t.Fatalf("AllocateID(after persisted collision) = %q, want a suffixed candidate", next)
+	}
+}
+
 func TestStoreCreateHeadlessPreferenceDefaultsOnAndPreservesExplicitValues(t *testing.T) {
 	tests := []struct {
 		name     string

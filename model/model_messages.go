@@ -509,6 +509,8 @@ type flowLaunchFailurePersistedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	OriginalErr   string
 	PersistErr    error
+	Release       func()
+	Create        *flowLaunchCreateRequest
 }
 
 type PlanLaunchRequestedMsg struct {
@@ -519,8 +521,8 @@ type PlanLaunchRequestedMsg struct {
 }
 
 // FlowEmbeddedLaunchRequestedMsg is what remains of the pre-lifecycle embedded
-// launch path. Creation-time Flow starts (Plan Now and Ready-Bead F) emit it;
-// repair, manual, automatic, and resume launches route through the lifecycle.
+// launch path. Ready-Bead F emits it; new-Flow Plan Now and the other migrated
+// launch sources route through the lifecycle.
 type FlowEmbeddedLaunchRequestedMsg struct {
 	LaunchContext    actions.AgentLaunchContext
 	Request          uint64

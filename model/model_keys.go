@@ -43,6 +43,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
 		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
+			if m.activeFlowCreate != 0 {
+				return m.setStatus(statusOther, flowCreateInProgressStatus), nil
+			}
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
 			cmd = tagFlowCreateRequest(cmd, request)
@@ -255,6 +258,11 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
 		switch msg := msg.(type) {
+		case flowLaunchCreateRequestedMsg:
+			if msg.Create.Request == 0 {
+				msg.Create.Request = request
+			}
+			return msg
 		case PlanLaunchRequestedMsg:
 			if msg.Request == 0 {
 				msg.Request = request
@@ -2036,10 +2044,13 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+	if msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request) {
 		return m, nil
 	}
 	m = m.clearFlowCreateRequest(msg.Request)
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to create flow"
@@ -2052,10 +2063,13 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 }
 
 func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+	if msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request) {
 		return m, nil
 	}
 	m = m.clearFlowCreateRequest(msg.Request)
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
 	title := strings.TrimSpace(msg.Title)
 	if title == "" {
 		title = "Flow"
@@ -3068,12 +3082,33 @@ func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText st
 }
 
 func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMsg) (Model, tea.Cmd) {
+	releaseFlowLaunchReservation(msg.Release)
 	ctx := msg.LaunchContext
+	presentCreate := true
+	if msg.Create != nil {
+		presentCreate = m.createFlowLaunchOriginCurrent(*msg.Create)
+	}
 	// A mismatch skips only the release: this message is shared with every
 	// source that has no lifecycle attempt, and returning early would swallow
 	// their status and Flow surface refresh.
-	if _, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateFailurePersisting); ok {
+	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateFailurePersisting); ok {
+		if attempt.Kind == flowLaunchKindCreatePhase {
+			presentCreate = m.createFlowLaunchOriginCurrent(attempt.Create)
+			if msg.Create == nil {
+				m = m.clearFlowCreateRequest(attempt.Create.Request)
+			}
+		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+	}
+	// A create-tagged prefill correction may lose re-reservation to a newer
+	// exact-Flow attempt. Request cleanup is independently fenced by the request
+	// ID, so it must not depend on finding the old attempt; attempt release above
+	// remains token-fenced and cannot touch the winner.
+	if msg.Create != nil {
+		m = m.clearFlowCreateRequest(msg.Create.Request)
+	}
+	if !presentCreate {
+		return m, nil
 	}
 	errText := msg.OriginalErr
 	if msg.PersistErr != nil {

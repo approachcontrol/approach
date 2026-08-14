@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -598,6 +599,30 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
+	createReserveFlowLaunch := reserveFlowLaunch
+	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
+		// The compatibility reservation above intentionally returns identity only,
+		// but create-phase startup must snapshot the authoritative post-create graph
+		// or it cannot distinguish a launchable Flow from a parked one. Reread via
+		// the caller's configured storage boundary while retaining the same no-op
+		// reservation ownership used by existing custom persistence integrations.
+		createReserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			record, release, err := reserveFlowLaunch(flowID)
+			if err != nil {
+				return flowstore.FlowRecord{}, release, err
+			}
+			authoritative, err := readFlow(flowID)
+			if err != nil {
+				releaseFlowLaunchReservation(release)
+				return flowstore.FlowRecord{}, nil, err
+			}
+			if authoritative.FlowID != record.FlowID {
+				releaseFlowLaunchReservation(release)
+				return flowstore.FlowRecord{}, nil, fmt.Errorf("reserve launch reread returned flow %q", authoritative.FlowID)
+			}
+			return authoritative, release, nil
+		}
+	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
 	if addFlowPhaseLaunchID == nil {
 		addFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -701,6 +726,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	allocateFlowID := func(title string) (string, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return "", err
+		}
+		return store.AllocateID(title)
+	}
 	createFlow := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 		store, err := newFlowStore()
 		if err != nil {
@@ -751,6 +783,23 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		// documented contract takes over and refuses worktree-less launches.
 		ensureFlowWorktree = starter.EnsureWorktree
 	}
+	launchSeams := newFlowLaunchSeams(
+		readFlow,
+		readSession,
+		listSessions,
+		addFlowPhaseLaunchID,
+		setFlowPhase,
+		planMarkdownPath,
+		readPlan,
+	)
+	launchSeams.AllocateFlowID = allocateFlowID
+	launchSeams.CreateFlow = createFlow
+	launchSeams.ReserveLaunch = createReserveFlowLaunch
+	launchSeams.CreateWorktree = actions.CreateFlowWorktree
+	launchSeams.ResolveCommit = actions.ResolveWorktreeCommit
+	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
+	launchSeams.RunBootstrapHook = runBootstrapHook
+	launchSeams.SetStartMetadata = setFlowStartMetadata
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
@@ -806,52 +855,44 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		ensureFlowWorktree:        ensureFlowWorktree,
 		setFlowPhase:              setFlowPhase,
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
-		launchSeams: newFlowLaunchSeams(
-			readFlow,
-			readSession,
-			listSessions,
-			addFlowPhaseLaunchID,
-			setFlowPhase,
-			planMarkdownPath,
-			readPlan,
-		),
-		setFlowAutoMode:          setFlowAutoMode,
-		setFlowHeadless:          setFlowHeadless,
-		lookupPRMerge:            lookupPRMerge,
-		markFlowManualMerge:      markFlowManualMerge,
-		closeFlow:                closeFlow,
-		reopenFlow:               reopenFlow,
-		reserveFlowRepairLaunch:  reserveFlowRepairLaunch,
-		reserveFlowLaunch:        reserveFlowLaunch,
-		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
-		resetFlowPhase:           resetFlowPhase,
-		deleteFlow:               deleteFlow,
-		readPlan:                 readPlan,
-		planMarkdownPath:         planMarkdownPath,
-		copyToClipboard:          copyToClipboard,
-		openCode:                 openCode,
-		openURL:                  openURL,
-		pageText:                 pageText,
-		editFile:                 editFile,
-		saveAgent:                saveAgent,
-		saveAgentModel:           saveAgentModel,
-		saveAgentReasoningEffort: saveAgentReasoningEffort,
-		savePromptTemplate:       savePromptTemplate,
-		resetPromptTemplate:      resetPromptTemplate,
-		launchTerminal:           launchTerminal,
-		launchDetachedTerminal:   launchDetachedTerminal,
-		launchAgent:              launchAgent,
-		launchBackend:            normalizeLaunchBackend(opts.LaunchBackend),
-		tmuxLaunchAvailable:      tmuxLaunchAvailable,
-		launchRepoTmuxAgent:      launchRepoTmuxAgent,
-		repoTmuxSessionExists:    repoTmuxSessionExists,
-		repoTmuxLaunchWindowLive: repoTmuxLaunchWindowLive,
-		tmuxAttachHint:           normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
-		startEmbeddedTerminal:    startEmbeddedTerminal,
-		finalizeAgentSession:     finalizeAgentSession,
-		sessionStateRoot:         opts.SessionStateRoot,
-		bootstrapHookForRepo:     bootstrapHookForRepo,
-		runBootstrapHook:         runBootstrapHook,
+		launchSeams:               launchSeams,
+		setFlowAutoMode:           setFlowAutoMode,
+		setFlowHeadless:           setFlowHeadless,
+		lookupPRMerge:             lookupPRMerge,
+		markFlowManualMerge:       markFlowManualMerge,
+		closeFlow:                 closeFlow,
+		reopenFlow:                reopenFlow,
+		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
+		reserveFlowLaunch:         reserveFlowLaunch,
+		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
+		resetFlowPhase:            resetFlowPhase,
+		deleteFlow:                deleteFlow,
+		readPlan:                  readPlan,
+		planMarkdownPath:          planMarkdownPath,
+		copyToClipboard:           copyToClipboard,
+		openCode:                  openCode,
+		openURL:                   openURL,
+		pageText:                  pageText,
+		editFile:                  editFile,
+		saveAgent:                 saveAgent,
+		saveAgentModel:            saveAgentModel,
+		saveAgentReasoningEffort:  saveAgentReasoningEffort,
+		savePromptTemplate:        savePromptTemplate,
+		resetPromptTemplate:       resetPromptTemplate,
+		launchTerminal:            launchTerminal,
+		launchDetachedTerminal:    launchDetachedTerminal,
+		launchAgent:               launchAgent,
+		launchBackend:             normalizeLaunchBackend(opts.LaunchBackend),
+		tmuxLaunchAvailable:       tmuxLaunchAvailable,
+		launchRepoTmuxAgent:       launchRepoTmuxAgent,
+		repoTmuxSessionExists:     repoTmuxSessionExists,
+		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
+		startEmbeddedTerminal:     startEmbeddedTerminal,
+		finalizeAgentSession:      finalizeAgentSession,
+		sessionStateRoot:          opts.SessionStateRoot,
+		bootstrapHookForRepo:      bootstrapHookForRepo,
+		runBootstrapHook:          runBootstrapHook,
 	}
 	if ui.IsGitMode(m.topMode) {
 		m.lastGitMode = m.topMode
@@ -1716,10 +1757,33 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleQuitEmbeddedTerminals()
 	case embeddedPromptPrefillResultMsg:
 		if !m.hasEmbeddedTerminalID(msg.ID) {
+			if msg.Create != nil {
+				if msg.Err == nil {
+					msg.Err = fmt.Errorf("embedded terminal closed before prompt prefill completed")
+				}
+				return m.handleFlowLaunchPrefillFailure(msg)
+			}
 			return m, nil
+		}
+		if msg.Create != nil && !m.createFlowLaunchOriginCurrent(*msg.Create) {
+			cancelErr := fmt.Errorf("creation canceled after repository changed")
+			if msg.Err != nil {
+				// A failed prefill already attempted termination in its command.
+				// Preserve that result rather than terminating the same process twice.
+				msg.Err = errors.Join(cancelErr, msg.Err)
+			} else if terminateErr := m.terminateEmbeddedTerminalByID(msg.ID); terminateErr != nil {
+				msg.Err = errors.Join(cancelErr, fmt.Errorf("terminate embedded terminal after canceled prefill: %w", terminateErr))
+				msg.RetainTerminal = true
+			} else {
+				msg.Err = cancelErr
+			}
+			return m.handleFlowLaunchPrefillFailure(msg)
 		}
 		if msg.Err != nil {
 			return m.handleFlowLaunchPrefillFailure(msg)
+		}
+		if msg.Create != nil {
+			m = m.clearFlowCreateRequest(msg.Create.Request)
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)
 		return m.updateFlowTerminalFocusAfterLaunch(msg.LaunchContext), nil
@@ -2022,6 +2086,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAgentResultAfterFinalization(msg.Result, msg.Err)
 	case flowLaunchEventMsg:
 		return m.handleFlowLaunchEvent(msg)
+	case flowLaunchCreateRequestedMsg:
+		intent := flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: flowLaunchOriginNewFlow, Create: msg.Create}
+		next, cmd, _ := m.requestFlowLaunch(intent)
+		return next, cmd
 	case flowLaunchFailurePersistedMsg:
 		return m.handleFlowLaunchFailurePersisted(msg)
 	case DeleteFailedMsg:
