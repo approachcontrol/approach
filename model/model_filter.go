@@ -80,7 +80,7 @@ func newFlowPane() pane.Pane[flowstore.FlowRecord] {
 func newBeadPane() pane.Pane[beadsquery.Bead] {
 	return pane.New(func(bead beadsquery.Bead) string {
 		return strings.Join([]string{bead.ID, bead.Title, bead.Assignee}, " ")
-	}, fixedHeight[beadsquery.Bead])
+	}, beadItemHeight(ui.BeadExpansion{}))
 }
 
 func newBeadSubviews() [beadSubviewCount]beadSubviewState {
@@ -266,6 +266,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		m = m.setExpandedFlowID("")
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		index, _ := beadSubviewIndex(mode)
+		if m.beads[index].pane.Query() != query {
+			m = m.clearBeadExpansion()
+		}
 		m.beads[index].pane = m.beads[index].pane.SetQuery(query)
 		m = m.reflowBeads(mode)
 	}

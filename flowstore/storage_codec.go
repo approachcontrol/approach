@@ -151,6 +151,73 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 	}, nil
 }
 
+func patchStoredFlowPhaseAgentSettings(data []byte, update phaseAgentSettingsSave) ([]byte, error) {
+	var rawRecord map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawRecord); err != nil {
+		return nil, fmt.Errorf("decode settings-only flow record: %w", err)
+	}
+	var phases []json.RawMessage
+	if err := json.Unmarshal(rawRecord["phases"], &phases); err != nil {
+		return nil, fmt.Errorf("decode settings-only flow phases: %w", err)
+	}
+	if update.PhaseIndex < 0 || update.PhaseIndex >= len(phases) {
+		return nil, fmt.Errorf("settings-only phase index %d is outside %d phases", update.PhaseIndex, len(phases))
+	}
+	var phase map[string]json.RawMessage
+	if err := json.Unmarshal(phases[update.PhaseIndex], &phase); err != nil {
+		return nil, fmt.Errorf("decode settings-only phase %d: %w", update.PhaseIndex, err)
+	}
+	var phaseID string
+	if err := json.Unmarshal(phase["phase_id"], &phaseID); err != nil {
+		return nil, fmt.Errorf("decode settings-only phase %d id: %w", update.PhaseIndex, err)
+	}
+	if phaseID != update.PhaseID {
+		return nil, fmt.Errorf("settings-only phase index %d contains %q, want %q", update.PhaseIndex, phaseID, update.PhaseID)
+	}
+
+	settings := update.Settings.Normalize()
+	for key, value := range map[string]string{
+		"agent":            settings.Agent,
+		"model":            settings.Model,
+		"reasoning_effort": settings.ReasoningEffort,
+	} {
+		if value == "" {
+			delete(phase, key)
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode settings-only phase %s: %w", key, err)
+		}
+		phase[key] = encoded
+	}
+	phaseUpdatedAt, err := json.Marshal(update.PhaseUpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("encode settings-only phase updated_at: %w", err)
+	}
+	phase["updated_at"] = phaseUpdatedAt
+	encodedPhase, err := json.Marshal(phase)
+	if err != nil {
+		return nil, fmt.Errorf("encode settings-only phase: %w", err)
+	}
+	phases[update.PhaseIndex] = encodedPhase
+	encodedPhases, err := json.Marshal(phases)
+	if err != nil {
+		return nil, fmt.Errorf("encode settings-only phases: %w", err)
+	}
+	rawRecord["phases"] = encodedPhases
+	recordUpdatedAt, err := json.Marshal(update.RecordUpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("encode settings-only record updated_at: %w", err)
+	}
+	rawRecord["updated_at"] = recordUpdatedAt
+	patched, err := json.MarshalIndent(rawRecord, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode settings-only flow record: %w", err)
+	}
+	return patched, nil
+}
+
 func decodeStoredFlow(flowID, repoPath, status, updatedAt string, data []byte) (storedFlow, error) {
 	var dto storedFlowDTO
 	if err := json.Unmarshal(data, &dto); err != nil {

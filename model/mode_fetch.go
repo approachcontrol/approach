@@ -125,6 +125,9 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 			errorPrefix: "failed to load flows",
 			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
 				records, err := m.listFlows(flowstore.FlowFilter{RepoPath: repoPath})
+				if partial, ok := flowstore.AsPartialList(err); ok {
+					return FlowResultMsg{RepoPath: repoPath, Flows: records, Degradation: partial, ListRequest: request}, nil
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -171,6 +174,7 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 		mode: mode,
 		pane: paneName,
 		beforeStart: func(m Model) Model {
+			m = m.clearBeadExpansion()
 			if m.activeViewKind == FetchBeadDetail {
 				m = m.invalidateViewRequest()
 			}
@@ -276,6 +280,9 @@ func (m Model) fetchMode(mode ui.Mode, request uint64) tea.Cmd {
 func (m Model) fetchActiveFlows(request uint64) tea.Cmd {
 	return func() tea.Msg {
 		records, err := m.listFlows(flowstore.FlowFilter{})
+		if partial, ok := flowstore.AsPartialList(err); ok {
+			return ActiveFlowResultMsg{Flows: records, Degradation: partial, ListRequest: request}
+		}
 		if err != nil {
 			return FetchErrorMsg{
 				Pane:        "active-flows",

@@ -26,10 +26,12 @@ const closedLimit = 100
 
 // Bead is the display data for one Beads issue.
 type Bead struct {
-	ID       string
-	Priority int
-	Title    string
-	Assignee string
+	ID        string
+	Priority  int
+	Title     string
+	Assignee  string
+	IssueType string
+	Parent    string
 }
 
 // Show returns the selected bead's human-readable detail.
@@ -58,6 +60,20 @@ func (q *Querier) ListReady(repoPath string) ([]Bead, error) {
 		return nil, queryError("ready", err)
 	}
 	return ParseReady(out)
+}
+
+// ListChildren returns the selected issue's direct children.
+func ListChildren(repoPath, parentID string) ([]Bead, error) {
+	return defaultQuery().ListChildren(repoPath, parentID)
+}
+
+// ListChildren returns the selected issue's direct children.
+func (q *Querier) ListChildren(repoPath, parentID string) ([]Bead, error) {
+	out, err := q.runner.Run(repoPath, "children", parentID, "--json", "--readonly")
+	if err != nil {
+		return nil, queryError("children", err)
+	}
+	return ParseChildren(out)
 }
 
 // ListBlocked returns the selected repository's blocked beads.

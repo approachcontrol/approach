@@ -284,6 +284,37 @@ func TestBuildSnapshotFlowErrorIsSanitized(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshotIndexesHealthyFlowsFromTypedPartialResultAndLogsDiagnostic(t *testing.T) {
+	partial := &flowstore.PartialListError{Entries: []flowstore.PartialListEntry{
+		{FlowID: "bad-json", Cause: errors.New("malformed JSON")},
+		{FlowID: "future", Cause: errors.New("unsupported schema version 99")},
+	}}
+	var logged []string
+	snap := buildSnapshot(
+		staticRepos(),
+		func() ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "healthy", RepoPath: "/repos/alpha"}}, partial
+		},
+		func(format string, args ...any) {
+			logged = append(logged, fmt.Sprintf(format, args...))
+		},
+	)
+	if snap.err != nil {
+		t.Fatalf("snapshot err = %v, want typed partial result accepted", snap.err)
+	}
+	if got, want := flowIDs(snap.Flows()), []string{"healthy"}; !equalStrings(got, want) {
+		t.Fatalf("Flows() = %v, want %v", got, want)
+	}
+	if len(logged) != 1 {
+		t.Fatalf("logged = %#v, want one partial-list diagnostic", logged)
+	}
+	for _, want := range []string{"reading flow records partially degraded", "bad-json", "malformed JSON", "future", "unsupported schema version 99"} {
+		if !strings.Contains(logged[0], want) {
+			t.Fatalf("partial log missing %q: %q", want, logged[0])
+		}
+	}
+}
+
 func TestBuildSnapshotEmptySources(t *testing.T) {
 	snap := buildSnapshot(staticRepos(), staticFlows(), nil)
 	if len(snap.Repos()) != 0 || len(snap.Flows()) != 0 {

@@ -21,9 +21,10 @@ type autoAdvanceTickMsg struct{}
 // listFlows failure arrives as Err instead of a FetchErrorMsg so the loop
 // always reschedules and never stomps display status.
 type AutoAdvanceResultMsg struct {
-	Flows   []flowstore.FlowRecord
-	Err     string
-	Request uint64
+	Flows       []flowstore.FlowRecord
+	Degradation *flowstore.PartialListError
+	Err         string
+	Request     uint64
 }
 
 func autoAdvanceTickCmd() tea.Cmd {
@@ -35,6 +36,9 @@ func autoAdvanceTickCmd() tea.Cmd {
 func (m Model) fetchAutoAdvanceFlows(request uint64) tea.Cmd {
 	return func() tea.Msg {
 		records, err := m.listFlows(flowstore.FlowFilter{})
+		if partial, ok := flowstore.AsPartialList(err); ok {
+			return AutoAdvanceResultMsg{Flows: records, Degradation: partial, Request: request}
+		}
 		if err != nil {
 			return AutoAdvanceResultMsg{Err: err.Error(), Request: request}
 		}
@@ -63,7 +67,7 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	if msg.Request == 0 || msg.Request != m.autoAdvanceInFlight {
 		return m.finishAutoAdvanceFetch(msg.Request)
 	}
-	if msg.Err != "" {
+	if msg.Err != "" || msg.Degradation != nil {
 		return m.finishAutoAdvanceFetch(msg.Request)
 	}
 

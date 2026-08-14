@@ -87,6 +87,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "esc" && m.activeSearchQuery() != "" {
+		beadsSearch := m.activePane != ui.PaneRepos && ui.IsBeadsMode(m.focusedMode())
 		oldRepoPath, _ := m.currentRepoPath()
 		m = m.setActiveSearchQuery("")
 		m = m.setSearchActive(false)
@@ -99,6 +100,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if oldRepoPath != newRepoPath {
 				return m.handleRepoSelectionChanged(ok)
 			}
+		}
+		if beadsSearch {
+			return m.reconcileBeadExpansion()
 		}
 		return m, nil
 	}
@@ -279,6 +283,7 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	beadsSearch := m.activePane != ui.PaneRepos && ui.IsBeadsMode(m.focusedMode())
 	oldRepoPath, _ := m.currentRepoPath()
 
 	switch key {
@@ -313,6 +318,9 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if oldRepoPath != newRepoPath {
 			return m.handleRepoSelectionChanged(ok)
 		}
+	}
+	if beadsSearch {
+		return m.reconcileBeadExpansion()
 	}
 	return m, nil
 }
@@ -534,10 +542,13 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleUnlock()
 	case "f":
 		if mode == ui.ModeBeadsReady {
-			return m.handleReadyBeadFlowCreate()
+			return m.handleReadyBeadFlowCreate(readyBeadFlowCreateOnly)
 		}
 		return m.handleFetch()
 	case "F":
+		if m.readyBeadFlowKeysOwned() {
+			return m.handleReadyBeadFlowCreate(readyBeadFlowCreateAndStart)
+		}
 		return m.handlePull()
 	case "t":
 		return m.handleOpenTerminal()
@@ -556,10 +567,17 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) canCreateReadyBeadFlow() bool {
+type readyBeadFlowIntent uint8
+
+const (
+	readyBeadFlowCreateOnly readyBeadFlowIntent = iota
+	readyBeadFlowCreateAndStart
+)
+
+func (m Model) readyBeadFlowKeysOwned() bool {
 	terminalInputFocused := m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
 	if m.modal.IsOpen() || m.searchActive || terminalInputFocused ||
-		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
+		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady {
 		return false
 	}
 	if _, ok := m.currentRepoPath(); !ok {
@@ -571,8 +589,20 @@ func (m Model) canCreateReadyBeadFlow() bool {
 	return ok && strings.TrimSpace(bead.ID) != ""
 }
 
-func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
+func (m Model) canCreateReadyBeadFlow() bool {
+	return m.readyBeadFlowKeysOwned() && m.activeReadyBeadFlowCreate == 0
+}
+
+func (m Model) canStartReadyBeadFlow() bool {
 	if !m.canCreateReadyBeadFlow() {
+		return false
+	}
+	command, _, _ := m.flowLaunchAgentSettings()
+	return agent.Normalize(command) != ""
+}
+
+func (m Model) handleReadyBeadFlowCreate(intent readyBeadFlowIntent) (Model, tea.Cmd) {
+	if !m.canCreateReadyBeadFlow() || (intent == readyBeadFlowCreateAndStart && !m.canStartReadyBeadFlow()) {
 		return m, nil
 	}
 	repoPath, _ := m.currentRepoPath()
@@ -582,7 +612,7 @@ func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
 	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
 	var request uint64
 	m, request = m.nextReadyBeadFlowCreateRequest()
-	return m, m.createReadyBeadFlow(repoPath, title, instructions, request)
+	return m, m.createReadyBeadFlow(repoPath, title, instructions, request, intent)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
@@ -848,11 +878,19 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 // --- Cursor navigation ---
 
 func (m Model) handleCursorUp() (tea.Model, tea.Cmd) {
-	return m.moveCursor(-1), nil
+	next := m.moveCursor(-1)
+	if ui.IsBeadsMode(m.focusedMode()) {
+		return next.reconcileBeadExpansion()
+	}
+	return next, nil
 }
 
 func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
-	return m.moveCursor(1), nil
+	next := m.moveCursor(1)
+	if ui.IsBeadsMode(m.focusedMode()) {
+		return next.reconcileBeadExpansion()
+	}
+	return next, nil
 }
 
 // moveCursor moves the selected item in the active right-pane view by delta
@@ -936,6 +974,13 @@ func (m Model) moveCursor(delta int) Model {
 		// A pending subview renders its loading message instead of its retained
 		// rows, so cursor keys must not move a selection the user cannot see.
 		if m.beads[index].pending {
+			return m
+		}
+		if m.canScrollBeadExpansion(delta, h) {
+			m.beads[index].pane = m.beads[index].pane.ScrollBy(delta, h, w)
+			return m
+		}
+		if m.beads[index].pane.Len() <= 1 {
 			return m
 		}
 		m.beads[index].pane = m.beads[index].pane.Move(delta, h, w)
@@ -1559,6 +1604,9 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
+	if m.flowPhaseAgentControlsSelected() {
+		return m.handleSetFlowPhaseAgent()
+	}
 	m.modal = modal.OpenSelectWithLayout(
 		"Choose interactive helper",
 		agentSelectItems(),
@@ -1585,6 +1633,119 @@ func selectedAgentIndex(command string) int {
 	}
 }
 
+const inheritFlowPhaseAgentSetting = "__inherit_global__"
+
+func (m Model) selectedFlowPhaseAgentTarget() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID != m.currentExpandedFlowID() || m.currentSelectedFlowPhaseID() == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+	}
+	phase, ok := flowRecordPhaseByID(record, m.currentSelectedFlowPhaseID())
+	return record, phase, ok
+}
+
+func (m Model) handleSetFlowPhaseAgent() (tea.Model, tea.Cmd) {
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok {
+		return m.setStatus(statusOther, "Select an expanded Flow phase before setting its agent"), nil
+	}
+	items := append([]modal.SelectItem{{Label: "inherit global settings", Value: inheritFlowPhaseAgentSetting}}, agentSelectItems()...)
+	selected := 0
+	if raw := agent.Normalize(phase.Agent); raw != "" {
+		selected = selectedAgentIndex(raw) + 1
+	}
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose agent for phase %s", phase.PhaseID),
+		items,
+		selected,
+		modal.Layout{Width: 36, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			settings := flowstore.PhaseAgentSettings{}
+			if value != inheritFlowPhaseAgentSetting {
+				settings.Agent = agent.Normalize(value)
+			}
+			return m.setFlowPhaseAgentSettingsCmd(record.FlowID, phase.PhaseID, settings)
+		},
+	)
+	return m, nil
+}
+
+func (m Model) handleSetFlowPhaseModel() (tea.Model, tea.Cmd) {
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok {
+		return m.setStatus(statusOther, "Select an expanded Flow phase before setting its model"), nil
+	}
+	effective, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+	if err != nil {
+		return m.setStatus(statusOther, err.Error()), nil
+	}
+	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, modelSelectItems(effective.Command)...)
+	selected := 0
+	if raw := agent.NormalizeModel(phase.Model); raw != "" {
+		selected = selectedModelIndex(effective.Command, raw) + 1
+	}
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose model for phase %s", phase.PhaseID), items, selected,
+		modal.Layout{Width: 40, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			settings := phase.AgentSettings().Normalize()
+			if value == inheritFlowPhaseAgentSetting {
+				settings.Model = ""
+			} else {
+				if settings.Agent == "" {
+					settings.Agent = effective.Command
+				}
+				settings.Model = agent.NormalizeModel(value)
+			}
+			return m.setFlowPhaseAgentSettingsCmd(record.FlowID, phase.PhaseID, settings)
+		},
+	)
+	return m, nil
+}
+
+func (m Model) handleSetFlowPhaseReasoningEffort() (tea.Model, tea.Cmd) {
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok {
+		return m.setStatus(statusOther, "Select an expanded Flow phase before setting reasoning effort"), nil
+	}
+	effective, err := flowstore.ResolvePhaseAgentSettings(m.agentPreferences(), phase.AgentSettings())
+	if err != nil {
+		return m.setStatus(statusOther, err.Error()), nil
+	}
+	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, reasoningEffortSelectItems(effective.Command)...)
+	selected := 0
+	if raw := agent.NormalizeReasoningEffort(phase.ReasoningEffort); raw != "" {
+		selected = selectedReasoningEffortIndex(effective.Command, raw) + 1
+	}
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose effort for phase %s", phase.PhaseID), items, selected,
+		modal.Layout{Width: 40, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			settings := phase.AgentSettings().Normalize()
+			if value == inheritFlowPhaseAgentSetting {
+				settings.ReasoningEffort = ""
+			} else {
+				if settings.Agent == "" {
+					settings.Agent = effective.Command
+				}
+				settings.ReasoningEffort = agent.NormalizeReasoningEffort(value)
+			}
+			return m.setFlowPhaseAgentSettingsCmd(record.FlowID, phase.PhaseID, settings)
+		},
+	)
+	return m, nil
+}
+
+func (m Model) setFlowPhaseAgentSettingsCmd(flowID, phaseID string, settings flowstore.PhaseAgentSettings) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{FlowID: flowID, PhaseID: phaseID, Settings: settings})
+		if err != nil {
+			return FlowPhaseAgentSettingsSetFailedMsg{FlowID: flowID, PhaseID: phaseID, Err: err.Error()}
+		}
+		return FlowPhaseAgentSettingsSetMsg{Flow: flow, PhaseID: phaseID, PhaseIdentity: artifacts.NormalizePhaseID(phaseID)}
+	}
+}
+
 func (m Model) setAgent(command string) tea.Cmd {
 	return func() tea.Msg {
 		if err := m.saveAgent(command); err != nil {
@@ -1595,6 +1756,9 @@ func (m Model) setAgent(command string) tea.Cmd {
 }
 
 func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
+	if m.flowPhaseAgentControlsSelected() {
+		return m.handleSetFlowPhaseReasoningEffort()
+	}
 	command := agent.Normalize(m.agentCommand)
 	if command == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting reasoning effort")
@@ -1616,6 +1780,9 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
+	if m.flowPhaseAgentControlsSelected() {
+		return m.handleSetFlowPhaseModel()
+	}
 	command := agent.Normalize(m.agentCommand)
 	if command == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting model")
@@ -1938,6 +2105,9 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "Unable to create flow"
+	}
+	if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
+		errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
 	}
 	m = m.setStatus(statusOther, errText)
 	if m.flowRefreshSurfaceVisible() {
@@ -2740,7 +2910,7 @@ func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Mo
 
 // launchTrackedFlowEmbedded opens a tracked embedded Flow launch. It is what is
 // left of the pre-lifecycle embedded opener now that repair routes through the
-// lifecycle; Plan Now is its only production caller.
+// lifecycle; only creation-time Flow starts call it directly.
 func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchReserved bool) (Model, tea.Cmd) {
 	ctx.Embedded = true
 	ctx.FlowLaunchTracked = true
@@ -2958,7 +3128,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		errText += "update flow phase: " + msg.PersistErr.Error()
 	}
 	m = m.setStatus(statusOther, errText)
-	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
+	if msg.LaunchContext.FlowID != "" && m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -3266,6 +3436,9 @@ func (m Model) resetBottomPaneCursors() Model {
 }
 
 func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
+	if from != to && (ui.IsBeadsMode(from) || ui.IsBeadsMode(to)) {
+		m = m.clearBeadExpansion()
+	}
 	if from == ui.ModeActiveFlows || to == ui.ModeActiveFlows {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
@@ -3290,6 +3463,7 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 }
 
 func (m Model) clearBeadsRepoOwnedState() Model {
+	m = m.clearBeadExpansion()
 	for i := range m.beads {
 		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
 		m.beads[i].available = false
@@ -3319,6 +3493,7 @@ func (m Model) resetRightPaneCursors() Model {
 
 func (m Model) resetStoredPaneCursors() Model {
 	m = m.invalidateStoredListRequests()
+	m = m.setFlowDegradation(ui.ModeFlows, "", nil)
 	// Covers the rescan-driven repo changes in handleRepoRefreshResult, which
 	// never route through handleRepoSelectionChanged.
 	m = m.invalidateReadyBeadFlowCreateRequest()
@@ -3417,6 +3592,7 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 		rows -= ui.TableHeaderRows
 	}
 	rows -= m.paneCachedWarningRows(mode)
+	rows -= m.paneFlowDegradationWarningRows(mode)
 	// The positive floor predates the warning row and also covers hidden
 	// background panes, which are allocated no rows at all. Viewports this
 	// small cannot show a cached row either way, so the floor stays.

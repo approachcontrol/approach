@@ -31,6 +31,86 @@ var ErrFlowNotFound = errors.New("flow not found")
 
 var errFlowNotFound = ErrFlowNotFound
 
+// PartialListEntry identifies one authoritative Flow row that could be scanned
+// but not decoded while listing. Cause retains the row-local corruption error.
+type PartialListEntry struct {
+	FlowID string
+	Cause  error
+}
+
+// DiagnosticFlowID renders the authoritative row ID without allowing corrupt
+// control bytes or an ambiguous blank value to reach terminal and log sinks.
+// FlowID itself remains unchanged so callers can inspect the exact stored key.
+func (e PartialListEntry) DiagnosticFlowID() string {
+	if strings.TrimSpace(e.FlowID) == "" {
+		return strconv.QuoteToASCII(e.FlowID)
+	}
+	for _, r := range e.FlowID {
+		if !strconv.IsPrint(r) {
+			return strconv.QuoteToASCII(e.FlowID)
+		}
+	}
+	return e.FlowID
+}
+
+// PartialListError reports rows omitted from an otherwise usable List result.
+// Entries retain the list query's deterministic SQL order.
+type PartialListError struct {
+	Entries []PartialListEntry
+}
+
+func (e *PartialListError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := make([]string, len(e.Entries))
+	for i, entry := range e.Entries {
+		parts[i] = fmt.Sprintf("%s: %v", entry.DiagnosticFlowID(), entry.Cause)
+	}
+	return fmt.Sprintf("skipped %d unreadable Flows: %s", len(e.Entries), strings.Join(parts, "; "))
+}
+
+// Unwrap exposes every retained row-local cause to errors.Is and errors.As.
+func (e *PartialListError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	causes := make([]error, len(e.Entries))
+	for i, entry := range e.Entries {
+		causes[i] = entry.Cause
+	}
+	return causes
+}
+
+// AsPartialList classifies a valid standalone partial Flow-list result without
+// requiring callers to match diagnostic text. Ordinary single-error wrapping
+// is accepted, but aggregate error trees are rejected so a joined fatal error
+// can never be downgraded merely because it also contains a partial diagnostic.
+func AsPartialList(err error) (*PartialListError, bool) {
+	for err != nil {
+		if partial, ok := err.(*PartialListError); ok {
+			if partial == nil || len(partial.Entries) == 0 {
+				return nil, false
+			}
+			for _, entry := range partial.Entries {
+				if entry.Cause == nil {
+					return nil, false
+				}
+			}
+			return partial, true
+		}
+		if _, aggregate := err.(interface{ Unwrap() []error }); aggregate {
+			return nil, false
+		}
+		wrapped, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return nil, false
+		}
+		err = wrapped.Unwrap()
+	}
+	return nil, false
+}
+
 // ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
 // wraps. It is exported so callers outside this package can build the rejection
 // their AutoMode handling has to survive.
@@ -133,8 +213,8 @@ type FlowPhase struct {
 	ParentPhaseID string `json:"parent_phase_id,omitempty"`
 	Title         string `json:"title"`
 	Kind          string `json:"kind"`
-	// Agent, Model, and ReasoningEffort are captured when the Flow is created
-	// and are not consumed at launch yet; see PhaseAgentSettings.
+	// Agent, Model, and ReasoningEffort are optional launch overrides; see
+	// PhaseAgentSettings and ResolvePhaseAgentSettings.
 	Agent           string    `json:"agent,omitempty"`
 	Model           string    `json:"model,omitempty"`
 	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
@@ -209,6 +289,44 @@ func (s PhaseAgentSettings) Validate() error {
 		return err
 	}
 	return agent.ValidateReasoningEffort(s.Agent, s.ReasoningEffort)
+}
+
+// ResolvePhaseAgentSettings validates a phase's raw persisted stamp before
+// applying field-by-field fallbacks from the current provider preferences.
+// An empty raw stamp follows the globally selected command. A non-empty agent
+// selects that provider's global model and effort, even when another provider
+// is selected globally. The literal "default" is non-empty and therefore
+// remains an explicit provider-default choice.
+func ResolvePhaseAgentSettings(prefs agent.Preferences, raw PhaseAgentSettings) (agent.Settings, error) {
+	raw = raw.Normalize()
+	if err := raw.Validate(); err != nil {
+		return agent.Settings{}, err
+	}
+
+	effectivePrefs := prefs
+	if raw.Agent != "" {
+		effectivePrefs.Command = raw.Agent
+	}
+	resolved := agent.Resolve(effectivePrefs)
+	resolved.Command = agent.Normalize(resolved.Command)
+	resolved.Model = agent.NormalizeModel(resolved.Model)
+	resolved.ReasoningEffort = agent.NormalizeReasoningEffort(resolved.ReasoningEffort)
+	if raw.Model != "" {
+		resolved.Model = raw.Model
+	}
+	if raw.ReasoningEffort != "" {
+		resolved.ReasoningEffort = raw.ReasoningEffort
+	}
+	if err := agent.Validate(resolved.Command); err != nil {
+		return agent.Settings{}, err
+	}
+	if err := agent.ValidateModel(resolved.Command, resolved.Model); err != nil {
+		return agent.Settings{}, err
+	}
+	if err := agent.ValidateReasoningEffort(resolved.Command, resolved.ReasoningEffort); err != nil {
+		return agent.Settings{}, err
+	}
+	return resolved, nil
 }
 
 // AgentSettings returns the agent selection captured for this phase.
@@ -427,6 +545,14 @@ type PhaseUpdate struct {
 	Outcome string
 	Notes   string
 	Summary string
+}
+
+// PhaseAgentSettingsUpdate replaces one phase's complete persisted agent
+// settings stamp. Empty settings clear the stamp and restore global fallback.
+type PhaseAgentSettingsUpdate struct {
+	FlowID   string
+	PhaseID  string
+	Settings PhaseAgentSettings
 }
 
 // PhaseRestartUpdate restarts a blocked or needs-attention phase as running.
@@ -790,6 +916,71 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", syncErr, compErr)
 	}
 	return FlowRecord{}, syncErr
+}
+
+// SetPhaseAgentSettings atomically replaces only one phase's agent settings.
+// It intentionally bypasses Flow normalization, readiness derivation, linked
+// plan synchronization, and unrelated phase validation: settings affect only a
+// future launch and legacy records must remain otherwise byte-for-byte stable.
+func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	normalizedPhaseID := artifacts.NormalizePhaseID(update.PhaseID)
+	if normalizedPhaseID == "" {
+		return FlowRecord{}, fmt.Errorf("phase id is required")
+	}
+	settings := update.Settings.Normalize()
+	if err := settings.Validate(); err != nil {
+		return FlowRecord{}, err
+	}
+
+	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		if !ok {
+			return FlowRecord{}, flowNotFoundError(update.FlowID)
+		}
+		record := stored.record
+		phaseIndex := -1
+		for i := range record.Phases {
+			if record.Phases[i].PhaseID == update.PhaseID {
+				phaseIndex = i
+				break
+			}
+		}
+		if phaseIndex < 0 {
+			for i := range record.Phases {
+				if artifacts.NormalizePhaseID(record.Phases[i].PhaseID) == normalizedPhaseID {
+					phaseIndex = i
+					break
+				}
+			}
+		}
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		if phase.AgentSettings().Normalize() == settings && phase.AgentSettings() == settings {
+			return record, nil
+		}
+		now := s.now()
+		record.Phases[phaseIndex] = phase.withAgentSettings(settings)
+		record.Phases[phaseIndex].UpdatedAt = now
+		record.UpdatedAt = now
+		if err := sess.savePhaseAgentSettings(phaseAgentSettingsSave{
+			PhaseIndex:      phaseIndex,
+			PhaseID:         phase.PhaseID,
+			Settings:        settings,
+			PhaseUpdatedAt:  now,
+			RecordUpdatedAt: now,
+		}); err != nil {
+			return FlowRecord{}, err
+		}
+		return record, nil
+	})
 }
 
 // compensatePhaseSyncFailure demotes a committed phase to needs_attention after
@@ -2094,14 +2285,14 @@ func appendUnique(values []string, value string) []string {
 // List returns records matching filter, sorted by UpdatedAt descending.
 func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
 	stored, err := s.backend.list(filter)
-	if err != nil {
+	if _, partial := AsPartialList(err); err != nil && !partial {
 		return nil, err
 	}
-	var records []FlowRecord
+	records := make([]FlowRecord, 0, len(stored))
 	for _, flow := range stored {
 		records = append(records, flow.record)
 	}
-	return records, nil
+	return records, err
 }
 
 func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -277,11 +279,13 @@ type PlanResultMsg struct {
 type FlowResultMsg struct {
 	RepoPath    string
 	Flows       []flowstore.FlowRecord
+	Degradation *flowstore.PartialListError
 	ListRequest uint64
 }
 
 type ActiveFlowResultMsg struct {
 	Flows       []flowstore.FlowRecord
+	Degradation *flowstore.PartialListError
 	ListRequest uint64
 }
 
@@ -469,6 +473,18 @@ type AgentReasoningEffortSetFailedMsg struct {
 	Err     string
 }
 
+type FlowPhaseAgentSettingsSetMsg struct {
+	Flow          flowstore.FlowRecord
+	PhaseID       string
+	PhaseIdentity string
+}
+
+type FlowPhaseAgentSettingsSetFailedMsg struct {
+	FlowID  string
+	PhaseID string
+	Err     string
+}
+
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
@@ -496,18 +512,20 @@ type flowLaunchFailurePersistedMsg struct {
 }
 
 type PlanLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
-	LaunchRelease func()
+	LaunchContext    actions.AgentLaunchContext
+	Request          uint64
+	ReadyBeadRequest uint64
+	LaunchRelease    func()
 }
 
 // FlowEmbeddedLaunchRequestedMsg is what remains of the pre-lifecycle embedded
-// launch path. Only Plan Now still emits it; repair, manual, automatic, and
-// resume launches all route through the launch lifecycle.
+// launch path. Creation-time Flow starts (Plan Now and Ready-Bead F) emit it;
+// repair, manual, automatic, and resume launches route through the lifecycle.
 type FlowEmbeddedLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
-	LaunchRelease func()
+	LaunchContext    actions.AgentLaunchContext
+	Request          uint64
+	ReadyBeadRequest uint64
+	LaunchRelease    func()
 }
 
 type FlowCreatedMsg struct {
@@ -534,6 +552,7 @@ type ReadyBeadFlowCreatedMsg struct {
 
 type ReadyBeadFlowCreateFailedMsg struct {
 	RepoPath string
+	FlowID   string
 	Title    string
 	Err      string
 	Request  uint64
@@ -1143,6 +1162,41 @@ func (m Model) handleAgentModelSet(msg AgentModelSetMsg) Model {
 	return m
 }
 
+func (m Model) handleFlowPhaseAgentSettingsSet(msg FlowPhaseAgentSettingsSetMsg) Model {
+	if msg.Flow.FlowID == "" {
+		return m.setStatus(statusOther, "Unable to update Flow phase agent settings")
+	}
+	record, phase, ok := m.selectedFlowPhaseAgentTarget()
+	if !ok || record.FlowID != msg.Flow.FlowID || phase.PhaseID != msg.PhaseID ||
+		artifacts.NormalizePhaseID(phase.PhaseID) != msg.PhaseIdentity {
+		return m.setStatus(statusOther, "Flow phase selection changed before agent settings were applied")
+	}
+	updatedPhaseIndex := flowPhaseStoredIndexByID(msg.Flow.Phases, msg.PhaseID)
+	if updatedPhaseIndex < 0 {
+		return m.setStatus(statusOther, "Unable to update Flow phase agent settings")
+	}
+	updatedPhase := msg.Flow.Phases[updatedPhaseIndex]
+	m = m.replaceFlowRecord(
+		msg.Flow,
+		flowPhaseAgentSettingsMutationField(msg.PhaseID),
+		flowPhaseAgentSettingsOverlay(
+			msg.PhaseID,
+			updatedPhase.AgentSettings(),
+			msg.Flow.UpdatedAt,
+			updatedPhase.UpdatedAt,
+		),
+	)
+	return m.setStatus(statusOther, fmt.Sprintf("Updated agent settings for Flow phase %s", msg.PhaseID))
+}
+
+func (m Model) handleFlowPhaseAgentSettingsSetFailed(msg FlowPhaseAgentSettingsSetFailedMsg) Model {
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "Unable to update Flow phase agent settings"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
 func (m Model) handleAgentModelSetFailed(msg AgentModelSetFailedMsg) Model {
 	// Keep the selection usable for this session even when persistence fails.
 	m = m.withModel(msg.Command, msg.Model)
@@ -1431,30 +1485,30 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 	return m
 }
 
-func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
+func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) (Model, bool) {
 	return m.handleBeadsResult(ui.ModeBeadsOpen, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
 }
 
-func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string) Model {
+func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string) (Model, bool) {
 	return m.handleBeadsResultWithTotal(mode, repoPath, beads, request, available, errorDetail, 0)
 }
 
-func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) Model {
+func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) (Model, bool) {
 	return m.handleBeadsResultWithTotal(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error, msg.Total)
 }
 
-func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) Model {
+func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) (Model, bool) {
 	if !m.modeStored(mode) {
-		return m
+		return m, false
 	}
 	var ok bool
 	m, ok = m.acceptListResult(repoPath, mode, request)
 	if !ok {
-		return m
+		return m, false
 	}
 	index, ok := beadSubviewIndex(mode)
 	if !ok {
-		return m
+		return m, false
 	}
 	if !available || errorDetail != "" {
 		beads = nil
@@ -1466,7 +1520,7 @@ func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads [
 	m.beads[index].error = errorDetail
 	m.beads[index].total = total
 	m.beads[index].repoPath = repoPath
-	return m.reflowBeads(mode)
+	return m.reflowBeads(mode), true
 }
 
 func (m Model) handleWorktreeSessionResult(msg WorktreeSessionResultMsg) Model {
@@ -1503,9 +1557,12 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	m = m.setFlowDegradation(ui.ModeFlows, msg.RepoPath, msg.Degradation)
 	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
 	m = m.pruneAcknowledgedFlowMutations()
-	m = m.seedAutoAdvanceSnapshot(flows)
+	if msg.Degradation == nil {
+		m = m.seedAutoAdvanceSnapshot(flows)
+	}
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1533,9 +1590,12 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
+	m = m.setFlowDegradation(ui.ModeActiveFlows, "", msg.Degradation)
 	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
 	m = m.pruneAcknowledgedFlowMutations()
-	m = m.seedAutoAdvanceSnapshot(flows)
+	if msg.Degradation == nil {
+		m = m.seedAutoAdvanceSnapshot(flows)
+	}
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
@@ -1675,6 +1735,9 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	if flow.FlowID == "" {
 		return m
 	}
+	if field.overlayOnly() && m.flowMutationSuperseded(flow, field) {
+		return m
+	}
 	m = m.rememberFlowMutation(flow, field, apply)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
@@ -1682,13 +1745,24 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
+	overlayOnly := field.overlayOnly() && apply != nil
+	// An overlay-only write result is authoritative only for its named field.
+	// Copying unrelated fields from it could regress a peer write that landed
+	// after the store returned; the regular refresh surfaces unrelated changes.
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
 	replacedFlows := false
 	for i := range items {
-		if items[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(items[i].UpdatedAt) {
+		if items[i].FlowID != flow.FlowID {
 			continue
 		}
-		items[i] = flow
+		if overlayOnly {
+			items[i] = apply(items[i])
+		} else {
+			if flow.UpdatedAt.Before(items[i].UpdatedAt) {
+				continue
+			}
+			items[i] = flow
+		}
 		replacedFlows = true
 		break
 	}
@@ -1706,10 +1780,17 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
 	replacedActive := false
 	for i := range activeRecords {
-		if activeRecords[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+		if activeRecords[i].FlowID != flow.FlowID {
 			continue
 		}
-		activeRecords[i] = flow
+		if overlayOnly {
+			activeRecords[i] = apply(activeRecords[i])
+		} else {
+			if flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+				continue
+			}
+			activeRecords[i] = flow
+		}
 		replacedActive = true
 		break
 	}
@@ -1723,6 +1804,27 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	return m.clampSelectionsAfterFilter()
 }
 
+func (m Model) flowMutationSuperseded(flow flowstore.FlowRecord, field flowMutationField) bool {
+	for _, cached := range m.latestFlowMutations {
+		if cached.field == field &&
+			cached.record.FlowID == flow.FlowID &&
+			sameRepoPath(cached.record.RepoPath, flow.RepoPath) &&
+			flow.UpdatedAt.Before(cached.record.UpdatedAt) {
+			return true
+		}
+	}
+	for _, records := range [][]flowstore.FlowRecord{m.flows.Items(), m.activeFlowRecords} {
+		for _, record := range records {
+			if record.FlowID == flow.FlowID &&
+				sameRepoPath(record.RepoPath, flow.RepoPath) &&
+				flow.UpdatedAt.Before(record.UpdatedAt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // cachedFlowMutation retains a Flow write this process persisted, together with
 // the list request generation current when the write completed. The generation
 // is a causal version: a fetch issued at a later generation already observes the
@@ -1732,9 +1834,8 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 //
 // apply re-applies only the field this process changed. A fetch issued before
 // the write can still read the store after a peer wrote a causally newer record,
-// so restoring a whole cached record would hide the peer's phase completions and
-// other metadata. Toggles that change one scalar therefore carry an apply
-// function and never replace the incoming record.
+// so targeted phase mutations use an overlay-only field and never restore their
+// whole cached record over the incoming one.
 type cachedFlowMutation struct {
 	record     flowstore.FlowRecord
 	generation uint64
@@ -1744,15 +1845,39 @@ type cachedFlowMutation struct {
 
 // flowMutationField identifies what a cached write changed, so writes to
 // different fields of one Flow are cached independently.
-type flowMutationField uint8
+type flowMutationField string
 
 const (
 	// flowMutationWholeRecord covers writes that change phases and derived
 	// state together, which cannot be expressed as a single-field overlay.
-	flowMutationWholeRecord flowMutationField = iota
-	flowMutationHeadless
-	flowMutationAutoMode
+	flowMutationWholeRecord              flowMutationField = "whole-record"
+	flowMutationHeadless                 flowMutationField = "headless"
+	flowMutationAutoMode                 flowMutationField = "auto-mode"
+	flowMutationPhaseAgentSettingsPrefix                   = "phase-agent-settings:"
 )
+
+func flowPhaseAgentSettingsMutationField(phaseID string) flowMutationField {
+	return flowMutationField(flowMutationPhaseAgentSettingsPrefix + phaseID)
+}
+
+func flowPhaseStoredIndexByID(phases []flowstore.FlowPhase, phaseID string) int {
+	for i := range phases {
+		if phases[i].PhaseID == phaseID {
+			return i
+		}
+	}
+	identity := artifacts.NormalizePhaseID(phaseID)
+	for i := range phases {
+		if artifacts.NormalizePhaseID(phases[i].PhaseID) == identity {
+			return i
+		}
+	}
+	return -1
+}
+
+func (field flowMutationField) overlayOnly() bool {
+	return strings.HasPrefix(string(field), flowMutationPhaseAgentSettingsPrefix)
+}
 
 func flowHeadlessOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
 	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
@@ -1768,6 +1893,31 @@ func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.Flow
 	}
 }
 
+func flowPhaseAgentSettingsOverlay(
+	phaseID string,
+	settings flowstore.PhaseAgentSettings,
+	recordUpdatedAt time.Time,
+	phaseUpdatedAt time.Time,
+) func(flowstore.FlowRecord) flowstore.FlowRecord {
+	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		target := flowPhaseStoredIndexByID(record.Phases, phaseID)
+		if target < 0 || record.Phases[target].UpdatedAt.After(phaseUpdatedAt) {
+			return record
+		}
+		if record.UpdatedAt.Before(recordUpdatedAt) {
+			record.UpdatedAt = recordUpdatedAt
+		}
+		record.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+		record.Phases[target].Agent = settings.Agent
+		record.Phases[target].Model = settings.Model
+		record.Phases[target].ReasoningEffort = settings.ReasoningEffort
+		if record.Phases[target].UpdatedAt.Before(phaseUpdatedAt) {
+			record.Phases[target].UpdatedAt = phaseUpdatedAt
+		}
+		return record
+	}
+}
+
 // preferNewerCachedFlowRecords re-applies mutations that a fetch issued before
 // the write could not have seen. Mutations the fetch supersedes are dropped by
 // pruneAcknowledgedFlowMutations.
@@ -1776,13 +1926,15 @@ func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.Flow
 // issued, but the store read happens later and unlocked, so an older request can
 // still return a record that already carries this write plus a newer peer write.
 //
-// Reconciliation therefore runs in two steps. UpdatedAt selects the base record: a cached
-// record stamped later than the incoming one carries phase and status metadata
-// the write result proved newer, so it becomes the base; otherwise the incoming
-// record wins and a peer's newer work is kept. Overlays are then re-applied on
-// top of whichever base was chosen, so a toggle this process persisted survives
-// either way, and a whole-record write that read the store before a concurrent
-// toggle cannot revert it.
+// Reconciliation therefore runs in two steps. UpdatedAt selects the base record
+// from mutations allowed to contribute one: a cached record stamped later than
+// the incoming one carries phase and status metadata the write result proved
+// newer, so it becomes the base; otherwise the incoming record wins and a peer's
+// newer work is kept. Targeted phase mutations are overlay-only and never
+// contribute a base. Overlays are then re-applied on top of whichever base was
+// chosen, so a field this process persisted survives either way, and a
+// whole-record write that read the store before a concurrent toggle cannot
+// revert it.
 //
 // UpdatedAt is the strongest ordering signal the store offers today, and it is
 // not a causal version: a peer may have a clock behind this process, and a
@@ -1794,7 +1946,7 @@ func preferNewerCachedFlowRecords(incoming []flowstore.FlowRecord, request uint6
 	merged := append([]flowstore.FlowRecord(nil), incoming...)
 	for i, record := range merged {
 		for _, mutation := range mutations {
-			if !unacknowledgedFlowMutationFor(mutation, request, record) {
+			if mutation.field.overlayOnly() || !unacknowledgedFlowMutationFor(mutation, request, record) {
 				continue
 			}
 			if merged[i].UpdatedAt.Before(mutation.record.UpdatedAt) {
@@ -1817,13 +1969,15 @@ func unacknowledgedFlowMutationFor(mutation cachedFlowMutation, request uint64, 
 		sameRepoPath(mutation.record.RepoPath, record.RepoPath)
 }
 
-// pruneAcknowledgedFlowMutations drops mutations that every surface able to
-// accept a Flow result has already observed. Repository Flows and Active Flows
-// keep separate request counters and both accept results, so a repository fetch
-// started while an Active Flows fetch is still outstanding must not retire a
-// mutation that the older request still needs. A hidden Active Flows surface
-// rejects its own results and re-fetches on entry, so it never holds pruning
-// back.
+// pruneAcknowledgedFlowMutations drops base-contributing mutations that every
+// surface able to accept a Flow result has already observed. Overlay-only
+// mutations remain as same-field result-ordering watermarks until their Flow is
+// deleted; their acknowledged generation keeps them inert during fetch merges.
+// Repository Flows and Active Flows keep separate request counters and both
+// accept results, so a repository fetch started while an Active Flows fetch is
+// still outstanding must not retire a mutation that the older request still
+// needs. A hidden Active Flows surface rejects its own results and re-fetches on
+// entry, so it never holds pruning back.
 func (m Model) pruneAcknowledgedFlowMutations() Model {
 	threshold := m.currentListRequest(ui.ModeFlows)
 	if active := m.currentListRequest(ui.ModeActiveFlows); m.activeFlowSurfaceVisible() && active < threshold {
@@ -1831,7 +1985,7 @@ func (m Model) pruneAcknowledgedFlowMutations() Model {
 	}
 	retained := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
 	for _, mutation := range m.latestFlowMutations {
-		if mutation.generation >= threshold {
+		if mutation.field.overlayOnly() || mutation.generation >= threshold {
 			retained = append(retained, mutation)
 		}
 	}
@@ -1975,6 +2129,13 @@ func (m Model) clearDeletedFlowState(flowID string) Model {
 	if record, ok := m.activeFlows.Selected(); ok && record.FlowID == flowID {
 		m.selectedActiveFlowPhaseID = ""
 	}
+	retainedMutations := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
+	for _, mutation := range m.latestFlowMutations {
+		if mutation.record.FlowID != flowID {
+			retainedMutations = append(retainedMutations, mutation)
+		}
+	}
+	m.latestFlowMutations = retainedMutations
 	return m
 }
 

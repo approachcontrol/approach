@@ -75,6 +75,7 @@ right. The essentials:
 | `ctrl+a` | Toggle Active Flows (all repos) |
 | `/` | Fuzzy filter the active pane |
 | `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
+| `F` | In a settled Beads Ready pane, create the selected Bead's Flow and start its first actionable phase; pull in eligible Git contexts and elsewhere outside that Ready selection |
 | `f5` | Rescan repositories and refresh both stored content panes; Active Flows also refreshes while its takeover is open |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent |
@@ -133,20 +134,37 @@ page the raw human-readable output of `bd show <id> --readonly` through
 invalidates an older result; delivery also requires the same bead to remain the
 visible selection.
 
-In Ready only, press `f` on a settled visible selection whose Bead has a usable
-ID to create one Approach-owned Flow in the selected repository.
+In Ready only, press `f` or `F` on a settled visible selection whose Bead has a
+usable ID to create one Approach-owned Flow in the selected repository.
 Its title is `<trimmed bead ID>: <trimmed bead title>` and its instructions are
 ``Use Bead <id> as the durable source of requirements. Read it with `bd show <id>` before planning or implementation.`` The configured Flow preset supplies
-the phase graph, and the shortcut prepares the Flow exactly like a Flows-pane
+the phase graph, and both shortcuts prepare the Flow exactly like a Flows-pane
 `n` submission with Plan Now off: it creates the `flow/<slug>` branch and
 worktree from the repository's current HEAD, records the start metadata, and
-runs the bootstrap hook. It does not link a plan or issue, start a phase,
-launch an agent, or invoke `bd`; the Bead remains untouched.
+runs the bootstrap hook. Lowercase `f` then parks the Flow without linking a
+plan or issue, starting a phase, or launching an agent. Uppercase `F` instead
+starts the first actionable phase through the normal creation-time Flow launch
+path, using the configured agent, model, reasoning effort, prompt templates,
+session root, and default-on headless setting. CLI agents stay embedded for this
+creation-time start even in tmux mode; external-only agents keep their normal
+external route. Neither shortcut invokes `bd`, so the Bead remains untouched.
 
-The result is the same parked Flow the Flows-pane `n` form creates, so `g` on
-its first phase launches the agent inside the Flow's isolated worktree. If the
-worktree cannot be created, the Flow record is still persisted with its
-launchable phases blocked and the error is shown in the status line. A Flow that
+The Ready selection owns both keys while either request is in flight, preventing
+repeated or mixed presses from creating duplicates. `F` is advertised only when
+an agent is configured; when it is not, the owned key is consumed instead of
+falling through to pull. Repository changes invalidate stale completions and
+release any held launch reservation. Outside an owned Ready selection, `F`
+retains its normal pull behavior.
+
+Lowercase `f` produces the same parked Flow as the Flows-pane `n` form, so `g`
+on its first phase launches the agent inside the isolated worktree. For either
+Ready shortcut, an initial store failure leaves no Flow; worktree failure keeps
+the persisted Flow with its launchable phases blocked; start-metadata failure
+keeps the Flow and reports its ID even though the new worktree could not be
+recorded; and bootstrap failure keeps the recorded worktree with blocked
+phases. For uppercase `F`, later reservation, launch-bookkeeping, and
+agent-spawn failures also keep the Flow for recovery and release their
+reservation. A Flow that
 has no worktree at all — one created through `approach flow create` without
 `--worktree-path`, for example — gets one created on its first phase launch
 rather than running the agent in the repository root; when that creation is
