@@ -319,6 +319,68 @@ func TestReturningFromActiveFlowsRestartsSelectedEpicExpansion(t *testing.T) {
 	}
 }
 
+func TestActiveFlowsTakeoverInvalidatesBottomFocusedBeadExpansion(t *testing.T) {
+	t.Parallel()
+
+	childrenCalls := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListChildrenBeads: func(_ string, parentID string) ([]beadsquery.Bead, error) {
+			childrenCalls++
+			return []beadsquery.Bead{{ID: parentID + "-child", Title: "Child"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListFlows:      func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, staleCmd := update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic-before", Title: "Before", IssueType: "epic"}},
+	})
+	if staleCmd == nil {
+		t.Fatal("accepted epic did not start expansion")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %v, want bottom Flows focus", m.Mode())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("mode = %v, want Active Flows takeover", m.Mode())
+	}
+
+	var backgroundCmd tea.Cmd
+	m, backgroundCmd = update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{{ID: "epic-background", Title: "Background", IssueType: "epic"}},
+	})
+	if backgroundCmd != nil {
+		t.Fatalf("background Beads result started expansion during takeover: %T", backgroundCmd)
+	}
+	m, _ = update(m, staleCmd())
+	if childrenCalls != 1 {
+		t.Fatalf("stale command calls = %d, want one executed query", childrenCalls)
+	}
+
+	m, returnCmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeFlows || returnCmd == nil {
+		t.Fatalf("return from takeover = mode %v cmd %T, want Flows and deferred refresh", m.Mode(), returnCmd)
+	}
+	result := returnCmd()
+	if batch, ok := result.(tea.BatchMsg); ok {
+		for _, cmd := range batch {
+			m, _ = update(m, cmd())
+		}
+	} else {
+		m, _ = update(m, result)
+	}
+	if childrenCalls != 2 || !strings.Contains(ansi.Strip(m.View()), "epic-background-child") {
+		t.Fatalf("return did not start a fresh expansion: calls=%d\n%s", childrenCalls, ansi.Strip(m.View()))
+	}
+}
+
 func TestBeadExpansionFilterClearInvalidatesFilteredEpicAndRestartsTopEpic(t *testing.T) {
 	t.Parallel()
 

@@ -311,6 +311,7 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 		m.activeFlowReturnPane = m.activePane
 		m.activeFlowReturnContent = m.contentPane
 		m.activeFlowReturnSet = true
+		m = m.clearBeadExpansion()
 		m.activeFlowSurface = true
 		m = m.resetModeCursorsForSwitch(previousMode, ui.ModeActiveFlows)
 		return m.startActiveFlowsFetchWithRefreshTick()

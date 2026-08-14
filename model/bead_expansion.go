@@ -26,6 +26,9 @@ func isEpicBead(bead beadsquery.Bead) bool {
 // focus: the top pane remains visible and must reflow while the bottom pane is
 // focused.
 func (m Model) reconcileBeadExpansion() (Model, tea.Cmd) {
+	if m.activeFlowSurfaceVisible() {
+		return m.clearBeadExpansion(), nil
+	}
 	mode := m.topMode
 	index, ok := beadSubviewIndex(mode)
 	if !ok {
@@ -74,6 +77,9 @@ func (m Model) reconcileBeadExpansion() (Model, tea.Cmd) {
 }
 
 func (m Model) handleBeadExpansionResult(msg beadExpansionResultMsg) Model {
+	if m.activeFlowSurfaceVisible() {
+		return m
+	}
 	if msg.target.token == 0 || msg.target != m.beadExpansion.target {
 		return m
 	}

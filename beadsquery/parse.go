@@ -116,10 +116,7 @@ func parsePriorityBeads(text, kind string) ([]Bead, error) {
 		if records[i].bead.Priority != records[j].bead.Priority {
 			return records[i].bead.Priority < records[j].bead.Priority
 		}
-		if order := naturalCompareIDs(records[i].bead.ID, records[j].bead.ID); order != 0 {
-			return order < 0
-		}
-		return records[i].bead.ID < records[j].bead.ID
+		return naturalCompareIDs(records[i].bead.ID, records[j].bead.ID) < 0
 	})
 	return beadsFromParsed(records), nil
 }

@@ -51,27 +51,32 @@ func TestParseOpenSortsCounterIDsNaturally(t *testing.T) {
 	}
 }
 
-func TestParseReadyUsesRawIDAsFinalTieBreak(t *testing.T) {
+func TestExistingPriorityParsersDoNotApplyRawIDTieBreak(t *testing.T) {
 	t.Parallel()
 
-	inputs := []string{
-		`[
-			{"id":"bd-1","priority":1,"title":"Plain"},
-			{"id":"bd-01","priority":1,"title":"Padded"}
-		]`,
-		`[
-			{"id":"bd-01","priority":1,"title":"Padded"},
-			{"id":"bd-1","priority":1,"title":"Plain"}
-		]`,
+	parsers := []struct {
+		name  string
+		parse func(string) ([]beadsquery.Bead, error)
+	}{
+		{name: "open", parse: beadsquery.ParseOpen},
+		{name: "ready", parse: beadsquery.ParseReady},
+		{name: "blocked", parse: beadsquery.ParseBlocked},
+		{name: "in-progress", parse: beadsquery.ParseInProgress},
 	}
-	for _, input := range inputs {
-		got, err := beadsquery.ParseReady(input)
-		if err != nil {
-			t.Fatalf("ParseReady() error = %v", err)
-		}
-		if got[0].ID != "bd-01" || got[1].ID != "bd-1" {
-			t.Fatalf("ParseReady() IDs = %q, %q, want bd-01, bd-1", got[0].ID, got[1].ID)
-		}
+	for _, parser := range parsers {
+		parser := parser
+		t.Run(parser.name, func(t *testing.T) {
+			got, err := parser.parse(`[
+				{"id":"bd-1","priority":1,"title":"Plain"},
+				{"id":"bd-01","priority":1,"title":"Padded"}
+			]`)
+			if err != nil {
+				t.Fatalf("parse() error = %v", err)
+			}
+			if got[0].ID != "bd-1" || got[1].ID != "bd-01" {
+				t.Fatalf("parse() IDs = %q, %q, want input order bd-1, bd-01", got[0].ID, got[1].ID)
+			}
+		})
 	}
 }
 
