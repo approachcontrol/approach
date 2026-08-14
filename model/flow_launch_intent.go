@@ -7,9 +7,8 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 )
 
-// flowLaunchKind is the closed set of launch intents the lifecycle can be asked
-// to run. Create-phase is reserved for later migration; every other declared
-// kind is implemented today.
+// flowLaunchKind is the closed set of launch intents implemented by the
+// lifecycle's sole admission and event-handling boundary.
 type flowLaunchKind int
 
 const (

@@ -225,7 +225,7 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 	case flowLaunchKindSavedSessionResume:
 		return m.admitSavedSessionFlowLaunch(intent)
 	default:
-		// Later beads route the remaining kinds; nothing submits them yet.
+		// Reject values outside the lifecycle's closed intent-kind set.
 		return m, nil, false
 	}
 }
@@ -337,9 +337,9 @@ func (m Model) cachedFlowLaunchTarget(intent flowLaunchIntent) (flowstore.FlowRe
 	return record, phase, true
 }
 
-// flowLaunchAdmissionOccupied reports whether anything already owns this Flow.
-// It spans the lifecycle's own attempts and every launch source that has not
-// been migrated yet, which is what keeps the two mutually exclusive per Flow.
+// flowLaunchAdmissionOccupied reports whether the lifecycle attempt map or an
+// installed Flow terminal already owns this Flow. Those ownership forms are
+// mutually exclusive per exact Flow ID.
 func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {

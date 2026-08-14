@@ -161,6 +161,25 @@ func bypass(m Model, ctx launchContext) {
 	}
 }
 
+func TestFlowLaunchFunctionContractTracksSinkPassedAsArgument(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "argument.go", `package model
+func bypass(m Model, ctx launchContext) {
+	invoke(m.openFlowEmbeddedTerminalReserved, ctx)
+}`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := file.Decls[0].(*ast.FuncDecl)
+	key := flowLaunchFunctionKey{name: function.Name.Name}
+	contracts := map[flowLaunchFunctionKey]flowLaunchFunctionContract{
+		key: flowLaunchFunctionContractForBody(function.Body),
+	}
+	if !contractSinkReferences(contracts, "openFlowEmbeddedTerminalReserved")[key] {
+		t.Fatal("function argument hid openFlowEmbeddedTerminalReserved from the launch boundary inventory")
+	}
+}
+
 func parseFlowLaunchFunctionContracts(t *testing.T, includeTests bool) map[flowLaunchFunctionKey]flowLaunchFunctionContract {
 	t.Helper()
 	entries, err := os.ReadDir(".")
@@ -312,14 +331,14 @@ func declaredFlowLaunchKinds(t *testing.T) map[string]bool {
 	return kinds
 }
 
-func contractDirectCallers(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, called string) map[flowLaunchFunctionKey]bool {
-	callers := make(map[flowLaunchFunctionKey]bool)
+func contractSinkReferences(contracts map[flowLaunchFunctionKey]flowLaunchFunctionContract, sink string) map[flowLaunchFunctionKey]bool {
+	references := make(map[flowLaunchFunctionKey]bool)
 	for key, contract := range contracts {
-		if contract.calls[called] {
-			callers[key] = true
+		if contract.identifiers[sink] {
+			references[key] = true
 		}
 	}
-	return callers
+	return references
 }
 
 func TestFlowLaunchLifecycleBoundary(t *testing.T) {
@@ -361,13 +380,15 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	// reviewed lifecycle adapters or an explicitly non-Flow neighboring route.
 	// Adding a new wrapper or source fails even when it declares no intent kind.
 	wiring := flowLaunchFunctionKey{name: "NewWithOptions"}
-	expectedSinkCallers := map[string]map[flowLaunchFunctionKey]bool{
+	creatorWiring := flowLaunchFunctionKey{name: "newFlowCreator"}
+	lifecycleWiring := flowLaunchFunctionKey{name: "newFlowLaunchSeams"}
+	expectedSinkReferences := map[string]map[flowLaunchFunctionKey]bool{
 		"CreateWithOptions":                         {wiring: true},
-		"CreateFlow":                                {{name: "createFlowLaunchWriteCmd"}: true},
+		"CreateFlow":                                {wiring: true, creatorWiring: true, {name: "createFlowLaunchWriteCmd"}: true},
 		"ReserveAgentLaunch":                        {wiring: true},
-		"ReserveLaunch":                             {{name: "createFlowLaunchReserveCmd"}: true},
-		"AddPhaseLaunchID":                          {wiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},
-		"SetStartMetadata":                          {wiring: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
+		"ReserveLaunch":                             {wiring: true, creatorWiring: true, {name: "createFlowLaunchReserveCmd"}: true},
+		"AddPhaseLaunchID":                          {wiring: true, lifecycleWiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("flowLaunchLauncher"): true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},
+		"SetStartMetadata":                          {wiring: true, creatorWiring: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
 		"openFlowEmbeddedTerminal":                  {},
 		"openFlowEmbeddedTerminalReserved":          {modelFlowLaunchFunction("openFlowEmbeddedTerminal"): true, modelFlowLaunchFunction("installFlowLaunchEmbedded"): true},
 		"runAgentLaunchWithStatus":                  {modelFlowLaunchFunction("launchAgentInRepoTmuxSession"): true, modelFlowLaunchFunction("handoffFlowLaunchTmux"): true, modelFlowLaunchFunction("launchAgentWithContextStatus"): true, modelFlowLaunchFunction("runAgentLaunchWithReservation"): true},
@@ -382,8 +403,8 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		"launchAgentAtPathWithBranch":               {modelFlowLaunchFunction("handleWorktreeCreated"): true},
 	}
 	for sink := range sinks {
-		if got, want := contractDirectCallers(contracts, sink), expectedSinkCallers[sink]; !reflect.DeepEqual(got, want) {
-			t.Errorf("production callers of launch sink %s changed: got=%v want=%v", sink, got, want)
+		if got, want := contractSinkReferences(contracts, sink), expectedSinkReferences[sink]; !reflect.DeepEqual(got, want) {
+			t.Errorf("production references to launch sink %s changed: got=%v want=%v", sink, got, want)
 		}
 	}
 	for _, source := range sources {
