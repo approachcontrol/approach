@@ -11,6 +11,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 const flowCreateInProgressStatus = "Flow creation is already in progress"
@@ -343,7 +344,7 @@ func createFlowLaunchSessionsCmd(seams flowLaunchSeams, attempt flowLaunchAttemp
 			return event
 		}
 		for _, record := range records {
-			if flowSessionLive(record.Status, record.EndedAt) {
+			if sessions.IsActive(record.Status, record.EndedAt) {
 				event.Err = "Flow ID has an active session"
 				break
 			}
