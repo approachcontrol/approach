@@ -111,13 +111,9 @@ type flowLaunchIntent struct {
 	// because the read command has no Model. The read stage uses the record's
 	// repo path when it has one and this otherwise.
 	FallbackRepoPath string
-	// SavedSession is the cached row that caused saved-session admission. It is
-	// intentionally not authoritative; SessionKey is the only identity carried
-	// into the exact refresh.
-	SavedSession sessions.SessionRecord
-	SessionKey   flowLaunchSavedSessionKey
-	Create       flowLaunchCreateRequest
-	Settings     flowLaunchAgentSettingsSnapshot
+	SessionKey       flowLaunchSavedSessionKey
+	Create           flowLaunchCreateRequest
+	Settings         flowLaunchAgentSettingsSnapshot
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way

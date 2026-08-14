@@ -13,6 +13,7 @@ import (
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -34,10 +35,11 @@ func testStashes() []gitquery.Stash {
 	}
 }
 
-// testFlowRecords mirrors every Flow record a test feeds into a pane so the
-// authoritative ReadFlow seam can answer with the same record the surface
-// shows. Package tests never run in parallel, so one registry is enough.
+// The test record registries mirror Flow and session records fed into panes so
+// authoritative read seams can answer with the same records the surfaces show.
+// Package tests never run in parallel, so process-wide registries are enough.
 var testFlowRecords = map[string]flowstore.FlowRecord{}
+var testSessionRecords = map[string]sessions.SessionRecord{}
 
 func recordTestFlowRecords(records []flowstore.FlowRecord) {
 	for _, record := range records {
@@ -47,11 +49,31 @@ func recordTestFlowRecords(records []flowstore.FlowRecord) {
 	}
 }
 
+func testSessionRecordKey(provider sessions.Provider, sessionID string) string {
+	return string(provider) + "\x00" + sessionID
+}
+
+func recordTestSessionRecords(records []sessions.SessionRecord) {
+	for _, record := range records {
+		if record.SessionID != "" {
+			testSessionRecords[testSessionRecordKey(record.Provider, record.SessionID)] = record
+		}
+	}
+}
+
 // newTestModel builds a Model and, unless the test supplies its own, points the
 // authoritative Flow read at the records the test feeds into its panes. Tests
 // that need the persisted record to diverge from the cached snapshot set
 // Options.ReadFlow explicitly.
 func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
+	if opts.ReadSession == nil {
+		opts.ReadSession = func(provider sessions.Provider, sessionID string) (sessions.SessionRecord, error) {
+			if record, ok := testSessionRecords[testSessionRecordKey(provider, sessionID)]; ok {
+				return record, nil
+			}
+			return sessions.SessionRecord{}, fmt.Errorf("session %s/%s not found", provider, sessionID)
+		}
+	}
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
 			if record, ok := testFlowRecords[flowID]; ok {
@@ -122,9 +144,40 @@ func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
 	if request, ok := msg.(flowTerminalOpenRequest); ok {
 		return model.OpenFlowEmbeddedTerminalForTest(m, request.LaunchContext)
 	}
+	switch msg := msg.(type) {
+	case model.SessionResultMsg:
+		recordTestSessionRecords(msg.Sessions)
+	case model.WorktreeSessionResultMsg:
+		recordTestSessionRecords(msg.Sessions)
+	}
 	msg = stampListRequest(m, msg)
 	tm, cmd := m.Update(msg)
 	return tm.(model.Model), cmd
+}
+
+func resumeSavedSessionForTest(t *testing.T, m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := update(m, msg)
+	if cmd == nil {
+		return m, nil
+	}
+	return update(m, cmd())
+}
+
+func selectSavedSessionForTest(t *testing.T, m model.Model) (model.Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		return m, nil
+	}
+	msg := cmd()
+	m, cmd = update(m, msg)
+	if cmd == nil {
+		return m, nil
+	}
+	msg = cmd()
+	m, cmd = update(m, msg)
+	return m, cmd
 }
 
 func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {

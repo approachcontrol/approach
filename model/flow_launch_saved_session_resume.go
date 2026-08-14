@@ -17,22 +17,22 @@ const (
 )
 
 // routeSavedSessionResume is the one record-based entry point for all three UI
-// surfaces. A cached Flow association is only an initial reservation hint; a
-// cached non-Flow record keeps the surface's established direct route.
+// surfaces. The cached row supplies only the exact provider/session key; the
+// authoritative refresh decides whether the established non-Flow route or the
+// Flow lifecycle owns the resume.
 func (m Model) routeSavedSessionResume(record sessions.SessionRecord, origin flowLaunchOrigin) (Model, tea.Cmd) {
-	if strings.TrimSpace(record.FlowID) == "" {
-		return m.routeNonFlowSavedSessionResume(record, origin)
+	if strings.TrimSpace(record.SessionID) == "" {
+		return m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed"), nil
 	}
 	key, err := newFlowLaunchSavedSessionKey(record.Provider, record.SessionID)
 	if err != nil {
 		return m.setStatus(statusOther, err.Error()), nil
 	}
 	intent := flowLaunchIntent{
-		Kind:         flowLaunchKindSavedSessionResume,
-		FlowID:       strings.TrimSpace(record.FlowID),
-		Origin:       origin,
-		SavedSession: record,
-		SessionKey:   key,
+		Kind:       flowLaunchKindSavedSessionResume,
+		FlowID:     savedSessionFlowLaunchProvisionalID(key),
+		Origin:     origin,
+		SessionKey: key,
 	}
 	next, cmd, _ := m.requestFlowLaunch(intent)
 	return next, cmd
@@ -55,17 +55,14 @@ func (m Model) routeNonFlowSavedSessionResume(record sessions.SessionRecord, ori
 }
 
 func (m Model) admitSavedSessionFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
-	flowID := strings.TrimSpace(intent.FlowID)
 	key, err := newFlowLaunchSavedSessionKey(intent.SessionKey.Provider, intent.SessionKey.SessionID)
-	if err != nil || flowID == "" {
-		if err == nil {
-			err = fmt.Errorf("saved session resume requires a cached Flow ID")
-		}
+	if err != nil {
 		return m.setStatus(statusOther, err.Error()), nil, false
 	}
+	flowID := savedSessionFlowLaunchProvisionalID(key)
 	intent.FlowID = flowID
 	intent.SessionKey = key
-	if _, occupied := m.flowLaunchSessionOwners[key]; occupied || m.flowLaunchAdmissionOccupied(flowID) {
+	if _, occupied := m.flowLaunchSessionOwners[key]; occupied {
 		return m.setStatus(statusOther, savedSessionResumePendingStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -85,6 +82,10 @@ func (m Model) admitSavedSessionFlowLaunch(intent flowLaunchIntent) (Model, tea.
 		return m.setStatus(statusOther, savedSessionResumePendingStatus), nil, false
 	}
 	return next, savedSessionFlowLaunchSessionReadCmd(next.launchSeams, intent, token), true
+}
+
+func savedSessionFlowLaunchProvisionalID(key flowLaunchSavedSessionKey) string {
+	return fmt.Sprintf("\x00saved-session:%s:%d:%s", key.Provider, len(key.SessionID), key.SessionID)
 }
 
 func savedSessionFlowLaunchSessionReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, token string) tea.Cmd {

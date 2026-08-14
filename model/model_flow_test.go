@@ -8923,7 +8923,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if sessionTick != nil {
 		t.Fatal("opening a session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -8979,7 +8979,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if sessionTick != nil {
 		t.Fatal("opening an exited session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -10557,7 +10557,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if view := m.View(); !strings.Contains(view, "2 codex feature/session exited") {
 		t.Fatalf("session terminal should use the next global tab number:\n%s", view)
 	}
@@ -10604,7 +10604,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -10800,30 +10800,25 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-5", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/five", Branch: "feature/five"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-6", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/six", Branch: "feature/six"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
-	openSessionIndex := func(index int, label string) {
+	openSessionIndex := func(index int) {
 		t.Helper()
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 		for range index {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 		}
-		var cmd tea.Cmd
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-		if cmd == nil {
-			t.Fatalf("%s should return a command", label)
-		}
-		m, _ = update(m, cmd())
+		m, _ = selectSavedSessionForTest(t, m)
 	}
 	for i := 1; i < 5; i++ {
-		openSessionIndex(i, "session picker selection")
+		openSessionIndex(i)
 	}
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts = %d, want 9", starts)
 	}
 
-	openSessionIndex(5, "session picker selection at mixed-scope cap")
+	openSessionIndex(5)
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts after mixed-scope cap = %d, want 9", starts)
 	}

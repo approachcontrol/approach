@@ -68,9 +68,13 @@ func (state flowLaunchState) String() string {
 // re-reserves while the slot it is about to dismiss is still installed, which
 // is what keeps the Flow owned across the correction.
 type flowLaunchAttempt struct {
-	Token               string
-	Kind                flowLaunchKind
-	State               flowLaunchState
+	Token string
+	Kind  flowLaunchKind
+	State flowLaunchState
+	// FlowID is an exact persisted Flow ID except while a saved-session resume
+	// owns only its provider/session key during the authoritative session read.
+	// That state uses an internal non-persistable provisional ID, then transfers
+	// atomically to the refreshed Flow ID or releases into the non-Flow route.
 	FlowID              string
 	PhaseID             string
 	Origin              flowLaunchOrigin
