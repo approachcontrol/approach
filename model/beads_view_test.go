@@ -434,18 +434,33 @@ func TestBeadExpansionUsesStoredTopPaneWhileBottomFocused(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, model.BeadsOpenResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
+		Beads: []beadsquery.Bead{
+			{ID: "before-0", Title: "Before zero"}, {ID: "before-1", Title: "Before one"},
+			{ID: "before-2", Title: "Before two"}, {ID: "before-3", Title: "Before three"},
+			{ID: "before-4", Title: "Before four"}, {ID: "before-5", Title: "Before five"},
+			{ID: "epic", Title: "Epic", IssueType: "epic"}, {ID: "after", Title: "After"},
+		},
+	})
+	var cmd tea.Cmd
+	for range 6 {
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if cmd == nil || m.BeadsScroll(ui.ModeBeadsOpen) != 1 {
+		t.Fatalf("selecting epic = cmd %T scroll %d, want pending expansion at scroll 1", cmd, m.BeadsScroll(ui.ModeBeadsOpen))
+	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %v, want bottom Flows focus", m.Mode())
 	}
-	m, cmd := update(m, model.BeadsOpenResultMsg{RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true, Beads: []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}, {ID: "after", Title: "After"}}})
-	if cmd == nil {
-		t.Fatal("bottom focus prevented stored top epic query")
-	}
 	m, _ = update(m, cmd())
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "child-1") || m.BeadsScroll(ui.ModeBeadsOpen) < 0 {
-		t.Fatalf("stored top expansion did not render/reflow while bottom focused:\n%s", view)
+	if got := m.BeadsScroll(ui.ModeBeadsOpen); got != 3 {
+		t.Fatalf("stored top expansion scroll = %d, want 3 while bottom focused:\n%s", got, view)
+	}
+	if !strings.Contains(view, "child-1") || !strings.Contains(view, "child-3") || strings.Contains(view, "after") {
+		t.Fatalf("stored top expansion did not expose the expected reflowed lines while bottom focused:\n%s", view)
 	}
 }
 
