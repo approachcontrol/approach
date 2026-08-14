@@ -37,10 +37,12 @@ type flowLaunchCreateRequest struct {
 	Headless     bool
 }
 
-// flowLaunchCreateRequestedMsg keeps the form thin: it carries intent back to
-// Update, where requestFlowLaunch performs admission and owns every side effect.
+// flowLaunchCreateRequestedMsg keeps the form thin: it carries intent and the
+// submitting Model's settings snapshot back to Update, where requestFlowLaunch
+// performs admission and owns every side effect.
 type flowLaunchCreateRequestedMsg struct {
-	Create flowLaunchCreateRequest
+	Create   flowLaunchCreateRequest
+	Settings flowLaunchAgentSettingsSnapshot
 }
 
 type flowLaunchCreateProof int
@@ -96,7 +98,7 @@ func (m Model) admitCreateFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	if token == "" {
 		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, "Unable to allocate a Flow launch ID"), nil, false
 	}
-	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
+	settings := intent.Settings
 	command := agent.Normalize(settings.Command)
 	if command == "" || agent.NormalizeStored(settings.Command) != command {
 		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
@@ -761,11 +763,15 @@ func createFlowLaunchRecoveryCmd(seams flowLaunchSeams, attempt flowLaunchAttemp
 		event.Stage, event.From = flowLaunchStageCreateRecovered, flowLaunchStateFailurePersisting
 		errs := append([]string(nil), parts...)
 		if metadata {
+			commit := prior.Commit
+			if strings.TrimSpace(commit) == "" && seams.ResolveCommit != nil {
+				commit = seams.ResolveCommit(prior.Worktree.WorktreePath)
+			}
 			if seams.SetStartMetadata == nil {
 				errs = append(errs, "record start metadata: seam unavailable")
 			} else if _, err := seams.SetStartMetadata(flowstore.StartMetadataUpdate{
 				FlowID: prior.FlowID, WorktreePath: prior.Worktree.WorktreePath, Branch: prior.Worktree.Branch,
-				BaseRef: attempt.Create.BaseRef, Commit: prior.Commit,
+				BaseRef: attempt.Create.BaseRef, Commit: commit,
 			}); err != nil {
 				errs = append(errs, "record start metadata: "+err.Error())
 			}

@@ -2110,7 +2110,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case flowLaunchEventMsg:
 		return m.handleFlowLaunchEvent(msg)
 	case flowLaunchCreateRequestedMsg:
-		intent := flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: msg.Create.Presentation.Origin, Create: msg.Create}
+		intent := flowLaunchIntent{
+			Kind: flowLaunchKindCreatePhase, Origin: msg.Create.Presentation.Origin,
+			Create: msg.Create, Settings: msg.Settings,
+		}
 		next, cmd, _ := m.requestFlowLaunch(intent)
 		return next, cmd
 	case flowLaunchFailurePersistedMsg:

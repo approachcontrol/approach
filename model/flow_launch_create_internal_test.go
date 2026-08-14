@@ -64,6 +64,38 @@ func TestBeadsReadyStartRoutesCreatePhaseBeforeSideEffects(t *testing.T) {
 		msg.Create.RepoPath != "/dev/alpha" || msg.Create.Bead != (flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}) || !msg.Create.Headless {
 		t.Fatalf("Ready F create request = %#v", msg.Create)
 	}
+	if msg.Settings.Command != "codex" {
+		t.Fatalf("Ready F settings command = %q, want codex", msg.Settings.Command)
+	}
+}
+
+func TestCreateFlowLaunchSourceSnapshotsSettingsBeforeQueuedRequestIsHandled(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m := h.model(t)
+	m.codexModel = "gpt-5.5"
+	m.codexReasoningEffort = "high"
+	m.sessionStateRoot = "/state/request"
+	m.flowPromptTemplates.Plan = "REQUEST TEMPLATE: {flow_title}"
+	var request uint64
+	m, request = m.nextFlowCreateRequest()
+	cmd := tagFlowCreateRequest(m.createFlowAndLaunchPlanForRepo("/dev/alpha", "New Flow", "Write the plan.", "main", true), request)
+
+	// A settings result already queued ahead of the create request belongs to
+	// the next launch, not the request the user submitted under codex.
+	m.agentCommand = "claude"
+	m.codexModel = "gpt-5.6-sol"
+	m.codexReasoningEffort = "low"
+	m.sessionStateRoot = "/state/later"
+	m.flowPromptTemplates.Plan = "LATER TEMPLATE"
+	updated, launchCmd := m.Update(cmd())
+	m = updated.(Model)
+	m = drainCreateLaunch(t, m, launchCmd)
+
+	if len(h.contexts) != 1 || h.contexts[0].Command != "codex" || h.contexts[0].Model != "gpt-5.5" ||
+		h.contexts[0].ReasoningEffort != "high" || h.contexts[0].SessionStateRoot != "/state/request" ||
+		!strings.Contains(h.contexts[0].InitialPrompt, "REQUEST TEMPLATE") {
+		t.Fatalf("launch contexts = %#v, status=%q order=%#v, want submitting Model's codex snapshot", h.contexts, m.status.Text, h.order)
+	}
 }
 
 func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRecord(t *testing.T) {
@@ -301,7 +333,8 @@ func (h *createLaunchHarness) admitSource(t *testing.T, m Model, origin flowLaun
 		Presentation: flowLaunchCreatePresentation{Origin: origin, Request: request},
 		RepoPath:     "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", Bead: h.record.Bead, BaseRef: "main", Headless: h.record.Headless,
 	}
-	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: origin, Create: create})
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
+	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: origin, Create: create, Settings: settings})
 	if !admitted || cmd == nil {
 		t.Fatalf("create admission = %v, cmd=%v, status=%q", admitted, cmd != nil, next.status.Text)
 	}
@@ -643,7 +676,8 @@ func TestCreateFlowLaunchPreservesRequestTimeAgentSnapshotAcrossAllocation(t *te
 	var request uint64
 	m, request = m.nextFlowCreateRequest()
 	create := flowLaunchCreateRequest{Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: request}, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: true}
-	m, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Create: create})
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
+	m, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Create: create, Settings: settings})
 	if !admitted || cmd == nil {
 		t.Fatal("create intent was not admitted")
 	}
@@ -877,6 +911,9 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 			}
 			if metadata != tc.wantMetadata || len(h.phaseUpdates) != tc.wantBlocks || h.releases != tc.wantRelease {
 				t.Fatalf("cancellation result: order=%#v updates=%#v releases=%d", h.order, h.phaseUpdates, h.releases)
+			}
+			if tc.stage == flowLaunchStageCreateWorktree && h.record.Commit != "abc123" {
+				t.Fatalf("stale post-worktree recovery commit = %q, want abc123", h.record.Commit)
 			}
 			if m.status.Text != "newer creation status" || m.activeFlowCreate == 0 || len(h.contexts) != 0 {
 				t.Fatalf("newer presentation changed: status=%q active=%d contexts=%#v", m.status.Text, m.activeFlowCreate, h.contexts)

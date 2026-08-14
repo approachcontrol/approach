@@ -639,11 +639,12 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, head
 }
 
 func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
 	return func() tea.Msg {
 		return flowLaunchCreateRequestedMsg{Create: flowLaunchCreateRequest{
 			Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow},
 			RepoPath:     repoPath, Title: title, Instructions: instructions, BaseRef: baseRef, Headless: headless,
-		}}
+		}, Settings: settings}
 	}
 }
 
@@ -693,11 +694,12 @@ func (m Model) createReadyBeadFlowOnly(repoPath, title, instructions string, bea
 }
 
 func (m Model) requestReadyBeadFlowLaunch(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64) tea.Cmd {
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
 	return func() tea.Msg {
 		return flowLaunchCreateRequestedMsg{Create: flowLaunchCreateRequest{
 			Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginReadyBead, Request: request},
 			RepoPath:     repoPath, Title: title, Instructions: instructions, Bead: bead, Headless: true,
-		}}
+		}, Settings: settings}
 	}
 }
 

@@ -71,6 +71,96 @@ func TestGenericAgentLaunchRequestRejectsEveryFlowContextMarker(t *testing.T) {
 	}
 }
 
+func flowLaunchFunctionContractForBody(body *ast.BlockStmt) flowLaunchFunctionContract {
+	contract := flowLaunchFunctionContract{calls: make(map[string]bool), identifiers: make(map[string]bool)}
+	aliases := make(map[string]map[string]bool)
+	addAlias := func(name string, value ast.Expr) {
+		if name == "" {
+			return
+		}
+		targets := flowLaunchCallableNames(value, aliases)
+		if len(targets) == 0 {
+			return
+		}
+		if aliases[name] == nil {
+			aliases[name] = make(map[string]bool)
+		}
+		for target := range targets {
+			aliases[name][target] = true
+		}
+	}
+	// Collect local function-value aliases first. Alias scopes are deliberately
+	// conservative: retaining every possible target makes the boundary guard
+	// fail closed across reassignments instead of letting a later call disappear.
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.AssignStmt:
+			if len(node.Lhs) == len(node.Rhs) {
+				for i, left := range node.Lhs {
+					if name, ok := left.(*ast.Ident); ok {
+						addAlias(name.Name, node.Rhs[i])
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			if len(node.Names) == len(node.Values) {
+				for i, name := range node.Names {
+					addAlias(name.Name, node.Values[i])
+				}
+			}
+		}
+		return true
+	})
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.Ident:
+			contract.identifiers[node.Name] = true
+		case *ast.CallExpr:
+			for called := range flowLaunchCallableNames(node.Fun, aliases) {
+				contract.calls[called] = true
+			}
+		}
+		return true
+	})
+	return contract
+}
+
+func flowLaunchCallableNames(expr ast.Expr, aliases map[string]map[string]bool) map[string]bool {
+	names := make(map[string]bool)
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		if targets := aliases[expr.Name]; len(targets) != 0 {
+			for target := range targets {
+				names[target] = true
+			}
+		} else {
+			names[expr.Name] = true
+		}
+	case *ast.SelectorExpr:
+		names[expr.Sel.Name] = true
+	case *ast.ParenExpr:
+		return flowLaunchCallableNames(expr.X, aliases)
+	}
+	return names
+}
+
+func TestFlowLaunchFunctionContractTracksFunctionValueAliases(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "alias.go", `package model
+func bypass(m Model, ctx launchContext) {
+	open := m.openFlowEmbeddedTerminalReserved
+	open(ctx)
+}`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := file.Decls[0].(*ast.FuncDecl)
+	contract := flowLaunchFunctionContractForBody(function.Body)
+	if !contract.calls["openFlowEmbeddedTerminalReserved"] {
+		t.Fatal("function-value alias hid openFlowEmbeddedTerminalReserved from the launch boundary contract")
+	}
+}
+
 func parseFlowLaunchFunctionContracts(t *testing.T, includeTests bool) map[flowLaunchFunctionKey]flowLaunchFunctionContract {
 	t.Helper()
 	entries, err := os.ReadDir(".")
@@ -93,21 +183,7 @@ func parseFlowLaunchFunctionContracts(t *testing.T, includeTests bool) map[flowL
 			if !ok || function.Body == nil {
 				continue
 			}
-			contract := flowLaunchFunctionContract{calls: make(map[string]bool), identifiers: make(map[string]bool)}
-			ast.Inspect(function.Body, func(node ast.Node) bool {
-				switch node := node.(type) {
-				case *ast.Ident:
-					contract.identifiers[node.Name] = true
-				case *ast.CallExpr:
-					switch called := node.Fun.(type) {
-					case *ast.Ident:
-						contract.calls[called.Name] = true
-					case *ast.SelectorExpr:
-						contract.calls[called.Sel.Name] = true
-					}
-				}
-				return true
-			})
+			contract := flowLaunchFunctionContractForBody(function.Body)
 			key := flowLaunchFunctionKey{name: function.Name.Name}
 			if function.Recv != nil && len(function.Recv.List) == 1 {
 				key.receiver = flowLaunchReceiverName(function.Recv.List[0].Type)
@@ -290,7 +366,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		"CreateFlow":                                {{name: "createFlowLaunchWriteCmd"}: true},
 		"ReserveAgentLaunch":                        {wiring: true},
 		"ReserveLaunch":                             {{name: "createFlowLaunchReserveCmd"}: true},
-		"AddPhaseLaunchID":                          {wiring: true, {name: "createFlowLaunchIDCmd"}: true},
+		"AddPhaseLaunchID":                          {wiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},
 		"SetStartMetadata":                          {wiring: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
 		"openFlowEmbeddedTerminal":                  {},
 		"openFlowEmbeddedTerminalReserved":          {modelFlowLaunchFunction("openFlowEmbeddedTerminal"): true, modelFlowLaunchFunction("installFlowLaunchEmbedded"): true},

@@ -79,6 +79,8 @@ const (
 // flowLaunchIntent is what a caller submits. It carries only what the caller
 // knows: everything else — agent settings, prompt templates, phase, headless
 // preference — the lifecycle reads from the Model or the authoritative record.
+// Create-phase is the exception for settings: its source is asynchronous, so
+// it carries the immutable snapshot captured by the submitting Model.
 // FallbackRepoPath exists because a stage that runs without a Model needs the
 // current repo path. Phase resume and repair use it as a last candidate when
 // resolving their launch directory.
@@ -116,6 +118,7 @@ type flowLaunchIntent struct {
 	SavedSession sessions.SessionRecord
 	SessionKey   flowLaunchSavedSessionKey
 	Create       flowLaunchCreateRequest
+	Settings     flowLaunchAgentSettingsSnapshot
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way
