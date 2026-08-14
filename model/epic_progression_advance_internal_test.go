@@ -534,7 +534,7 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 	}
 }
 
-func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryOrEpic(t *testing.T) {
+func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryEpicOrNoncanonicalLink(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
@@ -552,7 +552,9 @@ func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryOrEpic(t *te
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			otherEpic := progressionAdvanceFlow("other-epic", repo, "epic.a", "another-epic", flowstore.StatusPending)
 			otherRepo := progressionAdvanceFlow("other-repo", "/elsewhere", "epic.a", epic, flowstore.StatusPending)
-			return []flowstore.FlowRecord{otherEpic, otherRepo}, nil
+			noncanonicalChild := progressionAdvanceFlow("noncanonical-child", repo, "epic.a ", epic, flowstore.StatusPending)
+			noncanonicalEpic := progressionAdvanceFlow("noncanonical-epic", repo, "epic.a", " "+epic, flowstore.StatusPending)
+			return []flowstore.FlowRecord{otherEpic, otherRepo, noncanonicalChild, noncanonicalEpic}, nil
 		},
 		createFlow: func(candidate FlowStartRequest) (FlowStartResult, error) {
 			request = candidate
@@ -563,6 +565,9 @@ func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryOrEpic(t *te
 		},
 		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
+		},
+		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, nil
 		},
 	}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})

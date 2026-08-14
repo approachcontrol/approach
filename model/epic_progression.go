@@ -193,8 +193,8 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			}
 			exactLinked := make(map[string]struct{})
 			for _, flow := range flows {
-				if filepath.Clean(flow.RepoPath) == repoPath && strings.TrimSpace(flow.Bead.EpicID) == epicID && strings.TrimSpace(flow.Bead.ID) != "" {
-					exactLinked[strings.TrimSpace(flow.Bead.ID)] = struct{}{}
+				if filepath.Clean(flow.RepoPath) == repoPath && flow.Bead.EpicID == epicID && flow.Bead.ID != "" {
+					exactLinked[flow.Bead.ID] = struct{}{}
 				}
 			}
 			intersection, linked := 0, 0
