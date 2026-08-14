@@ -2044,10 +2044,13 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+	if msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request) {
 		return m, nil
 	}
 	m = m.clearFlowCreateRequest(msg.Request)
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to create flow"
@@ -2060,10 +2063,13 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 }
 
 func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+	if msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request) {
 		return m, nil
 	}
 	m = m.clearFlowCreateRequest(msg.Request)
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
 	title := strings.TrimSpace(msg.Title)
 	if title == "" {
 		title = "Flow"

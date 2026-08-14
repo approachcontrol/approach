@@ -1305,7 +1305,9 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 	if !reserved {
 		m = finishSlot(m)
 		if msg.Create != nil {
-			return m, flowLaunchFailurePersistCmdForCreate(m.launchSeams.SetPhase, update, ctx, errText, msg.Create)
+			// A newer exact-Flow attempt owns phase recovery now. The stale create
+			// may release only its request and slot, never mutate the winner's phase.
+			return m.clearFlowCreateRequest(msg.Create.Request), nil
 		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}
@@ -1325,6 +1327,7 @@ func flowLaunchFailurePersistCmdForCreate(
 ) tea.Cmd {
 	return func() tea.Msg {
 		msg := flowLaunchFailurePersistCmd(setPhase, update, ctx, errText)().(flowLaunchFailurePersistedMsg)
+		msg.OriginalErr = "Flow " + ctx.FlowID + ": " + errText
 		msg.Create = create
 		return msg
 	}

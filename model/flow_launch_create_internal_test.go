@@ -646,9 +646,12 @@ func TestCreateFlowLaunchMissingPrefillSlotRecoversPhaseAndCompletesRequest(t *t
 	if !strings.Contains(m.status.Text, "embedded terminal closed before prompt prefill completed") {
 		t.Fatalf("missing-slot status = %q", m.status.Text)
 	}
+	if !strings.HasPrefix(m.status.Text, "Flow "+h.record.FlowID+": ") {
+		t.Fatalf("missing-slot status = %q, want exact Flow ID prefix", m.status.Text)
+	}
 }
 
-func TestCreateFlowLaunchPrefillPersistenceClearsRequestWhenAnotherAttemptWinsReservation(t *testing.T) {
+func TestCreateFlowLaunchPrefillFailureDoesNotMutatePhaseWhenAnotherAttemptWinsReservation(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	m, prefill := startInteractiveCreateUntilPrefill(t, h)
 	newer := flowLaunchAttempt{Token: "newer-token", Kind: flowLaunchKindManualPhase, FlowID: h.record.FlowID}
@@ -658,16 +661,15 @@ func TestCreateFlowLaunchPrefillPersistenceClearsRequestWhenAnotherAttemptWinsRe
 		t.Fatal("test could not install competing exact-Flow attempt")
 	}
 	prefill.Err = errors.New("prefill failed")
-	next, cmd := m.Update(prefill)
-	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("prefill failure should persist phase recovery")
+	m, cmd := m.handleFlowLaunchPrefillFailure(prefill)
+	if cmd != nil {
+		t.Fatalf("old prefill failure returned command %T, want fenced cleanup only", cmd)
 	}
-	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, cmd)
-	settled, _ := m.Update(persisted)
-	m = settled.(Model)
 	if m.activeFlowCreate != 0 {
 		t.Fatalf("active create request = %d, want cleared", m.activeFlowCreate)
+	}
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("old prefill failure mutated phase owned by winner: %#v", h.phaseUpdates)
 	}
 	attempt, exists := m.flowLaunchAttempt(h.record.FlowID)
 	if !exists || attempt.Token != newer.Token || attempt.State != flowLaunchStateReading {

@@ -12053,7 +12053,7 @@ func TestModel_NewFlowSubmissionIsSingleFlightAcrossPlanNowChoices(t *testing.T)
 	}
 }
 
-func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
+func TestModel_NewFlowStaleParkedCreateReleasesRequestAfterRepoChange(t *testing.T) {
 	listCalls := 0
 	m := newTestModel(testRepos(), model.Options{
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
@@ -12093,11 +12093,40 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("stale parked create returned command %T, want nil", cmd)
 	}
-	if got := model.ActiveFlowCreateForTest(next); got == 0 {
-		t.Fatal("stale parked create should leave current create request untouched")
+	if got := model.ActiveFlowCreateForTest(next); got != 0 {
+		t.Fatalf("active Flow create request = %d, want released stale request", got)
 	}
 	if listCalls != 0 {
 		t.Fatalf("list calls = %d, want stale result ignored", listCalls)
+	}
+}
+
+func TestModel_NewFlowStaleParkedCreateFailureReleasesRequestAfterRepoChange(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{}, errors.New("create failed")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeFlows)
+
+	m, createCmd := submitNewFlowPromptsWithCreateOptions(t, m, "Stale Failure", "Plan later", "main", false, false)
+	if createCmd == nil {
+		t.Fatal("expected parked Flow creation command")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	staleMsg := createCmd()
+	if failed, ok := staleMsg.(model.FlowCreateFailedMsg); !ok || failed.Request == 0 {
+		t.Fatalf("creation command returned %#v, want tagged FlowCreateFailedMsg", staleMsg)
+	}
+	next, cmd := update(m, staleMsg)
+	if cmd != nil {
+		t.Fatalf("stale parked create failure returned command %T, want nil", cmd)
+	}
+	if got := model.ActiveFlowCreateForTest(next); got != 0 {
+		t.Fatalf("active Flow create request = %d, want released stale request", got)
 	}
 }
 
