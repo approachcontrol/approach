@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -664,6 +665,80 @@ func TestCreateFlowLaunchRejectsSameIDReplacementAtPostBootstrapReread(t *testin
 	}
 	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
 		t.Fatalf("replacement reread result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchRejectsGenerationLossDuringLaunchIDProofReread(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.CreatedAt = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	h.addErr = errors.New("write failed")
+	h.readMutate = func(record *flowstore.FlowRecord) {
+		if h.readCalls == 2 {
+			record.CreatedAt = record.CreatedAt.Add(time.Second)
+		}
+	}
+	m := h.start(t, h.model(t))
+
+	joined := strings.Join(h.order, ",")
+	for _, forbidden := range []string{"metadata", "terminal", "block:"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("proof reread generation loss performed %q: %#v", forbidden, h.order)
+		}
+	}
+	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
+		t.Fatalf("proof reread generation result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchCancellationDoesNotRecoverAfterGenerationLoss(t *testing.T) {
+	for _, stage := range []flowLaunchStage{flowLaunchStageCreateBootstrap, flowLaunchStageCreateLaunchID} {
+		t.Run(fmt.Sprint(stage), func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+			h.record.CreatedAt = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+			if stage == flowLaunchStageCreateLaunchID {
+				h.addErr = errors.New("write failed")
+			}
+			h.readMutate = func(record *flowstore.FlowRecord) {
+				wantCall := 1
+				if stage == flowLaunchStageCreateLaunchID {
+					wantCall = 2
+				}
+				if h.readCalls == wantCall {
+					record.CreatedAt = record.CreatedAt.Add(time.Second)
+				}
+			}
+
+			m, cmd := h.admit(t, h.model(t))
+			m, event := advanceCreateLaunchToStage(t, m, cmd, stage)
+			if !event.GenerationLost {
+				t.Fatal("test event did not lose its Flow generation")
+			}
+			m.flowCreateSeq++
+			m.activeFlowCreate = m.flowCreateSeq
+			m = m.setStatusNow(statusOther, "newer creation status")
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			if len(h.phaseUpdates) != 0 || strings.Contains(strings.Join(h.order, ","), "metadata") {
+				t.Fatalf("stale generation loss recovered replacement: order=%#v updates=%#v", h.order, h.phaseUpdates)
+			}
+			if h.releases != 1 || m.status.Text != "newer creation status" || m.activeFlowCreate == 0 {
+				t.Fatalf("stale generation cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.activeFlowCreate)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchParkedMetadataRejectsGenerationLoss(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhasePending}})
+	h.record.CreatedAt = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	h.metadataMutate = func(record *flowstore.FlowRecord) {
+		record.CreatedAt = record.CreatedAt.Add(time.Second)
+	}
+	m := h.start(t, h.model(t))
+
+	if h.releases != 1 || m.activeFlowCreate != 0 || strings.Contains(m.status.Text, "Created flow") || !strings.Contains(m.status.Text, "flow generation changed") {
+		t.Fatalf("parked generation result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
 	}
 }
 

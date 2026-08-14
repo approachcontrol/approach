@@ -237,6 +237,10 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 			}
 			return m.beginCreateFlowRecovery(attempt, msg, []string{"record start metadata: " + msg.Err}, false, true)
 		}
+		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed before embedded install")
+		}
 		if msg.Parked {
 			releaseFlowLaunchReservation(msg.Release)
 			m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowCreateRequest(attempt.Create.Request)
@@ -245,10 +249,6 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 				return m.startFlowSurfaceFetch()
 			}
 			return m, nil
-		}
-		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
-			releaseFlowLaunchReservation(msg.Release)
-			return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed before embedded install")
 		}
 		root := msg.StartupRoots[0]
 		phase, ok := flowPhaseByID(msg.Record, root.PhaseID)
@@ -547,6 +547,11 @@ func createFlowLaunchIDCmd(seams flowLaunchSeams, prior flowLaunchEventMsg) tea.
 			event.RecoveryErrs = []string{fmt.Sprintf("reread flow after AddPhaseLaunchID: returned flow %q", fresh.FlowID)}
 			return event
 		}
+		if !createFlowSameGeneration(prior.CreatedRecord, fresh) {
+			event.Err += "; reread flow after AddPhaseLaunchID: flow generation changed"
+			event.Proof, event.GenerationLost = flowLaunchCreateProofUnknown, true
+			return event
+		}
 		event.Record = fresh
 		if phase, ok := flowPhaseByID(fresh, root.PhaseID); ok && flowPhaseContainsLaunch(phase, prior.Token) {
 			event.Proof = flowLaunchCreateProofPresent
@@ -657,6 +662,10 @@ func (m Model) finishCreateAfterWrite(attempt flowLaunchAttempt, errText string)
 }
 
 func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	if msg.GenerationLost {
+		releaseFlowLaunchReservation(msg.Release)
+		return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
+	}
 	switch msg.Stage {
 	case flowLaunchStageCreateSessionsRead:
 		return m.finishCreateBeforeWrite(attempt, "")
