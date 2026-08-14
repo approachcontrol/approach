@@ -81,10 +81,13 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 				id := terminalSafeSingleLine(child.ID)
 				title := terminalSafeSingleLine(child.Title)
 				body := fmt.Sprintf("↳ %s  P%d  %s", id, child.Priority, title)
+				marker := ""
 				if expansion.ReadinessKnown && expansion.ReadyIDs[child.ID] {
-					body += "  [ready]"
+					marker = "  [ready]"
 				}
-				lines = append(lines, truncateToWidth("     "+body, width))
+				const indent = "     "
+				body = truncateToWidth(body, width-ansi.StringWidth(indent)-ansi.StringWidth(marker))
+				lines = append(lines, truncateToWidth(indent+body+marker, width))
 			}
 		}
 		if !expansion.ReadinessKnown {

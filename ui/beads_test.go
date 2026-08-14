@@ -89,6 +89,33 @@ func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
 	}
 }
 
+func TestRenderBeadsPanePreservesReadyMarkerAtNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	const width = 48
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	child := beadsquery.Bead{
+		ID: "bd-child-with-a-long-identifier", Priority: 1,
+		Title: "A child title that also needs truncation",
+	}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Children: []beadsquery.Bead{child}, ReadyIDs: map[string]bool{child.ID: true},
+		ReadinessKnown: true,
+	}
+	lines := expansionVisualLines(epic, true, width, expansion)
+	if len(lines) != 2 {
+		t.Fatalf("rendered lines = %d, want parent and child", len(lines))
+	}
+	plain := ansi.Strip(lines[1])
+	if !strings.Contains(plain, "[ready]") {
+		t.Fatalf("narrow child row lost ready marker: %q", plain)
+	}
+	if got := ansi.StringWidth(lines[1]); got > width {
+		t.Fatalf("child row width = %d, want <= %d: %q", got, width, plain)
+	}
+}
+
 func TestRenderBeadsPaneEmptyChildrenStillShowsReadinessFailure(t *testing.T) {
 	t.Parallel()
 
