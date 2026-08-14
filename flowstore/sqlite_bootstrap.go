@@ -822,8 +822,25 @@ func readAndCanonicalizeLegacy(root, collection string, presets map[string]Prese
 
 func decodeLegacyFlow(flowID string, data []byte) (legacyStoredFlow, bool) {
 	raw := decodeRawFlowFields(data)
+	if raw == nil {
+		return legacyStoredFlow{}, false
+	}
 	presence := raw.dependsOnPresence()
 	headlessPresent := raw.present("headless")
+	// Preparation receipts did not exist in the legacy file store and may only
+	// be minted by the protected post-bootstrap SQLite transition. Ignore both
+	// the persisted spelling and the Go field spelling that encoding/json would
+	// otherwise accept case-insensitively. Removing the raw value before the
+	// typed decode also keeps malformed future timestamps forward-compatible.
+	for field := range raw {
+		if strings.EqualFold(field, "prepared_at") || strings.EqualFold(field, "PreparedAt") {
+			delete(raw, field)
+		}
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return legacyStoredFlow{}, false
+	}
 	var record FlowRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return legacyStoredFlow{}, false

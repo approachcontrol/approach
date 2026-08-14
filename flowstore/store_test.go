@@ -312,6 +312,40 @@ func TestStoreReadLegacyRecordWithoutHeadlessDefaultsOnWithoutRewriting(t *testi
 	}
 }
 
+func TestStoreLegacyImportIgnoresPreparationReceiptFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "valid timestamp", value: `"2026-01-01T00:00:00Z"`},
+		{name: "malformed timestamp", value: `"not-a-timestamp"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			flowID := "20260814T120000Z-legacy-receipt"
+			writeRawFlowMeta(t, root, flowID, `
+  "prepared_at": `+tt.value+`,
+  "phases": [
+    {"phase_id": "plan", "title": "Plan", "kind": "plan", "status": "ready", "order": 1,
+     "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() legacy migration error = %v", err)
+			}
+			record, err := store.Read(flowID)
+			if err != nil {
+				t.Fatalf("Read() migrated legacy Flow error = %v", err)
+			}
+			if record.PreparedAt != nil {
+				t.Fatalf("migrated legacy PreparedAt = %v, want nil", record.PreparedAt)
+			}
+		})
+	}
+}
+
 func testBoolPtr(value bool) *bool {
 	return &value
 }

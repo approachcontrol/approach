@@ -128,8 +128,9 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 	if starter.createPreparation == nil {
 		// Compatibility for direct FlowStarter callers that predate preparation
 		// receipts. This adapter runs the callback but cannot certify persistence;
-		// production Model wiring always supplies Store.CreatePreparation, and its
-		// integration tests require a durable PreparedAt receipt.
+		// production Model wiring always supplies Store.CreatePreparation. The
+		// receipt check in PrepareFlow turns this adapter into an explicit failure
+		// after bootstrap rather than allowing a receipt-less Flow to launch.
 		starter.createPreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
 			created, err := starter.createFlow(record, createOpts)
 			if err != nil {
@@ -363,10 +364,12 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		}
 		return result, s.blockStartupFailurePhases(flow, phaseID, errText, errText)
 	}
-	if finalized.PreparedAt != nil {
-		flow = finalized
-		result.Flow = finalized
+	if finalized.PreparedAt == nil {
+		errText := "Preparation receipt persistence failed: finalizer returned no preparation receipt"
+		return result, s.blockStartupFailurePhases(flow, phaseID, errText, errText)
 	}
+	flow = finalized
+	result.Flow = finalized
 
 	return result, nil
 }
