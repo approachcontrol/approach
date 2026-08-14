@@ -43,6 +43,18 @@ type beadSubviewState struct {
 	repoPath string
 }
 
+type beadExpansionTarget struct {
+	token    uint64
+	repoPath string
+	mode     ui.Mode
+	epicID   string
+}
+
+type beadExpansionSnapshot struct {
+	target     beadExpansionTarget
+	projection ui.BeadExpansion
+}
+
 // Model is the bubbletea application model.
 type Model struct {
 	repos                     pane.Pane[scanner.Repo]
@@ -67,6 +79,8 @@ type Model struct {
 	pendingFlowHeadlessWrites []pendingFlowHeadlessWrite
 	activeFlows               pane.Pane[flowstore.FlowRecord]
 	beads                     [beadSubviewCount]beadSubviewState
+	beadExpansion             beadExpansionSnapshot
+	beadExpansionSeq          uint64
 	expandedPlanID            string
 	expandedFlowID            string
 	expandedActiveFlowID      string
@@ -131,6 +145,8 @@ type Model struct {
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
+	listChildrenBeads         func(string, string) ([]beadsquery.Bead, error)
+	listReadyBeads            func(string) ([]beadsquery.Bead, error)
 	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
@@ -267,6 +283,7 @@ type Options struct {
 	ListPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
+	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
 	ListBlockedBeads          func(repoPath string) ([]beadsquery.Bead, error)
 	ListOpenBeads             func(repoPath string) ([]beadsquery.Bead, error)
 	ListInProgressBeads       func(repoPath string) ([]beadsquery.Bead, error)
@@ -426,6 +443,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listReadyBeads := opts.ListReadyBeads
 	if listReadyBeads == nil {
 		listReadyBeads = beadsquery.ListReady
+	}
+	listChildrenBeads := opts.ListChildrenBeads
+	if listChildrenBeads == nil {
+		listChildrenBeads = beadsquery.ListChildren
 	}
 	listBlockedBeads := opts.ListBlockedBeads
 	if listBlockedBeads == nil {
@@ -762,6 +783,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
+		listChildrenBeads:         listChildrenBeads,
+		listReadyBeads:            listReadyBeads,
 		showBead:                  showBead,
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
@@ -1280,6 +1303,7 @@ func (m Model) View() string {
 		BeadsQuery:                   beadsQuery,
 		BeadsSourceCount:             beadsSourceCount,
 		BeadsClosedTotal:             beadsClosedTotal,
+		BeadExpansion:                cloneBeadExpansion(m.beadExpansion.projection),
 		FlowTerminalActivity:         m.flowTerminalActivity(),
 		ExpandedPlanID:               m.expandedPlanID,
 		ExpandedFlowID:               m.currentExpandedFlowID(),
@@ -1785,15 +1809,37 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeActiveFlows, msg.ListRequest)
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
 	case BeadsReadyResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsReady, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
+		next, accepted := m.handleBeadsResult(ui.ModeBeadsReady, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
+		if !accepted {
+			return next, nil
+		}
+		return next.reconcileBeadExpansion()
 	case BeadsBlockedResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsBlocked, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
+		next, accepted := m.handleBeadsResult(ui.ModeBeadsBlocked, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
+		if !accepted {
+			return next, nil
+		}
+		return next.reconcileBeadExpansion()
 	case BeadsOpenResultMsg:
-		return m.handleBeadsOpenResult(msg), nil
+		next, accepted := m.handleBeadsOpenResult(msg)
+		if !accepted {
+			return next, nil
+		}
+		return next.reconcileBeadExpansion()
 	case BeadsInProgressResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
+		next, accepted := m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
+		if !accepted {
+			return next, nil
+		}
+		return next.reconcileBeadExpansion()
 	case BeadsClosedResultMsg:
-		return m.handleBeadsClosedResult(msg), nil
+		next, accepted := m.handleBeadsClosedResult(msg)
+		if !accepted {
+			return next, nil
+		}
+		return next.reconcileBeadExpansion()
+	case beadExpansionResultMsg:
+		return m.handleBeadExpansionResult(msg), nil
 	case BeadDetailResultMsg:
 		return m.handleBeadDetailResult(msg)
 	case FlowAutoModeSetMsg:

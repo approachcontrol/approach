@@ -51,6 +51,110 @@ func TestParseOpenSortsCounterIDsNaturally(t *testing.T) {
 	}
 }
 
+func TestExistingPriorityParsersDoNotApplyRawIDTieBreak(t *testing.T) {
+	t.Parallel()
+
+	parsers := []struct {
+		name  string
+		parse func(string) ([]beadsquery.Bead, error)
+	}{
+		{name: "open", parse: beadsquery.ParseOpen},
+		{name: "ready", parse: beadsquery.ParseReady},
+		{name: "blocked", parse: beadsquery.ParseBlocked},
+		{name: "in-progress", parse: beadsquery.ParseInProgress},
+	}
+	for _, parser := range parsers {
+		parser := parser
+		t.Run(parser.name, func(t *testing.T) {
+			got, err := parser.parse(`[
+				{"id":"bd-1","priority":1,"title":"Plain"},
+				{"id":"bd-01","priority":1,"title":"Padded"}
+			]`)
+			if err != nil {
+				t.Fatalf("parse() error = %v", err)
+			}
+			if got[0].ID != "bd-1" || got[1].ID != "bd-01" {
+				t.Fatalf("parse() IDs = %q, %q, want input order bd-1, bd-01", got[0].ID, got[1].ID)
+			}
+		})
+	}
+}
+
+func TestParseChildrenAcceptsCapturedRowsAndOptionalMetadata(t *testing.T) {
+	t.Parallel()
+
+	input, err := os.ReadFile("testdata/children.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := beadsquery.ParseChildren(string(input))
+	if err != nil {
+		t.Fatalf("ParseChildren() error = %v", err)
+	}
+	want := []beadsquery.Bead{
+		{ID: "approach-y7g.1", Priority: 2, Title: "Epic/child visibility in Beads view", IssueType: "feature", Parent: "approach-y7g"},
+		{ID: "approach-y7g.2", Priority: 2, Title: "Persist Bead linkage on FlowRecord", IssueType: "feature", Parent: "approach-y7g"},
+		{ID: "approach-y7g.4", Priority: 2, Title: "Enable auto-progression on an epic creates first child Flow", IssueType: "feature", Parent: "approach-y7g"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseChildren() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseChildrenAcceptsEnvelopeAndUsesRawIDAsFinalTieBreak(t *testing.T) {
+	t.Parallel()
+
+	got, err := beadsquery.ParseChildren(`{"data":[
+		{"id":"bd-1","priority":1,"title":"Plain"},
+		{"id":"bd-01","priority":1,"title":"Padded","issue_type":" epic ","parent":"bd-parent"}
+	]}`)
+	if err != nil {
+		t.Fatalf("ParseChildren() error = %v", err)
+	}
+	want := []beadsquery.Bead{
+		{ID: "bd-01", Priority: 1, Title: "Padded", IssueType: " epic ", Parent: "bd-parent"},
+		{ID: "bd-1", Priority: 1, Title: "Plain"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseChildren() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEveryListParserPreservesOptionalIssueMetadataAndLegacyZeroValues(t *testing.T) {
+	t.Parallel()
+
+	parsers := []struct {
+		name  string
+		parse func(string) ([]beadsquery.Bead, error)
+		extra string
+	}{
+		{name: "open", parse: beadsquery.ParseOpen},
+		{name: "ready", parse: beadsquery.ParseReady},
+		{name: "blocked", parse: beadsquery.ParseBlocked},
+		{name: "in-progress", parse: beadsquery.ParseInProgress},
+		{name: "closed", parse: beadsquery.ParseClosed, extra: `,"closed_at":"2026-08-08T20:00:00Z"`},
+		{name: "children", parse: beadsquery.ParseChildren},
+	}
+	for _, parser := range parsers {
+		parser := parser
+		t.Run(parser.name, func(t *testing.T) {
+			got, err := parser.parse(`[
+				{"id":"bd-1","priority":1,"title":"Metadata","issue_type":"Epic","parent":"bd-root"` + parser.extra + `},
+				{"id":"bd-2","priority":2,"title":"Legacy"` + parser.extra + `}
+			]`)
+			if err != nil {
+				t.Fatalf("parse() error = %v", err)
+			}
+			if got[0].IssueType != "Epic" || got[0].Parent != "bd-root" {
+				t.Fatalf("metadata bead = %#v, want preserved optional fields", got[0])
+			}
+			if got[1].IssueType != "" || got[1].Parent != "" {
+				t.Fatalf("legacy bead = %#v, want zero-valued optional fields", got[1])
+			}
+		})
+	}
+}
+
 func TestParseOpenEmptyList(t *testing.T) {
 	t.Parallel()
 

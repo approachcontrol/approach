@@ -432,6 +432,7 @@ type RenderParams struct {
 	BeadsQuery                   string
 	BeadsSourceCount             int
 	BeadsClosedTotal             int
+	BeadExpansion                BeadExpansion
 	FlowTerminalActivity         []FlowTerminalActivity
 	ExpandedPlanID               string
 	ExpandedFlowID               string
@@ -884,7 +885,7 @@ func renderApplication(p RenderParams) string {
 		message := "Could not load " + beadsModeLabel(p.Mode) + " beads: " + terminalSafeSingleLine(p.BeadsError)
 		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, message)
 	case IsBeadsMode(p.Mode) && len(p.BeadsOpen) > 0:
-		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight)
+		rightLines = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight, p.BeadExpansion)
 	case IsBeadsMode(p.Mode):
 		message := p.RightEmptyMessage
 		if message == "" {
@@ -1017,7 +1018,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	case IsBeadsMode(mode) && p.BeadsError != "":
 		body = renderPlaceholderPane(width, bodyRows, "Could not load "+beadsModeLabel(mode)+" beads: "+terminalSafeSingleLine(p.BeadsError))
 	case IsBeadsMode(mode) && len(p.BeadsOpen) > 0:
-		body = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows)
+		body = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows, p.BeadExpansion)
 	case IsBeadsMode(mode):
 		message := "beads not configured"
 		if repoPath == "" || p.BeadsOpenAvailable {
@@ -3071,22 +3072,7 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 }
 
 func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, height int) []string {
-	content := make([]string, 0, len(beads))
-	for i, bead := range beads {
-		id := terminalSafeSingleLine(bead.ID)
-		title := terminalSafeSingleLine(bead.Title)
-		assignee := terminalSafeSingleLine(bead.Assignee)
-		body := fmt.Sprintf("%s  P%d  %s", id, bead.Priority, title)
-		if assignee != "" {
-			body += "  " + assignee
-		}
-		line := "   " + body
-		if i == selected {
-			line = renderStyledRow(stashSelStyle.Render(" > "+body), stashSelStyle, width)
-		}
-		content = append(content, truncateToWidth(line, width))
-	}
-	return scrollAndPad(content, scroll, height)
+	return renderBeadsPane(beads, selected, scroll, width, height, BeadExpansion{})
 }
 
 func terminalSafeSingleLine(text string) string {

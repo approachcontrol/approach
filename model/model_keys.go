@@ -87,6 +87,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "esc" && m.activeSearchQuery() != "" {
+		beadsSearch := m.activePane != ui.PaneRepos && ui.IsBeadsMode(m.focusedMode())
 		oldRepoPath, _ := m.currentRepoPath()
 		m = m.setActiveSearchQuery("")
 		m = m.setSearchActive(false)
@@ -99,6 +100,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if oldRepoPath != newRepoPath {
 				return m.handleRepoSelectionChanged(ok)
 			}
+		}
+		if beadsSearch {
+			return m.reconcileBeadExpansion()
 		}
 		return m, nil
 	}
@@ -279,6 +283,7 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	beadsSearch := m.activePane != ui.PaneRepos && ui.IsBeadsMode(m.focusedMode())
 	oldRepoPath, _ := m.currentRepoPath()
 
 	switch key {
@@ -313,6 +318,9 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if oldRepoPath != newRepoPath {
 			return m.handleRepoSelectionChanged(ok)
 		}
+	}
+	if beadsSearch {
+		return m.reconcileBeadExpansion()
 	}
 	return m, nil
 }
@@ -843,11 +851,19 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 // --- Cursor navigation ---
 
 func (m Model) handleCursorUp() (tea.Model, tea.Cmd) {
-	return m.moveCursor(-1), nil
+	next := m.moveCursor(-1)
+	if ui.IsBeadsMode(m.focusedMode()) {
+		return next.reconcileBeadExpansion()
+	}
+	return next, nil
 }
 
 func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
-	return m.moveCursor(1), nil
+	next := m.moveCursor(1)
+	if ui.IsBeadsMode(m.focusedMode()) {
+		return next.reconcileBeadExpansion()
+	}
+	return next, nil
 }
 
 // moveCursor moves the selected item in the active right-pane view by delta
@@ -931,6 +947,13 @@ func (m Model) moveCursor(delta int) Model {
 		// A pending subview renders its loading message instead of its retained
 		// rows, so cursor keys must not move a selection the user cannot see.
 		if m.beads[index].pending {
+			return m
+		}
+		if m.canScrollBeadExpansion(delta, h) {
+			m.beads[index].pane = m.beads[index].pane.ScrollBy(delta, h, w)
+			return m
+		}
+		if m.beads[index].pane.Len() <= 1 {
 			return m
 		}
 		m.beads[index].pane = m.beads[index].pane.Move(delta, h, w)
@@ -3377,6 +3400,9 @@ func (m Model) resetBottomPaneCursors() Model {
 }
 
 func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
+	if from != to && (ui.IsBeadsMode(from) || ui.IsBeadsMode(to)) {
+		m = m.clearBeadExpansion()
+	}
 	if from == ui.ModeActiveFlows || to == ui.ModeActiveFlows {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
@@ -3401,6 +3427,7 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 }
 
 func (m Model) clearBeadsRepoOwnedState() Model {
+	m = m.clearBeadExpansion()
 	for i := range m.beads {
 		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
 		m.beads[i].available = false

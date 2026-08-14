@@ -10,11 +10,13 @@ import (
 )
 
 type beadJSON struct {
-	ID       *string `json:"id"`
-	Priority *int    `json:"priority"`
-	Title    *string `json:"title"`
-	Assignee *string `json:"assignee"`
-	ClosedAt *string `json:"closed_at"`
+	ID        *string `json:"id"`
+	Priority  *int    `json:"priority"`
+	Title     *string `json:"title"`
+	Assignee  *string `json:"assignee"`
+	IssueType *string `json:"issue_type"`
+	Parent    *string `json:"parent"`
+	ClosedAt  *string `json:"closed_at"`
 }
 
 type parsedBead struct {
@@ -55,6 +57,25 @@ func ParseOpen(text string) ([]Bead, error) {
 // ParseReady decodes bd ready JSON and returns beads ordered by priority then ID.
 func ParseReady(text string) ([]Bead, error) {
 	return parsePriorityBeads(text, "ready")
+}
+
+// ParseChildren decodes bd children JSON and returns direct children ordered
+// by priority, natural ID, and finally raw ID for equal-natural identifiers.
+func ParseChildren(text string) ([]Bead, error) {
+	records, err := parseBeadRecords(text, "children", false)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].bead.Priority != records[j].bead.Priority {
+			return records[i].bead.Priority < records[j].bead.Priority
+		}
+		if order := naturalCompareIDs(records[i].bead.ID, records[j].bead.ID); order != 0 {
+			return order < 0
+		}
+		return records[i].bead.ID < records[j].bead.ID
+	})
+	return beadsFromParsed(records), nil
 }
 
 // ParseBlocked decodes bd blocked-list JSON and returns beads ordered by priority then ID.
@@ -141,6 +162,12 @@ func parseBeadRecords(text, kind string, requireClosedAt bool) ([]parsedBead, er
 		beads[i].bead = Bead{ID: *record.ID, Priority: *record.Priority, Title: *record.Title}
 		if record.Assignee != nil {
 			beads[i].bead.Assignee = *record.Assignee
+		}
+		if record.IssueType != nil {
+			beads[i].bead.IssueType = *record.IssueType
+		}
+		if record.Parent != nil {
+			beads[i].bead.Parent = *record.Parent
 		}
 		if requireClosedAt {
 			if record.ClosedAt == nil || strings.TrimSpace(*record.ClosedAt) == "" {

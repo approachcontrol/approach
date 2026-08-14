@@ -2,6 +2,7 @@ package beadsquery_test
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -180,6 +181,69 @@ func TestQuerierListReadyUsesDependencyGraphQuery(t *testing.T) {
 	}
 }
 
+func TestQuerierListChildrenUsesCapturedReadonlyQuery(t *testing.T) {
+	t.Parallel()
+
+	fixture, err := os.ReadFile("testdata/children.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{out: string(fixture)}
+	got, err := beadsquery.NewQuerier(runner).ListChildren("/repo", "approach-y7g")
+	if err != nil {
+		t.Fatalf("ListChildren() error = %v", err)
+	}
+	wantArgs := []string{"children", "approach-y7g", "--json", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+	if len(got) != 3 || got[0].ID != "approach-y7g.1" || got[0].Parent != "approach-y7g" {
+		t.Fatalf("ListChildren() = %#v, want parsed captured children", got)
+	}
+}
+
+func TestListChildrenUsesDefaultRunner(t *testing.T) {
+	runner := &fakeRunner{out: `[{"id":"bd-1","priority":1,"title":"Child"}]`}
+	previous := beadsquery.DefaultRunner
+	beadsquery.DefaultRunner = runner
+	t.Cleanup(func() { beadsquery.DefaultRunner = previous })
+
+	got, err := beadsquery.ListChildren("/repo", "bd-parent")
+	if err != nil {
+		t.Fatalf("ListChildren() error = %v", err)
+	}
+	wantArgs := []string{"children", "bd-parent", "--json", "--readonly"}
+	if len(got) != 1 || runner.calls != 1 || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("ListChildren() = %#v, call = (%d, %#v), want one child and %#v", got, runner.calls, runner.args, wantArgs)
+	}
+}
+
+func TestQuerierListChildrenPreservesFailuresWithoutPartialData(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name          string
+		cause         error
+		notConfigured bool
+	}{
+		{name: "configured", cause: errors.New("bd children failed")},
+		{name: "not configured", cause: errors.New("Error: no beads database found"), notConfigured: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := beadsquery.NewQuerier(&fakeRunner{out: `[{"id":"partial"}]`, err: tt.cause}).ListChildren("/repo", "bd-parent")
+			if got != nil {
+				t.Fatalf("ListChildren() = %#v, want no partial data", got)
+			}
+			if !errors.Is(err, tt.cause) || errors.Is(err, beadsquery.ErrNotConfigured) != tt.notConfigured {
+				t.Fatalf("ListChildren() error = %v, want cause %v and notConfigured=%v", err, tt.cause, tt.notConfigured)
+			}
+			if !strings.Contains(err.Error(), "listing children beads") {
+				t.Fatalf("ListChildren() error = %q, want children context", err)
+			}
+		})
+	}
+}
+
 func TestQuerierListBlockedUsesUncappedReadonlyStatusQuery(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +345,7 @@ func TestEveryQueryUsesSharedAbsenceClassification(t *testing.T) {
 		{name: "open", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListOpen("/repo") }},
 		{name: "in-progress", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListInProgress("/repo") }},
 		{name: "closed", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListClosed("/repo") }},
+		{name: "children", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListChildren("/repo", "bd-parent") }},
 	}
 	for _, query := range queries {
 		t.Run(query.name, func(t *testing.T) {

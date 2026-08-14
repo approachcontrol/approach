@@ -171,6 +171,7 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 		mode: mode,
 		pane: paneName,
 		beforeStart: func(m Model) Model {
+			m = m.clearBeadExpansion()
 			if m.activeViewKind == FetchBeadDetail {
 				m = m.invalidateViewRequest()
 			}

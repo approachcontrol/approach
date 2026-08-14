@@ -40,6 +40,212 @@ func TestRender_BeadsOpenRowsPreserveOrderAndOptionalAssignee(t *testing.T) {
 	}
 }
 
+func TestRenderBeadsPaneMarksEpicsAndExpandsSelectedEpicReadyFirst(t *testing.T) {
+	t.Parallel()
+
+	beads := []beadsquery.Bead{
+		{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: " ePiC "},
+		{ID: "bd-task", Priority: 2, Title: "Ordinary", IssueType: "task"},
+	}
+	expansion := BeadExpansion{
+		EpicID:         "bd-epic",
+		State:          BeadExpansionLoaded,
+		Children:       []beadsquery.Bead{{ID: "bd-child-2", Priority: 1, Title: "Ready"}, {ID: "bd-child-1", Priority: 2, Title: "Neutral"}},
+		ReadyIDs:       map[string]bool{"bd-child-2": true},
+		ReadinessKnown: true,
+	}
+	lines := renderBeadsPane(beads, 0, 0, 80, 5, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	for _, want := range []string{"bd-epic  P1  Parent  [epic]", "bd-child-2  P1  Ready  [ready]", "bd-child-1  P2  Neutral", "bd-task  P2  Ordinary"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("render missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "Ordinary  [epic]") || strings.Contains(plain, "Neutral  [ready]") {
+		t.Fatalf("render invented epic/readiness markers:\n%s", plain)
+	}
+	if got := BeadVisualHeight(beads[0], expansion); got != 3 {
+		t.Fatalf("BeadVisualHeight(epic) = %d, want 3", got)
+	}
+}
+
+func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	const width = 24
+	epic := beadsquery.Bead{
+		ID: "bd-epic", Priority: 1, Title: "A very long epic title",
+		Assignee: "a-very-long-assignee", IssueType: "epic",
+	}
+	for _, selected := range []bool{false, true} {
+		line := renderBeadRow(epic, selected, width)
+		plain := ansi.Strip(line)
+		if !strings.Contains(plain, "[epic]") {
+			t.Fatalf("selected=%t narrow row lost epic marker: %q", selected, plain)
+		}
+		if got := ansi.StringWidth(line); got > width {
+			t.Fatalf("selected=%t row width = %d, want <= %d: %q", selected, got, width, plain)
+		}
+	}
+}
+
+func TestRenderBeadsPanePreservesReadyMarkerAtNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	const width = 48
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	child := beadsquery.Bead{
+		ID: "bd-child-with-a-long-identifier", Priority: 1,
+		Title: "A child title that also needs truncation",
+	}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Children: []beadsquery.Bead{child}, ReadyIDs: map[string]bool{child.ID: true},
+		ReadinessKnown: true,
+	}
+	lines := expansionVisualLines(epic, true, width, expansion)
+	if len(lines) != 2 {
+		t.Fatalf("rendered lines = %d, want parent and child", len(lines))
+	}
+	plain := ansi.Strip(lines[1])
+	if !strings.Contains(plain, "[ready]") {
+		t.Fatalf("narrow child row lost ready marker: %q", plain)
+	}
+	if got := ansi.StringWidth(lines[1]); got > width {
+		t.Fatalf("child row width = %d, want <= %d: %q", got, width, plain)
+	}
+}
+
+func TestRenderBeadsPaneStylesSelectedExpansionLines(t *testing.T) {
+	t.Parallel()
+
+	const width = 60
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Children: []beadsquery.Bead{{ID: "bd-child", Priority: 1, Title: "Child"}},
+		Detail:   "bd ready failed",
+	}
+	selectedLines := expansionVisualLines(epic, true, width, expansion)
+	plainLines := []string{
+		"     ↳ bd-child  P1  Child",
+		"     Readiness unavailable: bd ready failed",
+	}
+	if len(selectedLines) != 3 {
+		t.Fatalf("selected expansion lines = %d, want parent, child, and warning", len(selectedLines))
+	}
+	for i, plain := range plainLines {
+		want := renderStyledRow(stashSelStyle.Render(plain), stashSelStyle, width)
+		if got := selectedLines[i+1]; got != want {
+			t.Fatalf("selected expansion line %d = %q, want selection-styled %q", i, got, want)
+		}
+	}
+
+	unfocusedLines := expansionVisualLines(epic, false, width, expansion)
+	for i, want := range plainLines {
+		if got := unfocusedLines[i+1]; got != want {
+			t.Fatalf("unfocused expansion line %d = %q, want plain %q", i, got, want)
+		}
+	}
+}
+
+func TestRenderBeadsPaneEmptyChildrenStillShowsReadinessFailure(t *testing.T) {
+	t.Parallel()
+
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Detail: "bd ready failed",
+	}
+	lines := expansionVisualLines(epic, true, 60, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	for _, want := range []string{"no direct children", "Readiness unavailable: bd ready failed"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("empty partial failure missing %q:\n%s", want, plain)
+		}
+	}
+	if got := BeadVisualHeight(epic, expansion); got != 3 || got != len(lines) {
+		t.Fatalf("height = %d, rendered lines = %d, want 3", got, len(lines))
+	}
+}
+
+func TestRenderBeadsPaneExpansionStatesAreBoundedAndSanitized(t *testing.T) {
+	t.Parallel()
+
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	tests := []struct {
+		name      string
+		expansion BeadExpansion
+		want      string
+	}{
+		{name: "loading", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoading}, want: "loading direct children"},
+		{name: "empty", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true}, want: "no direct children"},
+		{name: "error", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionError, Detail: "bad\n\x1b[31mtracker"}, want: "Could not load children: bad tracker"},
+		{name: "readiness unavailable", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, Children: []beadsquery.Bead{{ID: "bd-child", Title: "Child\nrow"}}, Detail: "bd\x1b]52;c;eA==\a failed"}, want: "Readiness unavailable: bd failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const width = 48
+			lines := renderBeadsPane([]beadsquery.Bead{epic}, 0, 0, width, 4, tt.expansion)
+			plain := ansi.Strip(strings.Join(lines, "\n"))
+			if !strings.Contains(plain, tt.want) {
+				t.Fatalf("render missing %q:\n%s", tt.want, plain)
+			}
+			for _, line := range lines {
+				if got := ansi.StringWidth(line); got > width {
+					t.Fatalf("line width = %d, want <= %d: %q", got, width, ansi.Strip(line))
+				}
+			}
+			if got := BeadVisualHeight(epic, tt.expansion); got != len(expansionVisualLines(epic, true, width, tt.expansion)) {
+				t.Fatalf("height = %d, rendered expansion lines = %d", got, len(expansionVisualLines(epic, true, width, tt.expansion)))
+			}
+		})
+	}
+}
+
+func TestRenderBeadsPaneHonorsVisualScrollOffset(t *testing.T) {
+	t.Parallel()
+
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true, Children: []beadsquery.Bead{{ID: "bd-child-1", Title: "One"}, {ID: "bd-child-2", Title: "Two"}}}
+	lines := renderBeadsPane([]beadsquery.Bead{epic, {ID: "bd-after", Title: "After"}}, -1, 2, 60, 2, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if strings.Contains(plain, "bd-epic") || strings.Contains(plain, "bd-child-1") || !strings.Contains(plain, "bd-child-2") || !strings.Contains(plain, "bd-after") {
+		t.Fatalf("visual scroll did not slice flattened expansion lines:\n%s", plain)
+	}
+}
+
+func TestRenderBeadExpansionProjectionMatchesFullAndStackedDispatch(t *testing.T) {
+	t.Parallel()
+
+	expansion := BeadExpansion{
+		EpicID: "epic", State: BeadExpansionLoaded, ReadinessKnown: true,
+		Children: []beadsquery.Bead{{ID: "child-1", Title: "One"}, {ID: "child-2", Title: "Two"}},
+	}
+	base := RenderParams{
+		Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+		Width: 100, Height: 24, ActivePane: PaneTop,
+		BeadsOpen:          []beadsquery.Bead{{ID: "epic", Title: "Epic", IssueType: "epic"}, {ID: "after", Title: "After"}},
+		BeadsOpenAvailable: true, BeadsOpenSelected: -1, BeadsOpenScroll: 1, BeadExpansion: expansion,
+	}
+	full := base
+	full.Mode = ModeBeadsOpen
+	stacked := base
+	stacked.Mode = ModeFlows
+	stacked.TopMode = ModeBeadsOpen
+	stacked.BottomMode = ModeFlows
+	stacked.ContentPane = PaneTop
+
+	for name, params := range map[string]RenderParams{"full": full, "stacked": stacked} {
+		t.Run(name, func(t *testing.T) {
+			view := ansi.Strip(Render(params))
+			if strings.Contains(view, "epic  P0") || !strings.Contains(view, "child-1") || !strings.Contains(view, "child-2") || !strings.Contains(view, "after") {
+				t.Fatalf("%s dispatch did not use the shared scrolled expansion projection:\n%s", name, view)
+			}
+		})
+	}
+}
+
 func TestRender_BeadsOpenAvailableEmptyShowsExactQuietMessage(t *testing.T) {
 	view := ansi.Strip(Render(RenderParams{
 		Repos:              []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
