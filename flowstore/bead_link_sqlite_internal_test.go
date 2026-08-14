@@ -3,6 +3,7 @@ package flowstore
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -128,6 +129,130 @@ func TestSQLiteSettingsOnlySavePreservesBeadProjections(t *testing.T) {
 	}
 	if _, err := store.Read(created.FlowID); err != nil {
 		t.Fatalf("Read() after settings-only save = %v", err)
+	}
+}
+
+func TestSQLiteMigrationFencesAlreadyOpenPredecessorWriterFromStrippingBeadLink(t *testing.T) {
+	root := t.TempDir()
+	seedPredecessorDatabase(t, root, 1)
+	path := filepath.Join(root, databaseFilename)
+	legacyDB, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{
+		"mode":    {"rw"},
+		"_pragma": {"busy_timeout(5000)"},
+		"_txlock": {"immediate"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDB.SetMaxOpenConns(1)
+	legacyDB.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = legacyDB.Close() })
+	var journalMode string
+	if err := legacyDB.QueryRow("PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("legacy journal mode = %q, want WAL", journalMode)
+	}
+
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() migration error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, err := store.Create(FlowRecord{
+		Title: "Linked after migration", Instructions: "Keep the link.", RepoPath: filepath.Join(root, "repo"),
+		Bead: BeadLink{ID: "child", EpicID: "epic"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var before []byte
+	if err := legacyDB.QueryRow("SELECT record FROM flows WHERE flow_id = ?", created.FlowID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	var predecessorView map[string]any
+	if err := json.Unmarshal(before, &predecessorView); err != nil {
+		t.Fatal(err)
+	}
+	delete(predecessorView, "bead")
+	stripped, err := json.Marshal(predecessorView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacyDB.Exec(
+		"UPDATE flows SET updated_at = ?, record = ? WHERE flow_id = ?",
+		created.UpdatedAt.Add(time.Minute).Format(time.RFC3339Nano), stripped, created.FlowID,
+	); err == nil || !strings.Contains(err.Error(), "older approach version cannot remove persisted Bead link") {
+		t.Fatalf("legacy UPDATE error = %v, want persisted Bead-link fence", err)
+	}
+
+	var after []byte
+	if err := legacyDB.QueryRow("SELECT record FROM flows WHERE flow_id = ?", created.FlowID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("rejected legacy UPDATE changed the stored record")
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() after rejected legacy UPDATE error = %v", err)
+	}
+	if read.Bead != (BeadLink{ID: "child", EpicID: "epic"}) {
+		t.Fatalf("Read().Bead = %#v, want preserved link", read.Bead)
+	}
+}
+
+func TestSQLiteRejectsMissingOrAlteredBeadCompatibilityTrigger(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		mutate  string
+		wantErr string
+	}{
+		{
+			name:    "missing",
+			mutate:  "DROP TRIGGER guard_linked_flow_record_update",
+			wantErr: "incompatible schema objects",
+		},
+		{
+			name: "altered",
+			mutate: `
+DROP TRIGGER guard_linked_flow_record_update;
+CREATE TRIGGER guard_linked_flow_record_update
+BEFORE UPDATE OF record ON flows
+BEGIN
+    SELECT 1;
+END;`,
+			wantErr: "incompatible Bead compatibility trigger",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := NewStore(StoreOptions{Root: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(root, databaseFilename), map[string][]string{"mode": {"rw"}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(tt.mutate); err != nil {
+				_ = db.Close()
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := NewStore(StoreOptions{Root: root}); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("NewStore() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

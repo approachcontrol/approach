@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS flows (
     epic_id TEXT NOT NULL DEFAULT ''
  )`
 
+const flowBeadCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_linked_flow_record_update
+BEFORE UPDATE OF record ON flows
+WHEN (OLD.bead_id <> '' OR OLD.epic_id <> '')
+    AND (
+        COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.bead.id'), '') <> NEW.bead_id
+        OR COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.bead.epic_id'), '') <> NEW.epic_id
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted Bead link');
+END`
+
 const flowSchemaSQL = flowTableSchemaV2 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
@@ -63,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
     ON flows(repo_path, updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_status_updated
     ON flows(status, updated_at DESC, flow_id ASC);
-`
+` + flowBeadCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -277,7 +289,7 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	if tables == 0 {
 		return fmt.Errorf("flow database is empty or was never initialized")
 	}
-	if err := validateSQLiteSchemaObjects(db); err != nil {
+	if err := validateSQLiteSchemaObjects(db, version); err != nil {
 		return err
 	}
 	if err := validateSQLiteFlowTableDefinition(db, version); err != nil {
@@ -321,7 +333,10 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	if !equalStrings(columns, wantColumns) {
 		return fmt.Errorf("flow database has incompatible flows columns: got %v, want %v", columns, wantColumns)
 	}
-	return validateSQLiteIndexes(db)
+	if err := validateSQLiteIndexes(db); err != nil {
+		return err
+	}
+	return validateSQLiteBeadCompatibilityTrigger(db, version)
 }
 
 func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
@@ -349,13 +364,14 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 func normalizeSQLiteSchemaSQL(statement string) string {
 	normalized := strings.Join(strings.Fields(statement), " ")
 	normalized = strings.Replace(normalized, "CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
+	normalized = strings.Replace(normalized, "CREATE TRIGGER IF NOT EXISTS ", "CREATE TRIGGER ", 1)
 	for _, spacing := range [][2]string{{" (", "("}, {"( ", "("}, {" )", ")"}, {" ,", ","}, {", ", ","}} {
 		normalized = strings.ReplaceAll(normalized, spacing[0], spacing[1])
 	}
 	return normalized
 }
 
-func validateSQLiteSchemaObjects(db *sql.DB) error {
+func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 	rows, err := db.Query("SELECT type, name, tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
 	if err != nil {
 		return fmt.Errorf("validate flow database schema objects: %w", err)
@@ -382,8 +398,30 @@ func validateSQLiteSchemaObjects(db *sql.DB) error {
 		"index:idx_flows_updated:flows",
 		"table:flows:flows",
 	}
+	if version == 2 {
+		want = append(want, "trigger:guard_linked_flow_record_update:flows")
+	}
 	if !equalStrings(objects, want) {
 		return fmt.Errorf("flow database has incompatible schema objects: got %v, want %v", objects, want)
+	}
+	return nil
+}
+
+func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
+	if version == 1 {
+		return nil
+	}
+	if version != 2 {
+		return fmt.Errorf("no flow database trigger contract for version %d", version)
+	}
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_linked_flow_record_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database Bead compatibility trigger: %w", err)
+	}
+	got = normalizeSQLiteSchemaSQL(got)
+	want := normalizeSQLiteSchemaSQL(flowBeadCompatibilityTrigger)
+	if got != want {
+		return fmt.Errorf("flow database has incompatible Bead compatibility trigger: got %q, want %q", got, want)
 	}
 	return nil
 }

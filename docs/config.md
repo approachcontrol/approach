@@ -540,10 +540,14 @@ The database and its records have separate compatibility gates:
   predecessor table-and-index contract, then upgraded transactionally in place.
   Existing rows, JSON record blobs, earlier projections, and retained `flows/`
   files are not rewritten or removed. A malformed predecessor is rejected
-  before either column or the version stamp changes. A value newer than this
-  build supports prevents the store from opening and reports that Approach must
-  be upgraded. This is not corruption and is never downgraded to a partial
-  result.
+  before either column or the version stamp changes. Version 2 also installs an
+  exact compatibility trigger: if an Approach process that was already running
+  before the upgrade later tries to rewrite a linked Flow using the predecessor
+  JSON shape, SQLite rejects the write instead of letting it strip `bead` while
+  retaining the physical projections. Restart that older process with the
+  upgraded build before retrying its write. A value newer than this build
+  supports prevents the store from opening and reports that Approach must be
+  upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a
   record written with a newer per-record version does not prevent healthy rows
   from being listed. List operations skip only rows that SQLite scanned

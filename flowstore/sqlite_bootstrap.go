@@ -165,6 +165,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 	for _, statement := range []string{
 		"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
+		flowBeadCompatibilityTrigger,
 		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
 	} {
 		if _, err := tx.Exec(statement); err != nil {
