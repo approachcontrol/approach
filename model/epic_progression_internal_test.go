@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -36,5 +37,87 @@ func TestRejectEpicProgressionCandidateOrdersTerminalAndPreparationClasses(t *te
 				t.Fatalf("classification = %q, want substring %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEpicProgressionToggleReconcilesRuntimeBaselineBeforeReservationRelease(t *testing.T) {
+	target := beadExpansionTarget{repoPath: "/repo", epicID: "epic"}
+	key := epicProgressionBaselineKey(target.repoPath, target.epicID)
+	oldFlow := flowstore.FlowRecord{FlowID: "old-flow"}
+	newFlow := flowstore.FlowRecord{FlowID: "new-flow"}
+	for _, tt := range []struct {
+		name        string
+		msg         epicProgressionToggleResultMsg
+		wantFlowID  string
+		wantPresent bool
+	}{
+		{
+			name: "confirmed enable installs baseline",
+			msg: epicProgressionToggleResultMsg{
+				target: target, flow: newFlow, known: true, enabled: true, baselineDisposition: epicProgressionBaselineReplace,
+			},
+			wantFlowID:  newFlow.FlowID,
+			wantPresent: true,
+		},
+		{
+			name: "confirmed disable removes baseline",
+			msg: epicProgressionToggleResultMsg{
+				target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+			},
+		},
+		{
+			name: "unknown outcome preserves possible live baseline",
+			msg: epicProgressionToggleResultMsg{
+				target: target, known: false,
+			},
+			wantFlowID:  oldFlow.FlowID,
+			wantPresent: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			baselines := map[string]flowstore.FlowRecord{key: oldFlow}
+			m := Model{
+				beadExpansion:            beadExpansionSnapshot{target: beadExpansionTarget{token: 99}},
+				epicProgressionBaselines: baselines,
+				flowPreparationAdmission: true,
+			}
+			released := false
+			tt.msg.release = func() {
+				released = true
+				flow, found := baselines[key]
+				if found != tt.wantPresent || flow.FlowID != tt.wantFlowID {
+					t.Fatalf("baseline at release = %#v, %t; want Flow %q, present %t", flow, found, tt.wantFlowID, tt.wantPresent)
+				}
+			}
+			next, _ := m.handleEpicProgressionToggleResult(tt.msg)
+			if !released || next.flowPreparationAdmission {
+				t.Fatalf("release called = %t, admission retained = %t", released, next.flowPreparationAdmission)
+			}
+		})
+	}
+}
+
+func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testing.T) {
+	target := beadExpansionTarget{repoPath: "/repo", epicID: "epic"}
+	key := epicProgressionBaselineKey(target.repoPath, target.epicID)
+	baseline := flowstore.FlowRecord{FlowID: "prepared-flow"}
+	m := Model{
+		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			return flowstore.EpicProgression{}, errors.New("commit failed")
+		},
+		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
+		},
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: baseline},
+		flowPreparationAdmission: true,
+		beadExpansion:            beadExpansionSnapshot{target: beadExpansionTarget{token: 99}},
+	}
+	msg, ok := m.disableEpicProgressionCmd(target)().(epicProgressionToggleResultMsg)
+	if !ok {
+		t.Fatal("disable command returned unexpected message")
+	}
+	next, _ := m.handleEpicProgressionToggleResult(msg)
+	if got := next.epicProgressionBaselines[key]; got.FlowID != baseline.FlowID {
+		t.Fatalf("confirmed-active disable replaced baseline with %#v", got)
 	}
 }

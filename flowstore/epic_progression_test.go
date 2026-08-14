@@ -102,6 +102,16 @@ func TestEnableEpicProgressionRequiresExactPreparedPendingFlow(t *testing.T) {
 
 	key := flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "epic-1"}
 	if _, _, err := store.EnableEpicProgressionForPreparedFlow(flowstore.PreparedEpicProgressionUpdate{
+		FlowID: flow.FlowID,
+		Key:    flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "other-epic"},
+		Bead:   link,
+	}); err == nil {
+		t.Fatal("EnableEpicProgressionForPreparedFlow(mismatched key epic) succeeded")
+	}
+	if _, found, err := store.ReadEpicProgression(flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "other-epic"}); err != nil || found {
+		t.Fatalf("unrelated progression after rejected enable = found %t, err %v", found, err)
+	}
+	if _, _, err := store.EnableEpicProgressionForPreparedFlow(flowstore.PreparedEpicProgressionUpdate{
 		FlowID: flow.FlowID, Key: key, Bead: flowstore.BeadLink{ID: "wrong", EpicID: "epic-1"},
 	}); err == nil {
 		t.Fatal("EnableEpicProgressionForPreparedFlow(wrong link) succeeded")
@@ -118,5 +128,59 @@ func TestEnableEpicProgressionRequiresExactPreparedPendingFlow(t *testing.T) {
 	}
 	if !progression.Enabled || authoritative.PreparedAt == nil || authoritative.Status != flowstore.StatusPending || authoritative.Bead != link {
 		t.Fatalf("enable result = progression %#v, flow %#v", progression, authoritative)
+	}
+}
+
+func TestEnableEpicProgressionRefusesIncompleteClosedAndRunningFlows(t *testing.T) {
+	for _, state := range []string{"incomplete", "closed", "running"} {
+		t.Run(state, func(t *testing.T) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			repo := filepath.Join(t.TempDir(), "repo")
+			link := flowstore.BeadLink{ID: "epic.1", EpicID: "epic"}
+			flow, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+				FlowID: "state-refusal", Title: "State", Instructions: "Test.", RepoPath: repo, Bead: link,
+			}, flowstore.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+				FlowID: flow.FlowID, WorktreePath: filepath.Join(t.TempDir(), "worktree"), Branch: "flow/state-refusal",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if state != "incomplete" {
+				flow, err = finalizer.Finalize(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch state {
+			case "closed":
+				if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: flow.FlowID, Reason: "closed before enable"}); err != nil {
+					t.Fatal(err)
+				}
+			case "running":
+				phases := flowstore.OrderedPhases(flow.Phases)
+				if len(phases) == 0 {
+					t.Fatal("prepared Flow has no phase")
+				}
+				if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: flow.FlowID, PhaseID: phases[0].PhaseID, LaunchID: "launch-1"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			key := flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "epic"}
+			if _, _, err := store.EnableEpicProgressionForPreparedFlow(flowstore.PreparedEpicProgressionUpdate{
+				FlowID: flow.FlowID, Key: key, Bead: link,
+			}); err == nil {
+				t.Fatalf("EnableEpicProgressionForPreparedFlow() accepted %s Flow", state)
+			}
+			if _, found, err := store.ReadEpicProgression(key); err != nil || found {
+				t.Fatalf("progression after %s refusal = found %t, err %v", state, found, err)
+			}
+		})
 	}
 }

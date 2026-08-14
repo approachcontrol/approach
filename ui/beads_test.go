@@ -89,6 +89,41 @@ func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
 	}
 }
 
+func TestRenderBeadRowPreservesEpicAndAutoMarkersAtMinimumWidth(t *testing.T) {
+	t.Parallel()
+
+	const width = 19 // selection prefix plus "  [epic]  [auto]"
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "A very long epic title", IssueType: "epic"}
+	line := renderBeadRow(epic, true, width, true)
+	plain := ansi.Strip(line)
+	if !strings.Contains(plain, "[epic]  [auto]") {
+		t.Fatalf("minimum-width row lost persistent markers: %q", plain)
+	}
+	if got := ansi.StringWidth(line); got != width {
+		t.Fatalf("row width = %d, want %d: %q", got, width, plain)
+	}
+}
+
+func TestRenderBeadsPaneShowsProgressionFailureWithoutHidingChildren(t *testing.T) {
+	t.Parallel()
+
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded,
+		Children:          []beadsquery.Bead{{ID: "bd-child", Priority: 2, Title: "Child"}},
+		ReadinessKnown:    true,
+		ProgressionDetail: "database failed\n\x1b]8;;https://example.invalid\aunsafe",
+	}
+	lines := expansionVisualLines(epic, true, 60, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if len(lines) != 3 || !strings.Contains(plain, "bd-child") || !strings.Contains(plain, "Auto-progression unavailable: database failed unsafe") {
+		t.Fatalf("progression warning/children render = %d lines:\n%s", len(lines), plain)
+	}
+	if got := BeadVisualHeight(epic, expansion); got != len(lines) {
+		t.Fatalf("BeadVisualHeight() = %d, rendered lines = %d", got, len(lines))
+	}
+}
+
 func TestRenderBeadsPanePreservesReadyMarkerAtNarrowWidths(t *testing.T) {
 	t.Parallel()
 

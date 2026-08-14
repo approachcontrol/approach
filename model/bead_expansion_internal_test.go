@@ -81,3 +81,26 @@ func TestBeadExpansionKeepsProgressionIndependentFromChildAndReadinessFailures(t
 		t.Fatalf("progression failure damaged child/readiness projection: %#v", next.beadExpansion.projection)
 	}
 }
+
+func TestUnknownToggleResultReflowsProgressionWarningHeight(t *testing.T) {
+	index, _ := beadSubviewIndex(ui.ModeBeadsOpen)
+	target := beadExpansionTarget{token: 1, repoPath: "/repo", mode: ui.ModeBeadsOpen, epicID: "epic"}
+	m := Model{
+		topMode:       ui.ModeBeadsOpen,
+		beads:         newBeadSubviews(),
+		beadExpansion: beadExpansionSnapshot{target: target, projection: ui.BeadExpansion{EpicID: "epic", State: ui.BeadExpansionLoaded, ReadinessKnown: true}},
+	}
+	m.beads[index].available = true
+	m.beads[index].repoPath = "/repo"
+	m.beads[index].pane = m.beads[index].pane.SetItems([]beadsquery.Bead{{ID: "epic", IssueType: "epic"}})
+	m = m.reflowBeadExpansionPane()
+
+	next, _ := m.handleEpicProgressionToggleResult(epicProgressionToggleResultMsg{
+		target: target, status: "database unavailable",
+	})
+	probe := next.beads[index].pane.ScrollBy(999, 1, 80)
+	_, _, scroll := probe.View()
+	if scroll != 2 {
+		t.Fatalf("warning-height max scroll = %d, want 2 for three rendered lines", scroll)
+	}
+}

@@ -126,6 +126,10 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 		}
 	}
 	if starter.createPreparation == nil {
+		// Compatibility for direct FlowStarter callers that predate preparation
+		// receipts. This adapter runs the callback but cannot certify persistence;
+		// production Model wiring always supplies Store.CreatePreparation, and its
+		// integration tests require a durable PreparedAt receipt.
 		starter.createPreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
 			created, err := starter.createFlow(record, createOpts)
 			if err != nil {

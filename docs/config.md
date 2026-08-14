@@ -431,7 +431,7 @@ and a five-second busy timeout by default; writers serialize database-wide while
 WAL readers continue. They appear in the TUI
 flows pane (bottom-pane keyboard `3`), which is stored at startup below
 Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
-toggle per-Flow auto mode, per-epic progression, and the per-Flow headless preference, resume attached phase sessions, record a manual
+toggle per-Flow auto mode and the per-Flow headless preference, resume attached phase sessions, record a manual
 GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
 Flow terminals are documented in `docs/tui-guide.md`. Other phase mutation

@@ -37,21 +37,23 @@ func BeadVisualHeight(bead beadsquery.Bead, expansion BeadExpansion) int {
 	if expansion.EpicID == "" || bead.ID != expansion.EpicID {
 		return 1
 	}
+	height := 1
 	switch expansion.State {
 	case BeadExpansionLoaded:
-		height := 1 + len(expansion.Children)
+		height += len(expansion.Children)
 		if len(expansion.Children) == 0 {
 			height++
 		}
 		if !expansion.ReadinessKnown {
 			height++
 		}
-		return height
 	case BeadExpansionLoading, BeadExpansionError:
-		return 2
-	default:
-		return 1
+		height++
 	}
+	if strings.TrimSpace(expansion.ProgressionDetail) != "" {
+		height++
+	}
+	return height
 }
 
 func renderBeadsPane(beads []beadsquery.Bead, selected, scroll, width, height int, expansion BeadExpansion) []string {
@@ -104,6 +106,9 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 		if !expansion.ReadinessKnown {
 			stateLine("Readiness unavailable: " + expansion.Detail)
 		}
+	}
+	if strings.TrimSpace(expansion.ProgressionDetail) != "" {
+		stateLine("Auto-progression unavailable: " + expansion.ProgressionDetail)
 	}
 	return lines
 }

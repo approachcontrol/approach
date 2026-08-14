@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,6 +63,101 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 	}
 	if _, _, err := store.ReadEpicProgression(EpicProgressionKey{RepoPath: record.RepoPath, EpicID: "epic"}); err != nil {
 		t.Fatalf("new progression table unreadable: %v", err)
+	}
+}
+
+func TestSQLiteV0AndV1ToV3AddEveryProjectionWithoutReencodingFlows(t *testing.T) {
+	for _, version := range []int{0, 1} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, databaseFilename)
+			db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rwc"}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(flowTableSchemaV1 + `;
+CREATE INDEX idx_flows_updated ON flows(updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_repo_updated ON flows(repo_path, updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id ASC);
+` + fmt.Sprintf("PRAGMA user_version = %d;", version)); err != nil {
+				t.Fatal(err)
+			}
+			stamp := time.Date(2026, 8, 14, 16, version, 0, 0, time.UTC)
+			record := FlowRecord{
+				SchemaVersion: schemaVersion, FlowID: fmt.Sprintf("v%d-flow", version), Title: "Legacy", Instructions: "Test.",
+				Status: StatusPending, RepoPath: filepath.Join(root, "repo"), Phases: []FlowPhase{}, CreatedAt: stamp, UpdatedAt: stamp,
+			}
+			blob, projection, err := encodeStoredFlow(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("INSERT INTO flows(flow_id, repo_path, status, updated_at, record) VALUES(?, ?, ?, ?, ?)",
+				projection.flowID, projection.repoPath, projection.status, projection.updatedAt, blob); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			store, err := NewStore(StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() migration error = %v", err)
+			}
+			defer store.Close()
+			backend := store.backend.(*sqliteBackend)
+			var gotBlob []byte
+			var beadID, epicID, preparedAt string
+			if err := backend.db.QueryRow("SELECT record, bead_id, epic_id, prepared_at FROM flows WHERE flow_id = ?", record.FlowID).
+				Scan(&gotBlob, &beadID, &epicID, &preparedAt); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(gotBlob, blob) || beadID != "" || epicID != "" || preparedAt != "" {
+				t.Fatalf("v%d Flow migration changed legacy content: blobEqual=%t bead=%q epic=%q prepared=%q",
+					version, bytes.Equal(gotBlob, blob), beadID, epicID, preparedAt)
+			}
+		})
+	}
+}
+
+func TestSQLiteV2ToV3RejectsInvalidPredecessorWithoutPartialObjects(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, databaseFilename)
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rwc"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately omit one required v2 index. Predecessor validation must fail
+	// before any v3 ALTER/CREATE statement is allowed to land.
+	if _, err := db.Exec(flowTableSchemaV2 + `;
+CREATE INDEX idx_flows_updated ON flows(updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_repo_updated ON flows(repo_path, updated_at DESC, flow_id ASC);
+` + flowBeadCompatibilityTrigger + `; PRAGMA user_version = 2;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(StoreOptions{Root: root}); err == nil {
+		t.Fatal("NewStore() accepted invalid v2 predecessor")
+	}
+
+	db, err = sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rw"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, preparedColumns, progressionTables int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('flows') WHERE name = 'prepared_at'").Scan(&preparedColumns); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'epic_progressions'").Scan(&progressionTables); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 || preparedColumns != 0 || progressionTables != 0 {
+		t.Fatalf("failed migration left version=%d prepared_columns=%d progression_tables=%d", version, preparedColumns, progressionTables)
 	}
 }
 

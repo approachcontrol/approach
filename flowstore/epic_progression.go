@@ -13,6 +13,14 @@ import (
 
 const epicProgressionSchemaVersion = 1
 
+var errPreparedEpicProgressionCommitUnknown = errors.New("prepared epic progression commit outcome is unknown")
+
+// IsPreparedEpicProgressionCommitUnknown reports that an atomic enable reached
+// commit but SQLite could not confirm whether that commit became durable.
+func IsPreparedEpicProgressionCommitUnknown(err error) bool {
+	return errors.Is(err, errPreparedEpicProgressionCommitUnknown)
+}
+
 // EpicProgressionKey identifies one repository-local Beads epic.
 type EpicProgressionKey struct {
 	RepoPath string
@@ -113,6 +121,12 @@ func (s *Store) EnableEpicProgressionForPreparedFlow(update PreparedEpicProgress
 	if update.Bead.ID == "" || update.Bead.EpicID == "" {
 		return EpicProgression{}, FlowRecord{}, errors.New("prepared epic progression requires an exact child and epic Bead link")
 	}
+	if update.Bead.ID != strings.TrimSpace(update.Bead.ID) || update.Bead.EpicID != strings.TrimSpace(update.Bead.EpicID) {
+		return EpicProgression{}, FlowRecord{}, errors.New("prepared epic progression Bead link must be canonical")
+	}
+	if update.Bead.EpicID != key.EpicID {
+		return EpicProgression{}, FlowRecord{}, fmt.Errorf("prepared epic progression key epic %q does not match Flow link epic %q", key.EpicID, update.Bead.EpicID)
+	}
 	backend, ok := s.backend.(*sqliteBackend)
 	if !ok {
 		return EpicProgression{}, FlowRecord{}, errors.New("flow backend does not support atomic prepared epic progression")
@@ -177,7 +191,10 @@ ON CONFLICT(repo_path, epic_id) DO UPDATE SET
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return EpicProgression{}, FlowRecord{}, fmt.Errorf("commit prepared epic progression update %q: %w", update.FlowID, err)
+		return progression, flow, errors.Join(
+			errPreparedEpicProgressionCommitUnknown,
+			fmt.Errorf("commit prepared epic progression update %q: %w", update.FlowID, err),
+		)
 	}
 	return progression, flow, nil
 }
