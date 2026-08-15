@@ -358,7 +358,9 @@ compensated because the receipt may be durable. A generation mismatch is
 separately stale and is also not compensated, because the same Flow ID now
 names an unrelated replacement. Ready-Bead create-and-launch uses the same
 preparation finalizer before it records the initial phase launch ID. Each
-preparation also carries a storage-only random generation nonce. Reservation
+preparation also carries a storage-only random generation nonce. A nonce-bearing
+Flow is unlaunchable until that receipt is stamped, so another process cannot
+persist a launch ID in the gap before the creator's reservation. Reservation
 failure, stale presentation, or another post-create exit consumes the finalizer
 through an atomic compensation path: under the launch/close reservation it
 revalidates that exact nonce and blocks only the authoritative launchable

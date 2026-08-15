@@ -1912,6 +1912,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if PreparationLaunchBlocked(record) {
+			return FlowRecord{}, fmt.Errorf("record a phase launch for flow %q: %w", record.FlowID, ErrPreparationIncomplete)
+		}
 		if FlowClosed(record) {
 			if update.AutoLaunch {
 				return FlowRecord{}, fmt.Errorf("auto launch target %q is not eligible because flow %q is closed: %w",

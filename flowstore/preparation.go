@@ -394,6 +394,13 @@ func (f *preparationFinalizer) consume() error {
 	return nil
 }
 
+// PreparationLaunchBlocked reports that a nonce-bearing preparation has not
+// yet stamped its receipt, so another process must not launch or persist a
+// launch ID. Migrated records without a nonce stay launchable.
+func PreparationLaunchBlocked(record FlowRecord) bool {
+	return strings.TrimSpace(record.PreparationNonce) != "" && record.PreparedAt == nil
+}
+
 // SamePreparationIdentity reports whether two records name the same
 // receipt-less preparation generation. Prefer the storage-only nonce whenever
 // either record carries one. Compare the legacy PreparationGeneration field

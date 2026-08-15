@@ -807,7 +807,7 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 func flowPhaseCanLaunchAtIndex(record flowstore.FlowRecord, phaseIndex int) bool {
 	// The merge-kind and autoreview-rerun branches below bypass
 	// PhaseLaunchEligible, so a closed Flow needs its own guard here.
-	if flowstore.FlowClosed(record) {
+	if flowstore.FlowClosed(record) || flowstore.PreparationLaunchBlocked(record) {
 		return false
 	}
 	if phaseIndex < 0 || phaseIndex >= len(record.Phases) {

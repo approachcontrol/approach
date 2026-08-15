@@ -572,7 +572,7 @@ func launchablePhases(flow flowstore.FlowRecord) []flowstore.FlowPhase {
 	var phases []flowstore.FlowPhase
 	seen := make(map[string]bool)
 	for i, phase := range ordered {
-		if !flowstore.PhaseLaunchEligible(orderedFlow, i) || seen[phase.PhaseID] {
+		if !flowstore.PhaseGraphLaunchEligible(orderedFlow, i) || seen[phase.PhaseID] {
 			continue
 		}
 		seen[phase.PhaseID] = true

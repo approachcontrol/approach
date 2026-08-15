@@ -69,6 +69,47 @@ func TestPreparationReceiptCanOnlyBeMintedBySuccessfulOneShotFinalizer(t *testin
 	}
 }
 
+func TestAddPhaseLaunchIDRejectsReceiptlessPreparation(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "unlaunchable", Title: "Unlaunchable", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase, _, ok := flowstore.FirstLaunchablePhase(created)
+	if ok {
+		t.Fatalf("FirstLaunchablePhase() = %#v, want none while the nonce-bearing preparation has no receipt", phase)
+	}
+	if flowstore.PhaseLaunchEligible(created, 0) {
+		t.Fatal("PhaseLaunchEligible() = true, want false for a receipt-less nonce-bearing preparation")
+	}
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: created.FlowID, PhaseID: created.Phases[0].PhaseID, LaunchID: "premature-launch",
+	}); !flowstore.IsPreparationIncomplete(err) {
+		t.Fatalf("AddPhaseLaunchID() error = %v, want incomplete preparation", err)
+	}
+
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: created.FlowID, WorktreePath: filepath.Join(t.TempDir(), "worktree"), Branch: "flow/unlaunchable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	finalized, err := finalizer.Finalize(nil)
+	if err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: finalized.FlowID, PhaseID: finalized.Phases[0].PhaseID, LaunchID: "post-receipt-launch",
+	}); err != nil {
+		t.Fatalf("AddPhaseLaunchID() after receipt error = %v", err)
+	}
+}
+
 func TestPreparationFinalizerFailureLeavesReceiptAbsentAndConsumesCapability(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(t.TempDir(), "repo")
@@ -153,7 +194,7 @@ func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *tes
 	if err != nil || authoritative.Title != replacement.Title || !authoritative.CreatedAt.Equal(stale.CreatedAt) {
 		t.Fatalf("same-ID replacement = %#v, %v", authoritative, err)
 	}
-	if _, _, ok := flowstore.FirstLaunchablePhase(authoritative); !ok {
+	if len(authoritative.Phases) == 0 || authoritative.Phases[0].Status != flowstore.PhaseReady {
 		t.Fatalf("old finalizer changed same-ID replacement: %#v", authoritative)
 	}
 	if _, err := replacementFinalizer.Compensate("test cleanup"); err != nil {
@@ -166,12 +207,11 @@ func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	launchable, _, ok := flowstore.FirstLaunchablePhase(claimed)
-	if !ok {
-		t.Fatal("claimed preparation has no launchable phase")
+	if len(claimed.Phases) == 0 {
+		t.Fatal("claimed preparation has no phases")
 	}
-	claimed, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-		FlowID: claimed.FlowID, PhaseID: launchable.PhaseID, LaunchID: "claim",
+	claimed, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID: claimed.FlowID, PhaseID: claimed.Phases[0].PhaseID, Status: flowstore.PhaseRunning,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +220,7 @@ func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *tes
 		t.Fatal("Compensate() overwrote a claimed preparation")
 	}
 	authoritative, err = store.Read(claimed.FlowID)
-	if err != nil || authoritative.Phases[0].Status != flowstore.PhaseRunning || len(authoritative.Phases[0].LaunchIDs) != 1 {
+	if err != nil || authoritative.Phases[0].Status != flowstore.PhaseRunning {
 		t.Fatalf("claimed preparation after Compensate() = %#v, %v", authoritative, err)
 	}
 
@@ -202,7 +242,7 @@ func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, ok := flowstore.FirstLaunchablePhase(authoritative); !ok {
+	if !flowstore.PhaseGraphLaunchEligible(authoritative, 0) {
 		t.Fatalf("Compensate() blocked a provisioned Flow: %#v", authoritative)
 	}
 
@@ -225,7 +265,7 @@ func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *tes
 	if err != nil || authoritative.BaseRef != "release" {
 		t.Fatalf("base-ref claimed preparation = %#v, %v", authoritative, err)
 	}
-	if _, _, ok := flowstore.FirstLaunchablePhase(authoritative); !ok {
+	if !flowstore.PhaseGraphLaunchEligible(authoritative, 0) {
 		t.Fatalf("Compensate() blocked a base-ref claimed Flow: %#v", authoritative)
 	}
 }
@@ -468,7 +508,9 @@ func TestPreparationFinalizerRejectsClosedAndAlreadyRunningFlows(t *testing.T) {
 				if len(phases) == 0 {
 					t.Fatal("prepared Flow has no launchable phase")
 				}
-				if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: flow.FlowID, PhaseID: phases[0].PhaseID, LaunchID: "premature-launch"}); err != nil {
+				if _, err := store.SetPhase(flowstore.PhaseUpdate{
+					FlowID: flow.FlowID, PhaseID: phases[0].PhaseID, Status: flowstore.PhaseRunning,
+				}); err != nil {
 					t.Fatal(err)
 				}
 			},
