@@ -736,7 +736,14 @@ companion creation skill lives at `agent-skills/approach-flow-create/`. Install 
 symlink both `approach-flow` and `approach-flow-create` into the user-level skill
 directory for supported agents such as Codex or Claude; for Codex, typical
 targets are `~/.codex/skills/approach-flow` and
-`~/.codex/skills/approach-flow-create`. `approach-flow` activates when `APPROACH_FLOW_ID`
+`~/.codex/skills/approach-flow-create`, though Codex also reads the shared
+`~/.agents/skills` directory. `agent-skills/install.sh` performs that
+installation for all three skills, defaulting to whichever of
+`~/.claude/skills` and `~/.agents/skills` has an existing agent home; use
+`--target DIR` for any other location such as `~/.codex/skills`. It also
+supports `--copy`, `--dry-run`, and `--force`. It replaces stale symlinks — including ones left dangling by a moved
+checkout — but skips real directories unless `--force` is given.
+`approach-flow` activates when `APPROACH_FLOW_ID`
 and `APPROACH_FLOW_PHASE_ID` are present, reads the active flow with
 `approach flow read --flow-id "$APPROACH_FLOW_ID"`, and documents the implemented
 `approach flow` / `approach plan` commands for phase persistence and saved-plan linkage.
