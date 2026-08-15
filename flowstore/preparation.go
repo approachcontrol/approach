@@ -130,17 +130,18 @@ func clonePreparationSnapshot(record FlowRecord) FlowRecord {
 // Finalize runs bootstrap exactly once and stamps the receipt only after the
 // callback succeeds. A commit error is reconciled with an authoritative read:
 // a visible receipt is success, a visible nil receipt is incomplete, and an
-// unreadable result is unknown.
+// unreadable result is unknown. A failed identity read happens before any
+// receipt write, so it is not unknown and leaves this capability retryable.
 func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, error) {
-	if err := f.consume(); err != nil {
-		return FlowRecord{}, err
-	}
 	current, err := f.store.Read(f.flowID)
 	if err != nil {
-		return FlowRecord{}, errors.Join(ErrPreparationUnknown, fmt.Errorf("read flow generation before preparation: %w", err))
+		return FlowRecord{}, fmt.Errorf("read flow generation before preparation: %w", err)
 	}
 	if current.PreparationNonce != f.nonce {
 		return current, errors.Join(ErrPreparationStale, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
+	}
+	if err := f.consume(); err != nil {
+		return FlowRecord{}, err
 	}
 
 	if bootstrap != nil {

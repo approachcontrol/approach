@@ -351,10 +351,12 @@ repository bootstrap hook. It holds that Flow generation's launch/close
 reservation from the post-create read through claim admission, metadata,
 finalization, and any startup-failure compensation. A successful finalizer
 stamps `PreparedAt`; callback failure keeps the existing startup-phase blocking
-behavior. If receipt persistence reports a commit error, the store reads the
-Flow back: a matching receipt is success, a confirmed nil receipt is incomplete
-and blocks launchable phases, and an unreadable result is unknown and is not
-compensated because the receipt may be durable. A generation mismatch is
+behavior. A failed identity read before bootstrap leaves the one-shot finalizer
+usable, so callers can retry or compensate a still-receipt-less Flow. If receipt
+persistence reports a commit error, the store reads the Flow back: a matching
+receipt is success, a confirmed nil receipt is incomplete and blocks launchable
+phases, and an unreadable result is unknown and is not compensated because the
+receipt may be durable. A generation mismatch is
 separately stale and is also not compensated, because the same Flow ID now
 names an unrelated replacement. Ready-Bead create-and-launch uses the same
 preparation finalizer before it records the initial phase launch ID. Each
