@@ -1091,6 +1091,36 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 			wantStatus: "A phase launch is already pending for this Flow",
 		},
 		{
+			name: "manual phase attempt before retained flow terminal",
+			occupy: func(m Model) Model {
+				m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+					Scope:    embeddedTerminalScopeFlow,
+					FlowID:   record.FlowID,
+					Terminal: flowPhaseLaunchTestTerminal{state: "exited"},
+				})
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:   "manual-with-terminal-1",
+					Kind:    flowLaunchKindManualPhase,
+					FlowID:  record.FlowID,
+					PhaseID: record.Phases[0].PhaseID,
+				}, flowLaunchStateReading)
+				return next
+			},
+			wantStatus: "A phase launch is already pending for this Flow",
+		},
+		{
+			name: "other attempt kind",
+			occupy: func(m Model) Model {
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:  "autofix-1",
+					Kind:   flowLaunchKindAutofix,
+					FlowID: record.FlowID,
+				}, flowLaunchStateReading)
+				return next
+			},
+			wantStatus: flowRepairTerminalStatus,
+		},
+		{
 			name: "retained flow terminal",
 			occupy: func(m Model) Model {
 				m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
