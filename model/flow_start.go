@@ -365,7 +365,18 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 
 	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
 	if err != nil {
-		compensated, compensationErr := s.blockStartupFailurePhasesReserved(flow, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
+		// The held reservation only orders this against Close, not against a
+		// concurrent phase mutation, so the snapshot in flow can no longer be
+		// trusted by the time worktree creation itself fails. Re-read the
+		// authoritative record before selecting phases to block; an
+		// unreadable record or a generation mismatch means guessing risks
+		// blocking a phase that already moved on, so report the failure
+		// without blocking anything instead.
+		fresh, freshErr := s.verifiedFreshFlow(flow)
+		if freshErr != nil {
+			return result, fmt.Errorf("Worktree creation failed: %s; %w", err.Error(), freshErr)
+		}
+		compensated, compensationErr := s.blockStartupFailurePhasesReserved(fresh, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
 		result.Flow = compensated
 		return result, compensationErr
 	}
@@ -405,19 +416,11 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		} else {
 			// Finalize returns an empty record ahead of its transactional read
 			// when bootstrap itself fails, so the pre-bootstrap snapshot in
-			// flow is otherwise all that is left to compensate. The held
-			// reservation only orders this against Close, not against a
-			// concurrent phase mutation, so re-read the authoritative record
-			// before selecting phases to block. An unreadable record or a
-			// generation mismatch means the snapshot cannot be trusted, so
-			// report the failure without blocking a phase we can no longer
-			// verify: guessing risks blocking a phase that already moved on.
-			fresh, readErr := s.readFlow(flow.FlowID)
-			if readErr != nil {
-				return result, fmt.Errorf("%s; could not confirm current Flow state before compensating: %w", errText, readErr)
-			}
-			if fresh.PreparationGeneration != flow.PreparationGeneration {
-				return result, fmt.Errorf("%s; flow %q changed before compensation could run", errText, flow.FlowID)
+			// flow is otherwise all that is left to compensate. Re-read the
+			// authoritative record before selecting phases to block instead.
+			fresh, freshErr := s.verifiedFreshFlow(flow)
+			if freshErr != nil {
+				return result, fmt.Errorf("%s; %w", errText, freshErr)
 			}
 			flow = fresh
 			result.Flow = fresh
@@ -605,6 +608,24 @@ func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) er
 		return fmt.Errorf("%s; mark flow blocked: %v", resultErr, err)
 	}
 	return fmt.Errorf("%s", resultErr)
+}
+
+// verifiedFreshFlow re-reads the authoritative Flow record and confirms its
+// preparation generation still matches the given snapshot. The launch/close
+// reservation PrepareFlow holds across startup failures only orders this
+// against Close, not against a concurrent phase mutation, so a snapshot taken
+// earlier in PrepareFlow can no longer be trusted by the time a startup step
+// fails: an unreadable record or a changed generation means the caller must
+// not guess which phase is still safe to block.
+func (s FlowStarter) verifiedFreshFlow(flow flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+	fresh, readErr := s.readFlow(flow.FlowID)
+	if readErr != nil {
+		return flowstore.FlowRecord{}, fmt.Errorf("could not confirm current Flow state before compensating: %w", readErr)
+	}
+	if fresh.PreparationGeneration != flow.PreparationGeneration {
+		return flowstore.FlowRecord{}, fmt.Errorf("flow %q changed before compensation could run", flow.FlowID)
+	}
+	return fresh, nil
 }
 
 // blockStartupFailurePhasesReserved compensates while PrepareFlow still owns
