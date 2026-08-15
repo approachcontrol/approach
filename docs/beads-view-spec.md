@@ -188,7 +188,7 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
   and creates or writes nothing.
 - Enabling chooses the first ready direct child in the expansion's established
   order. It lists the complete repository Flow corpus and either prepares a new
-  Flow through `PrepareFlow` or adopts the sole open `pending` exact-link match
+  Flow through `flowCreator.Create` or adopts the sole open `pending` exact-link match
   carrying a persisted preparation receipt. Partial listings, multiple exact
   matches, missing receipts, running state, deliberate closure, failure
   terminals, success terminals, and unknown statuses all refuse enablement.

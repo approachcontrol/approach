@@ -345,14 +345,15 @@ plan's own phase status rather than trusting either return value.
 
 ## Prepared child Flows and epic progression
 
-`FlowStarter.PrepareFlow` creates the Flow and worktree, records start metadata,
-runs the repository bootstrap hook, and only then consumes its one-shot store
-finalizer. A successful finalizer stamps `PreparedAt`; callback failure keeps
-the existing startup-phase blocking behavior. If receipt persistence reports a
-commit error, the store reads the Flow back: a matching receipt is success, a
-confirmed nil receipt is incomplete and blocks launchable phases, and an
-unreadable result is unknown and is not compensated because the receipt may be
-durable.
+`flowCreator.Create` creates the Flow and worktree, records start metadata, and
+consumes the store's one-shot preparation finalizer around the repository
+bootstrap hook. A successful finalizer stamps `PreparedAt`; callback failure
+keeps the existing startup-phase blocking behavior. If receipt persistence
+reports a commit error, the store reads the Flow back: a matching receipt is
+success, a confirmed nil receipt is incomplete and blocks launchable phases,
+and an unreadable result is unknown and is not compensated because the receipt
+may be durable. Ready-Bead create-and-launch uses the same preparation finalizer
+before it records the initial phase launch ID.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite

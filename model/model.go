@@ -832,6 +832,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	)
 	launchSeams.AllocateFlowID = allocateFlowID
 	launchSeams.CreateFlow = createFlow
+	launchSeams.CreatePreparation = createPreparation
 	launchSeams.ReserveLaunch = createReserveFlowLaunch
 	launchSeams.EnsureWorktree = ensureFlowWorktree
 	launchSeams.CreateWorktree = actions.CreateFlowWorktree

@@ -279,7 +279,7 @@ func (f callbackPreparationFinalizer) Finalize(callback func() error) (flowstore
 // A recorded worktree path means the directory exists and the store names it.
 // It does not mean the bootstrap hook completed: the hook runs after
 // SetStartMetadata, so a Flow whose hook failed passes through here and launches
-// into the worktree it did get. That is the same contract PrepareFlow has had
+// into the worktree it did get. That is the same contract prepared creation has
 // since Flow creation gained a hook, and the TUI guide documents it for the
 // second `g`. Making path existence imply a finished bootstrap needs a
 // provisioning marker in the store, which is a change to Flow creation too.
@@ -343,7 +343,7 @@ func (s flowCreator) EnsureWorktree(record flowstore.FlowRecord) (flowstore.Flow
 	}
 	if err := s.runBootstrap(record.RepoPath, worktree); err != nil {
 		// The worktree and its metadata survive a hook failure — the same
-		// trade-off PrepareFlow makes — so a retry takes the passthrough above.
+		// trade-off flowCreator.Create makes — so a retry takes the passthrough above.
 		return started, fmt.Errorf("bootstrap hook failed: %w", err)
 	}
 	return started, nil

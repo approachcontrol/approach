@@ -203,8 +203,7 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateMetadata:
 		if msg.Err != "" {
-			releaseFlowLaunchReservation(msg.Release)
-			return m.finishCreateAfterWrite(attempt, "record start metadata: "+msg.Err)
+			return m.recoverCreateFlowMetadataFailure(attempt, msg)
 		}
 		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
 			releaseFlowLaunchReservation(msg.Release)
@@ -219,7 +218,7 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateBootstrap:
 		if msg.Err != "" {
-			if msg.GenerationLost {
+			if msg.GenerationLost || msg.PreparationUnknown {
 				releaseFlowLaunchReservation(msg.Release)
 				return m.finishCreateAfterWrite(attempt, msg.ErrOp+": "+msg.Err)
 			}
@@ -390,15 +389,26 @@ func createFlowLaunchSessionsCmd(seams flowLaunchSeams, attempt flowLaunchAttemp
 func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, prior flowLaunchEventMsg) tea.Cmd {
 	return func() tea.Msg {
 		event := createFlowLaunchEvent(attempt, flowLaunchStageCreateWritten, flowLaunchStateCreateWriting)
-		if seams.CreateFlow == nil {
-			event.Err = "Flow launch lifecycle is missing exact-ID creation"
-			return event
-		}
 		req := createFlowStartRequest(attempt)
-		record, err := seams.CreateFlow(flowstore.FlowRecord{
+		record := flowstore.FlowRecord{
 			FlowID: attempt.FlowID, RepoPath: req.RepoPath, Title: req.Title,
 			Instructions: req.Instructions, Bead: req.Bead, BaseRef: req.BaseRef,
-		}, flowstore.CreateOptions{Headless: req.Headless, PhaseAgent: phaseAgentSettingsForRequest(req)})
+		}
+		opts := flowstore.CreateOptions{Headless: req.Headless, PhaseAgent: phaseAgentSettingsForRequest(req)}
+		var err error
+		if attempt.Origin == flowLaunchOriginReadyBead {
+			if seams.CreatePreparation == nil {
+				event.Err = "Flow launch lifecycle is missing exact-ID preparation"
+				return event
+			}
+			record, event.PreparationFinalizer, err = seams.CreatePreparation(record, opts)
+		} else {
+			if seams.CreateFlow == nil {
+				event.Err = "Flow launch lifecycle is missing exact-ID creation"
+				return event
+			}
+			record, err = seams.CreateFlow(record, opts)
+		}
 		event.Record = record
 		if err != nil {
 			event.Err = err.Error()
@@ -411,6 +421,7 @@ func createFlowLaunchReserveCmd(seams flowLaunchSeams, attempt flowLaunchAttempt
 	return func() tea.Msg {
 		event := createFlowLaunchEvent(attempt, flowLaunchStageCreateReserved, flowLaunchStateCreateReserving)
 		event.CreatedRecord = prior.Record
+		event.PreparationFinalizer = prior.PreparationFinalizer
 		if seams.ReserveLaunch == nil {
 			event.Err = "Flow launch lifecycle is missing launch reservation"
 			return event
@@ -498,21 +509,48 @@ func createFlowLaunchBootstrapCmd(seams flowLaunchSeams, attempt flowLaunchAttem
 	return func() tea.Msg {
 		event := prior
 		event.Stage, event.From, event.Err = flowLaunchStageCreateBootstrap, flowLaunchStateCreateBootstrap, ""
-		if seams.BootstrapHookForRepo != nil {
+		runBootstrap := func() error {
 			if hook, ok := seams.BootstrapHookForRepo(attempt.Create.RepoPath); ok {
 				if seams.RunBootstrapHook == nil {
-					event.Err = "Flow launch lifecycle is missing bootstrap runner"
-					return event
+					return fmt.Errorf("Flow launch lifecycle is missing bootstrap runner")
 				}
 				if err := seams.RunBootstrapHook(actions.BootstrapContext{
 					RepoPath: attempt.Create.RepoPath, WorktreePath: prior.Worktree.WorktreePath,
 					Ref: prior.Worktree.Branch, Kind: actions.WorktreeCreateFlow,
 				}, hook); err != nil {
-					event.Err = err.Error()
-					event.ErrOp = "run bootstrap"
-					return event
+					return err
 				}
 			}
+			return nil
+		}
+		if seams.BootstrapHookForRepo == nil {
+			runBootstrap = func() error { return nil }
+		}
+		if prior.PreparationFinalizer != nil {
+			var bootstrapErr error
+			finalized, err := prior.PreparationFinalizer.Finalize(func() error {
+				bootstrapErr = runBootstrap()
+				return bootstrapErr
+			})
+			event.Record = finalized
+			if err != nil {
+				event.ErrOp = "finalize preparation"
+				if bootstrapErr != nil {
+					event.ErrOp = "run bootstrap"
+				}
+				event.Err = err.Error()
+				event.PreparationUnknown = flowstore.IsPreparationUnknown(err)
+				return event
+			}
+			if finalized.PreparedAt == nil {
+				event.ErrOp = "finalize preparation"
+				event.Err = "finalizer returned no preparation receipt"
+				return event
+			}
+		} else if err := runBootstrap(); err != nil {
+			event.Err = err.Error()
+			event.ErrOp = "run bootstrap"
+			return event
 		}
 		if seams.ReadFlow == nil {
 			event.Err, event.ErrOp = "read seam unavailable", "reread flow before AddPhaseLaunchID"
@@ -724,8 +762,7 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
 	case flowLaunchStageCreateMetadata:
 		if msg.Err != "" {
-			releaseFlowLaunchReservation(msg.Release)
-			return m.finishCreateAfterWrite(attempt, "")
+			return m.recoverCreateFlowMetadataFailure(attempt, msg)
 		}
 		if len(msg.StartupRoots) == 0 {
 			releaseFlowLaunchReservation(msg.Release)
@@ -734,6 +771,10 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateBootstrap:
+		if msg.PreparationUnknown {
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, "")
+		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateLaunchID:
 		parts := []string{"creation canceled after repository changed"}
@@ -758,6 +799,17 @@ func (m Model) beginCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunch
 		return m, nil
 	}
 	return next, createFlowLaunchRecoveryCmd(next.launchSeams, attempt, msg, parts, metadata, block)
+}
+
+func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	worktreeRecord := msg.Record
+	worktreeRecord.WorktreePath = msg.Worktree.WorktreePath
+	worktreeRecord.Branch = msg.Worktree.Branch
+	parts := []string{"record start metadata: " + msg.Err}
+	if note := createdFlowWorktreeNote(worktreeRecord); note != "" {
+		parts = append(parts, note)
+	}
+	return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
 }
 
 func createFlowLaunchRecoveryCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, prior flowLaunchEventMsg, parts []string, metadata, block bool) tea.Cmd {

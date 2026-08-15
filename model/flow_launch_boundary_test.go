@@ -374,6 +374,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		"defaultEmbeddedTerminalStarter":            true,
 		"CreateWithOptions":                         true,
 		"CreateFlow":                                true,
+		"CreatePreparation":                         true,
 		"ReserveAgentLaunch":                        true,
 		"ReserveLaunch":                             true,
 		"AddPhaseLaunchID":                          true,
@@ -399,7 +400,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	creatorWiring := flowLaunchFunctionKey{name: "newFlowCreator"}
 	expectedSinkReferences := map[string]map[flowLaunchFunctionKey]bool{
 		"addFlowPhaseLaunchID":                      {modelFlowLaunchFunction("flowLaunchPreparation"): true, {receiver: "flowLaunchPreparation", name: "prepare"}: true},
-		"reserveFlowLaunch":                         {modelFlowLaunchFunction("reserveFlowSpawn"): true, modelFlowLaunchFunction("reserveTrackedFlowLaunch"): true, modelFlowLaunchFunction("savedSessionFlowLaunchPrepareCmd"): true},
+		"reserveFlowLaunch":                         {modelFlowLaunchFunction("enableEpicProgressionCmd"): true, modelFlowLaunchFunction("reserveFlowSpawn"): true, modelFlowLaunchFunction("reserveTrackedFlowLaunch"): true, modelFlowLaunchFunction("savedSessionFlowLaunchPrepareCmd"): true},
 		"reserveFlowRepairLaunch":                   {modelFlowLaunchFunction("repairFlowLaunchPrepareCmd"): true},
 		"startEmbeddedTerminal":                     {modelFlowLaunchFunction("openEmbeddedTerminalWithLabel"): true},
 		"launchAgent":                               {modelFlowLaunchFunction("launchAgentWithContextStatus"): true},
@@ -409,6 +410,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		"defaultEmbeddedTerminalStarter":            {wiring: true},
 		"CreateWithOptions":                         {wiring: true},
 		"CreateFlow":                                {wiring: true, creatorWiring: true, {name: "createFlowLaunchWriteCmd"}: true},
+		"CreatePreparation":                         {wiring: true, creatorWiring: true, {name: "createFlowLaunchWriteCmd"}: true},
 		"ReserveAgentLaunch":                        {wiring: true},
 		"ReserveLaunch":                             {wiring: true, creatorWiring: true, {name: "createFlowLaunchReserveCmd"}: true},
 		"AddPhaseLaunchID":                          {wiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("flowLaunchLauncher"): true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},

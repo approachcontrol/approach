@@ -16,6 +16,7 @@ import (
 type flowLaunchSeams struct {
 	AllocateFlowID           func(title string) (string, error)
 	CreateFlow               func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
+	CreatePreparation        func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error)
 	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
 	ReadSession              func(sessions.Provider, string) (sessions.SessionRecord, error)
 	ListFlowSessions         func(flowID string) ([]sessions.SessionRecord, error)

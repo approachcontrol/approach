@@ -20,7 +20,7 @@ launch.
 - Enabled and halted state survive restart. Advancement is edge-triggered only
   from success-terminal transitions observed while the TUI is running. Startup
   performs no catch-up for completions that occurred while Approach was down.
-- This first toggle slice prepares a child through `FlowStarter.PrepareFlow`
+- This first toggle slice prepares a child through `flowCreator.Create`
   only. It does not claim the Bead, start a phase, or launch an agent. Child
   launching is deferred to `approach-y7g.9`; selecting and advancing subsequent
   children is deferred to `approach-y7g.5`.
