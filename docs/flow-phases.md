@@ -349,7 +349,10 @@ plan's own phase status rather than trusting either return value.
 consumes the store's one-shot `CreatePreparation` finalizer around the
 repository bootstrap hook. It holds that Flow generation's launch/close
 reservation from the post-create read through claim admission, metadata,
-finalization, and any startup-failure compensation. A successful finalizer
+finalization, and any startup-failure compensation. A reservation or start-metadata
+failure consumes that same finalizer so a receipt-less nonce-bearing Flow is
+not left launchable-looking; claim-admission failure keeps the marked recovery
+Flow uncompensated so a later retry can finish preparation. A successful finalizer
 stamps `PreparedAt`; callback failure keeps the existing startup-phase blocking
 behavior. A failed identity read before bootstrap leaves the one-shot finalizer
 usable, so callers can retry or compensate a still-receipt-less Flow. If receipt
@@ -362,7 +365,8 @@ names an unrelated replacement. Ready-Bead create-and-launch uses the same
 preparation finalizer before it records the initial phase launch ID. Each
 preparation also carries a storage-only random generation nonce. A nonce-bearing
 Flow is unlaunchable until that receipt is stamped, so another process cannot
-persist a launch ID in the gap before the creator's reservation. Reservation
+persist a launch ID or start a phase-untracked Flow agent (`s`, `R`, `U`) in
+the gap before the creator's reservation. Reservation
 failure, stale presentation, or another post-create exit consumes the finalizer
 through an atomic compensation path: under the launch/close reservation it
 revalidates that exact nonce and blocks only the authoritative launchable

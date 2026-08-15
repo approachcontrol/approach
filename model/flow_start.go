@@ -216,7 +216,14 @@ func (s flowCreator) Create(req FlowStartRequest) (FlowStartResult, error) {
 	}
 	reserved, release, err := s.reserveLaunch(flow.FlowID)
 	if err != nil {
-		return FlowStartResult{Flow: flow}, fmt.Errorf("reserve flow preparation identity: %w", err)
+		notes := "reserve flow preparation identity: " + err.Error()
+		compensated, compensationErr := compensateParkedPreparation(finalizer, false, notes)
+		result := FlowStartResult{Flow: flow}
+		if compensationErr == nil {
+			result.Flow = compensated
+			return result, fmt.Errorf("%s", notes)
+		}
+		return result, fmt.Errorf("%s; compensate preparation: %w", notes, compensationErr)
 	}
 	releaseIdentity := func() {
 		if release != nil {
@@ -277,7 +284,26 @@ func (s flowCreator) Create(req FlowStartRequest) (FlowStartResult, error) {
 		Commit:       commit,
 	})
 	if err != nil {
-		return result, err
+		worktreeRecord := flow
+		worktreeRecord.WorktreePath = worktree.WorktreePath
+		worktreeRecord.Branch = worktree.Branch
+		notes := "record start metadata: " + err.Error()
+		if note := createdFlowWorktreeNote(worktreeRecord); note != "" {
+			notes += "; " + note
+		}
+		fresh, freshErr := s.verifiedFreshFlow(flow)
+		if freshErr != nil {
+			return result, fmt.Errorf("%s; %w", notes, freshErr)
+		}
+		if !parkedStartMetadataLanded(fresh, worktree, req.BaseRef, commit) {
+			compensated, compensationErr := compensateParkedPreparation(finalizer, true, notes)
+			if compensationErr == nil {
+				result.Flow = compensated
+				return result, fmt.Errorf("%s", notes)
+			}
+			return result, fmt.Errorf("%s; %w", notes, compensationErr)
+		}
+		startedFlow = fresh
 	}
 	flow = startedFlow
 	result.Flow = flow
@@ -523,6 +549,38 @@ func (s flowCreator) runBootstrap(repoPath string, worktree actions.FlowWorktree
 // in Create can no longer be trusted by the time a startup step fails: an
 // unreadable record or a changed generation means the caller must not guess
 // which phase is still safe to block.
+func compensateParkedPreparation(finalizer flowstore.PreparationFinalizer, underReservation bool, notes string) (flowstore.FlowRecord, error) {
+	var (
+		record flowstore.FlowRecord
+		err    error
+	)
+	for attempt := 0; attempt < readyPreparationCompensationAttemptLimit; attempt++ {
+		if underReservation {
+			record, err = finalizer.CompensateUnderReservation(notes)
+		} else {
+			record, err = finalizer.Compensate(notes)
+		}
+		if err == nil || !compensationRetryable(err) {
+			return record, err
+		}
+	}
+	return record, err
+}
+
+func parkedStartMetadataLanded(record flowstore.FlowRecord, worktree actions.FlowWorktreeCreateResult, baseRef, commit string) bool {
+	if strings.TrimSpace(record.WorktreePath) != strings.TrimSpace(worktree.WorktreePath) ||
+		strings.TrimSpace(record.Branch) != strings.TrimSpace(worktree.Branch) {
+		return false
+	}
+	if baseRef != "" && strings.TrimSpace(record.BaseRef) != strings.TrimSpace(baseRef) {
+		return false
+	}
+	if commit != "" && strings.TrimSpace(record.Commit) != strings.TrimSpace(commit) {
+		return false
+	}
+	return true
+}
+
 func (s flowCreator) verifiedFreshFlow(flow flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 	fresh, readErr := s.readFlow(flow.FlowID)
 	if readErr != nil {

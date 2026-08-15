@@ -30,6 +30,9 @@ func phaseRepairObstruction(phase flowstore.FlowPhase, description string) flowR
 // stale display status, so rendering and key handling agree about whether a
 // repair can help.
 func flowRepairObstructionForRecord(record flowstore.FlowRecord) (flowRepairObstruction, bool) {
+	if flowstore.PreparationLaunchBlocked(record) {
+		return flowRepairObstruction{}, false
+	}
 	switch flowstore.DeriveStatus(record) {
 	case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned, flowstore.StatusClosed:
 		return flowRepairObstruction{}, false

@@ -147,6 +147,14 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 			record: repairClassificationRecord(flowstore.FlowPhase{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, DependsOn: []string{}}),
 		},
 		{
+			name: "receipt-less nonce-bearing preparation",
+			record: func() flowstore.FlowRecord {
+				record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseBlocked})
+				record.PreparationNonce = "nonce-unprepared"
+				return record
+			}(),
+		},
+		{
 			name: "manually mergeable",
 			record: func() flowstore.FlowRecord {
 				record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseCompleted, DependsOn: []string{}})

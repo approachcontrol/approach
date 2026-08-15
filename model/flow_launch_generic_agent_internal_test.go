@@ -67,6 +67,29 @@ func TestGenericWorktreeAgentHintUsesCachedReadiness(t *testing.T) {
 	}
 }
 
+func TestGenericWorktreeAgentReceiptlessPreparationDoesNotAdvertiseOrStart(t *testing.T) {
+	record := genericFlowAgentRecord(t)
+	record.PreparationNonce = "nonce-unprepared"
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.activePane = m.contentPane
+	m.width = 180
+
+	if m.selectedFlowWorktreeAgentReady() {
+		t.Fatal("receipt-less preparation should not advertise the generic agent")
+	}
+	if view := m.View(); strings.Contains(view, "start agent") {
+		t.Fatalf("receipt-less preparation rendered the generic shortcut:\n%s", view)
+	}
+	next, cmd := m.handleStartSelectedFlowWorktreeAgent()
+	if cmd != nil {
+		t.Fatal("receipt-less preparation started the generic-agent lifecycle")
+	}
+	if next.(Model).flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("receipt-less preparation retained a generic-agent lifecycle attempt")
+	}
+}
+
 func TestGenericWorktreeAgentClosedFlowDoesNotAdvertiseOrStart(t *testing.T) {
 	record := genericFlowAgentRecord(t)
 	closedAt := time.Now()

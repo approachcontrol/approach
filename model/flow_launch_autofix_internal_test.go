@@ -338,6 +338,30 @@ func TestAutofixAdmissionRefusesEveryOccupancySignal(t *testing.T) {
 	}
 }
 
+func TestAutofixAdmissionRefusesReceiptlessPreparationSilently(t *testing.T) {
+	record := autofixFlowRecord()
+	record.PreparationNonce = "nonce-unprepared"
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+
+	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindAutofix,
+		FlowID: record.FlowID,
+	})
+	if admitted || cmd != nil {
+		t.Fatalf("admitted = %v, cmd != nil = %v, want a silent refusal", admitted, cmd != nil)
+	}
+	if got := next.status.Text; got != "" {
+		t.Fatalf("status = %q, want silence: the hint is absent and the key inert", got)
+	}
+	if next.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("a refused admission must reserve nothing")
+	}
+	if next.selectedFlowAutofixReady() {
+		t.Fatal("receipt-less preparation should not advertise autofix")
+	}
+}
+
 func TestAutofixAdmissionRefusesTheRecordShapedGateSilently(t *testing.T) {
 	record := autofixFlowRecord()
 	record.WorktreePath = ""

@@ -46,7 +46,7 @@ func autofixPromptForPR(number int) string {
 // worktree-less Flow simply does not offer it.
 func (m Model) selectedFlowAutofixTarget() (flowstore.FlowRecord, string, bool) {
 	record, repoPath, ok := m.selectedManualMergeFlow()
-	if !ok || strings.TrimSpace(record.WorktreePath) == "" {
+	if !ok || strings.TrimSpace(record.WorktreePath) == "" || flowstore.PreparationLaunchBlocked(record) {
 		return flowstore.FlowRecord{}, "", false
 	}
 	return record, repoPath, true
@@ -183,7 +183,8 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 func autofixFlowEligible(record flowstore.FlowRecord) bool {
 	return strings.TrimSpace(record.FlowID) != "" &&
 		flowManualMergeEligible(record) &&
-		strings.TrimSpace(record.WorktreePath) != ""
+		strings.TrimSpace(record.WorktreePath) != "" &&
+		!flowstore.PreparationLaunchBlocked(record)
 }
 
 // autofixFlowLaunchReadCmd is the authoritative read. Like resume's it

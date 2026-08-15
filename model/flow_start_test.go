@@ -49,6 +49,93 @@ func (f preparedFlowFinalizerForTest) CompensateUnderReservation(notes string) (
 	return f.Compensate(notes)
 }
 
+type compensatingPreparationFinalizerForTest struct {
+	record *flowstore.FlowRecord
+	notes  *string
+}
+
+func (f compensatingPreparationFinalizerForTest) Finalize(func() error) (flowstore.FlowRecord, error) {
+	return *f.record, errors.New("test finalizer must not finalize")
+}
+
+func (f compensatingPreparationFinalizerForTest) Compensate(notes string) (flowstore.FlowRecord, error) {
+	return f.CompensateUnderReservation(notes)
+}
+
+func (f compensatingPreparationFinalizerForTest) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	if f.notes != nil {
+		*f.notes = notes
+	}
+	flow := *f.record
+	for _, root := range launchablePhases(flow) {
+		for i := range flow.Phases {
+			if flow.Phases[i].PhaseID != root.PhaseID {
+				continue
+			}
+			update := blockedPhaseUpdate(flow.FlowID, root, notes)
+			flow.Phases[i].Status = update.Status
+			flow.Phases[i].Notes = update.Notes
+			flow.Phases[i].Outcome = update.Outcome
+		}
+	}
+	*f.record = flow
+	return flow, nil
+}
+
+type recordingPreparationFinalizerForTest struct {
+	record *flowstore.FlowRecord
+	calls  *[]string
+}
+
+func (f recordingPreparationFinalizerForTest) Finalize(callback func() error) (flowstore.FlowRecord, error) {
+	if f.calls != nil {
+		*f.calls = append(*f.calls, "finalize")
+	}
+	if callback != nil {
+		if err := callback(); err != nil {
+			return *f.record, err
+		}
+	}
+	prepared := *f.record
+	stamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	prepared.PreparedAt = &stamp
+	*f.record = prepared
+	return prepared, nil
+}
+
+func (f recordingPreparationFinalizerForTest) Compensate(notes string) (flowstore.FlowRecord, error) {
+	if f.calls != nil {
+		*f.calls = append(*f.calls, "compensate")
+	}
+	return *f.record, nil
+}
+
+func (f recordingPreparationFinalizerForTest) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	return f.Compensate(notes)
+}
+
+type retryableThenCompensatingFinalizerForTest struct {
+	record    *flowstore.FlowRecord
+	notes     *string
+	remaining *int
+}
+
+func (f retryableThenCompensatingFinalizerForTest) Finalize(func() error) (flowstore.FlowRecord, error) {
+	return *f.record, errors.New("test finalizer must not finalize")
+}
+
+func (f retryableThenCompensatingFinalizerForTest) Compensate(notes string) (flowstore.FlowRecord, error) {
+	return f.CompensateUnderReservation(notes)
+}
+
+func (f retryableThenCompensatingFinalizerForTest) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	if f.remaining != nil && *f.remaining > 0 {
+		*f.remaining--
+		return *f.record, errors.Join(flowstore.ErrPreparationReservation, errors.New("timed out waiting for Flow launch/close lock"))
+	}
+	return compensatingPreparationFinalizerForTest{record: f.record, notes: f.notes}.CompensateUnderReservation(notes)
+}
+
 func newFlowCreatorForTest(opts flowCreatorOptions) flowCreator {
 	var latest flowstore.FlowRecord
 	if opts.CreatePreparation == nil && opts.CreateFlow != nil {
@@ -780,6 +867,148 @@ func TestFlowCreatorCreateBootstrapFailureSkipsCompensationOnNonceMismatch(t *te
 	}
 	if (phaseUpdate != flowstore.PhaseUpdate{}) {
 		t.Fatalf("phase update = %#v, want no compensation against a replaced Flow", phaseUpdate)
+	}
+}
+
+func TestFlowCreatorMetadataFailureCompensatesLaunchableRoots(t *testing.T) {
+	created := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Parked", Instructions: "Write the plan.", RepoPath: "/dev/alpha",
+		PreparationNonce: "nonce-parked",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+			{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, DependsOn: []string{"plan"}},
+		},
+	}
+	var notes string
+	released := false
+	creator := newFlowCreator(flowCreatorOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, compensatingPreparationFinalizerForTest{record: &created, notes: &notes}, nil
+		},
+		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != created.FlowID {
+				t.Fatalf("ReserveLaunch(%q), want %q", flowID, created.FlowID)
+			}
+			return created, func() { released = true }, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{
+				WorktreePath: "/dev/alpha-worktrees/flow-parked",
+				Branch:       "flow/parked",
+			}, nil
+		},
+		SetStartMetadata: func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("database busy")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			if flowID != created.FlowID {
+				t.Fatalf("ReadFlow(%q), want %q", flowID, created.FlowID)
+			}
+			return created, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("SetPhase(%#v) must not replace finalizer compensation", update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	result, err := creator.Create(FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title, Instructions: created.Instructions,
+	})
+	if err == nil || !strings.Contains(err.Error(), "database busy") {
+		t.Fatalf("Create() error = %v, want metadata failure", err)
+	}
+	if !released {
+		t.Fatal("Create() did not release the preparation reservation")
+	}
+	if len(result.Flow.Phases) == 0 || result.Flow.Phases[0].Status != flowstore.PhaseBlocked {
+		t.Fatalf("Create() result = %#v, want compensated launchable root", result.Flow)
+	}
+	if !strings.Contains(notes, "database busy") || !strings.Contains(notes, "/dev/alpha-worktrees/flow-parked") {
+		t.Fatalf("compensation notes = %q, want metadata error and surviving worktree path", notes)
+	}
+}
+
+func TestFlowCreatorMetadataCommitUnknownContinuesWhenMetadataLanded(t *testing.T) {
+	created := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Parked", Instructions: "Write the plan.", RepoPath: "/dev/alpha",
+		PreparationNonce: "nonce-parked",
+		Phases:           []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}},
+	}
+	landed := created
+	landed.WorktreePath = "/dev/alpha-worktrees/flow-parked"
+	landed.Branch = "flow/parked"
+	landed.Commit = "abc123"
+	var calls []string
+	creator := newFlowCreator(flowCreatorOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, recordingPreparationFinalizerForTest{record: &landed, calls: &calls}, nil
+		},
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return created, func() {}, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: landed.WorktreePath, Branch: landed.Branch}, nil
+		},
+		ResolveCommit: func(string) string { return landed.Commit },
+		SetStartMetadata: func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("commit acknowledgement failed")
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return landed, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("SetPhase(%#v) must not compensate a landed metadata write", update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	result, err := creator.Create(FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title, Instructions: created.Instructions,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v, want finalization after landed metadata", err)
+	}
+	if result.Flow.PreparedAt == nil || strings.Join(calls, ",") != "finalize" {
+		t.Fatalf("Create() result = %#v calls=%#v, want finalized landed metadata", result.Flow, calls)
+	}
+}
+
+func TestFlowCreatorReservationFailureRetriesRetryableCompensation(t *testing.T) {
+	created := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Parked", Instructions: "Write the plan.", RepoPath: "/dev/alpha",
+		PreparationNonce: "nonce-parked",
+		Phases:           []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}},
+	}
+	var notes string
+	retries := 1
+	creator := newFlowCreator(flowCreatorOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, retryableThenCompensatingFinalizerForTest{record: &created, notes: &notes, remaining: &retries}, nil
+		},
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, errors.New("lock timeout")
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			t.Fatal("reservation failure created a worktree")
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+	})
+
+	result, err := creator.Create(FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title, Instructions: created.Instructions,
+	})
+	if err == nil || !strings.Contains(err.Error(), "lock timeout") {
+		t.Fatalf("Create() error = %v, want reservation failure", err)
+	}
+	if retries != 0 {
+		t.Fatalf("retryable compensation remaining = %d, want a retry", retries)
+	}
+	if len(result.Flow.Phases) == 0 || result.Flow.Phases[0].Status != flowstore.PhaseBlocked {
+		t.Fatalf("Create() result = %#v, want compensated launchable root", result.Flow)
+	}
+	if !strings.Contains(notes, "lock timeout") {
+		t.Fatalf("compensation notes = %q, want reservation error", notes)
 	}
 }
 
