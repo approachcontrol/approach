@@ -704,6 +704,18 @@ func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
 	if ctx.FlowSavedSessionResume {
 		return "session " + shortSessionID(ctx.ResumeSessionID)
 	}
+	if ctx.FlowAutofix &&
+		ctx.FlowAutofixPRNumber > 0 &&
+		ctx.Embedded &&
+		!ctx.Headless &&
+		strings.TrimSpace(ctx.FlowID) != "" &&
+		ctx.FlowPhaseID == "" &&
+		!ctx.FlowLaunchTracked &&
+		!ctx.FlowRepair &&
+		!ctx.FlowAgent &&
+		!ctx.FlowSavedSessionResume {
+		return fmt.Sprintf("autofix pr %d", ctx.FlowAutofixPRNumber)
+	}
 	for _, value := range []string{
 		ctx.FlowPhaseID,
 		ctx.FlowID,

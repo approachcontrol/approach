@@ -823,7 +823,11 @@ On a Flow row or an expanded phase row:
   the agent in the repository root. The launch goes through the same lifecycle as
   `g`, so occupancy, the persisted `h` headless preference, tmux mode, and the
   current agent/model/effort all apply, and interactive embedded launches prefill
-  the dock for you to send.
+  the dock for you to send. Their dock tab/chip uses the display identity
+  `autofix pr <num>` without `#`, so PR 116 renders, for example,
+  `1 codex autofix pr 116 running`; the agent prompt remains exactly
+  `autofix pr #116`. Headless launches are unchanged and retain the existing
+  Flow identity rather than using the interactive autofix label.
 
   It is deliberately **phase-untracked**: it writes no phase state, marks no
   phase running, and attaches its session to no phase history, so an autofix run
