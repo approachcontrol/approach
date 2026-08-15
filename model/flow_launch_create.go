@@ -311,6 +311,9 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		return next.installFlowLaunchEmbedded(attempt, msg)
 
 	case flowLaunchStageCreateRecovered:
+		if next, cmd, ok := m.retryReadyPreparationCompensation(attempt, msg); ok {
+			return next, cmd
+		}
 		releaseFlowLaunchReservation(msg.Release)
 		present := m.createFlowLaunchOriginCurrent(attempt.Create)
 		m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowLaunchCreatePresentation(attempt.Create)
@@ -832,6 +835,9 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
 	case flowLaunchStageCreateRecovered:
+		if next, cmd, ok := m.retryReadyPreparationCompensation(attempt, msg); ok {
+			return next, cmd
+		}
 		releaseFlowLaunchReservation(msg.Release)
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).clearFlowLaunchCreatePresentation(attempt.Create), nil
 	default:
@@ -849,19 +855,36 @@ func (m Model) beginCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunch
 	return next, createFlowLaunchRecoveryCmd(next.launchSeams, attempt, msg, parts, metadata, block)
 }
 
+const readyPreparationCompensationAttemptLimit = 3
+
 func (m Model) beginReadyPreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg, parts []string) (Model, tea.Cmd) {
 	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
 	if !ok {
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
+	msg.RecoveryErrs = append([]string(nil), parts...)
+	msg.CompensationRetryable = false
 	return next, createReadyPreparationCompensationCmd(msg, parts)
+}
+
+func (m Model) retryReadyPreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd, bool) {
+	if !msg.CompensationRetryable || msg.PreparationFinalizer == nil {
+		return m, nil, false
+	}
+	notes := msg.RecoveryErrs
+	if len(notes) == 0 {
+		notes = []string{"creation canceled after repository changed"}
+	}
+	next, cmd := m.beginReadyPreparationCompensation(attempt, msg, notes)
+	return next, cmd, true
 }
 
 func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []string) tea.Cmd {
 	return func() tea.Msg {
 		event := prior
 		event.Stage, event.From = flowLaunchStageCreateRecovered, flowLaunchStateFailurePersisting
+		event.CompensationRetryable = false
 		errs := append([]string(nil), parts...)
 		if prior.PreparationFinalizer == nil {
 			errs = append(errs, "compensate preparation: finalizer unavailable")
@@ -879,6 +902,10 @@ func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []str
 			event.Record = record
 			if err != nil {
 				errs = append(errs, "compensate preparation: "+err.Error())
+				if flowstore.IsPreparationIncomplete(err) && prior.CompensationRetries+1 < readyPreparationCompensationAttemptLimit {
+					event.CompensationRetryable = true
+					event.CompensationRetries = prior.CompensationRetries + 1
+				}
 			}
 		}
 		event.Err = strings.Join(errs, "; ")

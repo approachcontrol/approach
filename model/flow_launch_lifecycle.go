@@ -116,9 +116,13 @@ type flowLaunchEventMsg struct {
 	// worktree metadata and bootstrap hook succeed, before launch persistence.
 	PreparationFinalizer flowstore.PreparationFinalizer
 	PreparationUnknown   bool
-	Context              actions.AgentLaunchContext
-	Route                flowLaunchRoute
-	Skipped              bool
+	// CompensationRetryable is set when Ready compensation confirmed that
+	// neither writer attempt landed and the one-shot finalizer was restored.
+	CompensationRetryable bool
+	CompensationRetries   int
+	Context               actions.AgentLaunchContext
+	Route                 flowLaunchRoute
+	Skipped               bool
 	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.

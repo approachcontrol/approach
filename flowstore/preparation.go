@@ -206,9 +206,9 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 // launch/close reservation as agent spawn before consuming this capability, then
 // revalidates the generation and pending state inside the writer transaction so
 // a stale creator cannot overwrite a claimant or a same-ID replacement. A
-// reservation timeout leaves the finalizer usable for a later retry. Callers
-// that already hold that reservation must use CompensateUnderReservation
-// instead.
+// reservation timeout, or two writer attempts that reconcile as unlanded,
+// leaves the finalizer usable for a later retry. Callers that already hold that
+// reservation must use CompensateUnderReservation instead.
 func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
 	notes, err := f.compensationNotes(notes)
 	if err != nil {
@@ -268,6 +268,7 @@ func (f *preparationFinalizer) compensateUnderReservation(notes string) (FlowRec
 	if reconcileErr != nil || visible {
 		return authoritative, reconcileErr
 	}
+	f.restore()
 	return authoritative, errors.Join(ErrPreparationIncomplete, updateErr)
 }
 
@@ -393,6 +394,15 @@ func (f *preparationFinalizer) consume() error {
 	}
 	f.consumed = true
 	return nil
+}
+
+func (f *preparationFinalizer) restore() {
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.consumed = false
 }
 
 // PreparationLaunchBlocked reports that a nonce-bearing preparation has not

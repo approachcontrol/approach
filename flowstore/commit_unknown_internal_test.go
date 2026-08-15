@@ -44,14 +44,27 @@ func (tx *injectedCommitTx) Commit() error {
 }
 
 func injectNextCommitOutcome(store *Store, mode injectedCommitMode) {
+	injectCommitOutcomes(store, mode)
+}
+
+func injectCommitOutcomes(store *Store, modes ...injectedCommitMode) {
 	backend := store.backend.(*sqliteBackend)
 	original := backend.beginTx
+	remaining := append([]injectedCommitMode(nil), modes...)
 	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
 		tx, err := original(ctx)
 		if err != nil {
 			return nil, err
 		}
-		backend.beginTx = original
+		if len(remaining) == 0 {
+			backend.beginTx = original
+			return tx, nil
+		}
+		mode := remaining[0]
+		remaining = remaining[1:]
+		if len(remaining) == 0 {
+			backend.beginTx = original
+		}
 		return &injectedCommitTx{sqliteTransaction: tx, mode: mode, db: backend.db}, nil
 	}
 }
@@ -232,6 +245,36 @@ func TestPreparationCreateDoesNotAdoptPhaseStateClaimAfterAmbiguousCommit(t *tes
 	authoritative, readErr := store.Read("create-phase-claimed")
 	if readErr != nil || authoritative.Phases[0].Status != PhaseBlocked {
 		t.Fatalf("phase-claimed preparation = %#v, %v", authoritative, readErr)
+	}
+}
+
+func TestPreparationCompensationRetainsCapabilityWhenBothWritesFailToLand(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "compensation-exhausted", Title: "Exhausted", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	injectCommitOutcomes(store, injectedCommitAbsent, injectedCommitAbsent)
+	if _, err := finalizer.Compensate("creation canceled"); !IsPreparationIncomplete(err) {
+		t.Fatalf("Compensate() error = %v, want incomplete after both writes failed to land", err)
+	}
+	authoritative, err := store.Read(created.FlowID)
+	if err != nil || authoritative.Phases[0].Status != PhaseReady {
+		t.Fatalf("Read() after exhausted Compensate() = %#v, %v; want unchanged ready root", authoritative, err)
+	}
+
+	compensated, err := finalizer.Compensate("creation canceled")
+	if err != nil {
+		t.Fatalf("retry Compensate() error = %v, want the finalizer retained after unlanded writes", err)
+	}
+	if compensated.Phases[0].Status != PhaseBlocked {
+		t.Fatalf("retry Compensate() phase = %#v, want blocked", compensated.Phases[0])
 	}
 }
 

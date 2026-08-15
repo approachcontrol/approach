@@ -367,8 +367,10 @@ failure, stale presentation, or another post-create exit consumes the finalizer
 through an atomic compensation path: under the launch/close reservation it
 revalidates that exact nonce and blocks only the authoritative launchable
 roots. When create-phase already holds that reservation, compensation keeps it
-through the async command instead of releasing and re-acquiring. A same-ID
-replacement or already-claimed Flow is never overwritten.
+through the async command instead of releasing and re-acquiring. If both
+compensation writes reconcile as unlanded, the one-shot finalizer is restored
+and Ready recovery reschedules that same capability instead of dropping it. A
+same-ID replacement or already-claimed Flow is never overwritten.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
