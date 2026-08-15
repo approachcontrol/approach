@@ -96,7 +96,7 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 	if err != nil {
 		return nil, err
 	}
-	if err := completeCutover(canonicalRoot, state, presets); err != nil {
+	if err := completeCutover(canonicalRoot, state, presets, lockTimeout); err != nil {
 		return nil, err
 	}
 	backend, err := openSQLiteBackend(canonicalRoot, lockTimeout)
@@ -146,16 +146,26 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		closeDB = false
 		return nil
 	}
-	if version != 0 && version != 1 && version != 2 && version != 3 {
+	if version != 0 && version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	predecessor := int64(1)
-	if version == 2 {
-		predecessor = 2
-	} else if version == 3 {
-		predecessor = 3
+	if version >= 2 {
+		predecessor = version
 	}
-	if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
+	stampOnly := false
+	if version == 4 || version == 5 {
+		if err := validateSQLiteSchemaVersion(db, version); err != nil {
+			if validateSQLiteSchemaVersion(db, 6) == nil {
+				stampOnly = true
+			} else if version == 4 && validateSQLiteSchemaVersion(db, 5) == nil {
+				// Parent-release v4 that already has the v5 claim trigger still
+				// needs the v6 nonce column; do not stamp-only.
+			} else {
+				return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
+			}
+		}
+	} else if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
 		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
 	}
 	tx, err := db.Begin()
@@ -169,26 +179,50 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		return cause
 	}
 	statements := make([]string, 0, 10)
-	if predecessor == 1 {
-		statements = append(statements,
-			"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
-			"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
-			flowBeadCompatibilityTrigger,
-		)
+	if !stampOnly {
+		if predecessor == 1 {
+			statements = append(statements,
+				"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
+				"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
+				flowBeadCompatibilityTrigger,
+			)
+		}
+		if predecessor <= 2 {
+			statements = append(statements,
+				"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
+				epicProgressionTableSchema,
+				flowPreparedCompatibilityTrigger,
+			)
+		}
+		for _, statement := range statements {
+			if _, err := tx.Exec(statement); err != nil {
+				return rollback(fmt.Errorf("migrate flow database schema: %w", err))
+			}
+		}
+		if predecessor == 3 {
+			if err := migrateLegacyV3EpicProgressions(tx); err != nil {
+				return rollback(err)
+			}
+		}
+		statements = nil
+		if predecessor <= 3 {
+			statements = append(statements,
+				epicProgressionDoneInsertCompatibilityTrigger,
+				epicProgressionDoneUpdateCompatibilityTrigger,
+			)
+		}
+		if predecessor <= 4 {
+			statements = append(statements, flowProgressionClaimCompatibilityTrigger)
+		}
+		if predecessor <= 5 {
+			statements = append(statements,
+				"ALTER TABLE flows ADD COLUMN preparation_nonce TEXT NOT NULL DEFAULT ''",
+				"UPDATE flows SET preparation_nonce = CASE WHEN json_valid(CAST(record AS TEXT)) THEN COALESCE(json_extract(CAST(record AS TEXT), '$.preparation_nonce'), '') ELSE '' END",
+				flowPreparationNonceCompatibilityTrigger,
+			)
+		}
 	}
-	if predecessor < 3 {
-		statements = append(statements,
-			"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
-			epicProgressionTableSchema,
-			flowPreparedCompatibilityTrigger,
-		)
-	}
-	statements = append(statements,
-		"ALTER TABLE flows ADD COLUMN preparation_nonce TEXT NOT NULL DEFAULT ''",
-		"UPDATE flows SET preparation_nonce = CASE WHEN json_valid(CAST(record AS TEXT)) THEN COALESCE(json_extract(CAST(record AS TEXT), '$.preparation_nonce'), '') ELSE '' END",
-		flowPreparationNonceCompatibilityTrigger,
-		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
-	)
+	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
@@ -201,6 +235,58 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		return fmt.Errorf("close authoritative flow database migration handle: %w", err)
 	}
 	closeDB = false
+	return nil
+}
+
+func migrateLegacyV3EpicProgressions(tx *sql.Tx) error {
+	type migrationRow struct {
+		repoPath  string
+		epicID    string
+		enabled   int
+		updatedAt string
+		record    []byte
+	}
+	rows, err := tx.Query("SELECT repo_path, epic_id, enabled, updated_at, record FROM epic_progressions ORDER BY repo_path, epic_id")
+	if err != nil {
+		return fmt.Errorf("read v3 epic progressions for migration: %w", err)
+	}
+	var pending []migrationRow
+	for rows.Next() {
+		var row migrationRow
+		if err := rows.Scan(&row.repoPath, &row.epicID, &row.enabled, &row.updatedAt, &row.record); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan v3 epic progression for migration: %w", err)
+		}
+		row.record = append([]byte(nil), row.record...)
+		pending = append(pending, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate v3 epic progressions for migration: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close v3 epic progression migration rows: %w", err)
+	}
+	for _, row := range pending {
+		record, err := decodeLegacyV3EpicProgression(row.repoPath, row.epicID, row.enabled, row.updatedAt, row.record)
+		if err != nil {
+			return fmt.Errorf("migrate v3 epic progression: %w", err)
+		}
+		data, migratedUpdatedAt, err := encodeEpicProgression(record)
+		if err != nil {
+			return fmt.Errorf("encode migrated epic progression %q/%q: %w", row.repoPath, row.epicID, err)
+		}
+		if migratedUpdatedAt != row.updatedAt {
+			return fmt.Errorf("migrate v3 epic progression %q/%q changed updated_at projection", row.repoPath, row.epicID)
+		}
+		result, err := tx.Exec("UPDATE epic_progressions SET record = ? WHERE repo_path = ? AND epic_id = ?", data, row.repoPath, row.epicID)
+		if err != nil {
+			return fmt.Errorf("rewrite v3 epic progression %q/%q: %w", row.repoPath, row.epicID, err)
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			return fmt.Errorf("rewrite v3 epic progression %q/%q affected %d rows: %v", row.repoPath, row.epicID, affected, err)
+		}
+	}
 	return nil
 }
 
@@ -350,7 +436,7 @@ func inspectReservedDirectory(path string) (bool, error) {
 	return true, nil
 }
 
-func completeCutover(root string, state cutoverState, presets map[string]Preset) error {
+func completeCutover(root string, state cutoverState, presets map[string]Preset, lockTimeout time.Duration) error {
 	stagePath := filepath.Join(root, stageFilename)
 	legacyPath := filepath.Join(root, "flows")
 	tombstonePath := filepath.Join(root, "flows.legacy")
@@ -376,7 +462,16 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset)
 		// surface, because canonicalizeLegacyFlow is preset-dependent. A user who
 		// crashed mid-cutover and then edited a preset out of their config would
 		// get a mismatch on every subsequent launch and could never start again.
-		err := validateStagedDatabase(stagePath, nil, false)
+		// A predecessor-schema stage from an older build is still that durable
+		// corpus: upgrade it in place before current-schema validation, or the
+		// resume path treats a valid predecessor stage as unusable and discards it.
+		err := migrateAuthoritativeDatabase(stagePath, lockTimeout)
+		if err == nil {
+			err = settleStagedSQLiteFile(stagePath)
+		}
+		if err == nil {
+			err = validateStagedDatabase(stagePath, nil, false)
+		}
 		switch {
 		case err == nil:
 			if err := os.Rename(stagePath, databasePath); err != nil {
@@ -1072,6 +1167,27 @@ func fileFingerprint(path string) (fingerprint, error) {
 		return fingerprint{}, err
 	}
 	return fingerprint{hash: sha256.Sum256(data), size: info.Size(), mode: info.Mode(), modTime: info.ModTime()}, nil
+}
+
+func settleStagedSQLiteFile(path string) error {
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rw"}}))
+	if err != nil {
+		return fmt.Errorf("open staged flow database to settle journal: %w", err)
+	}
+	var mode string
+	if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil || mode != "delete" {
+		_ = db.Close()
+		return fmt.Errorf("settle staged flow database rollback journal: mode=%q err=%w", mode, err)
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close staged flow database after settle: %w", err)
+	}
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove staged flow database sidecar %q: %w", path+suffix, err)
+		}
+	}
+	return nil
 }
 
 func requireNoSQLiteSidecars(path string) error {

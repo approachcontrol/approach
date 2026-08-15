@@ -512,6 +512,8 @@ type flowLaunchFailurePersistedMsg struct {
 	Release                   func()
 	Create                    *flowLaunchCreateRequest
 	releaseReadyBeadAdmission bool
+	preparationKind           flowPreparationKind
+	preparationToken          uint64
 }
 
 type agentLaunchRequestedMsg struct {
@@ -534,18 +536,20 @@ type FlowCreateFailedMsg struct {
 }
 
 type ReadyBeadFlowCreatedMsg struct {
-	RepoPath string
-	FlowID   string
-	Title    string
-	Request  uint64
+	RepoPath         string
+	FlowID           string
+	Title            string
+	Request          uint64
+	preparationToken uint64
 }
 
 type ReadyBeadFlowCreateFailedMsg struct {
-	RepoPath string
-	FlowID   string
-	Title    string
-	Err      string
-	Request  uint64
+	RepoPath         string
+	FlowID           string
+	Title            string
+	Err              string
+	preparationToken uint64
+	Request          uint64
 }
 
 type FlowDeletedMsg struct {

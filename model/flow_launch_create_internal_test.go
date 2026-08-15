@@ -605,7 +605,7 @@ func TestCreateFlowLaunchAddFailureProofControlsRecovery(t *testing.T) {
 		}
 	})
 
-	t.Run("unreadable joins independent recovery failures", func(t *testing.T) {
+	t.Run("unreadable joins block failure after metadata", func(t *testing.T) {
 		h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 		h.addErr = errors.New("write failed")
 		h.readErrs = map[int]error{2: errors.New("database busy")}

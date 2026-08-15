@@ -18,6 +18,9 @@ var (
 	// ErrPreparationUnknown means a failed persistence attempt could not be
 	// reconciled by an authoritative read.
 	ErrPreparationUnknown = errors.New("flow preparation outcome is unknown")
+	// ErrPreparationStale means the Flow ID now names a different preparation
+	// generation, so callers must not compensate the returned replacement.
+	ErrPreparationStale = errors.New("flow preparation generation is stale")
 )
 
 // PreparationFinalizer is a Flow-bound one-shot capability. The concrete type
@@ -128,6 +131,13 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 	if err := f.consume(); err != nil {
 		return FlowRecord{}, err
 	}
+	current, err := f.store.Read(f.flowID)
+	if err != nil {
+		return FlowRecord{}, errors.Join(ErrPreparationUnknown, fmt.Errorf("read flow generation before preparation: %w", err))
+	}
+	if current.PreparationNonce != f.nonce {
+		return current, errors.Join(ErrPreparationStale, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
+	}
 
 	if bootstrap != nil {
 		if err := bootstrap(); err != nil {
@@ -178,7 +188,7 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 		return FlowRecord{}, errors.Join(ErrPreparationUnknown, err, fmt.Errorf("read preparation receipt: %w", readErr))
 	}
 	if authoritative.PreparationNonce != f.nonce {
-		return authoritative, err
+		return authoritative, errors.Join(ErrPreparationStale, err, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
 	}
 	if authoritative.PreparedAt != nil {
 		return authoritative, nil
@@ -397,3 +407,7 @@ func IsPreparationIncomplete(err error) bool { return errors.Is(err, ErrPreparat
 // IsPreparationUnknown reports a persistence outcome that could not be read
 // authoritatively after a failed receipt write.
 func IsPreparationUnknown(err error) bool { return errors.Is(err, ErrPreparationUnknown) }
+
+// IsPreparationStale reports that the Flow ID now names another preparation
+// generation and is therefore unsafe to mutate as compensation.
+func IsPreparationStale(err error) bool { return errors.Is(err, ErrPreparationStale) }

@@ -3,6 +3,10 @@
 // Agents persist Flow changes through the `approach flow` CLI
 // (cmd/approach/flow.go), never by editing approach.db — direct edits bypass
 // the store's transactions, validation, and phase-ID normalization.
+//
+// SQLite schema versions: v3 adds prepared_at + receipt trigger; v4 requires
+// boolean `done` in epic progression JSON; v5 fences the progression-claim
+// marker; v6 adds the protected flows.preparation_nonce generation projection.
 package flowstore
 
 import (
@@ -555,11 +559,20 @@ type FlowRecord struct {
 	// SetHeadless or CreateOptions.Headless — a value set on a record passed to
 	// Create is ignored. It is written without omitempty so an explicit false
 	// stays distinguishable from a legacy record that predates the field.
-	Headless   bool        `json:"headless"`
-	Phases     []FlowPhase `json:"phases"`
-	PreparedAt *time.Time  `json:"prepared_at,omitempty"`
+	Headless bool        `json:"headless"`
+	Phases   []FlowPhase `json:"phases"`
+	// ProgressionClaim marks an identity created for the external Beads claim
+	// protocol. Recovery repeats the idempotent claim; the marker is retry
+	// provenance, not proof that ownership already landed. SQLite schema v5
+	// fences this JSON marker with a compatibility trigger.
+	ProgressionClaim      bool       `json:"progression_claim,omitempty"`
+	PreparationGeneration string     `json:"preparation_generation,omitempty"`
+	PreparedAt            *time.Time `json:"prepared_at,omitempty"`
 	// PreparationNonce is storage-only generation identity minted by
 	// CreatePreparation. General creation strips caller-supplied values.
+	// SQLite schema v6 projects it onto flows.preparation_nonce and fences
+	// older writers with a compatibility trigger. Schema v4 separately
+	// requires boolean `done` in epic progression JSON.
 	PreparationNonce string             `json:"-"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
@@ -757,6 +770,7 @@ func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, prepara
 	// preparation finalizer. General creation never trusts a caller-supplied one.
 	record.PreparedAt = nil
 	record.PreparationNonce = strings.TrimSpace(preparationNonce)
+	record.PreparationGeneration = opts.preparationGeneration
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, fmt.Errorf("flow title is required")
 	}
@@ -1778,6 +1792,17 @@ func (s *Store) ReserveRepairLaunch(flowID string) (FlowRecord, func(), error) {
 // cross-process ordering.
 func (s *Store) ReserveAgentLaunch(flowID string) (FlowRecord, func(), error) {
 	return s.reserveLaunchAgainstClose(flowID, "launch an agent for")
+}
+
+// ReserveEpicProgressionSuccessor holds the Flow's launch/close lock while
+// sequential progression classifies it. Unlike launch reservations, this
+// reservation intentionally permits missing and closed Flows so the caller can
+// apply progression-first inactive precedence to every Flow condition.
+func (s *Store) ReserveEpicProgressionSuccessor(flowID string) (func(), error) {
+	if err := validateFlowID(flowID); err != nil {
+		return nil, err
+	}
+	return s.acquireLaunchCloseLock(flowID)
 }
 
 func (s *Store) reserveLaunchAgainstClose(flowID, action string) (FlowRecord, func(), error) {

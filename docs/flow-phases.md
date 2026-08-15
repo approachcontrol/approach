@@ -346,27 +346,90 @@ plan's own phase status rather than trusting either return value.
 ## Prepared child Flows and epic progression
 
 `flowCreator.Create` creates the Flow and worktree, records start metadata, and
-consumes the store's one-shot preparation finalizer around the repository
-bootstrap hook. A successful finalizer stamps `PreparedAt`; callback failure
-keeps the existing startup-phase blocking behavior. If receipt persistence
-reports a commit error, the store reads the Flow back: a matching receipt is
-success, a confirmed nil receipt is incomplete and blocks launchable phases,
-and an unreadable result is unknown and is not compensated because the receipt
-may be durable. Ready-Bead create-and-launch uses the same preparation finalizer
-before it records the initial phase launch ID. Each preparation also carries a
-storage-only random generation nonce. Reservation failure, stale presentation,
-or another post-create exit consumes the finalizer through an atomic
-compensation path: under the launch/close reservation it revalidates that exact
-nonce and blocks only the authoritative launchable roots. A same-ID replacement
-or already-claimed Flow is never overwritten.
+consumes the store's one-shot `CreatePreparation` finalizer around the
+repository bootstrap hook. It holds that Flow generation's launch/close
+reservation from the post-create read through claim admission, metadata,
+finalization, and any startup-failure compensation. A successful finalizer
+stamps `PreparedAt`; callback failure keeps the existing startup-phase blocking
+behavior. If receipt persistence reports a commit error, the store reads the
+Flow back: a matching receipt is success, a confirmed nil receipt is incomplete
+and blocks launchable phases, and an unreadable result is unknown and is not
+compensated because the receipt may be durable. A generation mismatch is
+separately stale and is also not compensated, because the same Flow ID now
+names an unrelated replacement. Ready-Bead create-and-launch uses the same
+preparation finalizer before it records the initial phase launch ID. Each
+preparation also carries a storage-only random generation nonce. Reservation
+failure, stale presentation, or another post-create exit consumes the finalizer
+through an atomic compensation path: under the launch/close reservation it
+revalidates that exact nonce and blocks only the authoritative launchable
+roots. A same-ID replacement or already-claimed Flow is never overwritten.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
 writer transaction re-reads the Flow and enables the epic progression row.
-This slice records the pending Flow as a runtime baseline before releasing the
-reservation, but does not dispatch a phase or advance to another child. A
-restart installs no baseline and performs no catch-up; live-edge advancement is
-owned by the later sequential-advance slice.
+Successful in-session enablement records that authoritative pending Flow as the
+runtime baseline before releasing the reservation. The view-independent 1 Hz
+poll compares only that exact baseline with the current unscoped Flow corpus.
+It advances on a newly observed `completed` or `merged` state, refreshes the
+baseline on other successful observations, and preserves it across failed or
+degraded polls and a missing tracked Flow. Startup never reconstructs these
+baselines from enabled rows and never catches up a terminal Flow observed while
+Approach was down.
+
+Each live edge takes the shared, monotonically token-owned preparation
+admission. Before any Beads query or creation side effect, the worker re-reads
+the progression row; absent, disabled, done, or halted state cancels the edge, while
+an unreadable row leaves it armed for retry. With no successor already owned by
+that edge, it intersects a fresh direct-child query with fresh `bd ready` order,
+indexes the complete repository Flow corpus by exact canonical repository plus
+`{child ID, epic ID}`, skips every ready child that already has such a Flow, and
+prepares the first unlinked child. Links for another repository or epic do not
+suppress the candidate. This path calls preparation only: it does not claim a
+Bead, create a launch intent, start a phase, or dispatch an agent.
+
+Once preparation returns a Flow ID, that exact ID is owned in memory before any
+retry classification. Later polls reserve and reconcile it before consulting Beads,
+so a partial preparation, reservation failure, or reconciliation failure cannot
+skip ahead and create another child. Missing receipts, deliberate closure, and
+non-`pending` exact-linked successors are visible owned obstructions. They keep
+the source edge and ownership armed but fail closed against later selection;
+durable halt persistence remains a separate concern.
+
+While holding a successor-specific launch/close reservation that permits an
+absent or closed Flow, one writer transaction
+revalidates progression before the Flow. Inactive progression wins over every
+simultaneous Flow condition; otherwise an absent or changed-link Flow is
+released, an incomplete/closed/non-pending exact Flow is an owned obstruction,
+an open prepared pending Flow is accepted, and storage uncertainty is
+retryable. Only acceptance replaces the runtime baseline. If the Ready/direct
+child intersection is empty, or every intersecting child already has an exact
+linked Flow, the TUI requests the atomic active→done transition. The stored row
+keeps `enabled:false` for compatibility, but `done:true` is the only completion
+signal; ordinary disabled state is never inferred as complete. A write error is
+reconciled by reread: confirmed done reports completion, absent/normal-off/halted
+state reports inactive, confirmed active preserves runtime ownership for retry,
+and unreadable state removes runtime ownership fail-closed until an explicit
+successful re-enable installs a new baseline. Manual disable always requests
+`done:false`; a confirmed done reread is reported as completion preceding the
+disable, not as a successful disable.
+
+When no exact-link Flow exists, epic enablement refreshes the epic's direct
+children and the repository Ready set before the sole sanctioned Beads mutation,
+and aborts without mutation if the selected child is no longer in both.
+`flowCreator.Create` then persists the receipt-less exact-link identity and runs
+`bd update --claim -- <child-id>` through its post-persistence admission hook
+before any worktree side effect. Generated Flow instructions use
+`bd show -- <child-id>`. A claim error retains that marked unprepared identity;
+an uncertain process-started error is never compensated with an automatic
+unclaim. After a confirmed claim, every later failure likewise leaves the
+exact-link Flow discoverable. Retry refreshes direct-child membership and
+searches for an open marked
+receipt-less or prepared-pending exact-link Flow before consulting Ready state,
+then repeats the same-actor idempotent claim before it adopts the prepared Flow
+or surfaces incomplete preparation instead of skipping to a sibling. Consumed
+`completed`/`merged` markers are ignored so a later Ready sibling can be
+selected; unmarked
+manual Ready `f`/`F` Flows do not enter this recovery path.
 
 ## Per-phase agent settings
 

@@ -338,9 +338,13 @@ func (m Model) clearFlowCreateRequest(request uint64) Model {
 }
 
 func (m Model) nextReadyBeadFlowCreateRequest() (Model, uint64) {
+	var admitted bool
+	m, _, admitted = m.acquireFlowPreparation(flowPreparationReadyBead)
+	if !admitted {
+		return m, 0
+	}
 	m.readyBeadFlowCreateSeq++
 	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
-	m.flowPreparationAdmission = true
 	return m, m.activeReadyBeadFlowCreate
 }
 
@@ -352,7 +356,6 @@ func (m Model) clearReadyBeadFlowCreateRequest(request uint64) Model {
 	if m.isCurrentReadyBeadFlowCreateRequest(request) {
 		m.activeReadyBeadFlowCreate = 0
 	}
-	m.flowPreparationAdmission = false
 	return m
 }
 
@@ -673,7 +676,7 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string, 
 	}
 }
 
-func (m Model) createReadyBeadFlowOnly(repoPath, title, instructions string, bead flowstore.BeadLink, request uint64) tea.Cmd {
+func (m Model) createReadyBeadFlowOnly(repoPath, title, instructions string, bead flowstore.BeadLink, request, preparationToken uint64) tea.Cmd {
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	preferences := m.agentPreferences()
 	return func() tea.Msg {
@@ -689,9 +692,9 @@ func (m Model) createReadyBeadFlowOnly(repoPath, title, instructions string, bea
 			AgentPreferencesProvided: true,
 		})
 		if err != nil {
-			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request}
+			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), Request: request, preparationToken: preparationToken}
 		}
-		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
+		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request, preparationToken: preparationToken}
 	}
 }
 

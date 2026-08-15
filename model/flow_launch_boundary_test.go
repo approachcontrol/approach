@@ -400,7 +400,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	creatorWiring := flowLaunchFunctionKey{name: "newFlowCreator"}
 	expectedSinkReferences := map[string]map[flowLaunchFunctionKey]bool{
 		"addFlowPhaseLaunchID":                      {modelFlowLaunchFunction("flowLaunchPreparation"): true, {receiver: "flowLaunchPreparation", name: "prepare"}: true},
-		"reserveFlowLaunch":                         {modelFlowLaunchFunction("enableEpicProgressionCmd"): true, modelFlowLaunchFunction("reserveFlowSpawn"): true, modelFlowLaunchFunction("reserveTrackedFlowLaunch"): true, modelFlowLaunchFunction("savedSessionFlowLaunchPrepareCmd"): true},
+		"reserveFlowLaunch":                         {modelFlowLaunchFunction("reserveFlowSpawn"): true, modelFlowLaunchFunction("reserveTrackedFlowLaunch"): true, modelFlowLaunchFunction("savedSessionFlowLaunchPrepareCmd"): true},
 		"reserveFlowRepairLaunch":                   {modelFlowLaunchFunction("repairFlowLaunchPrepareCmd"): true},
 		"startEmbeddedTerminal":                     {modelFlowLaunchFunction("openEmbeddedTerminalWithLabel"): true},
 		"launchAgent":                               {modelFlowLaunchFunction("launchAgentWithContextStatus"): true},

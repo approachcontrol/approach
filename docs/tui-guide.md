@@ -495,9 +495,10 @@ plans. v1 has no TUI plan deletion.
 
 With the top content pane focused, press `2` to enter the selected repository's
 Beads group at its last-used subview, defaulting to Ready before first use.
-Beads queries and detail reads are read-only, and no action in this group
-mutates tracker state. Pressing `2` while already in any Beads subview is a
-no-op. Press `r` for
+Beads queries and detail reads are read-only. Manual Ready Flow creation is
+also claim-free; the only tracker mutation in this group is the child claim
+performed when epic auto-progression prepares a new Flow. Pressing `2` while
+already in any Beads subview is a no-op. Press `r` for
 Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
 pressing the already-active letter is also a no-op. Top-pane `←`/`→` switches
 between Git and Beads at their remembered subviews. The five Beads modes keep
@@ -623,6 +624,39 @@ Flow-scoped; and the terminal dock takes ownership only after a successful
 embedded install. Pane focus and key ownership remain presentation concerns and
 never decide whether a launch may bypass lifecycle admission.
 
+For a selected epic with loaded children and readiness, `a: auto on` enables
+progression from the first ready direct child. After a complete Flow listing
+rules out ambiguous or unusable candidates, a new-Flow path refreshes the epic's
+direct children and the repository Ready set. If the selected child is no longer
+both direct and ready, the attempt stops without a claim. Otherwise it persists
+the receipt-less exact-link Flow identity, runs
+`bd update --claim -- <child-id>`, and waits for it before creating a worktree.
+The Flow instructions use `bd show -- <child-id>`. Any claim error is shown with
+the child ID and underlying cause, retains the marked unprepared identity for
+same-actor retry, and leaves progression known off.
+Because a process-started error can leave ownership uncertain or already
+claimed, Approach neither probes nor unclaims; retry uses the same actor. A
+successful claim is likewise retained if later Flow preparation, reservation,
+or progression enablement fails. Before choosing another ready sibling, retry
+finds the claimed direct child's open marked receipt-less or prepared-pending
+exact-link Flow even though that child is no longer Ready; it reserves the Flow,
+revalidates its generation and current direct-child membership, repeats the
+idempotent claim, then surfaces incomplete preparation or adopts the prepared
+Flow. Consumed `completed`/`merged` markers are ignored so off/on recovery can
+select a later Ready sibling. Unmarked manual Flows do not enter this recovery
+path. This action prepares or adopts only; it does not start a phase or launch
+an agent.
+
+Enabled epics advance from the same view-independent 1 Hz Flow poll. When the
+exact in-session baseline Flow is newly observed as `completed` or `merged`,
+Approach prepares the next unlinked direct child in fresh `bd ready` order; it
+does not claim the Bead or launch the new Flow. The status line reports the
+prepared child and Flow ID, retryable preparation/reconciliation errors, or an
+owned successor that blocks later children. When no creation candidate remains,
+it reports auto-progression completion and turns normal progression off. No
+startup catch-up occurs: explicitly toggle progression off and back on to
+install a new live baseline after reconciling an unknown drain state.
+
 Lowercase `f` produces the same parked Flow as a successful `n` form submission,
 so `g` on its first phase launches the agent inside the Flow's isolated
 worktree. An initial store failure leaves no Flow. If worktree creation fails,
@@ -730,10 +764,14 @@ allocates the final Flow ID before it checks exact-ID sessions; allocation is
 non-durable and does not reserve or create a record, so exact-ID creation is the
 collision authority. After creation the lifecycle holds its in-memory attempt
 and the cross-process launch/close reservation across worktree setup, bootstrap,
-launch-ID persistence, metadata, and embedded installation or recovery. The
-first canonical launchable root starts; parallel roots remain available unless
-startup recovery must block the captured root set. A graph with no launchable
-root is parked after metadata without a launch ID.
+launch-ID persistence, metadata, and embedded installation or recovery. Worktree,
+branch, and commit metadata are persisted immediately after worktree creation,
+before bootstrap or launch-ID persistence, so an interrupted bootstrap retains
+the artifact identity for recovery. The first canonical launchable root starts;
+parallel roots remain available unless startup recovery must block the captured
+root set. A graph with no launchable root is parked after metadata without a
+launch ID. Embedders that explicitly provide `Options.StartFlowPlan` override
+this default Plan Now lifecycle with that compatibility seam.
 
 On a Flow row or an expanded phase row:
 
@@ -824,7 +862,11 @@ On a Flow row or an expanded phase row:
   the agent in the repository root. The launch goes through the same lifecycle as
   `g`, so occupancy, the persisted `h` headless preference, tmux mode, and the
   current agent/model/effort all apply, and interactive embedded launches prefill
-  the dock for you to send.
+  the dock for you to send. Their dock tab/chip uses the display identity
+  `autofix pr <num>` without `#`, so PR 116 renders, for example,
+  `1 codex autofix pr 116 running`; the agent prompt remains exactly
+  `autofix pr #116`. Headless launches are unchanged and retain the existing
+  Flow identity rather than using the interactive autofix label.
 
   It is deliberately **phase-untracked**: it writes no phase state, marks no
   phase running, and attaches its session to no phase history, so an autofix run
@@ -896,9 +938,11 @@ terminal before repairing this Flow`. A repair in flight reserves the Flow from
 the key press onward, so a second `R` reports `A repair launch is already
 pending for this Flow` and a replayed launch message is a silent no-op; a phase
 resume already holding the Flow reports `A phase resume is already pending for
-this Flow`. Approach fresh-reads the persisted Flow and rechecks eligibility
-before allocating the terminal, so a Flow that stopped being repairable in the
-meantime reports `Flow is no longer repairable`.
+this Flow`. A pending manual or automatic phase launch reports `A phase launch
+is already pending for this Flow`; unlike a retained-terminal refusal, this can
+occur before any terminal slot exists. Approach fresh-reads the persisted Flow
+and rechecks eligibility before allocating the terminal, so a Flow that stopped
+being repairable in the meantime reports `Flow is no longer repairable`.
 
 Repair also refuses while the session store holds a live session belonging to
 any of the Flow's phase launches, with `Flow phase <phase-id> already has a

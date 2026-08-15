@@ -24,6 +24,38 @@ Branch first — never commit or push directly to main. Everything else (TDD, qu
 
 If this file conflicts with a linked doc, trust the linked doc and remove the duplicate here.
 
+## Cursor Cloud specific instructions
+
+Startup runs the update script (`go mod download`; `npm ci` in `web/` when its
+lockfile is present), so Go modules and `web/node_modules` are already fetched.
+Two independent products live here; standard commands are already documented —
+use them rather than duplicating:
+
+- Go TUI (`approach`, repo root): build/test/fmt/run commands are in
+  `docs/agent-operations.md` and the `Makefile`.
+- Next.js web viewer (`web/`): lint/typecheck/test/build/dev commands are in
+  `web/README.md`. It is a separate deployable with its own CI job.
+
+Non-obvious caveats worth knowing:
+
+- `make test` is slow (roughly 6–7 min): `actions` and `gitquery` spin up real
+  temporary git repositories. When iterating, run one package (e.g.
+  `go test ./scanner`) instead of the full gate.
+- `bd` (beads) is not installed in this environment. The TUI degrades gracefully
+  to a calm `beads not configured` state, and the Beads task-tracking commands in
+  the blocks below will not run — don't block on them for env work.
+- The TUI is a full-screen Bubble Tea app that needs a real TTY. Run it under
+  tmux with an explicit size (e.g. `tmux new-session -x 200 -y 50 ... './bin/approach'`)
+  and inspect it with `tmux capture-pane`; it will not render in a plain
+  non-TTY shell.
+- To exercise the web viewer end-to-end: start `approach serve` (see
+  `docs/graphql-api.md`) against scratch `--state-root`/`--scan-root` dirs (never
+  the default artifact root), point `web/.env.local`'s `APPROACH_GRAPHQL_URL` at
+  it, then `npm run dev` in `web/`. `scripts/generate-test-repos.sh` creates demo
+  repos, and `approach flow create ... --state-root <dir>` seeds a Flow to view.
+- `npm run dev`/`next build` regenerate `web/AGENTS.md`, `web/CLAUDE.md`, and
+  touch `web/next-env.d.ts`. These are Next.js artifacts — do not commit them.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 

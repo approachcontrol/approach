@@ -73,7 +73,8 @@ func (m Model) clearFlowLaunchCreatePresentation(create flowLaunchCreateRequest)
 	case flowLaunchOriginNewFlow:
 		return m.clearFlowCreateRequest(create.Presentation.Request)
 	case flowLaunchOriginReadyBead:
-		return m.clearReadyBeadFlowCreateRequest(create.Presentation.Request)
+		m = m.clearReadyBeadFlowCreateRequest(create.Presentation.Request)
+		return m.releaseFlowPreparation(flowPreparationReadyBead, m.flowPreparationOwner.Token)
 	default:
 		return m
 	}

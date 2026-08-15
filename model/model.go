@@ -14,6 +14,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/beadsmutate"
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
@@ -115,6 +116,9 @@ type Model struct {
 	readyBeadFlowCreateSeq    uint64
 	activeReadyBeadFlowCreate uint64
 	flowPreparationAdmission  bool
+	flowPreparationSeq        uint64
+	flowPreparationOwner      flowPreparationOwner
+
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
 	pendingRepoSelection      string
@@ -155,9 +159,11 @@ type Model struct {
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
 	listChildrenBeads         func(string, string) ([]beadsquery.Bead, error)
 	listReadyBeads            func(string) ([]beadsquery.Bead, error)
+	claimBead                 func(repoPath, beadID string) error
 	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	enableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
+	reconcileEpicSuccessor    func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
@@ -171,6 +177,8 @@ type Model struct {
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
+	reserveFlowPreparation    func(string) (flowstore.FlowRecord, func(), error)
+	reserveEpicSuccessor      func(string) (func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -203,6 +211,13 @@ type Model struct {
 	terminalFocus             terminalFocus
 	autoAdvanceDrainFlows     map[string]struct{}
 	epicProgressionBaselines  map[string]flowstore.FlowRecord
+
+	epicProgressionBaselineMinimumRequests map[string]uint64
+
+	epicProgressionOwnedSuccessors map[string]epicProgressionOwnedSuccessor
+	epicProgressionAdvanceSeq      uint64
+	activeEpicProgressionAdvance   epicProgressionAdvanceRequest
+	epicProgressionAdvanceCursor   string
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	// flowAutofixTmuxLaunches maps a Flow ID to every autofix tmux
@@ -296,9 +311,11 @@ type Options struct {
 	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
+	ClaimBead                 func(repoPath, beadID string) error
 	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	EnableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
+	ReconcileEpicSuccessor    func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 	ListBlockedBeads          func(repoPath string) ([]beadsquery.Bead, error)
 	ListOpenBeads             func(repoPath string) ([]beadsquery.Bead, error)
 	ListInProgressBeads       func(repoPath string) ([]beadsquery.Bead, error)
@@ -317,6 +334,7 @@ type Options struct {
 	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
 	ReserveFlowRepairLaunch   func(flowID string) (flowstore.FlowRecord, func(), error)
 	ReserveFlowLaunch         func(flowID string) (flowstore.FlowRecord, func(), error)
+	ReserveEpicSuccessor      func(flowID string) (func(), error)
 	AddFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow                func(flowID string) error
@@ -367,6 +385,7 @@ func New(repos []scanner.Repo) Model {
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
+	customEpicSuccessorPersistence := opts.ReconcileEpicSuccessor != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -467,6 +486,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if listChildrenBeads == nil {
 		listChildrenBeads = beadsquery.ListChildren
 	}
+	claimBead := opts.ClaimBead
+	if claimBead == nil {
+		claimBead = beadsmutate.Claim
+	}
 	readEpicProgression := opts.ReadEpicProgression
 	if readEpicProgression == nil {
 		if opts.FlowStore == nil && strings.TrimSpace(opts.SessionStateRoot) == "" {
@@ -503,6 +526,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.EpicProgression{}, flowstore.FlowRecord{}, err
 			}
 			return store.EnableEpicProgressionForPreparedFlow(update)
+		}
+	}
+	reconcileEpicSuccessor := opts.ReconcileEpicSuccessor
+	if reconcileEpicSuccessor == nil {
+		reconcileEpicSuccessor = func(update flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorRetryable}, err
+			}
+			return store.ReconcileEpicProgressionSuccessor(update)
 		}
 	}
 	listBlockedBeads := opts.ListBlockedBeads
@@ -641,28 +674,40 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
+	reserveEpicSuccessor := opts.ReserveEpicSuccessor
+	if reserveEpicSuccessor == nil {
+		if customEpicSuccessorPersistence {
+			// A caller that replaces successor reconciliation owns its storage
+			// boundary; opening the default store here would reserve another backend.
+			reserveEpicSuccessor = func(string) (func(), error) {
+				return func() {}, nil
+			}
+		} else {
+			reserveEpicSuccessor = func(flowID string) (func(), error) {
+				store, err := newFlowStore()
+				if err != nil {
+					return nil, err
+				}
+				return store.ReserveEpicProgressionSuccessor(flowID)
+			}
+		}
+	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
-		// The compatibility reservation above intentionally returns identity only,
-		// but create-phase startup must snapshot the authoritative post-create graph
-		// or it cannot distinguish a launchable Flow from a parked one. Reread via
-		// the caller's configured storage boundary while retaining the same no-op
-		// reservation ownership used by existing custom persistence integrations.
-		createReserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
-			record, release, err := reserveFlowLaunch(flowID)
-			if err != nil {
-				return flowstore.FlowRecord{}, release, err
-			}
-			authoritative, err := readFlow(flowID)
-			if err != nil {
-				releaseFlowLaunchReservation(release)
-				return flowstore.FlowRecord{}, nil, err
-			}
-			if authoritative.FlowID != record.FlowID {
-				releaseFlowLaunchReservation(release)
-				return flowstore.FlowRecord{}, nil, fmt.Errorf("reserve launch reread returned flow %q", authoritative.FlowID)
-			}
-			return authoritative, release, nil
+		// Custom phase persistence may belong to a different backend, so its
+		// compatibility reservation above deliberately owns no lock. That is safe
+		// for legacy launch seams but cannot authorize preparation side effects.
+		// Reuse an explicitly provided Store when it is the shared backend;
+		// otherwise leave this nil so flowCreator refuses before persistence.
+		createReserveFlowLaunch = nil
+		if opts.FlowStore != nil {
+			createReserveFlowLaunch = opts.FlowStore.ReserveAgentLaunch
+		}
+	}
+	reserveFlowPreparation := createReserveFlowLaunch
+	if reserveFlowPreparation == nil {
+		reserveFlowPreparation = func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, fmt.Errorf("authoritative Flow preparation reservation is unavailable")
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -804,7 +849,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		CreateWorktree:       actions.CreateFlowWorktree,
 		SetStartMetadata:     setFlowStartMetadata,
 		SetPhase:             setFlowPhase,
-		ReserveLaunch:        reserveFlowLaunch,
+		ReserveLaunch:        createReserveFlowLaunch,
+		ReadFlow:             readFlow,
 		BootstrapHookForRepo: bootstrapHookForRepo,
 		RunBootstrapHook:     runBootstrapHook,
 		ResolveCommit:        actions.ResolveWorktreeCommit,
@@ -888,9 +934,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		},
 		listChildrenBeads:         listChildrenBeads,
 		listReadyBeads:            listReadyBeads,
+		claimBead:                 claimBead,
 		readEpicProgression:       readEpicProgression,
 		setEpicProgression:        setEpicProgression,
 		enableEpicProgression:     enableEpicProgression,
+		reconcileEpicSuccessor:    reconcileEpicSuccessor,
 		showBead:                  showBead,
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
@@ -905,6 +953,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reopenFlow:                reopenFlow,
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
+		reserveFlowPreparation:    reserveFlowPreparation,
+		reserveEpicSuccessor:      reserveEpicSuccessor,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,
 		deleteFlow:                deleteFlow,
@@ -1856,6 +1906,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.startAutoAdvanceFetch()
 	case AutoAdvanceResultMsg:
 		return m.handleAutoAdvanceResult(msg)
+	case epicProgressionAdvanceResultMsg:
+		return m.handleEpicProgressionAdvanceResult(msg)
 	case StatusExpiredMsg:
 		return m.handleStatusExpired(msg), nil
 	case StatusFadeMsg:

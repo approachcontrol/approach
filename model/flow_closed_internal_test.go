@@ -168,9 +168,8 @@ func TestActiveFlowRecordsDropsClosedFlows(t *testing.T) {
 	}
 }
 
-// A close committed between launch bookkeeping and the spawn would leave a
-// launch ID for an agent that never started, so the reservation has to be held
-// across both rather than acquired at the terminal-open step.
+// Saved-session resume checks closure after the exact session refresh and the
+// authoritative Flow read, before protected preparation can reserve or spawn.
 func TestSessionResumeRefusesClosedFlow(t *testing.T) {
 	record := closedGuardRecord(flowstore.FlowPhase{
 		PhaseID: "implementation",

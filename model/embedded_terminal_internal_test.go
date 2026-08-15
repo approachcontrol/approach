@@ -223,6 +223,89 @@ func (t internalFakeEmbeddedTerminal) State() string {
 	return t.state
 }
 
+func TestFlowEmbeddedTerminalIdentityAutofix(t *testing.T) {
+	valid := actions.AgentLaunchContext{
+		FlowID:                 "flow-1",
+		WorktreePath:           "/dev/alpha/worktrees/flow-1",
+		FlowAutofix:            true,
+		FlowAutofixPRNumber:    116,
+		Embedded:               true,
+		InitialPrompt:          "autofix pr #116",
+		FlowLaunchTracked:      false,
+		FlowPhaseID:            "",
+		FlowRepair:             false,
+		FlowAgent:              false,
+		FlowSavedSessionResume: false,
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*actions.AgentLaunchContext)
+		want   string
+	}{
+		{name: "valid", want: "autofix pr 116"},
+		{name: "repair precedence", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowRepair = true
+		}, want: "repair"},
+		{name: "generic agent precedence", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowAgent = true
+		}, want: "agent"},
+		{name: "saved session precedence", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowSavedSessionResume = true
+			ctx.ResumeSessionID = "abcdefgh12345678"
+		}, want: "session abcdefgh"},
+		{name: "tracked phase precedence", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowPhaseID = "implementation"
+			ctx.FlowLaunchTracked = true
+		}, want: "implementation"},
+		{name: "untracked phase identity", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowPhaseID = "review-loop"
+		}, want: "review-loop"},
+		{name: "zero PR number", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowAutofixPRNumber = 0
+		}, want: "flow-1"},
+		{name: "negative PR number", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowAutofixPRNumber = -1
+		}, want: "flow-1"},
+		{name: "PR metadata without autofix role", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowAutofix = false
+		}, want: "flow-1"},
+		{name: "whitespace Flow ID", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowID = " \t "
+		}, want: "flow-1"},
+		{name: "whitespace phase ID", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowPhaseID = " \t "
+		}, want: "flow-1"},
+		{name: "not embedded", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.Embedded = false
+		}, want: "flow-1"},
+		{name: "headless", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.Headless = true
+		}, want: "flow-1"},
+		{name: "tracked without phase", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowLaunchTracked = true
+		}, want: "flow-1"},
+		{name: "malformed scope falls back to worktree", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowID = ""
+			ctx.WorktreePath = "/dev/alpha/worktrees/fallback"
+		}, want: "fallback"},
+		{name: "malformed scope falls back to flow", mutate: func(ctx *actions.AgentLaunchContext) {
+			ctx.FlowID = ""
+			ctx.WorktreePath = ""
+		}, want: "flow"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := valid
+			if tc.mutate != nil {
+				tc.mutate(&ctx)
+			}
+			if got := flowEmbeddedTerminalIdentity(ctx); got != tc.want {
+				t.Fatalf("flowEmbeddedTerminalIdentity(%#v) = %q, want %q", ctx, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEmbeddedTerminalNumbersAreGlobalAcrossScopes(t *testing.T) {
 	m := Model{
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {

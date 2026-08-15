@@ -26,6 +26,10 @@ type Preset struct {
 type CreateOptions struct {
 	Preset   *Preset
 	Headless *bool
+	// preparationGeneration is minted only by Store.CreatePreparation. Keeping
+	// it private prevents general CreateWithOptions callers from forging the
+	// generation carried by a preparation finalizer.
+	preparationGeneration string
 	// PhaseAgent is stamped onto every seeded phase, and onto declared phases
 	// that carry no settings of their own.
 	PhaseAgent PhaseAgentSettings

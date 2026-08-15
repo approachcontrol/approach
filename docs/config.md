@@ -539,15 +539,29 @@ The database and its records have separate compatibility gates:
   ''`, the exact protected-receipt trigger, and
   `epic_progressions(repo_path, epic_id, enabled, updated_at, record)` with a
   composite primary key and no enabled-scan index yet. Version 4 adds
+  required boolean `done` inside each progression record and installs insert
+  and record-update triggers that reject missing, null, or non-boolean `done`.
+  Version 5 leaves those columns unchanged and installs the progression-claim
+  marker compatibility trigger. Version 6 adds
   `flows.preparation_nonce TEXT NOT NULL DEFAULT ''` plus a compatibility
   trigger that keeps the projection and storage-only JSON field identical.
-  Under the bootstrap lease, existing version 0
+  Under the bootstrap
+  lease, existing version 0
   (unstamped v1 layout) and version 1 databases are validated against the exact
-  predecessor table-and-index contract; versions 2 and 3 are validated against
-  their exact columns, indexes, tables, and triggers. All upgrade transactionally
-  in place to version 4.
-  Existing rows, JSON record blobs, earlier projections, and retained `flows/`
-  files are not rewritten or removed. A malformed predecessor is rejected
+  predecessor table-and-index contract; version 2 is validated against its
+  exact columns, indexes, and Bead trigger; version 3 is validated against its
+  full schema before any record changes; version 4 is validated against the
+  parent-release contract (done and nonce triggers, no claim trigger). All
+  upgrade transactionally in place
+  to version 5. The v3→v4 step adds the nonce projection and strictly decodes
+  every legacy progression blob and rewrites it with `done:false`, preserving
+  identity, enabled/halt state, timestamps, and SQL projections exactly. The
+  v4→v5 step installs only the claim-marker trigger. Historical disabled rows
+  are conservative normal-off rows because their cause cannot be recovered.
+  Existing Flow JSON blobs, earlier projections, and retained `flows/` files
+  are not rewritten or removed. A malformed predecessor progression aborts and
+  rolls back every rewrite, new trigger, and the version stamp. Other malformed
+  predecessors are rejected
   before any column, table, trigger, or version stamp changes. Version 2 also installed an
   exact compatibility trigger: if an Approach process that was already running
   before the upgrade later tries to rewrite a linked Flow using the predecessor
@@ -558,7 +572,8 @@ The database and its records have separate compatibility gates:
   receipt while its projection remains protected. Version 4's nonce trigger
   also rejects a predecessor process that was already open when migration ran
   and then tries to erase a receipt-less preparation's exact generation token.
-  A value newer than this build
+  Version 5's claim-marker trigger likewise rejects an older rewrite that
+  removes a persisted progression-claim marker. A value newer than this build
   supports prevents the store from opening and reports that Approach must be
   upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a
@@ -570,10 +585,15 @@ The database and its records have separate compatibility gates:
 
 Progression records use their own codec v1. The key is a canonical absolute
 repository path plus trimmed epic ID; absence means normal disabled, while a
-malformed row is an error. Valid states are active `(enabled, no halt)`, normal
-off `(disabled, no halt)`, and halted `(disabled, complete child/status/message
-tuple)`. Redundant writes preserve both timestamps; enabling clears a sticky
-halt and disabling retains one.
+malformed row is an error. `done` is a required JSON boolean and the
+authoritative completion signal; disabled is never interpreted as done. Valid
+states are active `(enabled, !done, no halt)`, normal off `(disabled, !done, no
+halt)`, successfully exhausted `(disabled, done, no halt)`, and halted
+`(disabled, !done, complete child/status/message tuple)`. Enabled+done,
+done+halt, and enabled+halt are invalid. Only active may newly become done;
+repeating done and every complete-state no-op preserve timestamps. Explicit
+manual off clears done while retaining a sticky halt. Ordinary and prepared
+enable clear both done and halt.
 
 Point reads stay strict: `approach flow read --flow-id ID` returns the damaged
 row's decode, version, or physical-projection mismatch and never reports it as
