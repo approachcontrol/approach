@@ -21,6 +21,10 @@ var (
 	// ErrPreparationStale means the Flow ID now names a different preparation
 	// generation, so callers must not compensate the returned replacement.
 	ErrPreparationStale = errors.New("flow preparation generation is stale")
+	// ErrPreparationReservation means Compensate could not acquire the
+	// launch/close reservation, so the one-shot finalizer was not consumed and
+	// remains retryable.
+	ErrPreparationReservation = errors.New("flow preparation reservation is unavailable")
 )
 
 // PreparationFinalizer is a Flow-bound one-shot capability. The concrete type
@@ -208,7 +212,9 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 // a stale creator cannot overwrite a claimant or a same-ID replacement. A
 // reservation timeout, or two writer attempts that reconcile as unlanded,
 // leaves the finalizer usable for a later retry. Callers that already hold that
-// reservation must use CompensateUnderReservation instead.
+// reservation must use CompensateUnderReservation instead. A reservation
+// timeout is classified as ErrPreparationReservation so callers can retry
+// without treating the capability as consumed.
 func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
 	notes, err := f.compensationNotes(notes)
 	if err != nil {
@@ -216,7 +222,7 @@ func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
 	}
 	release, err := f.store.acquireLaunchCloseLock(f.flowID)
 	if err != nil {
-		return FlowRecord{}, err
+		return FlowRecord{}, errors.Join(ErrPreparationReservation, err)
 	}
 	defer release()
 	if err := f.consume(); err != nil {
@@ -473,3 +479,7 @@ func IsPreparationUnknown(err error) bool { return errors.Is(err, ErrPreparation
 // IsPreparationStale reports that the Flow ID now names another preparation
 // generation and is therefore unsafe to mutate as compensation.
 func IsPreparationStale(err error) bool { return errors.Is(err, ErrPreparationStale) }
+
+// IsPreparationReservation reports that Compensate could not acquire the
+// launch/close reservation and therefore left the one-shot finalizer usable.
+func IsPreparationReservation(err error) bool { return errors.Is(err, ErrPreparationReservation) }

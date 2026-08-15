@@ -368,8 +368,9 @@ through an atomic compensation path: under the launch/close reservation it
 revalidates that exact nonce and blocks only the authoritative launchable
 roots. When create-phase already holds that reservation, compensation keeps it
 through the async command instead of releasing and re-acquiring. If both
-compensation writes reconcile as unlanded, the one-shot finalizer is restored
-and Ready recovery reschedules that same capability instead of dropping it. A
+compensation writes reconcile as unlanded, or Compensate times out acquiring
+the launch/close reservation, the one-shot finalizer remains usable and Ready
+recovery reschedules that same capability instead of dropping it. A
 same-ID replacement or already-claimed Flow is never overwritten.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that

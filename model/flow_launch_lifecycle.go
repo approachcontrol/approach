@@ -116,8 +116,9 @@ type flowLaunchEventMsg struct {
 	// worktree metadata and bootstrap hook succeed, before launch persistence.
 	PreparationFinalizer flowstore.PreparationFinalizer
 	PreparationUnknown   bool
-	// CompensationRetryable is set when Ready compensation confirmed that
-	// neither writer attempt landed and the one-shot finalizer was restored.
+	// CompensationRetryable is set when Ready compensation left the one-shot
+	// finalizer usable: either both writer attempts reconciled as unlanded, or
+	// Compensate could not acquire the launch/close reservation.
 	CompensationRetryable bool
 	CompensationRetries   int
 	Context               actions.AgentLaunchContext

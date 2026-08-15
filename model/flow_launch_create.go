@@ -902,7 +902,7 @@ func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []str
 			event.Record = record
 			if err != nil {
 				errs = append(errs, "compensate preparation: "+err.Error())
-				if flowstore.IsPreparationIncomplete(err) && prior.CompensationRetries+1 < readyPreparationCompensationAttemptLimit {
+				if compensationRetryable(err) && prior.CompensationRetries+1 < readyPreparationCompensationAttemptLimit {
 					event.CompensationRetryable = true
 					event.CompensationRetries = prior.CompensationRetries + 1
 				}
@@ -911,6 +911,10 @@ func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []str
 		event.Err = strings.Join(errs, "; ")
 		return event
 	}
+}
+
+func compensationRetryable(err error) bool {
+	return flowstore.IsPreparationIncomplete(err) || flowstore.IsPreparationReservation(err)
 }
 
 func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {

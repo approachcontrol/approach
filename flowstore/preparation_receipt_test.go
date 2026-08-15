@@ -323,6 +323,9 @@ func TestPreparationFinalizerCompensateRetainsCapabilityWhenReservationTimesOut(
 		if err == nil {
 			t.Fatal("Compensate() succeeded while another process held the launch reservation")
 		}
+		if !flowstore.IsPreparationReservation(err) {
+			t.Fatalf("Compensate() timeout error = %v, want reservation classification so callers can retry", err)
+		}
 	}
 
 	compensated, err := finalizer.Compensate("create worktree: worktree failed")

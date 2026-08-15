@@ -19,33 +19,34 @@ import (
 )
 
 type createLaunchHarness struct {
-	record                        flowstore.FlowRecord
-	allocatedID                   string
-	order                         []string
-	contexts                      []actions.AgentLaunchContext
-	phaseUpdates                  []flowstore.PhaseUpdate
-	sessions                      []sessions.SessionRecord
-	addErr                        error
-	addPersists                   bool
-	createErr                     error
-	reserveErr                    error
-	reserveReleaseOnError         bool
-	reserveMutate                 func(*flowstore.FlowRecord)
-	worktreeErr                   error
-	bootstrapErr                  error
-	preparationErr                error
-	bootstrapCheck                func(flowstore.FlowRecord) error
-	metadataErr                   error
-	metadataMutate                func(*flowstore.FlowRecord)
-	phaseErrs                     map[string]error
-	readErrs                      map[int]error
-	readMutate                    func(*flowstore.FlowRecord)
-	readCalls                     int
-	terminalErr                   error
-	terminal                      EmbeddedTerminal
-	releases                      int
-	releasesAtCompensate          int
-	compensateIncompleteRemaining int
+	record                         flowstore.FlowRecord
+	allocatedID                    string
+	order                          []string
+	contexts                       []actions.AgentLaunchContext
+	phaseUpdates                   []flowstore.PhaseUpdate
+	sessions                       []sessions.SessionRecord
+	addErr                         error
+	addPersists                    bool
+	createErr                      error
+	reserveErr                     error
+	reserveReleaseOnError          bool
+	reserveMutate                  func(*flowstore.FlowRecord)
+	worktreeErr                    error
+	bootstrapErr                   error
+	preparationErr                 error
+	bootstrapCheck                 func(flowstore.FlowRecord) error
+	metadataErr                    error
+	metadataMutate                 func(*flowstore.FlowRecord)
+	phaseErrs                      map[string]error
+	readErrs                       map[int]error
+	readMutate                     func(*flowstore.FlowRecord)
+	readCalls                      int
+	terminalErr                    error
+	terminal                       EmbeddedTerminal
+	releases                       int
+	releasesAtCompensate           int
+	compensateIncompleteRemaining  int
+	compensateReservationRemaining int
 }
 
 type createLaunchPreparationFinalizer struct {
@@ -81,6 +82,10 @@ func (f createLaunchPreparationFinalizer) Compensate(notes string) (flowstore.Fl
 	}
 	f.h.releasesAtCompensate = f.h.releases
 	f.h.order = append(f.h.order, "compensate")
+	if f.h.compensateReservationRemaining > 0 {
+		f.h.compensateReservationRemaining--
+		return f.h.record, errors.Join(flowstore.ErrPreparationReservation, errors.New("timed out waiting for Flow launch/close lock"))
+	}
 	if f.h.compensateIncompleteRemaining > 0 {
 		f.h.compensateIncompleteRemaining--
 		return f.h.record, flowstore.ErrPreparationIncomplete
@@ -1181,6 +1186,33 @@ func TestCreateFlowLaunchReadyPreMetadataExitsUsePreparationFinalizer(t *testing
 				t.Fatalf("pre-metadata cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
 			}
 		})
+	}
+}
+
+func TestCreateFlowLaunchReadyCompensationRetriesWhenReservationTimesOut(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+	})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.reserveErr = errors.New("database busy")
+	h.compensateReservationRemaining = 1
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	compensateCalls := 0
+	for _, call := range h.order {
+		if call == "compensate" {
+			compensateCalls++
+		}
+	}
+	if compensateCalls != 2 {
+		t.Fatalf("Ready compensation calls = %d, want a retry after reservation timeout: %#v", compensateCalls, h.order)
+	}
+	if len(h.phaseUpdates) == 0 || h.phaseUpdates[0].Status != flowstore.PhaseBlocked {
+		t.Fatalf("retry did not block startup roots: %#v", h.phaseUpdates)
+	}
+	if m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatal("reservation-timeout retry stranded lifecycle ownership")
 	}
 }
 
