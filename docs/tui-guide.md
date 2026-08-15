@@ -895,9 +895,11 @@ terminal before repairing this Flow`. A repair in flight reserves the Flow from
 the key press onward, so a second `R` reports `A repair launch is already
 pending for this Flow` and a replayed launch message is a silent no-op; a phase
 resume already holding the Flow reports `A phase resume is already pending for
-this Flow`. Approach fresh-reads the persisted Flow and rechecks eligibility
-before allocating the terminal, so a Flow that stopped being repairable in the
-meantime reports `Flow is no longer repairable`.
+this Flow`. A pending manual or automatic phase launch reports `A phase launch
+is already pending for this Flow`; unlike a retained-terminal refusal, this can
+occur before any terminal slot exists. Approach fresh-reads the persisted Flow
+and rechecks eligibility before allocating the terminal, so a Flow that stopped
+being repairable in the meantime reports `Flow is no longer repairable`.
 
 Repair also refuses while the session store holds a live session belonging to
 any of the Flow's phase launches, with `Flow phase <phase-id> already has a
