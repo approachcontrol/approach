@@ -699,6 +699,36 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, head
 }
 
 func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
+	if m.customStartFlowPlan {
+		command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
+		preferences := m.agentPreferences()
+		return func() tea.Msg {
+			result, err := m.startFlowPlan(FlowStartRequest{
+				RepoPath:                    repoPath,
+				Title:                       title,
+				Instructions:                instructions,
+				BaseRef:                     baseRef,
+				AgentCommand:                command,
+				Model:                       launchModel,
+				ReasoningEffort:             reasoningEffort,
+				AgentPreferences:            preferences,
+				AgentPreferencesProvided:    true,
+				SessionStateRoot:            m.sessionStateRoot,
+				FlowPromptTemplates:         m.flowPromptTemplates,
+				FlowPromptTemplatesProvided: true,
+				Headless:                    flowHeadlessPointer(headless),
+			})
+			if err != nil {
+				releaseFlowLaunchReservation(result.LaunchRelease)
+				return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
+			}
+			if result.LaunchSkipped {
+				releaseFlowLaunchReservation(result.LaunchRelease)
+				return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title}
+			}
+			return flowPlanLaunchMessage(result.LaunchContext, result.LaunchRelease)
+		}
+	}
 	return func() tea.Msg {
 		return flowLaunchCreateRequestedMsg{Create: flowLaunchCreateRequest{
 			RepoPath: repoPath, Title: title, Instructions: instructions, BaseRef: baseRef, Headless: headless,

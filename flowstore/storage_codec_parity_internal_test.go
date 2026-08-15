@@ -45,10 +45,12 @@ func populatedFlowRecord() FlowRecord {
 			Sessions:  []Session{{Provider: "claude", SessionID: "s1", LaunchID: "launch-1", Status: "ended", StartedAt: created, EndedAt: updated, TranscriptPath: "/tmp/t.jsonl"}},
 			CreatedAt: created, UpdatedAt: updated,
 		}},
-		PreparedAt:    &preparedAt,
-		CreatedAt:     created,
-		UpdatedAt:     updated,
-		GraphRecovery: GraphRecoveryState{Status: GraphRecoveryMissingEdgesUnresolved},
+		ProgressionClaim:      true,
+		PreparationGeneration: "0123456789abcdef0123456789abcdef",
+		PreparedAt:            &preparedAt,
+		CreatedAt:             created,
+		UpdatedAt:             updated,
+		GraphRecovery:         GraphRecoveryState{Status: GraphRecoveryMissingEdgesUnresolved},
 	}
 }
 

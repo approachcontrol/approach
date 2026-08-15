@@ -51,6 +51,9 @@ func recordTestFlowRecords(records []flowstore.FlowRecord) {
 // that need the persisted record to diverge from the cached snapshot set
 // Options.ReadFlow explicitly.
 func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
+	if opts.ClaimBead == nil {
+		opts.ClaimBead = func(string, string) error { return nil }
+	}
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
 			if record, ok := testFlowRecords[flowID]; ok {

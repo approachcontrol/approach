@@ -11983,6 +11983,40 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 	}
 }
 
+func TestModel_NewFlowPlanNowHonorsExplicitStartFlowPlanSeam(t *testing.T) {
+	calls := 0
+	var request model.FlowStartRequest
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			calls++
+			request = req
+			return model.FlowStartResult{
+				Flow:          flowstore.FlowRecord{FlowID: "custom-flow", RepoPath: req.RepoPath, Title: req.Title},
+				LaunchSkipped: true,
+			}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeFlows)
+
+	_, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Custom Plan", "Use custom seam", "main", true, true)
+	if cmd == nil {
+		t.Fatal("Plan Now returned nil command")
+	}
+	msg := cmd()
+	created, ok := msg.(model.FlowCreatedMsg)
+	if !ok {
+		t.Fatalf("Plan Now returned %T, want FlowCreatedMsg from explicit StartFlowPlan seam", msg)
+	}
+	if calls != 1 || created.FlowID != "custom-flow" || created.Request == 0 {
+		t.Fatalf("custom seam calls/result = %d/%#v", calls, created)
+	}
+	if request.RepoPath != "/dev/alpha" || request.Title != "Custom Plan" || request.Instructions != "Use custom seam" || request.BaseRef != "main" {
+		t.Fatalf("custom StartFlowPlan request = %#v", request)
+	}
+}
+
 func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyEsc},

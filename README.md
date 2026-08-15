@@ -92,8 +92,10 @@ plans, Flows, embedded terminals, recovery states — is in
 
 With the top pane focused, press `2` to enter the selected repository's Beads
 group at its last-used subview, defaulting to Ready on first entry.
-All Beads queries and detail reads are read-only, and Approach never mutates
-tracker state. Pressing `2` again inside Beads is a no-op. While Beads is active,
+All Beads queries and detail reads are read-only. The only tracker mutation is
+the explicit claim performed when epic auto-progression prepares a new child
+Flow; ordinary browsing and manual Ready Flow creation never mutate Beads.
+Pressing `2` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
 Closed, and `←`/`→` step and wrap through those five subviews. The letters
 remain scoped to Beads, so Git and other views keep their existing meanings.
@@ -157,11 +159,24 @@ state alongside the direct-child and Ready snapshots. Press `a` when the
 footer shows `a: auto on` to prepare the first ready direct child's Flow and
 enable progression, or `a: auto off` to disable it. Enabled rows show
 `[epic]  [auto]`. Enablement reuses the Ready ordering and exact create-only
-request mapping, may adopt one already-prepared pending Flow with the exact
-Bead/epic link, and refuses partial listings, ambiguity, incomplete preparation,
-running Flows, and terminal Flows. It never claims the Bead, starts a phase, or
-launches an agent. With no ready child it reports that progression remains off
-and writes neither a Flow nor progression state.
+request mapping. After revalidating the selected child, Approach persists its
+receipt-less exact-link Flow identity, then claims the child with
+`bd update --claim -- <id>` before creating a worktree; the positional separator
+prevents flag-shaped IDs from being interpreted as options. A child that is no
+longer both direct and ready stops the attempt without a Flow or claim. A claim
+error is shown with its cause and retains the marked unprepared Flow identity so
+retry can repeat the same-actor idempotent claim when a post-start error may mean
+the claim already landed. The generated Flow
+instructions use `bd show -- <id>` so the same IDs remain positional on lookup.
+Before choosing a new ready sibling, enablement recovers a direct child's open
+marked receipt-less or prepared-pending exact-link Flow independently of Ready
+state; retry reserves and revalidates both that Flow identity and current direct
+membership, then reclaims it idempotently before adopting a prepared Flow or
+surfacing incomplete preparation instead of skipping it. Partial listings,
+ambiguity, running Flows, and terminal Flows still refuse enablement. It does
+not start a phase or launch an
+agent. With no ready or recoverable child it reports that progression remains
+off and writes neither a claim, Flow, nor progression state.
 
 When an enabled epic exhausts its ready children, Approach persists an explicit
 completed progression state. Completion remains disabled for compatibility but
@@ -255,11 +270,13 @@ Flows are stored in `<artifact-root>/approach.db` using SQLite WAL mode. On the
 first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
 records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
-and agent sessions remain file-backed. SQLite schema v4 retains the v3 protected
-Flow preparation receipts and `epic_progressions` table while adding the durable
-progression `done` field. Versions 0 through 3 upgrade transactionally; the
-v3→v4 migration rewrites only progression JSON records, conservatively setting
-historical rows to `done:false`, and never rewrites existing Flow JSON blobs.
+and agent sessions remain file-backed. SQLite schema v3 adds protected Flow
+preparation receipts and the `epic_progressions` table; schema v4 adds the
+durable progression `done` field; schema v5 adds the compatibility guard for
+progression-claim recovery markers. Versions 0 through 4 upgrade
+transactionally; the v3→v4 migration rewrites only progression JSON records,
+conservatively setting historical rows to `done:false`, and never rewrites
+existing Flow JSON blobs.
 
 ## Development
 

@@ -347,12 +347,15 @@ plan's own phase status rather than trusting either return value.
 
 `FlowStarter.PrepareFlow` creates the Flow and worktree, records start metadata,
 runs the repository bootstrap hook, and only then consumes its one-shot store
-finalizer. A successful finalizer stamps `PreparedAt`; callback failure keeps
+finalizer. It holds that Flow generation's launch/close reservation from the
+post-create read through claim admission, metadata, finalization, and any
+startup-failure compensation. A successful finalizer stamps `PreparedAt`; callback failure keeps
 the existing startup-phase blocking behavior. If receipt persistence reports a
 commit error, the store reads the Flow back: a matching receipt is success, a
 confirmed nil receipt is incomplete and blocks launchable phases, and an
 unreadable result is unknown and is not compensated because the receipt may be
-durable.
+durable. A generation mismatch is separately stale and is also not compensated,
+because the same Flow ID now names an unrelated replacement.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
@@ -402,6 +405,24 @@ and unreadable state removes runtime ownership fail-closed until an explicit
 successful re-enable installs a new baseline. Manual disable always requests
 `done:false`; a confirmed done reread is reported as completion preceding the
 disable, not as a successful disable.
+
+When no exact-link Flow exists, epic enablement refreshes the epic's direct
+children and the repository Ready set before the sole sanctioned Beads mutation,
+and aborts without mutation if the selected child is no longer in both.
+`PrepareFlow` then persists the receipt-less exact-link identity and runs
+`bd update --claim -- <child-id>` through its post-persistence admission hook
+before any worktree side effect. Generated Flow instructions use
+`bd show -- <child-id>`. A claim error retains that marked unprepared identity;
+an uncertain process-started error is never compensated with an automatic
+unclaim. After a confirmed claim, every later failure likewise leaves the
+exact-link Flow discoverable. Retry refreshes direct-child membership and
+searches for an open marked
+receipt-less or prepared-pending exact-link Flow before consulting Ready state,
+then repeats the same-actor idempotent claim before it adopts the prepared Flow
+or surfaces incomplete preparation instead of skipping to a sibling. Consumed
+`completed`/`merged` markers are ignored so a later Ready sibling can be
+selected; unmarked
+manual Ready `f`/`F` Flows do not enter this recovery path.
 
 ## Per-phase agent settings
 

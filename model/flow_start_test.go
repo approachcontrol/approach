@@ -36,10 +36,10 @@ func (f preparedFlowFinalizerForTest) Finalize(callback func() error) (flowstore
 }
 
 func newFlowStarterForTest(opts model.FlowStarterOptions) model.FlowStarter {
+	var latest flowstore.FlowRecord
 	if opts.CreatePreparation == nil && opts.CreateFlow != nil {
 		createFlow := opts.CreateFlow
 		setStartMetadata := opts.SetStartMetadata
-		var latest flowstore.FlowRecord
 		opts.CreatePreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
 			created, err := createFlow(record, createOpts)
 			if err != nil {
@@ -56,6 +56,22 @@ func newFlowStarterForTest(opts model.FlowStarterOptions) model.FlowStarter {
 				}
 				return started, err
 			}
+		}
+	}
+	if opts.ReserveLaunch == nil && opts.CreatePreparation != nil {
+		opts.ReserveLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if latest.FlowID == "" {
+				return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
+			}
+			return latest, func() {}, nil
+		}
+	}
+	if opts.ReadFlow == nil && opts.CreatePreparation != nil {
+		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
+			if latest.FlowID == "" {
+				return flowstore.FlowRecord{FlowID: flowID}, nil
+			}
+			return latest, nil
 		}
 	}
 	return model.NewFlowStarter(opts)
@@ -484,7 +500,7 @@ func TestFlowStarterStartPlanParksFlowWhenNoPhaseIsLaunchable(t *testing.T) {
 	}
 }
 
-func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
+func TestFlowStarterStartPlanRequiresCreatePreparation(t *testing.T) {
 	starter := newFlowStarterForTest(model.FlowStarterOptions{
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
 			t.Fatal("worktree should not be created without a Flow persistence adapter")
@@ -496,8 +512,8 @@ func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	if err == nil {
 		t.Fatal("StartPlan returned nil error, want missing adapter failure")
 	}
-	if !strings.Contains(err.Error(), "missing CreateFlow") {
-		t.Fatalf("error = %q, want missing CreateFlow", err)
+	if !strings.Contains(err.Error(), "missing CreatePreparation") {
+		t.Fatalf("error = %q, want missing CreatePreparation", err)
 	}
 }
 
@@ -583,43 +599,27 @@ func TestFlowStarterPrepareFlowCreatesLaunchableFlowWithoutLaunchID(t *testing.T
 }
 
 func TestFlowStarterStartPlanRefusesFinalizerWithoutPreparationReceipt(t *testing.T) {
-	flow := flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		Title:        "Receipt required",
-		Instructions: "Do not launch without durable preparation.",
-		RepoPath:     "/dev/alpha",
-		Phases: []flowstore.FlowPhase{{
-			PhaseID: "plan",
-			Title:   "Plan",
-			Kind:    flowstore.KindPlan,
-			Status:  flowstore.PhaseReady,
-		}},
-	}
-	launchRecorded := false
-	var blocked flowstore.PhaseUpdate
+	sideEffects := 0
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateFlow: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			return flow, nil
+			sideEffects++
+			return flowstore.FlowRecord{FlowID: "flow-1"}, nil
 		},
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			return actions.FlowWorktreeCreateResult{
-				WorktreePath: "/dev/alpha-worktrees/flow-receipt-required",
-				Branch:       "flow/receipt-required",
-			}, nil
+			sideEffects++
+			return actions.FlowWorktreeCreateResult{}, nil
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			started := flow
-			started.WorktreePath = update.WorktreePath
-			started.Branch = update.Branch
-			return started, nil
+			sideEffects++
+			return flowstore.FlowRecord{}, nil
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			blocked = update
-			return flow, nil
+			sideEffects++
+			return flowstore.FlowRecord{}, nil
 		},
 		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			launchRecorded = true
-			return flow, nil
+			sideEffects++
+			return flowstore.FlowRecord{}, nil
 		},
 	})
 
@@ -629,14 +629,29 @@ func TestFlowStarterStartPlanRefusesFinalizerWithoutPreparationReceipt(t *testin
 		Instructions: "Do not launch without durable preparation.",
 		AgentCommand: "codex",
 	})
-	if err == nil || !strings.Contains(err.Error(), "preparation receipt") {
-		t.Fatalf("StartPlan() error = %v, want missing preparation receipt refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "missing CreatePreparation") {
+		t.Fatalf("StartPlan() error = %v, want missing CreatePreparation refusal", err)
 	}
-	if launchRecorded {
-		t.Fatal("StartPlan() recorded a launch without a preparation receipt")
+	if sideEffects != 0 {
+		t.Fatalf("missing CreatePreparation performed %d side effects", sideEffects)
 	}
-	if blocked.FlowID != flow.FlowID || blocked.PhaseID != "plan" || blocked.Status != flowstore.PhaseBlocked {
-		t.Fatalf("blocked phase update = %#v, want plan phase blocked", blocked)
+}
+
+func TestFlowStarterPrepareFlowRequiresAuthoritativeReservationBeforeCreate(t *testing.T) {
+	creates := 0
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			creates++
+			return flowstore.FlowRecord{}, nil, nil
+		},
+	})
+
+	_, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Reservation required"})
+	if err == nil || !strings.Contains(err.Error(), "missing authoritative ReserveLaunch") {
+		t.Fatalf("PrepareFlow() error = %v, want authoritative reservation requirement", err)
+	}
+	if creates != 0 {
+		t.Fatalf("PrepareFlow created %d receipt-less Flows before rejecting its configuration", creates)
 	}
 }
 
@@ -703,6 +718,141 @@ func TestFlowStarterPreparationFailureDoesNotBlockFreshRunningPhase(t *testing.T
 	}
 	if len(result.Flow.Phases) != 1 || result.Flow.Phases[0].Status != flowstore.PhaseRunning {
 		t.Fatalf("PrepareFlow() result = %#v, want authoritative running phase", result.Flow)
+	}
+}
+
+func TestFlowStarterStalePreparationDoesNotCompensateReplacementFlow(t *testing.T) {
+	created := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Original", Instructions: "Preserve another generation.", RepoPath: "/dev/alpha",
+		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}},
+	}
+	replacement := created
+	replacement.Title = "Replacement"
+	reserves := 0
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, preparationFinalizerFuncForTest(func(func() error) (flowstore.FlowRecord, error) {
+				return replacement, errors.Join(flowstore.ErrPreparationStale, errors.New("generation changed"))
+			}), nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-original", Branch: "flow/original"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			started := created
+			started.WorktreePath = update.WorktreePath
+			started.Branch = update.Branch
+			return started, nil
+		},
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			reserves++
+			if reserves > 1 {
+				t.Fatal("stale preparation attempted compensation")
+			}
+			return created, func() {}, nil
+		},
+	})
+
+	result, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title, Instructions: created.Instructions,
+	})
+	if !flowstore.IsPreparationStale(err) {
+		t.Fatalf("PrepareFlow() error = %v, want stale preparation", err)
+	}
+	if result.Flow.Title != created.Title {
+		t.Fatalf("PrepareFlow() result = %#v, want original generation", result.Flow)
+	}
+}
+
+func TestFlowStarterPreparationAdmissionFailureRetainsFencedRecoveryFlow(t *testing.T) {
+	created := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Claim child", RepoPath: "/dev/alpha", ProgressionClaim: true,
+		PreparationGeneration: "generation-1",
+	}
+	claimErr := errors.New("already claimed by another actor")
+	var order []string
+	marked := false
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreatePreparation: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			order = append(order, "create")
+			marked = record.ProgressionClaim
+			return created, preparationFinalizerFuncForTest(func(func() error) (flowstore.FlowRecord, error) {
+				t.Fatal("claim failure reached preparation finalization")
+				return flowstore.FlowRecord{}, nil
+			}), nil
+		},
+		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			order = append(order, "reserve")
+			if flowID != created.FlowID {
+				t.Fatalf("ReserveLaunch(%q), want %q", flowID, created.FlowID)
+			}
+			return created, func() { order = append(order, "release") }, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			t.Fatal("claim failure created a worktree")
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+	})
+
+	result, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title,
+		AfterFlowPersisted: func() error {
+			order = append(order, "claim")
+			return claimErr
+		},
+	})
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("PrepareFlow() error = %v, want claim error", err)
+	}
+	if result.Flow.FlowID != created.FlowID || !result.Flow.ProgressionClaim {
+		t.Fatalf("PrepareFlow() result = %#v, want marked recovery Flow", result.Flow)
+	}
+	if !marked {
+		t.Fatal("PrepareFlow did not persist the progression claim marker")
+	}
+	if got, want := strings.Join(order, " -> "), "create -> reserve -> claim -> release"; got != want {
+		t.Fatalf("preparation admission order = %q, want %q", got, want)
+	}
+}
+
+func TestFlowStarterPreparationReservationRejectsReplacementBeforeAdmission(t *testing.T) {
+	created := flowstore.FlowRecord{FlowID: "flow-1", Title: "Original", RepoPath: "/dev/alpha", PreparationGeneration: "generation-1"}
+	replacement := created
+	replacement.Title = "Replacement"
+	replacement.PreparationGeneration = ""
+	sideEffects := 0
+	released := false
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, preparationFinalizerFuncForTest(func(func() error) (flowstore.FlowRecord, error) {
+				t.Fatal("replacement reservation reached finalization")
+				return flowstore.FlowRecord{}, nil
+			}), nil
+		},
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return replacement, func() { released = true }, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			sideEffects++
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+	})
+
+	result, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title,
+		AfterFlowPersisted: func() error {
+			sideEffects++
+			return nil
+		},
+	})
+	if !flowstore.IsPreparationStale(err) {
+		t.Fatalf("PrepareFlow() error = %v, want stale reservation", err)
+	}
+	if sideEffects != 0 || !released {
+		t.Fatalf("replacement reservation side effects/released = %d/%t, want 0/true", sideEffects, released)
+	}
+	if result.Flow.Title != created.Title {
+		t.Fatalf("PrepareFlow() result = %#v, want original generation", result.Flow)
 	}
 }
 
@@ -978,6 +1128,10 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 			calls = append(calls, "create-worktree")
 			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
 		},
+		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			calls = append(calls, "reserve")
+			return flowstore.FlowRecord{FlowID: flowID}, func() { calls = append(calls, "release") }, nil
+		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			calls = append(calls, "set-start")
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -1005,7 +1159,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 		t.Fatal("StartPlan returned nil error, want bootstrap failure")
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,set-phase" {
+	if strings.Join(calls, ",") != "create-flow,reserve,create-worktree,set-start,bootstrap,set-phase,release" {
 		t.Fatalf("call order = %#v", calls)
 	}
 	if !strings.Contains(err.Error(), "Bootstrap hook failed") || !strings.Contains(err.Error(), "missing env file") {
@@ -1081,6 +1235,167 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *te
 	}
 }
 
+func TestFlowStarterStartPlanBootstrapFailureRereadsPhasesBeforeCompensation(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			// The pre-bootstrap snapshot: a concurrent writer has not yet run.
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			// A concurrent `approach flow phase set` ran while bootstrap was in
+			// flight and moved the graph onto a different launchable phase.
+			return flowstore.FlowRecord{
+				FlowID: flowID,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+	if phaseUpdate.PhaseID != "research" {
+		t.Fatalf("blocked phase = %q, want the re-read record's research phase rather than the stale plan snapshot", phaseUpdate.PhaseID)
+	}
+}
+
+func TestFlowStarterStartPlanBootstrapFailureSkipsCompensationWhenRereadFails(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("store unavailable")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+	if !strings.Contains(err.Error(), "could not confirm current Flow state") || !strings.Contains(err.Error(), "store unavailable") {
+		t.Fatalf("error = %q, want unreadable-flow compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation without a trustworthy re-read", phaseUpdate)
+	}
+}
+
+func TestFlowStarterStartPlanBootstrapFailureSkipsCompensationOnGenerationMismatch(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:                update.FlowID,
+				WorktreePath:          update.WorktreePath,
+				PreparationGeneration: "generation-a",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			// A same-ID replacement Flow: a different preparation generation
+			// means this is not the record that failed bootstrap.
+			return flowstore.FlowRecord{FlowID: flowID, PreparationGeneration: "generation-b"}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+	if !strings.Contains(err.Error(), "changed before compensation could run") {
+		t.Fatalf("error = %q, want generation-mismatch compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation against a replaced Flow", phaseUpdate)
+	}
+}
+
 func TestFlowStarterStartPlanWorktreeFailureBlocksRequestedPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 
@@ -1109,6 +1424,115 @@ func TestFlowStarterStartPlanWorktreeFailureBlocksRequestedPlanPhase(t *testing.
 		!strings.Contains(phaseUpdate.Notes, "Worktree creation failed") ||
 		!strings.Contains(phaseUpdate.Notes, "branch exists") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+}
+
+func TestFlowStarterStartPlanWorktreeFailureRereadsPhasesBeforeCompensation(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			// The pre-worktree snapshot: a concurrent writer has not yet run.
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			// A concurrent `approach flow phase set` ran while worktree
+			// creation was in flight and moved the graph onto a different
+			// launchable phase.
+			return flowstore.FlowRecord{
+				FlowID: flowID,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want worktree failure")
+	}
+	if phaseUpdate.PhaseID != "research" {
+		t.Fatalf("blocked phase = %q, want the re-read record's research phase rather than the stale plan snapshot", phaseUpdate.PhaseID)
+	}
+}
+
+func TestFlowStarterStartPlanWorktreeFailureSkipsCompensationWhenRereadFails(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("store unavailable")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want worktree failure")
+	}
+	if !strings.Contains(err.Error(), "could not confirm current Flow state") || !strings.Contains(err.Error(), "store unavailable") ||
+		!strings.Contains(err.Error(), "branch exists") {
+		t.Fatalf("error = %q, want unreadable-flow compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation without a trustworthy re-read", phaseUpdate)
+	}
+}
+
+func TestFlowStarterStartPlanWorktreeFailureSkipsCompensationOnGenerationMismatch(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.PreparationGeneration = "generation-a"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			// A same-ID replacement Flow: a different preparation generation
+			// means this is not the record that failed worktree creation.
+			return flowstore.FlowRecord{FlowID: flowID, PreparationGeneration: "generation-b"}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want worktree failure")
+	}
+	if !strings.Contains(err.Error(), "changed before compensation could run") {
+		t.Fatalf("error = %q, want generation-mismatch compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation against a replaced Flow", phaseUpdate)
 	}
 }
 
@@ -1149,27 +1573,38 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksFirstLaunchablePhase(t *test
 
 func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
+	authoritative := flowstore.FlowRecord{
+		FlowID: "flow-1",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+			{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
+			{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+		},
+	}
 
 	starter := newFlowStarterForTest(model.FlowStarterOptions{
 		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{
-				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
-				{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
-				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
-			}
-			return record, nil
+			authoritative.Title = record.Title
+			authoritative.Instructions = record.Instructions
+			authoritative.RepoPath = record.RepoPath
+			return authoritative, nil
 		},
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
 			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
-			return flowstore.FlowRecord{}, nil
+			for i := range authoritative.Phases {
+				if authoritative.Phases[i].PhaseID == update.PhaseID {
+					authoritative.Phases[i].Status = update.Status
+					authoritative.Phases[i].Notes = update.Notes
+				}
+			}
+			return authoritative, nil
 		},
 	})
 
-	_, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Research Flow", Instructions: "Plan research"})
+	result, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Research Flow", Instructions: "Plan research"})
 	if err == nil {
 		t.Fatal("PrepareFlow returned nil error, want worktree failure")
 	}
@@ -1186,6 +1621,9 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *t
 			!strings.Contains(update.Notes, "branch exists") {
 			t.Fatalf("phase update %d = %#v, want blocked %s", i, update, wantPhaseID)
 		}
+	}
+	if result.Flow.Phases[0].Status != flowstore.PhaseBlocked || result.Flow.Phases[1].Status != flowstore.PhaseBlocked {
+		t.Fatalf("compensated result Flow = %#v, want both roots blocked", result.Flow)
 	}
 }
 

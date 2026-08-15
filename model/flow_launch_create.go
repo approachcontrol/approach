@@ -150,7 +150,15 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateWorktree:
 		if msg.Err != "" {
-			return m.beginCreateFlowRecovery(attempt, msg, []string{"create worktree: " + msg.Err}, false, true)
+			if msg.GenerationLost {
+				releaseFlowLaunchReservation(msg.Release)
+				return m.finishCreateAfterWrite(attempt, msg.ErrOp+": "+msg.Err)
+			}
+			operation := msg.ErrOp
+			if operation == "" {
+				operation = "create worktree"
+			}
+			return m.beginCreateFlowRecovery(attempt, msg, []string{operation + ": " + msg.Err}, operation == "record start metadata", true)
 		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateBootstrap)
 		if !ok {
@@ -455,7 +463,32 @@ func createFlowLaunchWorktreeCmd(seams flowLaunchSeams, attempt flowLaunchAttemp
 		event.Worktree = worktree
 		if err != nil {
 			event.Err = err.Error()
+			return event
 		}
+		if seams.ResolveCommit != nil {
+			event.Commit = seams.ResolveCommit(worktree.WorktreePath)
+		}
+		if seams.SetStartMetadata == nil {
+			event.Err, event.ErrOp = "Flow launch lifecycle is missing start metadata persistence", "record start metadata"
+			return event
+		}
+		record, err := seams.SetStartMetadata(flowstore.StartMetadataUpdate{
+			FlowID: prior.FlowID, WorktreePath: worktree.WorktreePath, Branch: worktree.Branch,
+			BaseRef: attempt.Create.BaseRef, Commit: event.Commit,
+		})
+		if err != nil {
+			event.Err, event.ErrOp = err.Error(), "record start metadata"
+			return event
+		}
+		if record.FlowID != prior.FlowID {
+			event.Err, event.ErrOp = fmt.Sprintf("returned flow %q", record.FlowID), "record start metadata"
+			return event
+		}
+		if !createFlowSameGeneration(prior.CreatedRecord, record) {
+			event.Err, event.ErrOp, event.GenerationLost = "flow generation changed", "record start metadata", true
+			return event
+		}
+		event.Record = record
 		return event
 	}
 }
@@ -464,9 +497,6 @@ func createFlowLaunchBootstrapCmd(seams flowLaunchSeams, attempt flowLaunchAttem
 	return func() tea.Msg {
 		event := prior
 		event.Stage, event.From, event.Err = flowLaunchStageCreateBootstrap, flowLaunchStateCreateBootstrap, ""
-		if seams.ResolveCommit != nil {
-			event.Commit = seams.ResolveCommit(prior.Worktree.WorktreePath)
-		}
 		if seams.BootstrapHookForRepo != nil {
 			if hook, ok := seams.BootstrapHookForRepo(attempt.Create.RepoPath); ok {
 				if seams.RunBootstrapHook == nil {
@@ -689,7 +719,8 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		m = m.withFlowLaunchAttempt(attempt)
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateWorktree:
-		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
+		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"},
+			msg.Err == "" || msg.ErrOp == "record start metadata", true)
 	case flowLaunchStageCreateBootstrap:
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, true, true)
 	case flowLaunchStageCreateLaunchID:

@@ -37,11 +37,12 @@ subviews — `r` ready, `b` blocked, `o` open, `i` in-progress, `c` closed — s
 the selected repo's beads one status at a time. Data comes from the `bd` CLI in
 JSON mode, fetched asynchronously when the user enters the group or moves the
 repo cursor. Repos without beads show a calm "beads not configured" message;
-configured repos where `bd` fails show a real error. The view is read-only in
-its Beads access and tracker state, with `enter` paging a bead's detail through
-the pager. A settled Ready selection also exposes `f` to create an
-Approach-owned parked Flow — record, branch, and worktree — without invoking
-`bd` or mutating the Bead.
+configured repos where `bd` fails show a real error. Queries, detail reads, and
+manual Ready Flow creation are read-only in tracker state, with `enter` paging a
+bead's detail through the pager. A settled Ready selection also exposes `f` to
+create an Approach-owned parked Flow — record, branch, and worktree — without
+invoking `bd` or mutating the Bead. Epic auto-progression is the sole exception:
+it claims a child before preparing that child's new Flow.
 
 ## User Stories
 
@@ -69,7 +70,7 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
 22. As an Approach user, I want bead data fetched asynchronously on group entry and repo-cursor change, so that the UI never blocks on a `bd` subprocess.
 23. As an Approach user, I want stale-result protection on bead fetches, so that moving quickly across repos never shows one repo's beads under another repo's name.
 24. As an Approach user, I want `enter` on a bead to page its full detail (`bd show`) through the pager, so that I can read descriptions and dependencies without leaving the TUI.
-25. As an Approach user, I want Beads queries and tracker state to remain read-only, so that browsing or creating a Flow can never mutate the tracker by accident.
+25. As an Approach user, I want Beads queries and manual Flow creation to remain read-only, so that only an explicit epic auto-progression claim mutates tracker state.
 26. As an Approach user, I want `default_view` numbers 10–14 pinning each beads subview, so that I can start the app directly in any of them, mirroring the git subview numbers.
 27. As an Approach user, I want the frozen `default_view` vocabulary (1–9) untouched, so that existing configs keep their meaning.
 28. As an Approach user, I want a manual way to refetch beads via the app's existing refresh affordance, so that I can pull in changes an agent made without bouncing the repo cursor.
@@ -186,15 +187,27 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
   children and readiness snapshots are loaded. With no ready direct child, the
   action reports `No ready child for epic <id>; auto-progression remains off`
   and creates or writes nothing.
-- Enabling chooses the first ready direct child in the expansion's established
-  order. It lists the complete repository Flow corpus and either prepares a new
-  Flow through `PrepareFlow` or adopts the sole open `pending` exact-link match
-  carrying a persisted preparation receipt. Partial listings, multiple exact
+- Enabling lists the complete repository Flow corpus and first searches direct
+  children in established order for an open marked receipt-less or
+  prepared-pending exact-link Flow, independently of current Ready state. It
+  reserves and revalidates the Flow generation and current direct-child
+  membership, repeats the same-actor idempotent claim, then surfaces incomplete preparation
+  or adopts the prepared match before choosing the first ready direct child for
+  a new Flow. Partial listings, multiple exact
   matches, missing receipts, running state, deliberate closure, failure
   terminals, success terminals, and unknown statuses all refuse enablement.
-  Preparation uses the Ready create-only title, durable-requirements prompt,
-  Bead/epic link, and captured agent settings. It does not call `bd`, claim a
-  Bead, start a phase, or launch an agent.
+  Before new-Flow preparation, it refreshes both direct children and Ready state
+  and refuses a selected child that is no longer in both sets. `PrepareFlow`
+  persists the receipt-less exact-link identity, then claims through the isolated
+  `beadsmutate` adapter before any worktree side effect. A claim error surfaces
+  the child-specific cause, retains that marked identity, and leaves progression
+  known off; an error after process start may still mean ownership is uncertain
+  or already applied, so retry repeats the same-actor idempotent claim rather
+  than compensating with an unclaim. Unmarked, Ready exact-link adoption remains
+  claim-free. Preparation uses the
+  Ready create-only title, a durable-requirements prompt containing
+  `bd show -- <id>`, the Bead/epic link, and captured agent settings. It does not
+  start a phase or launch an agent.
 - One in-process admission ticket is shared by epic enable/disable and Ready
   `f`/`F`, and automatic epic advancement. Every acquisition has a shared
   monotonically increasing owner token; delayed completion or launch-failure
@@ -242,11 +255,14 @@ Approach-owned parked Flow — record, branch, and worktree — without invoking
 
 ## Out of Scope
 
-- Any mutation of beads (create, start, close, reopen, edit, dependency
-  changes). Beads access and tracker state remain strictly read-only; creating
-  an Approach-owned Flow artifact is not a Beads mutation.
-- Claiming children, launching a progression-prepared child's phase, or startup
-  catch-up for completions observed while Approach was down.
+- Any Beads mutation except progression's single sanctioned `bd update
+  --claim -- <child-id>`; the positional separator keeps flag-shaped IDs from
+  becoming options. Create, start, close, reopen, edit, dependency changes,
+  and automatic unclaim remain out of scope. Queries and manual Ready Flow
+  creation stay strictly read-only; creating an Approach-owned Flow artifact
+  is not a Beads mutation.
+- Launching a progression-prepared child's phase, or startup catch-up for
+  completions observed while Approach was down.
 - Background polling or auto-refresh while the view is visible.
 - Reading beads storage files directly, or any fallback path that bypasses the
   `bd` CLI.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/beadsmutate"
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
@@ -158,6 +159,7 @@ type Model struct {
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
 	listChildrenBeads         func(string, string) ([]beadsquery.Bead, error)
 	listReadyBeads            func(string) ([]beadsquery.Bead, error)
+	claimBead                 func(repoPath, beadID string) error
 	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	enableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
@@ -166,6 +168,7 @@ type Model struct {
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
+	customStartFlowPlan       bool
 	ensureFlowWorktree        func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
@@ -177,6 +180,7 @@ type Model struct {
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
+	reserveFlowPreparation    func(string) (flowstore.FlowRecord, func(), error)
 	reserveEpicSuccessor      func(string) (func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
@@ -310,6 +314,7 @@ type Options struct {
 	ListFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
+	ClaimBead                 func(repoPath, beadID string) error
 	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	EnableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
@@ -485,6 +490,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listChildrenBeads := opts.ListChildrenBeads
 	if listChildrenBeads == nil {
 		listChildrenBeads = beadsquery.ListChildren
+	}
+	claimBead := opts.ClaimBead
+	if claimBead == nil {
+		claimBead = beadsmutate.Claim
 	}
 	readEpicProgression := opts.ReadEpicProgression
 	if readEpicProgression == nil {
@@ -690,26 +699,20 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
-		// The compatibility reservation above intentionally returns identity only,
-		// but create-phase startup must snapshot the authoritative post-create graph
-		// or it cannot distinguish a launchable Flow from a parked one. Reread via
-		// the caller's configured storage boundary while retaining the same no-op
-		// reservation ownership used by existing custom persistence integrations.
-		createReserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
-			record, release, err := reserveFlowLaunch(flowID)
-			if err != nil {
-				return flowstore.FlowRecord{}, release, err
-			}
-			authoritative, err := readFlow(flowID)
-			if err != nil {
-				releaseFlowLaunchReservation(release)
-				return flowstore.FlowRecord{}, nil, err
-			}
-			if authoritative.FlowID != record.FlowID {
-				releaseFlowLaunchReservation(release)
-				return flowstore.FlowRecord{}, nil, fmt.Errorf("reserve launch reread returned flow %q", authoritative.FlowID)
-			}
-			return authoritative, release, nil
+		// Custom phase persistence may belong to a different backend, so its
+		// compatibility reservation above deliberately owns no lock. That is safe
+		// for legacy launch seams but cannot authorize preparation side effects.
+		// Reuse an explicitly provided Store when it is the shared backend;
+		// otherwise leave this nil so FlowStarter refuses before persistence.
+		createReserveFlowLaunch = nil
+		if opts.FlowStore != nil {
+			createReserveFlowLaunch = opts.FlowStore.ReserveAgentLaunch
+		}
+	}
+	reserveFlowPreparation := createReserveFlowLaunch
+	if reserveFlowPreparation == nil {
+		reserveFlowPreparation = func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, fmt.Errorf("authoritative Flow preparation reservation is unavailable")
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -858,7 +861,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		SetStartMetadata:     setFlowStartMetadata,
 		SetPhase:             setFlowPhase,
 		AddPhaseLaunchID:     addFlowPhaseLaunchID,
-		ReserveLaunch:        reserveFlowLaunch,
+		ReserveLaunch:        createReserveFlowLaunch,
+		ReadFlow:             readFlow,
 		BootstrapHookForRepo: bootstrapHookForRepo,
 		RunBootstrapHook:     runBootstrapHook,
 		ResolveCommit:        actions.ResolveWorktreeCommit,
@@ -870,6 +874,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		createFlowForRepo = starter.PrepareFlow
 	}
 	startFlowPlan := opts.StartFlowPlan
+	customStartFlowPlan := startFlowPlan != nil
 	if startFlowPlan == nil {
 		startFlowPlan = starter.StartPlan
 	}
@@ -946,6 +951,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		},
 		listChildrenBeads:         listChildrenBeads,
 		listReadyBeads:            listReadyBeads,
+		claimBead:                 claimBead,
 		readEpicProgression:       readEpicProgression,
 		setEpicProgression:        setEpicProgression,
 		enableEpicProgression:     enableEpicProgression,
@@ -954,6 +960,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		countClosedBeads:          countClosedBeads,
 		createFlow:                createFlowForRepo,
 		startFlowPlan:             startFlowPlan,
+		customStartFlowPlan:       customStartFlowPlan,
 		ensureFlowWorktree:        ensureFlowWorktree,
 		setFlowPhase:              setFlowPhase,
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
@@ -966,6 +973,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reopenFlow:                reopenFlow,
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
+		reserveFlowPreparation:    reserveFlowPreparation,
 		reserveEpicSuccessor:      reserveEpicSuccessor,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,

@@ -1,6 +1,8 @@
 package flowstore
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -15,6 +17,9 @@ var (
 	// ErrPreparationUnknown means a failed persistence attempt could not be
 	// reconciled by an authoritative read.
 	ErrPreparationUnknown = errors.New("flow preparation outcome is unknown")
+	// ErrPreparationStale means the Flow ID now names a different preparation
+	// generation, so callers must not compensate the returned replacement.
+	ErrPreparationStale = errors.New("flow preparation generation is stale")
 )
 
 // PreparationFinalizer is a Flow-bound one-shot capability. The concrete type
@@ -24,20 +29,34 @@ type PreparationFinalizer interface {
 }
 
 type preparationFinalizer struct {
-	mu       sync.Mutex
-	store    *Store
-	flowID   string
-	consumed bool
+	mu         sync.Mutex
+	store      *Store
+	flowID     string
+	generation string
+	consumed   bool
 }
 
 // CreatePreparation creates an ordinary receipt-less Flow and returns the sole
 // capability that may stamp its preparation receipt.
 func (s *Store) CreatePreparation(record FlowRecord, opts CreateOptions) (FlowRecord, PreparationFinalizer, error) {
+	generation, err := newPreparationGeneration()
+	if err != nil {
+		return FlowRecord{}, nil, err
+	}
+	opts.preparationGeneration = generation
 	created, err := s.CreateWithOptions(record, opts)
 	if err != nil {
 		return FlowRecord{}, nil, err
 	}
-	return created, &preparationFinalizer{store: s, flowID: created.FlowID}, nil
+	return created, &preparationFinalizer{store: s, flowID: created.FlowID, generation: generation}, nil
+}
+
+func newPreparationGeneration() (string, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("mint preparation generation: %w", err)
+	}
+	return hex.EncodeToString(nonce[:]), nil
 }
 
 // Finalize runs bootstrap exactly once and stamps the receipt only after the
@@ -45,7 +64,7 @@ func (s *Store) CreatePreparation(record FlowRecord, opts CreateOptions) (FlowRe
 // a visible receipt is success, a visible nil receipt is incomplete, and an
 // unreadable result is unknown.
 func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, error) {
-	if f == nil || f.store == nil || strings.TrimSpace(f.flowID) == "" {
+	if f == nil || f.store == nil || strings.TrimSpace(f.flowID) == "" || strings.TrimSpace(f.generation) == "" {
 		return FlowRecord{}, errors.New("invalid flow preparation finalizer")
 	}
 	f.mu.Lock()
@@ -55,6 +74,13 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 	}
 	f.consumed = true
 	f.mu.Unlock()
+	current, err := f.store.Read(f.flowID)
+	if err != nil {
+		return FlowRecord{}, errors.Join(ErrPreparationUnknown, fmt.Errorf("read flow generation before preparation: %w", err))
+	}
+	if current.PreparationGeneration != f.generation {
+		return current, errors.Join(ErrPreparationStale, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
+	}
 
 	if bootstrap != nil {
 		if err := bootstrap(); err != nil {
@@ -70,6 +96,9 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 			return FlowRecord{}, flowNotFoundError(f.flowID)
 		}
 		record := stored.record
+		if record.PreparationGeneration != f.generation {
+			return FlowRecord{}, fmt.Errorf("flow %q generation changed before preparation finalization", record.FlowID)
+		}
 		if record.PreparedAt != nil {
 			return FlowRecord{}, fmt.Errorf("flow %q already has a preparation receipt", record.FlowID)
 		}
@@ -101,6 +130,9 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 	if readErr != nil {
 		return FlowRecord{}, errors.Join(ErrPreparationUnknown, err, fmt.Errorf("read preparation receipt: %w", readErr))
 	}
+	if authoritative.PreparationGeneration != f.generation {
+		return authoritative, errors.Join(ErrPreparationStale, err, fmt.Errorf("flow %q generation changed before preparation finalization", f.flowID))
+	}
 	if authoritative.PreparedAt != nil {
 		return authoritative, nil
 	}
@@ -113,3 +145,7 @@ func IsPreparationIncomplete(err error) bool { return errors.Is(err, ErrPreparat
 // IsPreparationUnknown reports a persistence outcome that could not be read
 // authoritatively after a failed receipt write.
 func IsPreparationUnknown(err error) bool { return errors.Is(err, ErrPreparationUnknown) }
+
+// IsPreparationStale reports that the Flow ID now names another preparation
+// generation and is therefore unsafe to mutate as compensation.
+func IsPreparationStale(err error) bool { return errors.Is(err, ErrPreparationStale) }

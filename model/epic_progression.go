@@ -7,21 +7,23 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/ui"
 )
 
 type epicProgressionToggleResultMsg struct {
-	target              beadExpansionTarget
-	progression         flowstore.EpicProgression
-	flow                flowstore.FlowRecord
-	baselineDisposition epicProgressionBaselineDisposition
-	enabled             bool
-	known               bool
-	status              string
-	release             func()
-	preparationKind     flowPreparationKind
-	preparationToken    uint64
+	target               beadExpansionTarget
+	progression          flowstore.EpicProgression
+	flow                 flowstore.FlowRecord
+	baselineDisposition  epicProgressionBaselineDisposition
+	enabled              bool
+	known                bool
+	status               string
+	presentStatusOnStale bool
+	release              func()
+	preparationKind      flowPreparationKind
+	preparationToken     uint64
 }
 
 type epicProgressionBaselineDisposition uint8
@@ -462,36 +464,52 @@ func (m Model) disableEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
 }
 
 func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection ui.BeadExpansion) tea.Cmd {
-	var childID, childTitle string
-	for _, child := range projection.Children {
-		if projection.ReadyIDs[child.ID] {
-			childID = strings.TrimSpace(child.ID)
-			childTitle = strings.TrimSpace(child.Title)
-			break
-		}
-	}
-	if childID == "" {
-		return func() tea.Msg {
-			return epicProgressionToggleResultMsg{target: target, known: true,
-				baselineDisposition: epicProgressionBaselineRemove,
-				status:              fmt.Sprintf("No ready child for epic %s; auto-progression remains off", target.epicID)}
-		}
-	}
 	listFlows := m.listFlows
+	listChildren := m.listChildrenBeads
+	listReady := m.listReadyBeads
+	claimBead := m.claimBead
 	createFlow := m.createFlow
-	reserveFlow := m.reserveFlowLaunch
+	reserveFlow := m.reserveFlowPreparation
 	enableProgression := m.enableEpicProgression
 	readProgression := m.readEpicProgression
 	readFlow := m.launchSeams.ReadFlow
 	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
 	preferences := m.agentPreferences()
 	return func() tea.Msg {
-		link := flowstore.BeadLink{ID: childID, EpicID: target.epicID}
 		flows, err := listFlows(flowstore.FlowFilter{RepoPath: target.repoPath})
 		if err != nil {
 			return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
 				status: fmt.Sprintf("Could not check existing child Flows: %v", err)}
 		}
+		directChildren, err := listChildren(target.repoPath, target.epicID)
+		if err != nil {
+			return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+				status: fmt.Sprintf("Could not refresh direct children for epic %s; auto-progression remains off: %v", target.epicID, err)}
+		}
+		childID, childTitle := epicProgressionRecoveryChild(target, directChildren, flows)
+		recovered := childID != ""
+		if !recovered {
+			for _, child := range projection.Children {
+				if projection.ReadyIDs[child.ID] {
+					childID = strings.TrimSpace(child.ID)
+					childTitle = strings.TrimSpace(child.Title)
+					break
+				}
+			}
+		}
+		if childID == "" {
+			return epicProgressionToggleResultMsg{target: target, known: true,
+				baselineDisposition: epicProgressionBaselineRemove,
+				status:              fmt.Sprintf("No ready child for epic %s; auto-progression remains off", target.epicID)}
+		}
+		ignoredConsumed := !recovered && hasConsumedProgressionMarker(target, flows)
+		if ignoredConsumed {
+			if detail := confirmConsumedProgressionMarkers(target, childID, flows, readFlow); detail != "" {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail}
+			}
+		}
+		link := flowstore.BeadLink{ID: childID, EpicID: target.epicID}
 		matches := make([]flowstore.FlowRecord, 0, 1)
 		for _, flow := range flows {
 			if filepath.Clean(flow.RepoPath) == filepath.Clean(target.repoPath) && flow.Bead == link {
@@ -503,45 +521,159 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				status: fmt.Sprintf("Multiple Flows exist for child %s; auto-progression remains off", childID)}
 		}
 		var flow flowstore.FlowRecord
+		var authoritative flowstore.FlowRecord
+		var release func()
+		claimed := false
 		if len(matches) == 1 {
 			flow = matches[0]
+			if flow.ProgressionClaim {
+				reserved, reservedRelease, err := reserveFlow(flow.FlowID)
+				if err != nil {
+					return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+						status: fmt.Sprintf("Could not reserve Flow %s before claim recovery; auto-progression remains off: %v", flow.FlowID, err)}
+				}
+				release = reservedRelease
+				// A migrated pre-receipt marked Flow carries no
+				// PreparationGeneration at all, so two matching empty
+				// generations are not evidence of drift on their own — but
+				// PreparationGeneration is assigned only at creation and is
+				// otherwise immutable, so any inequality, including an empty
+				// generation turning nonempty, still proves a same-ID
+				// replacement and must be rejected.
+				if reserved.FlowID != flow.FlowID || filepath.Clean(reserved.RepoPath) != filepath.Clean(target.repoPath) || reserved.Bead != link ||
+					!reserved.ProgressionClaim || reserved.PreparationGeneration != flow.PreparationGeneration {
+					return epicProgressionToggleResultMsg{target: target, flow: reserved, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+						status: fmt.Sprintf("Flow %s changed before claim recovery; auto-progression remains off", flow.FlowID)}
+				}
+				flow = reserved
+				authoritative = reserved
+				children, err := listChildren(target.repoPath, target.epicID)
+				if err != nil {
+					return epicProgressionToggleResultMsg{target: target, flow: flow, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+						status: fmt.Sprintf("Could not revalidate child %s before claim recovery; auto-progression remains off: %v", childID, err)}
+				}
+				direct := false
+				for _, child := range children {
+					if strings.TrimSpace(child.ID) == childID {
+						direct = true
+						childTitle = strings.TrimSpace(child.Title)
+						break
+					}
+				}
+				if !direct {
+					return epicProgressionToggleResultMsg{target: target, flow: flow, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+						status: fmt.Sprintf("Child %s is no longer a direct child of epic %s; auto-progression remains off", childID, target.epicID)}
+				}
+				if err := claimBead(target.repoPath, childID); err != nil {
+					return epicProgressionToggleResultMsg{target: target, flow: flow, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+						status: fmt.Sprintf("Could not reconcile claim for child %s; auto-progression remains off: %v", childID, err), presentStatusOnStale: true}
+				}
+				claimed = true
+			}
 			if detail := rejectEpicProgressionCandidate(flow); detail != "" {
-				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove, status: detail}
+				return epicProgressionToggleResultMsg{target: target, flow: flow, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail, presentStatusOnStale: claimed}
 			}
 		} else {
+			children, err := listChildren(target.repoPath, target.epicID)
+			if err != nil {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not revalidate child %s before claim; auto-progression remains off: %v", childID, err)}
+			}
+			ready, err := listReady(target.repoPath)
+			if err != nil {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not revalidate child %s before claim; auto-progression remains off: %v", childID, err)}
+			}
+			direct := false
+			for _, child := range children {
+				if strings.TrimSpace(child.ID) == childID {
+					direct = true
+					childTitle = strings.TrimSpace(child.Title)
+					break
+				}
+			}
+			readyNow := false
+			for _, bead := range ready {
+				if strings.TrimSpace(bead.ID) == childID {
+					readyNow = true
+					break
+				}
+			}
+			if !direct || !readyNow {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Child %s is no longer a ready direct child of epic %s; auto-progression remains off", childID, target.epicID)}
+			}
 			title := childID + ": " + childTitle
-			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", childID, childID)
+			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show -- %s` before planning or implementation.", childID, childID)
+			claimAttempted := false
+			var claimErr error
+			var siblingMarkerDetail string
 			result, createErr := createFlow(FlowStartRequest{
 				RepoPath: target.repoPath, Title: title, Instructions: instructions, Bead: link,
 				AgentCommand: command, Model: launchModel, ReasoningEffort: reasoningEffort,
 				AgentPreferences: preferences, AgentPreferencesProvided: true,
+				AfterFlowPersisted: func() error {
+					if ignoredConsumed {
+						if detail := confirmConsumedProgressionMarkersNow(target, childID, listFlows, readFlow); detail != "" {
+							siblingMarkerDetail = detail
+							return fmt.Errorf("%s", detail)
+						}
+					}
+					claimAttempted = true
+					claimErr = claimBead(target.repoPath, childID)
+					claimed = claimErr == nil
+					return claimErr
+				},
 			})
 			flow = result.Flow
+			if siblingMarkerDetail != "" {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: siblingMarkerDetail}
+			}
+			if claimErr != nil {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not claim child %s; auto-progression remains off: %v", childID, createErr), presentStatusOnStale: true}
+			}
+			if !claimAttempted {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Could not admit child %s before Flow preparation; auto-progression remains off: %v", childID, createErr)}
+			}
 			if createErr != nil {
 				if strings.TrimSpace(flow.FlowID) == "" {
 					return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
-						status: fmt.Sprintf("Could not prepare Flow for child %s: %v", childID, createErr)}
+						status: fmt.Sprintf("Could not prepare Flow for child %s: %v", childID, createErr), presentStatusOnStale: claimed}
 				}
 				authoritative, readErr := readFlow(flow.FlowID)
 				if readErr != nil {
 					return epicProgressionToggleResultMsg{target: target, flow: flow, baselineDisposition: epicProgressionBaselineRemove,
-						status: fmt.Sprintf("Could not confirm preparation for Flow %s; auto-progression state is unknown", flow.FlowID)}
+						status: fmt.Sprintf("Could not confirm preparation for Flow %s; auto-progression state is unknown", flow.FlowID), presentStatusOnStale: claimed}
 				}
 				if authoritative.PreparedAt == nil {
 					return epicProgressionToggleResultMsg{target: target, flow: authoritative, known: true, baselineDisposition: epicProgressionBaselineRemove,
-						status: fmt.Sprintf("Flow %s exists but preparation is incomplete; auto-progression remains off", flow.FlowID)}
+						status: fmt.Sprintf("Flow %s exists but preparation is incomplete; auto-progression remains off", flow.FlowID), presentStatusOnStale: claimed}
 				}
 				flow = authoritative
 			}
 			if detail := rejectEpicProgressionCandidate(flow); detail != "" {
-				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove, status: detail}
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail, presentStatusOnStale: claimed}
 			}
 		}
 
-		authoritative, release, err := reserveFlow(flow.FlowID)
-		if err != nil {
-			return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
-				status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", flow.FlowID, err)}
+		if ignoredConsumed {
+			if detail := confirmConsumedProgressionMarkersNow(target, childID, listFlows, readFlow); detail != "" {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail, presentStatusOnStale: claimed}
+			}
+		}
+		if release == nil {
+			var err error
+			authoritative, release, err = reserveFlow(flow.FlowID)
+			if err != nil {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", flow.FlowID, err), presentStatusOnStale: claimed}
+			}
 		}
 		progression, enabledFlow, err := enableProgression(flowstore.PreparedEpicProgressionUpdate{
 			FlowID: authoritative.FlowID,
@@ -551,7 +683,7 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		if err == nil {
 			return epicProgressionToggleResultMsg{target: target, progression: progression, flow: enabledFlow,
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
-				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, enabledFlow.FlowID)}
+				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, enabledFlow.FlowID), presentStatusOnStale: claimed}
 		}
 		resultFlow := enabledFlow
 		if strings.TrimSpace(resultFlow.FlowID) == "" {
@@ -560,22 +692,107 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 		confirmed, found, readErr := readProgression(flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID})
 		if readErr != nil {
 			return epicProgressionToggleResultMsg{target: target, flow: resultFlow, release: release,
-				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
+				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr), presentStatusOnStale: claimed}
 		}
 		if found && confirmed.Enabled && !confirmed.Done {
 			if !flowstore.IsPreparedEpicProgressionCommitUnknown(err) {
 				return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 					enabled: true, known: true, release: release,
-					status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err)}
+					status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err), presentStatusOnStale: claimed}
 			}
 			return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 				baselineDisposition: epicProgressionBaselineReplace, enabled: true, known: true, release: release,
-				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, resultFlow.FlowID)}
+				status: fmt.Sprintf("Enabled auto-progression for epic %s; Flow %s is prepared", target.epicID, resultFlow.FlowID), presentStatusOnStale: claimed}
 		}
 		return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 			baselineDisposition: epicProgressionBaselineRemove, known: true, release: release,
-			status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err)}
+			status: fmt.Sprintf("Flow %s was prepared, but enabling auto-progression failed: %v", resultFlow.FlowID, err), presentStatusOnStale: claimed}
 	}
+}
+
+func epicProgressionRecoveryChild(target beadExpansionTarget, children []beadsquery.Bead, flows []flowstore.FlowRecord) (string, string) {
+	for _, child := range children {
+		childID := strings.TrimSpace(child.ID)
+		if childID == "" {
+			continue
+		}
+		link := flowstore.BeadLink{ID: childID, EpicID: target.epicID}
+		for _, flow := range flows {
+			if filepath.Clean(flow.RepoPath) == filepath.Clean(target.repoPath) && flow.Bead == link && flow.ProgressionClaim && epicProgressionRetryRelevant(flow) {
+				return childID, strings.TrimSpace(child.Title)
+			}
+		}
+	}
+	return "", ""
+}
+
+// epicProgressionRetryRelevant reports whether a marked Flow should still be
+// treated as its Bead's recovery candidate. Closed Flows are ignored, and so
+// are consumed successful terminals (`completed`/`merged`) that remain
+// deliberately open: those markers have already done their job, and treating
+// them as retryable would make off/on recovery refuse enablement instead of
+// selecting a later Ready sibling. A marked Flow that is running, blocked,
+// abandoned, or otherwise mid-flight must still surface here so
+// rejectEpicProgressionCandidate can refuse enablement against it. Filtering
+// those out by status would make recovery silently fall through to a Ready
+// sibling, claiming and enabling progression against it while stranding the
+// mid-flight Flow's claim as an unrecoverable orphan.
+func epicProgressionRetryRelevant(flow flowstore.FlowRecord) bool {
+	return !flowstore.FlowClosed(flow) && !epicProgressionConsumedMarker(flow)
+}
+
+func epicProgressionConsumedMarker(flow flowstore.FlowRecord) bool {
+	if flowstore.FlowClosed(flow) || !flow.ProgressionClaim {
+		return false
+	}
+	status := strings.TrimSpace(flow.Status)
+	if status == "" {
+		status = flowstore.DeriveStatus(flow)
+	}
+	return status == flowstore.StatusCompleted || status == flowstore.StatusMerged
+}
+
+func hasConsumedProgressionMarker(target beadExpansionTarget, flows []flowstore.FlowRecord) bool {
+	for _, flow := range flows {
+		if filepath.Clean(flow.RepoPath) == filepath.Clean(target.repoPath) && flow.Bead.EpicID == target.epicID && epicProgressionConsumedMarker(flow) {
+			return true
+		}
+	}
+	return false
+}
+
+func confirmConsumedProgressionMarkers(target beadExpansionTarget, exceptChildID string, flows []flowstore.FlowRecord, readFlow func(string) (flowstore.FlowRecord, error)) string {
+	return confirmProgressionMarkersStillConsumed(target, exceptChildID, flows, readFlow)
+}
+
+func confirmConsumedProgressionMarkersNow(target beadExpansionTarget, exceptChildID string, listFlows func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error), readFlow func(string) (flowstore.FlowRecord, error)) string {
+	if listFlows == nil {
+		return "Could not refresh child Flows before sibling claim; auto-progression remains off"
+	}
+	flows, err := listFlows(flowstore.FlowFilter{RepoPath: target.repoPath})
+	if err != nil {
+		return fmt.Sprintf("Could not refresh child Flows before sibling claim; auto-progression remains off: %v", err)
+	}
+	return confirmProgressionMarkersStillConsumed(target, exceptChildID, flows, readFlow)
+}
+
+func confirmProgressionMarkersStillConsumed(target beadExpansionTarget, exceptChildID string, flows []flowstore.FlowRecord, readFlow func(string) (flowstore.FlowRecord, error)) string {
+	for _, flow := range flows {
+		if filepath.Clean(flow.RepoPath) != filepath.Clean(target.repoPath) || flow.Bead.EpicID != target.epicID || flow.Bead.ID == exceptChildID || !flow.ProgressionClaim {
+			continue
+		}
+		if readFlow == nil {
+			return fmt.Sprintf("Could not confirm consumed claim marker on Flow %s; auto-progression remains off", flow.FlowID)
+		}
+		fresh, err := readFlow(flow.FlowID)
+		if err != nil {
+			return fmt.Sprintf("Could not confirm consumed claim marker on Flow %s; auto-progression remains off: %v", flow.FlowID, err)
+		}
+		if epicProgressionRetryRelevant(fresh) {
+			return fmt.Sprintf("Flow %s changed before sibling claim; auto-progression remains off", flow.FlowID)
+		}
+	}
+	return ""
 }
 
 func rejectEpicProgressionCandidate(flow flowstore.FlowRecord) string {
@@ -643,6 +860,9 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 		m, flowRefreshCmd = m.startFlowSurfaceFetch()
 	}
 	if msg.target != m.beadExpansion.target {
+		if msg.presentStatusOnStale {
+			m = m.setStatus(statusOther, msg.status)
+		}
 		var progressionRefreshCmd tea.Cmd
 		current := m.beadExpansion.target
 		if current.token != 0 && current.repoPath == msg.target.repoPath && current.epicID == msg.target.epicID {

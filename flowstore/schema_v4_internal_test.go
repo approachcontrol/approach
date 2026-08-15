@@ -70,8 +70,8 @@ func TestSQLiteV3ToV4MigratesLegacyProgressionsConservatively(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	backend := store.backend.(*sqliteBackend)
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
-		t.Fatalf("user_version = %d, err %v", version, err)
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	for _, want := range records {
 		var repoPath, epicID, updatedAt string
@@ -296,7 +296,7 @@ ON CONFLICT(repo_path, epic_id) DO UPDATE SET record=excluded.record`, record.Re
 		})
 	}
 	if err := validateSQLiteSchema(backend.db); err != nil {
-		t.Fatalf("fresh v4 schema validation failed: %v", err)
+		t.Fatalf("fresh schema validation failed: %v", err)
 	}
 	var count int
 	if err := backend.db.QueryRow("SELECT count(*) FROM epic_progressions").Scan(&count); err != nil || count != 1 {
@@ -339,8 +339,8 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 			defer store.Close()
 			backend := store.backend.(*sqliteBackend)
 			var got int
-			if err := backend.db.QueryRow("PRAGMA user_version").Scan(&got); err != nil || got != 4 {
-				t.Fatalf("user_version = %d, err %v", got, err)
+			if err := backend.db.QueryRow("PRAGMA user_version").Scan(&got); err != nil || got != databaseSchemaVersion {
+				t.Fatalf("user_version = %d, err %v; want %d", got, err, databaseSchemaVersion)
 			}
 			if err := validateSQLiteSchema(backend.db); err != nil {
 				t.Fatal(err)

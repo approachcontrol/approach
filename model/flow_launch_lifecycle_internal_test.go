@@ -2076,10 +2076,14 @@ func TestFlowStarterPlanLaunchUsesFreshlyCreatedFlowID(t *testing.T) {
 	// gzs.1 leaves FlowStarter.StartPlan unguarded because the Flow it launches
 	// was created by the same call and cannot collide with a live attempt.
 	var launched flowstore.PhaseLaunchUpdate
+	created := flowstore.FlowRecord{
+		FlowID: "created-flow",
+		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady, Order: 1}},
+	}
 	starter := newPreparedFlowStarterForInternalTest(FlowStarterOptions{
 		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			record.FlowID = "created-flow"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady, Order: 1}}
+			record.FlowID = created.FlowID
+			record.Phases = created.Phases
 			return record, nil
 		},
 		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
@@ -2088,6 +2092,9 @@ func TestFlowStarterPlanLaunchUsesFreshlyCreatedFlowID(t *testing.T) {
 		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launched = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return created, func() {}, nil
 		},
 		ResolveCommit: func(string) string { return "abc123" },
 		NewLaunchID:   func() string { return "launch-1" },
