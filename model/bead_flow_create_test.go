@@ -393,6 +393,59 @@ func TestEpicAutoProgressionRetryAdoptsClaimedChildBeforeReadySibling(t *testing
 	}
 }
 
+func TestEpicAutoProgressionRetryRejectsRunningMarkedChildInsteadOfClaimingSibling(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	running := flowstore.FlowRecord{
+		FlowID: "flow-running", RepoPath: "/dev/alpha", Status: flowstore.StatusInProgress,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "running-generation", PreparedAt: &preparedAt,
+	}
+	var claimedIDs []string
+	creates := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "epic-1.1", Title: "Running child"},
+				{ID: "epic-1.2", Title: "Ready sibling"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{running}, nil
+		},
+		ClaimBead: func(_ string, beadID string) error {
+			claimedIDs = append(claimedIDs, beadID)
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			creates++
+			return model.FlowStartResult{}, nil
+		},
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != running.FlowID {
+				t.Fatalf("reserved Flow = %q, want running child Flow %q", flowID, running.FlowID)
+			}
+			return running, func() {}, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if creates != 0 {
+		t.Fatalf("running child retry creates = %d, want 0 (must not claim a Ready sibling instead)", creates)
+	}
+	for _, id := range claimedIDs {
+		if id != "epic-1.1" {
+			t.Fatalf("claimed IDs = %v, want only the running child's own Bead reconciled, never the sibling", claimedIDs)
+		}
+	}
+	if got := m.TransientError(); got != "Flow flow-running is in_progress; auto-progression remains off" {
+		t.Fatalf("running child retry status = %q", got)
+	}
+}
+
 func TestEpicAutoProgressionRetryRejectsReplacementOfMigratedMarkedChild(t *testing.T) {
 	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 	listed := flowstore.FlowRecord{

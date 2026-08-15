@@ -701,18 +701,16 @@ func epicProgressionRecoveryChild(target beadExpansionTarget, children []beadsqu
 	return "", ""
 }
 
+// epicProgressionRetryRelevant reports whether a marked Flow should still be
+// treated as its Bead's recovery candidate. It intentionally does not look at
+// prepared state or derived status beyond closure: a marked, open Flow that
+// is running, blocked, or otherwise mid-flight must still surface here so
+// rejectEpicProgressionCandidate can refuse enablement against it. Filtering
+// those out by status would make recovery silently fall through to a Ready
+// sibling, claiming and enabling progression against it while stranding the
+// mid-flight Flow's claim as an unrecoverable orphan.
 func epicProgressionRetryRelevant(flow flowstore.FlowRecord) bool {
-	if flowstore.FlowClosed(flow) {
-		return false
-	}
-	if flow.PreparedAt == nil {
-		return true
-	}
-	status := strings.TrimSpace(flow.Status)
-	if status == "" {
-		status = flowstore.DeriveStatus(flow)
-	}
-	return status == flowstore.StatusPending
+	return !flowstore.FlowClosed(flow)
 }
 
 func rejectEpicProgressionCandidate(flow flowstore.FlowRecord) string {
