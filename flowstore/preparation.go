@@ -202,12 +202,14 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 
 // Compensate atomically turns every currently launchable root of this exact
 // receipt-less preparation into a blocked phase. It acquires the same
-// launch/close reservation as agent spawn, then revalidates the generation and
-// pending state inside the writer transaction so a stale creator cannot
-// overwrite a claimant or a same-ID replacement. Callers that already hold
-// that reservation must use CompensateUnderReservation instead.
+// launch/close reservation as agent spawn before consuming this capability, then
+// revalidates the generation and pending state inside the writer transaction so
+// a stale creator cannot overwrite a claimant or a same-ID replacement. A
+// reservation timeout leaves the finalizer usable for a later retry. Callers
+// that already hold that reservation must use CompensateUnderReservation
+// instead.
 func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
-	notes, err := f.beginCompensation(notes)
+	notes, err := f.compensationNotes(notes)
 	if err != nil {
 		return FlowRecord{}, err
 	}
@@ -216,23 +218,26 @@ func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	defer release()
+	if err := f.consume(); err != nil {
+		return FlowRecord{}, err
+	}
 	return f.compensateUnderReservation(notes)
 }
 
 // CompensateUnderReservation is Compensate without taking a second launch/close
 // reservation. The caller must already hold that fence for this Flow.
 func (f *preparationFinalizer) CompensateUnderReservation(notes string) (FlowRecord, error) {
-	notes, err := f.beginCompensation(notes)
+	notes, err := f.compensationNotes(notes)
 	if err != nil {
+		return FlowRecord{}, err
+	}
+	if err := f.consume(); err != nil {
 		return FlowRecord{}, err
 	}
 	return f.compensateUnderReservation(notes)
 }
 
-func (f *preparationFinalizer) beginCompensation(notes string) (string, error) {
-	if err := f.consume(); err != nil {
-		return "", err
-	}
+func (f *preparationFinalizer) compensationNotes(notes string) (string, error) {
 	notes = strings.TrimSpace(notes)
 	if notes == "" {
 		return "", errors.New("flow preparation compensation requires notes")

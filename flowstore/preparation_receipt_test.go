@@ -262,6 +262,38 @@ func TestPreparationFinalizerCompensatesUnderHeldLaunchReservation(t *testing.T)
 	}
 }
 
+func TestPreparationFinalizerCompensateRetainsCapabilityWhenReservationTimesOut(t *testing.T) {
+	const lockTimeout = 80 * time.Millisecond
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir(), LockTimeout: lockTimeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "lock-timeout", Title: "Timeout", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, release, err := store.ReserveAgentLaunch(created.FlowID); err != nil {
+		t.Fatal(err)
+	} else {
+		_, err := finalizer.Compensate("create worktree: worktree failed")
+		release()
+		if err == nil {
+			t.Fatal("Compensate() succeeded while another process held the launch reservation")
+		}
+	}
+
+	compensated, err := finalizer.Compensate("create worktree: worktree failed")
+	if err != nil {
+		t.Fatalf("retry Compensate() error = %v, want the finalizer retained after reservation timeout", err)
+	}
+	if phase, _, ok := flowstore.FirstLaunchablePhase(compensated); ok {
+		t.Fatalf("retry Compensate() left launchable phase %#v", phase)
+	}
+}
+
 func TestPreparationFinalizerSnapshotIsolatedFromReturnedRecordMutation(t *testing.T) {
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
 	if err != nil {
