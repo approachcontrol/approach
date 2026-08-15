@@ -18,8 +18,9 @@ const (
 
 type injectedCommitTx struct {
 	sqliteTransaction
-	mode injectedCommitMode
-	db   *sql.DB
+	mode         injectedCommitMode
+	db           *sql.DB
+	afterDurable func()
 }
 
 func (tx *injectedCommitTx) Commit() error {
@@ -27,6 +28,9 @@ func (tx *injectedCommitTx) Commit() error {
 	case injectedCommitDurable:
 		if err := tx.sqliteTransaction.Commit(); err != nil {
 			return err
+		}
+		if tx.afterDurable != nil {
+			tx.afterDurable()
 		}
 	case injectedCommitUnreadable:
 		if err := tx.sqliteTransaction.Rollback(); err != nil {
@@ -40,14 +44,27 @@ func (tx *injectedCommitTx) Commit() error {
 }
 
 func injectNextCommitOutcome(store *Store, mode injectedCommitMode) {
+	injectCommitOutcomes(store, mode)
+}
+
+func injectCommitOutcomes(store *Store, modes ...injectedCommitMode) {
 	backend := store.backend.(*sqliteBackend)
 	original := backend.beginTx
+	remaining := append([]injectedCommitMode(nil), modes...)
 	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
 		tx, err := original(ctx)
 		if err != nil {
 			return nil, err
 		}
-		backend.beginTx = original
+		if len(remaining) == 0 {
+			backend.beginTx = original
+			return tx, nil
+		}
+		mode := remaining[0]
+		remaining = remaining[1:]
+		if len(remaining) == 0 {
+			backend.beginTx = original
+		}
 		return &injectedCommitTx{sqliteTransaction: tx, mode: mode, db: backend.db}, nil
 	}
 }
@@ -96,6 +113,237 @@ func TestPreparationReceiptReconcilesCommitAcknowledgementFailures(t *testing.T)
 			}
 			if !IsPreparationIncomplete(err) || finalized.PreparedAt != nil {
 				t.Fatalf("Finalize() = receipt %v, err %v; want confirmed incomplete", finalized.PreparedAt, err)
+			}
+		})
+	}
+}
+
+func TestPreparationCreateReconcilesCommitAcknowledgementFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		mode        injectedCommitMode
+		wantCreated bool
+		wantUnknown bool
+	}{
+		{name: "confirmed absent", mode: injectedCommitAbsent},
+		{name: "confirmed durable", mode: injectedCommitDurable, wantCreated: true},
+		{name: "readback unavailable", mode: injectedCommitUnreadable, wantUnknown: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := NewStore(StoreOptions{Root: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			injectNextCommitOutcome(store, tt.mode)
+			flow, finalizer, err := store.CreatePreparation(FlowRecord{
+				FlowID: "create-outcome", Title: "Create", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+			}, CreateOptions{})
+			if tt.wantUnknown {
+				if !IsPreparationUnknown(err) {
+					t.Fatalf("CreatePreparation() error = %v, want unknown classification", err)
+				}
+				return
+			}
+			if !tt.wantCreated {
+				if err == nil || finalizer != nil || flow.FlowID != "" {
+					t.Fatalf("CreatePreparation() = %#v, %v, %v; want confirmed absent error", flow, finalizer, err)
+				}
+				if _, readErr := store.Read("create-outcome"); !IsNotFound(readErr) {
+					t.Fatalf("Read() after absent insert error = %v, want not found", readErr)
+				}
+				return
+			}
+			if err != nil || finalizer == nil || flow.FlowID != "create-outcome" || flow.PreparationNonce == "" {
+				t.Fatalf("CreatePreparation() = %#v, %v, %v; want reconciled durable preparation", flow, finalizer, err)
+			}
+			compensated, compensateErr := finalizer.Compensate("test cleanup")
+			if compensateErr != nil {
+				t.Fatalf("reconciled finalizer Compensate() error = %v", compensateErr)
+			}
+			if _, _, ok := FirstLaunchablePhase(compensated); ok {
+				t.Fatalf("reconciled finalizer left launchable preparation: %#v", compensated)
+			}
+		})
+	}
+}
+
+func TestPreparationCreateDoesNotAdoptAClaimMadeAfterAmbiguousCommit(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	backend := store.backend.(*sqliteBackend)
+	original := backend.beginTx
+	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
+		tx, beginErr := original(ctx)
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		backend.beginTx = original
+		return &injectedCommitTx{
+			sqliteTransaction: tx,
+			mode:              injectedCommitDurable,
+			db:                backend.db,
+			afterDurable: func() {
+				if _, metadataErr := store.SetStartMetadata(StartMetadataUpdate{
+					FlowID: "create-claimed", BaseRef: "release",
+				}); metadataErr != nil {
+					t.Errorf("SetStartMetadata() during acknowledgement failure = %v", metadataErr)
+				}
+			},
+		}, nil
+	}
+
+	flow, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "create-claimed", Title: "Claimed", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, CreateOptions{})
+	if err == nil || finalizer != nil || flow.FlowID != "" {
+		t.Fatalf("CreatePreparation() = %#v, %v, %v; want ambiguous insert error without adopting claimant", flow, finalizer, err)
+	}
+	authoritative, readErr := store.Read("create-claimed")
+	if readErr != nil || authoritative.BaseRef != "release" {
+		t.Fatalf("claimed preparation = %#v, %v", authoritative, readErr)
+	}
+}
+
+func TestPreparationCreateDoesNotAdoptPhaseStateClaimAfterAmbiguousCommit(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	backend := store.backend.(*sqliteBackend)
+	original := backend.beginTx
+	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
+		tx, beginErr := original(ctx)
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		backend.beginTx = original
+		return &injectedCommitTx{
+			sqliteTransaction: tx,
+			mode:              injectedCommitDurable,
+			db:                backend.db,
+			afterDurable: func() {
+				if _, phaseErr := store.SetPhase(PhaseUpdate{
+					FlowID: "create-phase-claimed", PhaseID: "plan", Status: PhaseBlocked, Notes: "claimed elsewhere",
+				}); phaseErr != nil {
+					t.Errorf("SetPhase() during acknowledgement failure = %v", phaseErr)
+				}
+			},
+		}, nil
+	}
+
+	flow, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "create-phase-claimed", Title: "Claimed", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, CreateOptions{})
+	if err == nil || finalizer != nil || flow.FlowID != "" {
+		t.Fatalf("CreatePreparation() = %#v, %v, %v; want ambiguous insert error without adopting phase claim", flow, finalizer, err)
+	}
+	authoritative, readErr := store.Read("create-phase-claimed")
+	if readErr != nil || authoritative.Phases[0].Status != PhaseBlocked {
+		t.Fatalf("phase-claimed preparation = %#v, %v", authoritative, readErr)
+	}
+}
+
+func TestPreparationCompensationRetainsCapabilityWhenBothWritesFailToLand(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "compensation-exhausted", Title: "Exhausted", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	injectCommitOutcomes(store, injectedCommitAbsent, injectedCommitAbsent)
+	if _, err := finalizer.Compensate("creation canceled"); !IsPreparationIncomplete(err) {
+		t.Fatalf("Compensate() error = %v, want incomplete after both writes failed to land", err)
+	}
+	authoritative, err := store.Read(created.FlowID)
+	if err != nil || authoritative.Phases[0].Status != PhaseReady {
+		t.Fatalf("Read() after exhausted Compensate() = %#v, %v; want unchanged ready root", authoritative, err)
+	}
+
+	compensated, err := finalizer.Compensate("creation canceled")
+	if err != nil {
+		t.Fatalf("retry Compensate() error = %v, want the finalizer retained after unlanded writes", err)
+	}
+	if compensated.Phases[0].Status != PhaseBlocked {
+		t.Fatalf("retry Compensate() phase = %#v, want blocked", compensated.Phases[0])
+	}
+}
+
+func TestPreparationCompensationRetriesAbsentCommitForPendingCustomRoot(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	flow, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "pending-root", Title: "Pending root", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+		Phases: []FlowPhase{{
+			PhaseID: "custom", Title: "Custom", Kind: KindImplementation, Status: PhasePending, DependsOn: []string{},
+		}},
+	}, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.Phases[0].Status != PhasePending {
+		t.Fatalf("declared root status = %q, want persisted pending precondition", flow.Phases[0].Status)
+	}
+	injectNextCommitOutcome(store, injectedCommitAbsent)
+	compensated, err := finalizer.Compensate("creation canceled")
+	if err != nil {
+		t.Fatalf("Compensate() error = %v", err)
+	}
+	if compensated.Phases[0].Status != PhaseBlocked {
+		t.Fatalf("Compensate() phase = %#v, want blocked after retry", compensated.Phases[0])
+	}
+}
+
+func TestPreparationCompensationReconcilesCommitAcknowledgementFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		mode        injectedCommitMode
+		wantUnknown bool
+	}{
+		{name: "confirmed absent retries", mode: injectedCommitAbsent},
+		{name: "confirmed durable", mode: injectedCommitDurable},
+		{name: "readback unavailable", mode: injectedCommitUnreadable, wantUnknown: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := NewStore(StoreOptions{Root: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			flow, finalizer, err := store.CreatePreparation(FlowRecord{
+				FlowID: "compensation-outcome", Title: "Compensation", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+			}, CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			injectNextCommitOutcome(store, tt.mode)
+			compensated, err := finalizer.Compensate("creation canceled")
+			if tt.wantUnknown {
+				if !IsPreparationUnknown(err) {
+					t.Fatalf("Compensate() error = %v, want unknown classification", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Compensate() error = %v", err)
+			}
+			if compensated.FlowID != flow.FlowID {
+				t.Fatalf("Compensate() flow = %q, want %q", compensated.FlowID, flow.FlowID)
+			}
+			if _, _, ok := FirstLaunchablePhase(compensated); ok {
+				t.Fatalf("Compensate() left a launchable root after commit acknowledgement failure: %#v", compensated)
 			}
 		})
 	}

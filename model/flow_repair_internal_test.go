@@ -147,6 +147,14 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 			record: repairClassificationRecord(flowstore.FlowPhase{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, DependsOn: []string{}}),
 		},
 		{
+			name: "receipt-less nonce-bearing preparation",
+			record: func() flowstore.FlowRecord {
+				record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseBlocked})
+				record.PreparationNonce = "nonce-unprepared"
+				return record
+			}(),
+		},
+		{
 			name: "manually mergeable",
 			record: func() flowstore.FlowRecord {
 				record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseCompleted, DependsOn: []string{}})
@@ -335,7 +343,7 @@ func TestFlowPhaseResumeDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 // The resume test above covers the kind whose backstop message is its own; this
 // covers the shared one. Auto and manual launches route through the lifecycle,
 // so the refusal is exercised where they actually reach it — the install stage —
-// rather than through launchTrackedFlowEmbedded, whose production callers are
+// rather than through the lifecycle's tracked embedded installer, whose callers are
 // creation-time Flow starts and which never sees an auto launch.
 func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 	const (

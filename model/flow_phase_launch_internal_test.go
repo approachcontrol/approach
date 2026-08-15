@@ -85,8 +85,8 @@ func TestNextAutoLaunchPhaseSkipsMergeKindCustomID(t *testing.T) {
 }
 
 func TestFlowPhaseLaunchPreflightRequiresPlanForReviewKindCustomID(t *testing.T) {
-	launcher := FlowPhaseLauncher{AgentCommand: "codex"}
-	_, err := launcher.Preflight(FlowPhaseLaunchRequest{
+	launcher := flowLaunchPreparation{AgentCommand: "codex"}
+	_, err := launcher.preflight(flowPhaseLaunchRequest{
 		Record: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha"},
 		Phase:  flowstore.FlowPhase{PhaseID: "design-review", Kind: flowstore.KindPlanReview},
 	})
@@ -141,8 +141,8 @@ func TestNextAutoLaunchPhaseSkipsReadyPhaseWithUnsatisfiedDependency(t *testing.
 }
 
 func TestFlowPhaseLaunchCoordinatorNormalizesPhaseIDsForPreflightAndRecovery(t *testing.T) {
-	launcher := FlowPhaseLauncher{AgentCommand: "codex"}
-	_, err := launcher.Preflight(FlowPhaseLaunchRequest{
+	launcher := flowLaunchPreparation{AgentCommand: "codex"}
+	_, err := launcher.preflight(flowPhaseLaunchRequest{
 		Record: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha"},
 		Phase:  flowstore.FlowPhase{PhaseID: " Plan-Review ", Status: flowstore.PhaseReady},
 	})
@@ -206,11 +206,11 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want auto-launch command")
 	}
 	_, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
-	if launch.LaunchContext.FlowPhaseID != "implementation" ||
+	if launch.Context.FlowPhaseID != "implementation" ||
 		len(updates) != 1 ||
 		!updates[0].AutoLaunch ||
 		updates[0].PhaseID != "implementation" {
-		t.Fatalf("launch = %#v updates = %#v, want implementation auto-launch", launch.LaunchContext, updates)
+		t.Fatalf("launch = %#v updates = %#v, want implementation auto-launch", launch.Context, updates)
 	}
 }
 

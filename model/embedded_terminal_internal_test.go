@@ -56,7 +56,7 @@ func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) (Model, flowL
 }
 
 // installRepairLaunch runs the install stage for a prepared repair, the hop
-// that replaced the old FlowEmbeddedLaunchRequestedMsg handling.
+// used by the lifecycle after the obsolete direct-launch message was removed.
 func installRepairLaunch(m Model, attempt flowLaunchAttempt, ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	return m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
 		Token:   ctx.LaunchID,
@@ -67,6 +67,25 @@ func installRepairLaunch(m Model, attempt flowLaunchAttempt, ctx actions.AgentLa
 		Context: ctx,
 		Route:   flowLaunchRouteEmbedded,
 	})
+}
+
+// openFlowEmbeddedTerminalForTest exercises runtime-only slot, prefill, focus,
+// and tick mechanics without reintroducing a production Flow launch route.
+func openFlowEmbeddedTerminalForTest(m Model, ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	ctx.Embedded = true
+	needsTick := !m.hasRunningEmbeddedTerminal()
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	if err != nil || !opened {
+		return next, nil
+	}
+	if prefillCmd == nil {
+		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
+	}
+	var tickCmd tea.Cmd
+	if needsTick {
+		next, tickCmd = next.startEmbeddedTerminalTick()
+	}
+	return next, batchNonNil(prefillCmd, tickCmd)
 }
 
 func TestFlowRepairTerminalSlotPreservesRepairIdentityBeforePrefill(t *testing.T) {
@@ -1260,8 +1279,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	}
 	updateDone := make(chan updateResult, 1)
 	go func() {
-		nextModel, cmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
-		updateDone <- updateResult{model: nextModel, cmd: cmd}
+		next, cmd := openFlowEmbeddedTerminalForTest(m, ctx)
+		updateDone <- updateResult{model: next, cmd: cmd}
 	}()
 
 	deadlockGuard := time.After(5 * time.Second)
@@ -1348,8 +1367,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 		startCalls++
 		return secondTerm, nil
 	}
-	secondModel, secondCmd := next.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
-	next = secondModel.(Model)
+	var secondCmd tea.Cmd
+	next, secondCmd = openFlowEmbeddedTerminalForTest(next, ctx)
 	if startCalls != 2 || len(next.embeddedTerminals) != 2 {
 		t.Fatalf("second interactive launch starts=%d slots=%#v, want a second pending slot", startCalls, next.embeddedTerminals)
 	}
@@ -1453,8 +1472,7 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 		InitialPrompt:     "Build \x1b[31mit\x1b[0m",
 	}
 
-	nextModel, parentCmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
-	next := nextModel.(Model)
+	next, parentCmd := openFlowEmbeddedTerminalForTest(m, ctx)
 	prefillCmd := isolatedFlowPrefillCommandFromLaunchBatch(t, parentCmd)
 	rawMsg := prefillCmd()
 	msg, ok := rawMsg.(embeddedPromptPrefillResultMsg)

@@ -10,13 +10,14 @@ import (
 const storageTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 type flowProjection struct {
-	flowID     string
-	repoPath   string
-	status     string
-	updatedAt  string
-	beadID     string
-	epicID     string
-	preparedAt string
+	flowID           string
+	repoPath         string
+	status           string
+	updatedAt        string
+	beadID           string
+	epicID           string
+	preparedAt       string
+	preparationNonce string
 }
 
 type storageGraphRecovery struct {
@@ -53,6 +54,7 @@ type storedFlowDTO struct {
 	ProgressionClaim      bool                  `json:"progression_claim,omitempty"`
 	PreparationGeneration string                `json:"preparation_generation,omitempty"`
 	PreparedAt            string                `json:"prepared_at,omitempty"`
+	PreparationNonce      string                `json:"preparation_nonce,omitempty"`
 	CreatedAt             time.Time             `json:"created_at"`
 	UpdatedAt             time.Time             `json:"updated_at"`
 	GraphRecovery         *storageGraphRecovery `json:"graph_recovery,omitempty"`
@@ -97,6 +99,7 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 		Phases:                record.Phases,
 		ProgressionClaim:      record.ProgressionClaim,
 		PreparationGeneration: record.PreparationGeneration,
+		PreparationNonce:      record.PreparationNonce,
 		CreatedAt:             record.CreatedAt,
 		UpdatedAt:             record.UpdatedAt,
 	}
@@ -134,6 +137,7 @@ func (dto storedFlowDTO) record() FlowRecord {
 		Phases:                dto.Phases,
 		ProgressionClaim:      dto.ProgressionClaim,
 		PreparationGeneration: dto.PreparationGeneration,
+		PreparationNonce:      dto.PreparationNonce,
 		CreatedAt:             dto.CreatedAt,
 		UpdatedAt:             dto.UpdatedAt,
 	}
@@ -178,13 +182,14 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
 	}
 	return data, flowProjection{
-		flowID:     record.FlowID,
-		repoPath:   filepath.Clean(record.RepoPath),
-		status:     record.Status,
-		updatedAt:  updatedAt,
-		beadID:     record.Bead.ID,
-		epicID:     record.Bead.EpicID,
-		preparedAt: preparedAt,
+		flowID:           record.FlowID,
+		repoPath:         filepath.Clean(record.RepoPath),
+		status:           record.Status,
+		updatedAt:        updatedAt,
+		beadID:           record.Bead.ID,
+		epicID:           record.Bead.EpicID,
+		preparedAt:       preparedAt,
+		preparationNonce: record.PreparationNonce,
 	}, nil
 }
 
@@ -256,10 +261,10 @@ func patchStoredFlowPhaseAgentSettings(data []byte, update phaseAgentSettingsSav
 }
 
 func decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID string, data []byte) (storedFlow, error) {
-	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", data)
+	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", "", data)
 }
 
-func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string, data []byte) (storedFlow, error) {
+func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string, data []byte) (storedFlow, error) {
 	var dto storedFlowDTO
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
@@ -303,6 +308,9 @@ func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID
 	}
 	if dto.PreparedAt != preparedAt {
 		return storedFlow{}, fmt.Errorf("flow %q prepared_at projection %q disagrees with record %q", flowID, preparedAt, dto.PreparedAt)
+	}
+	if dto.PreparationNonce != preparationNonce {
+		return storedFlow{}, fmt.Errorf("flow %q preparation_nonce projection %q disagrees with record %q", flowID, preparationNonce, dto.PreparationNonce)
 	}
 	if record.PreparedAt != nil && (record.PreparedAt.Before(record.CreatedAt) || record.PreparedAt.After(record.UpdatedAt)) {
 		return storedFlow{}, fmt.Errorf("flow %q prepared_at must be between created_at and updated_at", flowID)

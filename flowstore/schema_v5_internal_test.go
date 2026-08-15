@@ -72,8 +72,8 @@ func TestSQLiteParentReleaseV4MigratesToV5AndInstallsClaimTrigger(t *testing.T) 
 	t.Cleanup(func() { _ = store.Close() })
 	backend := store.backend.(*sqliteBackend)
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 5 {
-		t.Fatalf("user_version = %d, err %v; want 5", version, err)
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	if err := validateSQLiteSchema(backend.db); err != nil {
 		t.Fatalf("migrated v5 schema validation failed: %v", err)
@@ -122,8 +122,8 @@ func TestSQLiteInPlaceV4WithClaimTriggerStampsV5WithoutRewritingFlows(t *testing
 	t.Cleanup(func() { _ = store.Close() })
 	backend := store.backend.(*sqliteBackend)
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 5 {
-		t.Fatalf("user_version = %d, err %v; want 5", version, err)
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	var gotBlob []byte
 	if err := backend.db.QueryRow("SELECT record FROM flows WHERE flow_id = ?", record.FlowID).Scan(&gotBlob); err != nil {
@@ -173,7 +173,7 @@ func TestSQLiteParentReleaseV4InterruptedStagePromotesWithoutRebuild(t *testing.
 	}
 	backend := store.backend.(*sqliteBackend)
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 5 {
-		t.Fatalf("promoted user_version = %d, err %v; want 5", version, err)
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("promoted user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 }

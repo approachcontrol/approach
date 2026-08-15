@@ -146,7 +146,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		closeDB = false
 		return nil
 	}
-	if version != 0 && version != 1 && version != 2 && version != 3 && version != 4 {
+	if version != 0 && version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	predecessor := int64(1)
@@ -154,10 +154,13 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		predecessor = version
 	}
 	stampOnly := false
-	if version == 4 {
-		if err := validateSQLiteSchemaVersion(db, 4); err != nil {
-			if validateSQLiteSchemaVersion(db, 5) == nil {
+	if version == 4 || version == 5 {
+		if err := validateSQLiteSchemaVersion(db, version); err != nil {
+			if validateSQLiteSchemaVersion(db, 6) == nil {
 				stampOnly = true
+			} else if version == 4 && validateSQLiteSchemaVersion(db, 5) == nil {
+				// Parent-release v4 that already has the v5 claim trigger still
+				// needs the v6 nonce column; do not stamp-only.
 			} else {
 				return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
 			}
@@ -210,6 +213,13 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		}
 		if predecessor <= 4 {
 			statements = append(statements, flowProgressionClaimCompatibilityTrigger)
+		}
+		if predecessor <= 5 {
+			statements = append(statements,
+				"ALTER TABLE flows ADD COLUMN preparation_nonce TEXT NOT NULL DEFAULT ''",
+				"UPDATE flows SET preparation_nonce = CASE WHEN json_valid(CAST(record AS TEXT)) THEN COALESCE(json_extract(CAST(record AS TEXT), '$.preparation_nonce'), '') ELSE '' END",
+				flowPreparationNonceCompatibilityTrigger,
+			)
 		}
 	}
 	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))
@@ -454,7 +464,7 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 		// get a mismatch on every subsequent launch and could never start again.
 		// A predecessor-schema stage from an older build is still that durable
 		// corpus: upgrade it in place before current-schema validation, or the
-		// resume path treats a valid v4 stage as unusable and discards it.
+		// resume path treats a valid predecessor stage as unusable and discards it.
 		err := migrateAuthoritativeDatabase(stagePath, lockTimeout)
 		if err == nil {
 			err = settleStagedSQLiteFile(stagePath)
@@ -655,7 +665,7 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 		return nil, nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -663,13 +673,13 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 	promoted := map[string]bool{}
 	var unresolved []string
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &data); err != nil {
 			return nil, nil, err
 		}
 		promoted[flowID] = true
-		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, data)
+		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -993,8 +1003,8 @@ func buildStagedDatabase(path string, records []FlowRecord) error {
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := tx.Exec("INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, record) VALUES(?, ?, ?, ?, ?, ?, ?)",
-			projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, data); err != nil {
+		if _, err := tx.Exec("INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, data); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("import legacy flow %q: %w", record.FlowID, err)
 		}
@@ -1066,21 +1076,21 @@ func validateStagedDatabase(path string, expected []FlowRecord, compareRecords b
 		_ = db.Close()
 		return fmt.Errorf("staged flow database integrity check = %q, err=%v", integrity, err)
 	}
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		_ = db.Close()
 		return err
 	}
 	var actual []FlowRecord
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &data); err != nil {
 			_ = rows.Close()
 			_ = db.Close()
 			return err
 		}
-		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, data)
+		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, data)
 		if err != nil {
 			_ = rows.Close()
 			_ = db.Close()

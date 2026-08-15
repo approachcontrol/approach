@@ -7,9 +7,8 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 )
 
-// flowLaunchKind is the closed set of launch intents the lifecycle can be asked
-// to run. Create-phase is reserved for later migration; every other declared
-// kind is implemented today.
+// flowLaunchKind is the closed set of launch intents implemented by the
+// lifecycle's sole admission and event-handling boundary.
 type flowLaunchKind int
 
 const (
@@ -37,6 +36,7 @@ const (
 	flowLaunchOriginEmbeddedSessionPicker
 	flowLaunchOriginInlineWorktreeSession
 	flowLaunchOriginNewFlow
+	flowLaunchOriginReadyBead
 )
 
 // flowLaunchSavedSessionKey is the exact identity shared by the session store
@@ -78,6 +78,8 @@ const (
 // flowLaunchIntent is what a caller submits. It carries only what the caller
 // knows: everything else — agent settings, prompt templates, phase, headless
 // preference — the lifecycle reads from the Model or the authoritative record.
+// Create-phase is the exception for settings: its source is asynchronous, so
+// it carries the immutable snapshot captured by the submitting Model.
 // FallbackRepoPath exists because a stage that runs without a Model needs the
 // current repo path. Phase resume and repair use it as a last candidate when
 // resolving their launch directory.
@@ -109,12 +111,9 @@ type flowLaunchIntent struct {
 	// because the read command has no Model. The read stage uses the record's
 	// repo path when it has one and this otherwise.
 	FallbackRepoPath string
-	// SavedSession is the cached row that caused saved-session admission. It is
-	// intentionally not authoritative; SessionKey is the only identity carried
-	// into the exact refresh.
-	SavedSession sessions.SessionRecord
-	SessionKey   flowLaunchSavedSessionKey
-	Create       flowLaunchCreateRequest
+	SessionKey       flowLaunchSavedSessionKey
+	Create           flowLaunchCreateRequest
+	Settings         flowLaunchAgentSettingsSnapshot
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way

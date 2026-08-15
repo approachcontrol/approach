@@ -572,10 +572,6 @@ func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("StartFlowPlan should not be called from active flows")
-			return model.FlowStartResult{}, nil
-		},
 	}), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
@@ -752,7 +748,7 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:     "codex",
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
@@ -1269,7 +1265,7 @@ func autoAdvanceLaunchCommand(m model.Model, flows []flowstore.FlowRecord) (mode
 	return model.AutoAdvanceLaunchCommandForTest(m, flows)
 }
 
-func autoLaunchFromFlowRefresh(t *testing.T, previous, current flowstore.FlowRecord) (model.FlowEmbeddedLaunchRequestedMsg, []flowstore.PhaseLaunchUpdate) {
+func autoLaunchFromFlowRefresh(t *testing.T, previous, current flowstore.FlowRecord) (flowTerminalOpenRequest, []flowstore.PhaseLaunchUpdate) {
 	t.Helper()
 	m, cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
 	if cmd == nil {
@@ -1310,16 +1306,16 @@ func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.
 // flowEmbeddedLaunchesFromCommand drives the AutoMode launch lifecycle to its
 // prepared launch contexts. It needs the Model because the authoritative read
 // event has to go back through Update before any prepare command exists.
-func flowEmbeddedLaunchesFromCommand(t *testing.T, m model.Model, cmd tea.Cmd) []model.FlowEmbeddedLaunchRequestedMsg {
+func flowEmbeddedLaunchesFromCommand(t *testing.T, m model.Model, cmd tea.Cmd) []flowTerminalOpenRequest {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("expected command")
 	}
 	_, prepared := model.AutoFlowLaunchesForTest(m, cmd)
-	launches := make([]model.FlowEmbeddedLaunchRequestedMsg, 0)
+	launches := make([]flowTerminalOpenRequest, 0)
 	for _, launch := range prepared {
 		if launch.Embedded {
-			launches = append(launches, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: launch.Context})
+			launches = append(launches, flowTerminalOpenRequest{LaunchContext: launch.Context})
 		}
 	}
 	return launches
@@ -2128,7 +2124,7 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 		t.Fatal("confirming manual merge should return command")
 	}
 	raw := cmd()
-	if _, ok := raw.(model.FlowEmbeddedLaunchRequestedMsg); ok {
+	if _, ok := raw.(flowTerminalOpenRequest); ok {
 		t.Fatal("manual merge must not launch a Flow phase")
 	}
 	m, cmd = update(m, raw)
@@ -3546,7 +3542,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-auto",
@@ -3648,7 +3644,7 @@ func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-auto",
@@ -3722,7 +3718,7 @@ func TestModel_ActiveFlowAutoCloseRefreshUsesGlobalFetch(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{normalFlow})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{activeFlow})
 
-	m, cmd := update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd := update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/bravo",
 		WorktreePath: "/dev/bravo-worktrees/flow-auto",
@@ -3788,7 +3784,7 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-auto",
@@ -3861,7 +3857,7 @@ func TestModel_FlowAutoModeSuppressesWhenCompletionObservedWithNonAutoClosingSou
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 			var cmd tea.Cmd
-			m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 				Command:      "codex",
 				RepoPath:     "/dev/alpha",
 				WorktreePath: "/dev/alpha-worktrees/flow-auto",
@@ -3945,7 +3941,7 @@ func TestModel_FlowAutoModeDeferredLaunchNoopsAfterAutoModeDisabled(t *testing.T
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-auto",
@@ -4013,7 +4009,7 @@ func TestModel_FlowAutoModeDeferredLaunchWaitsOnFailedSourceTerminal(t *testing.
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-auto",
@@ -4099,7 +4095,7 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		LaunchID:     "launch-old",
 		RepoPath:     "/dev/alpha",
@@ -4178,7 +4174,7 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
 	var cmd tea.Cmd
-	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, cmd = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		LaunchID:     "launch-old",
 		RepoPath:     "/dev/alpha",
@@ -4772,7 +4768,7 @@ func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.
 		Status:       flowstore.StatusInProgress,
 	}})
 
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:     "codex",
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
@@ -4782,7 +4778,7 @@ func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.
 		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", terms[0].writes)
 	}
 
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:     "codex",
 		FlowID:      "flow-1",
 		FlowPhaseID: "review-loop",
@@ -4823,7 +4819,7 @@ func TestModel_AutoHeadlessFlowLaunchPreservesTerminalFocus(t *testing.T) {
 		Status:       flowstore.StatusInProgress,
 	}})
 
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:     "codex",
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
@@ -4833,7 +4829,7 @@ func TestModel_AutoHeadlessFlowLaunchPreservesTerminalFocus(t *testing.T) {
 		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", terms[0].writes)
 	}
 
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:        "codex",
 		FlowID:         "flow-1",
 		FlowPhaseID:    "review-loop",
@@ -4881,7 +4877,7 @@ func TestModel_GWithFocusedFlowTerminalWritesInputWithoutLaunchingPhase(t *testi
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 		},
 	}})
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:     "codex",
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
@@ -5483,7 +5479,7 @@ func TestModel_RIsNoopForHealthyFlowAndExplainsOccupiedRepairSlot(t *testing.T) 
 		})
 		record := repairableFlowForShortcut()
 		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 			Command:     "codex",
 			FlowID:      record.FlowID,
 			FlowPhaseID: "implementation",
@@ -8927,7 +8923,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if sessionTick != nil {
 		t.Fatal("opening a session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -8983,7 +8979,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if sessionTick != nil {
 		t.Fatal("opening an exited session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -10241,7 +10237,7 @@ func TestModel_FlowTerminalInputModeTabIsForwardedToTerminal(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:     "codex",
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
@@ -10396,7 +10392,7 @@ func TestModel_FlowTerminalFocusCyclesLeftRightWithoutWritingPTY(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	for _, phaseID := range []string{"one", "two", "three"} {
-		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 			Command:      "codex",
 			RepoPath:     "/dev/alpha",
 			WorktreePath: "/dev/alpha",
@@ -10445,7 +10441,7 @@ func TestModel_FlowTerminalLeftRightNoOpWithOneTerminal(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command:      "codex",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
@@ -10561,7 +10557,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if view := m.View(); !strings.Contains(view, "2 codex feature/session exited") {
 		t.Fatalf("session terminal should use the next global tab number:\n%s", view)
 	}
@@ -10608,7 +10604,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -10804,30 +10800,25 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-5", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/five", Branch: "feature/five"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-6", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/six", Branch: "feature/six"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
-	openSessionIndex := func(index int, label string) {
+	openSessionIndex := func(index int) {
 		t.Helper()
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 		for range index {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 		}
-		var cmd tea.Cmd
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-		if cmd == nil {
-			t.Fatalf("%s should return a command", label)
-		}
-		m, _ = update(m, cmd())
+		m, _ = selectSavedSessionForTest(t, m)
 	}
 	for i := 1; i < 5; i++ {
-		openSessionIndex(i, "session picker selection")
+		openSessionIndex(i)
 	}
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts = %d, want 9", starts)
 	}
 
-	openSessionIndex(5, "session picker selection at mixed-scope cap")
+	openSessionIndex(5)
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts after mixed-scope cap = %d, want 9", starts)
 	}
@@ -11834,10 +11825,6 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 				Phases:       []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}},
 			}}, nil
 		},
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("Plan Now off should not start the plan phase")
-			return model.FlowStartResult{}, nil
-		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			externalCalls++
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -11880,7 +11867,6 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 		createRequest.Instructions != "Plan later" ||
 		createRequest.BaseRef != "main" ||
 		createRequest.AgentCommand != "" ||
-		createRequest.PlanPhaseStatus != "" ||
 		createRequest.Headless == nil || *createRequest.Headless {
 		t.Fatalf("create request = %#v", createRequest)
 	}
@@ -11983,55 +11969,16 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 	}
 }
 
-func TestModel_NewFlowPlanNowHonorsExplicitStartFlowPlanSeam(t *testing.T) {
-	calls := 0
-	var request model.FlowStartRequest
-	m := newTestModel(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			calls++
-			request = req
-			return model.FlowStartResult{
-				Flow:          flowstore.FlowRecord{FlowID: "custom-flow", RepoPath: req.RepoPath, Title: req.Title},
-				LaunchSkipped: true,
-			}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = switchTestMode(m, ui.ModeFlows)
-
-	_, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Custom Plan", "Use custom seam", "main", true, true)
-	if cmd == nil {
-		t.Fatal("Plan Now returned nil command")
-	}
-	msg := cmd()
-	created, ok := msg.(model.FlowCreatedMsg)
-	if !ok {
-		t.Fatalf("Plan Now returned %T, want FlowCreatedMsg from explicit StartFlowPlan seam", msg)
-	}
-	if calls != 1 || created.FlowID != "custom-flow" || created.Request == 0 {
-		t.Fatalf("custom seam calls/result = %d/%#v", calls, created)
-	}
-	if request.RepoPath != "/dev/alpha" || request.Title != "Custom Plan" || request.Instructions != "Use custom seam" || request.BaseRef != "main" {
-		t.Fatalf("custom StartFlowPlan request = %#v", request)
-	}
-}
-
 func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyEsc},
 		{Type: tea.KeyCtrlC},
 	} {
 		t.Run(key.String(), func(t *testing.T) {
-			startCalls := 0
 			embeddedCalls := 0
 			externalCalls := 0
 			m := newTestModel(testRepos(), model.Options{
 				AgentCommand: "codex",
-				StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-					startCalls++
-					return model.FlowStartResult{}, nil
-				},
 				LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 					externalCalls++
 					return actions.TerminalLaunchSpec{}, nil
@@ -12052,8 +11999,8 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 			if m.Overlay() != ui.OverlayNone {
 				t.Fatalf("overlay after cancel = %d, want none", m.Overlay())
 			}
-			if startCalls != 0 || embeddedCalls != 0 || externalCalls != 0 {
-				t.Fatalf("cancel should not start work; start=%d embedded=%d external=%d", startCalls, embeddedCalls, externalCalls)
+			if embeddedCalls != 0 || externalCalls != 0 {
+				t.Fatalf("cancel should not start work; embedded=%d external=%d", embeddedCalls, externalCalls)
 			}
 			if got := model.ActiveFlowCreateForTest(m); got != 0 {
 				t.Fatalf("active Flow create request after cancel = %d, want 0", got)
@@ -12199,10 +12146,6 @@ func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			createRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
-		},
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("Plan Now off should not validate or start an agent")
-			return model.FlowStartResult{}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -12357,10 +12300,6 @@ func TestModel_NewFlowParkedCreateCapturesAgentSettings(t *testing.T) {
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			createRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
-		},
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("Plan Now off should not start an agent")
-			return model.FlowStartResult{}, nil
 		},
 	})
 	m = inRightPane(m)

@@ -506,6 +506,16 @@ func phaseDependsOnPlanReviewFailure(record FlowRecord, graph phaseGraph, idx in
 // for launch. It is index-aware so stale duplicate rows from hand-authored
 // records cannot be launched even when their stored status is ready.
 func PhaseLaunchEligible(record FlowRecord, orderedIndex int) bool {
+	if PreparationLaunchBlocked(record) {
+		return false
+	}
+	return PhaseGraphLaunchEligible(record, orderedIndex)
+}
+
+// PhaseGraphLaunchEligible is PhaseLaunchEligible without the preparation
+// receipt fence. Create-time root snapshots and compensation still need the
+// graph-ready set while a nonce-bearing Flow is receipt-less.
+func PhaseGraphLaunchEligible(record FlowRecord, orderedIndex int) bool {
 	if FlowClosed(record) {
 		return false
 	}

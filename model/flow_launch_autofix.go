@@ -46,7 +46,7 @@ func autofixPromptForPR(number int) string {
 // worktree-less Flow simply does not offer it.
 func (m Model) selectedFlowAutofixTarget() (flowstore.FlowRecord, string, bool) {
 	record, repoPath, ok := m.selectedManualMergeFlow()
-	if !ok || strings.TrimSpace(record.WorktreePath) == "" {
+	if !ok || strings.TrimSpace(record.WorktreePath) == "" || flowstore.PreparationLaunchBlocked(record) {
 		return flowstore.FlowRecord{}, "", false
 	}
 	return record, repoPath, true
@@ -183,7 +183,8 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 func autofixFlowEligible(record flowstore.FlowRecord) bool {
 	return strings.TrimSpace(record.FlowID) != "" &&
 		flowManualMergeEligible(record) &&
-		strings.TrimSpace(record.WorktreePath) != ""
+		strings.TrimSpace(record.WorktreePath) != "" &&
+		!flowstore.PreparationLaunchBlocked(record)
 }
 
 // autofixFlowLaunchReadCmd is the authoritative read. Like resume's it
@@ -264,7 +265,7 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 // Because it writes nothing, the reservation's own record is the only fresh
 // state this launch ever sees, and it is the last read of the Flow before the
 // spawn. Every tracked kind resolves the persisted headless preference from the
-// record its write returns (FlowPhaseLauncher.Prepare); this kind resolves it —
+// record its write returns (flowLaunchPreparation.prepare); this kind resolves it —
 // and re-checks eligibility — from the reserved record for exactly that reason.
 // Without it a headless toggle landing between the read stage and this
 // reservation would launch in the previous mode, and on the wrong route with it,
@@ -274,7 +275,7 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 // still cannot compose a prompt no stage authorized.
 func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveTrackedFlowLaunch
-	// Snapshotted at admission, as FlowPhaseLauncher snapshots them, so the route
+	// Snapshotted at admission, as flowLaunchPreparation snapshots them, so the route
 	// is still decided against what the attempt was admitted with. Only the
 	// decision moves into the closure, where Headless is finally resolved.
 	backend := m.launchBackend
@@ -297,7 +298,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		repoPath := msg.RepoPath
 		// A zero UpdatedAt means no store answered — an injected persistence seam,
 		// or none at all — so it cannot authoritatively replace what the read
-		// stage validated. FlowPhaseLauncher.Prepare guards its own refresh the
+		// stage validated. flowLaunchPreparation.prepare guards its own refresh the
 		// same way.
 		if !reserved.UpdatedAt.IsZero() {
 			if !autofixFlowEligible(reserved) || reserved.PR.Number <= 0 {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,27 +19,148 @@ import (
 )
 
 type createLaunchHarness struct {
-	record         flowstore.FlowRecord
-	allocatedID    string
-	order          []string
-	contexts       []actions.AgentLaunchContext
-	phaseUpdates   []flowstore.PhaseUpdate
-	sessions       []sessions.SessionRecord
-	addErr         error
-	addPersists    bool
-	createErr      error
-	reserveErr     error
-	worktreeErr    error
-	bootstrapErr   error
-	metadataErr    error
-	metadataMutate func(*flowstore.FlowRecord)
-	phaseErrs      map[string]error
-	readErrs       map[int]error
-	readMutate     func(*flowstore.FlowRecord)
-	readCalls      int
-	terminalErr    error
-	terminal       EmbeddedTerminal
-	releases       int
+	record                         flowstore.FlowRecord
+	allocatedID                    string
+	order                          []string
+	contexts                       []actions.AgentLaunchContext
+	phaseUpdates                   []flowstore.PhaseUpdate
+	sessions                       []sessions.SessionRecord
+	addErr                         error
+	addPersists                    bool
+	createErr                      error
+	reserveErr                     error
+	reserveReleaseOnError          bool
+	reserveMutate                  func(*flowstore.FlowRecord)
+	worktreeErr                    error
+	bootstrapErr                   error
+	preparationErr                 error
+	bootstrapCheck                 func(flowstore.FlowRecord) error
+	metadataErr                    error
+	metadataPersists               bool
+	metadataMutate                 func(*flowstore.FlowRecord)
+	phaseErrs                      map[string]error
+	phaseErrRemaining              map[string]int
+	phasePersistErrs               map[string]error
+	readErrs                       map[int]error
+	readMutate                     func(*flowstore.FlowRecord)
+	readCalls                      int
+	terminalErr                    error
+	terminal                       EmbeddedTerminal
+	releases                       int
+	releasesAtCompensate           int
+	compensateIncompleteRemaining  int
+	compensateReservationRemaining int
+}
+
+type createLaunchPreparationFinalizer struct {
+	h     *createLaunchHarness
+	nonce string
+}
+
+func (f createLaunchPreparationFinalizer) Finalize(callback func() error) (flowstore.FlowRecord, error) {
+	if f.h.record.PreparationNonce != f.nonce {
+		return f.h.record, errors.New("preparation generation changed")
+	}
+	if callback != nil {
+		if err := callback(); err != nil {
+			return f.h.record, errors.Join(flowstore.ErrPreparationIncomplete, err)
+		}
+	}
+	if f.h.preparationErr != nil {
+		return f.h.record, f.h.preparationErr
+	}
+	f.h.order = append(f.h.order, "finalize")
+	stamp := time.Date(2026, time.August, 14, 12, 1, 0, 0, time.UTC)
+	f.h.record.PreparedAt = &stamp
+	return f.h.record, nil
+}
+
+func (f createLaunchPreparationFinalizer) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	return f.Compensate(notes)
+}
+
+func (f createLaunchPreparationFinalizer) Compensate(notes string) (flowstore.FlowRecord, error) {
+	if f.h.record.PreparationNonce != f.nonce {
+		return f.h.record, errors.New("preparation generation changed")
+	}
+	f.h.releasesAtCompensate = f.h.releases
+	f.h.order = append(f.h.order, "compensate")
+	if f.h.compensateReservationRemaining > 0 {
+		f.h.compensateReservationRemaining--
+		return f.h.record, errors.Join(flowstore.ErrPreparationReservation, errors.New("timed out waiting for Flow launch/close lock"))
+	}
+	if f.h.compensateIncompleteRemaining > 0 {
+		f.h.compensateIncompleteRemaining--
+		return f.h.record, flowstore.ErrPreparationIncomplete
+	}
+	for _, root := range launchablePhases(f.h.record) {
+		update := blockedPhaseUpdate(f.h.record.FlowID, root, notes)
+		f.h.phaseUpdates = append(f.h.phaseUpdates, update)
+		for i := range f.h.record.Phases {
+			if f.h.record.Phases[i].PhaseID == root.PhaseID {
+				f.h.record.Phases[i].Status = update.Status
+				f.h.record.Phases[i].Notes = update.Notes
+				f.h.record.Phases[i].Outcome = update.Outcome
+			}
+		}
+	}
+	return f.h.record, nil
+}
+
+func TestBeadsReadyStartRoutesCreatePhaseBeforeSideEffects(t *testing.T) {
+	m := NewWithOptions(nil, Options{
+		AgentCommand: "codex",
+	})
+	cmd := m.requestReadyBeadFlowLaunch(
+		"/dev/alpha",
+		"bd-1: First",
+		"Read bd-1.",
+		flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"},
+		1,
+	)
+	if cmd == nil {
+		t.Fatal("Ready F returned no command")
+	}
+	msg, ok := cmd().(flowLaunchCreateRequestedMsg)
+	if !ok {
+		t.Fatalf("Ready F did not route a createPhase lifecycle request")
+	}
+	if msg.Create.Presentation != (flowLaunchCreatePresentation{Origin: flowLaunchOriginReadyBead, Request: 1}) ||
+		msg.Create.RepoPath != "/dev/alpha" || msg.Create.Bead != (flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}) || !msg.Create.Headless {
+		t.Fatalf("Ready F create request = %#v", msg.Create)
+	}
+	if msg.Settings.Command != "codex" {
+		t.Fatalf("Ready F settings command = %q, want codex", msg.Settings.Command)
+	}
+}
+
+func TestCreateFlowLaunchSourceSnapshotsSettingsBeforeQueuedRequestIsHandled(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m := h.model(t)
+	m.codexModel = "gpt-5.5"
+	m.codexReasoningEffort = "high"
+	m.sessionStateRoot = "/state/request"
+	m.flowPromptTemplates.Plan = "REQUEST TEMPLATE: {flow_title}"
+	var request uint64
+	m, request = m.nextFlowCreateRequest()
+	cmd := tagFlowCreateRequest(m.createFlowAndLaunchPlanForRepo("/dev/alpha", "New Flow", "Write the plan.", "main", true), request)
+
+	// A settings result already queued ahead of the create request belongs to
+	// the next launch, not the request the user submitted under codex.
+	m.agentCommand = "claude"
+	m.codexModel = "gpt-5.6-sol"
+	m.codexReasoningEffort = "low"
+	m.sessionStateRoot = "/state/later"
+	m.flowPromptTemplates.Plan = "LATER TEMPLATE"
+	updated, launchCmd := m.Update(cmd())
+	m = updated.(Model)
+	m = drainCreateLaunch(t, m, launchCmd)
+
+	if len(h.contexts) != 1 || h.contexts[0].Command != "codex" || h.contexts[0].Model != "gpt-5.5" ||
+		h.contexts[0].ReasoningEffort != "high" || h.contexts[0].SessionStateRoot != "/state/request" ||
+		!strings.Contains(h.contexts[0].InitialPrompt, "REQUEST TEMPLATE") {
+		t.Fatalf("launch contexts = %#v, status=%q order=%#v, want submitting Model's codex snapshot", h.contexts, m.status.Text, h.order)
+	}
 }
 
 func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRecord(t *testing.T) {
@@ -88,9 +210,9 @@ func TestCreateFlowLaunchEmbeddedSuccessRefreshesVisibleUnfocusedFlowPane(t *tes
 
 	attempt := flowLaunchAttempt{
 		Token: "launch-create-1", Kind: flowLaunchKindCreatePhase, FlowID: h.record.FlowID,
-		Create: flowLaunchCreateRequest{Request: 1, RepoPath: h.record.RepoPath},
+		Create: flowLaunchCreateRequest{Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: 1}, RepoPath: h.record.RepoPath},
 	}
-	m.activeFlowCreate = attempt.Create.Request
+	m.activeFlowCreate = attempt.Create.Presentation.Request
 	m = m.withFlowLaunchAttempt(attempt)
 	beforeRequest := m.ListRequest(ui.ModeFlows)
 	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
@@ -130,6 +252,19 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 			return flowPhaseLaunchTestTerminal{state: "running"}, nil
 		},
 	})
+	create := func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+		h.order = append(h.order, "create:"+record.FlowID)
+		if record.FlowID != h.record.FlowID || record.RepoPath != h.record.RepoPath || record.Bead != h.record.Bead || opts.Headless == nil || *opts.Headless != h.record.Headless {
+			t.Fatalf("exact create = %#v, %#v", record, opts)
+		}
+		created := h.record
+		created.Title, created.Instructions, created.BaseRef = record.Title, record.Instructions, record.BaseRef
+		if h.createErr != nil {
+			return flowstore.FlowRecord{}, h.createErr
+		}
+		h.record = created
+		return created, nil
+	}
 	m.launchSeams = flowLaunchSeams{
 		AllocateFlowID: func(title string) (string, error) {
 			h.order = append(h.order, "allocate")
@@ -142,25 +277,28 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 			h.order = append(h.order, "sessions:"+flowID)
 			return h.sessions, nil
 		},
-		CreateFlow: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-			h.order = append(h.order, "create:"+record.FlowID)
-			if record.FlowID != h.record.FlowID || record.RepoPath != h.record.RepoPath || opts.Headless == nil || *opts.Headless != h.record.Headless {
-				t.Fatalf("exact create = %#v, %#v", record, opts)
+		CreateFlow: create,
+		CreatePreparation: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			created, err := create(record, opts)
+			if err != nil {
+				return flowstore.FlowRecord{}, nil, err
 			}
-			created := h.record
-			created.Title, created.Instructions, created.BaseRef = record.Title, record.Instructions, record.BaseRef
-			if h.createErr != nil {
-				return flowstore.FlowRecord{}, h.createErr
-			}
-			h.record = created
-			return created, nil
+			return created, createLaunchPreparationFinalizer{h: h, nonce: created.PreparationNonce}, nil
 		},
 		ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			h.order = append(h.order, "reserve:"+flowID)
+			release := func() { h.releases++ }
 			if h.reserveErr != nil {
+				if h.reserveReleaseOnError {
+					return flowstore.FlowRecord{}, release, h.reserveErr
+				}
 				return flowstore.FlowRecord{}, nil, h.reserveErr
 			}
-			return h.record, func() { h.releases++ }, nil
+			record := h.record
+			if h.reserveMutate != nil {
+				h.reserveMutate(&record)
+			}
+			return record, release, nil
 		},
 		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
 			h.order = append(h.order, "worktree")
@@ -178,6 +316,11 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 		},
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			h.order = append(h.order, "bootstrap")
+			if h.bootstrapCheck != nil {
+				if err := h.bootstrapCheck(h.record); err != nil {
+					return err
+				}
+			}
 			return h.bootstrapErr
 		},
 		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -209,20 +352,37 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			h.order = append(h.order, "metadata")
-			if h.metadataErr != nil {
+			if h.metadataErr != nil && !h.metadataPersists {
 				return flowstore.FlowRecord{}, h.metadataErr
 			}
 			h.record.WorktreePath, h.record.Branch, h.record.Commit = update.WorktreePath, update.Branch, update.Commit
 			if h.metadataMutate != nil {
 				h.metadataMutate(&h.record)
 			}
+			if h.metadataErr != nil {
+				return flowstore.FlowRecord{}, h.metadataErr
+			}
 			return h.record, nil
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			h.order = append(h.order, "block:"+update.PhaseID)
 			h.phaseUpdates = append(h.phaseUpdates, update)
+			if remaining := h.phaseErrRemaining[update.PhaseID]; remaining > 0 {
+				h.phaseErrRemaining[update.PhaseID]--
+				return flowstore.FlowRecord{}, errors.New("database busy")
+			}
 			if err := h.phaseErrs[update.PhaseID]; err != nil {
 				return flowstore.FlowRecord{}, err
+			}
+			if persistErr := h.phasePersistErrs[update.PhaseID]; persistErr != nil {
+				for i := range h.record.Phases {
+					if h.record.Phases[i].PhaseID == update.PhaseID {
+						h.record.Phases[i].Status = update.Status
+						h.record.Phases[i].Notes = update.Notes
+						h.record.Phases[i].Outcome = update.Outcome
+					}
+				}
+				return flowstore.FlowRecord{}, persistErr
 			}
 			return h.record, nil
 		},
@@ -253,17 +413,91 @@ func (h *createLaunchHarness) start(t *testing.T, m Model) Model {
 }
 
 func (h *createLaunchHarness) admit(t *testing.T, m Model) (Model, tea.Cmd) {
+	return h.admitSource(t, m, flowLaunchOriginNewFlow)
+}
+
+func (h *createLaunchHarness) admitSource(t *testing.T, m Model, origin flowLaunchOrigin) (Model, tea.Cmd) {
 	t.Helper()
 	var request uint64
-	m, request = m.nextFlowCreateRequest()
-	create := flowLaunchCreateRequest{
-		Request: request, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: h.record.Headless,
+	switch origin {
+	case flowLaunchOriginNewFlow:
+		m, request = m.nextFlowCreateRequest()
+	case flowLaunchOriginReadyBead:
+		m, request = m.nextReadyBeadFlowCreateRequest()
+	default:
+		t.Fatalf("unsupported create origin %v", origin)
 	}
-	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: flowLaunchOriginNewFlow, Create: create})
+	create := flowLaunchCreateRequest{
+		Presentation: flowLaunchCreatePresentation{Origin: origin, Request: request},
+		RepoPath:     "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", Bead: h.record.Bead, BaseRef: "main", Headless: h.record.Headless,
+	}
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
+	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Origin: origin, Create: create, Settings: settings})
 	if !admitted || cmd == nil {
 		t.Fatalf("create admission = %v, cmd=%v, status=%q", admitted, cmd != nil, next.status.Text)
 	}
 	return next, cmd
+}
+
+func TestCreateFlowLaunchReadyOriginPersistsBeadAndUsesEmbeddedOnlyHandoff(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.record.Headless = true
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if len(h.contexts) != 1 || !h.contexts[0].Embedded || !h.contexts[0].Headless {
+		t.Fatalf("Ready launch contexts = %#v", h.contexts)
+	}
+	if m.activeReadyBeadFlowCreate != 0 || m.activeFlowCreate != 0 || h.releases != 1 {
+		t.Fatalf("Ready ownership: ready=%d new=%d releases=%d", m.activeReadyBeadFlowCreate, m.activeFlowCreate, h.releases)
+	}
+}
+
+func TestCreateFlowLaunchReadyOriginFinalizesPreparationBeforeLaunchID(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if h.record.PreparedAt == nil {
+		t.Fatalf("Ready launch Flow has no preparation receipt: %#v", h.record)
+	}
+	joined := strings.Join(h.order, ",")
+	finalizeAt, launchAt := strings.Index(joined, "finalize"), strings.Index(joined, "launch-id:")
+	if finalizeAt < 0 || launchAt < 0 || finalizeAt > launchAt {
+		t.Fatalf("Ready launch order = %#v, want preparation finalization before launch ID", h.order)
+	}
+}
+
+func TestCreateFlowLaunchReadyFreshnessIsSourceAwareAtEveryBoundary(t *testing.T) {
+	stages := []flowLaunchStage{
+		flowLaunchStageCreateSessionsRead,
+		flowLaunchStageCreateWritten,
+		flowLaunchStageCreateReserved,
+		flowLaunchStageCreateWorktree,
+		flowLaunchStageCreateBootstrap,
+		flowLaunchStageCreateLaunchID,
+		flowLaunchStageCreateMetadata,
+	}
+	for _, stage := range stages {
+		t.Run(fmt.Sprint(stage), func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			m, event := advanceCreateLaunchToStage(t, m, cmd, stage)
+			m.readyBeadFlowCreateSeq++
+			m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+			m, newFlowRequest := m.nextFlowCreateRequest()
+			m = m.setStatusNow(statusOther, "newer presentation")
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			if m.activeReadyBeadFlowCreate == 0 || m.activeFlowCreate != newFlowRequest || m.status.Text != "newer presentation" {
+				t.Fatalf("source fence at %v: ready=%d new=%d status=%q", stage, m.activeReadyBeadFlowCreate, m.activeFlowCreate, m.status.Text)
+			}
+		})
+	}
 }
 
 func drainCreateLaunch(t *testing.T, m Model, cmd tea.Cmd) Model {
@@ -333,12 +567,18 @@ func startInteractiveCreateUntilPrefill(t *testing.T, h *createLaunchHarness) (M
 
 func TestCreateFlowLaunchOwnsExactIdentityAndStartupOrdering(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.bootstrapCheck = func(record flowstore.FlowRecord) error {
+		if record.WorktreePath != "/dev/alpha-worktrees/flow-new" || record.Branch != "flow/new" || record.Commit != "abc123" {
+			return fmt.Errorf("bootstrap observed start metadata %#v", record)
+		}
+		return nil
+	}
 	m := h.start(t, h.model(t))
 
 	want := []string{
 		"allocate", "sessions:" + h.record.FlowID, "create:" + h.record.FlowID, "reserve:" + h.record.FlowID,
 		"worktree", "commit", "metadata", "bootstrap", "reread:" + h.record.FlowID,
-		"launch-id:" + h.record.FlowID + ":plan:launch-create-1", "metadata", "terminal",
+		"launch-id:" + h.record.FlowID + ":plan:launch-create-1", "terminal",
 	}
 	if !reflect.DeepEqual(h.order, want) {
 		t.Fatalf("create order = %#v, want %#v", h.order, want)
@@ -412,8 +652,8 @@ func TestCreateFlowLaunchAddFailureProofControlsRecovery(t *testing.T) {
 		if m.status.Text != want {
 			t.Fatalf("joined recovery status = %q, want %q", m.status.Text, want)
 		}
-		if len(h.phaseUpdates) != 1 || h.releases != 1 {
-			t.Fatalf("unreadable recovery: updates=%#v releases=%d", h.phaseUpdates, h.releases)
+		if len(h.phaseUpdates) != readyPreparationCompensationAttemptLimit || h.releases != 1 {
+			t.Fatalf("unreadable recovery: updates=%#v releases=%d, want %d retried root-block writes", h.phaseUpdates, h.releases, readyPreparationCompensationAttemptLimit)
 		}
 	})
 }
@@ -435,11 +675,24 @@ func TestCreateFlowLaunchBootstrapAndMetadataFailuresRecoverCapturedRoots(t *tes
 			tc.configure(h)
 			m := h.start(t, h.model(t))
 
-			if len(h.phaseUpdates) != 2 || h.phaseUpdates[0].PhaseID != "plan" || h.phaseUpdates[1].PhaseID != "implementation" {
-				t.Fatalf("captured-root recovery = %#v", h.phaseUpdates)
+			if tc.name == "bootstrap" {
+				if len(h.phaseUpdates) != 2 || h.phaseUpdates[0].PhaseID != "plan" || h.phaseUpdates[1].PhaseID != "implementation" {
+					t.Fatalf("captured-root recovery = %#v", h.phaseUpdates)
+				}
+			} else if len(h.phaseUpdates) != 2 || h.phaseUpdates[0].PhaseID != "plan" || h.phaseUpdates[1].PhaseID != "implementation" {
+				t.Fatalf("metadata failure did not fence captured roots: %#v", h.phaseUpdates)
 			}
 			if len(h.contexts) != 0 || h.releases != 1 || !strings.Contains(m.status.Text, tc.wantOperation) {
 				t.Fatalf("recovery result: contexts=%#v releases=%d status=%q", h.contexts, h.releases, m.status.Text)
+			}
+			if tc.name == "metadata" {
+				joined := strings.Join(h.order, ",")
+				if strings.Contains(joined, "bootstrap") || strings.Contains(joined, "launch-id:") {
+					t.Fatalf("metadata failure crossed into bootstrap or launch persistence: %#v", h.order)
+				}
+				if !strings.Contains(m.status.Text, "/dev/alpha-worktrees/flow-new") {
+					t.Fatalf("metadata recovery status omitted surviving worktree: %q", m.status.Text)
+				}
 			}
 		})
 	}
@@ -499,25 +752,25 @@ func TestCreateFlowLaunchWorktreeFailureBlocksParallelRootsInCanonicalOrder(t *t
 	}
 }
 
-func TestCreateFlowLaunchRefusesOnlyLivePreexistingSessionsBeforeCreate(t *testing.T) {
+func TestCreateFlowLaunchRefusesEveryPreexistingSessionAssociationBeforeCreate(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		session    sessions.SessionRecord
-		wantCreate bool
+		name    string
+		session sessions.SessionRecord
+		status  string
 	}{
-		{name: "live", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "active"}},
-		{name: "ended", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "ended", EndedAt: time.Now()}, wantCreate: true},
+		{name: "live", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "active"}, status: "active session"},
+		{name: "ended", session: sessions.SessionRecord{SessionID: "s1", FlowID: "20260814T120000Z-new-flow", Status: "ended", EndedAt: time.Now()}, status: "saved session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 			h.sessions = []sessions.SessionRecord{tc.session}
 			m := h.start(t, h.model(t))
 			created := strings.Contains(strings.Join(h.order, ","), "create:"+h.record.FlowID)
-			if created != tc.wantCreate {
-				t.Fatalf("created = %v, want %v; order=%#v", created, tc.wantCreate, h.order)
+			if created {
+				t.Fatalf("preexisting %s crossed exact-ID creation: order=%#v", tc.name, h.order)
 			}
-			if !tc.wantCreate && (m.activeFlowCreate != 0 || h.releases != 0) {
-				t.Fatalf("live refusal ownership: active=%d releases=%d", m.activeFlowCreate, h.releases)
+			if m.activeFlowCreate != 0 || h.releases != 0 || !strings.Contains(m.status.Text, tc.status) {
+				t.Fatalf("%s refusal: status=%q active=%d releases=%d", tc.name, m.status.Text, m.activeFlowCreate, h.releases)
 			}
 		})
 	}
@@ -540,8 +793,9 @@ func TestCreateFlowLaunchPreservesRequestTimeAgentSnapshotAcrossAllocation(t *te
 	m := h.model(t)
 	var request uint64
 	m, request = m.nextFlowCreateRequest()
-	create := flowLaunchCreateRequest{Request: request, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: true}
-	m, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Create: create})
+	create := flowLaunchCreateRequest{Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: request}, RepoPath: "/dev/alpha", Title: "New Flow", Instructions: "Write the plan.", BaseRef: "main", Headless: true}
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
+	m, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindCreatePhase, Create: create, Settings: settings})
 	if !admitted || cmd == nil {
 		t.Fatal("create intent was not admitted")
 	}
@@ -632,7 +886,34 @@ func TestCreateFlowLaunchRejectsSameIDReplacementBeforeTrackedReservation(t *tes
 	}
 }
 
-func TestCreateFlowLaunchRevalidatesLaunchProofAfterMetadata(t *testing.T) {
+func TestCreateFlowLaunchRejectsPreparationNonceReplacementBeforeProvisioning(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.record.PreparationNonce = "old-generation"
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m, written := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWritten)
+	m, reserveCmd := m.handleFlowLaunchEvent(written)
+	if reserveCmd == nil {
+		t.Fatal("proven preparation did not request tracked reservation")
+	}
+
+	h.record.PreparationNonce = "replacement-generation"
+	reserved := reserveCmd().(flowLaunchEventMsg)
+	m, cmd = m.handleFlowLaunchEvent(reserved)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if slices.Contains(h.order, "worktree") || len(h.phaseUpdates) != 0 || h.releases != 1 {
+		t.Fatalf("nonce replacement result: order=%#v updates=%#v releases=%d", h.order, h.phaseUpdates, h.releases)
+	}
+	if !strings.Contains(m.status.Text, "claimed by another launch") {
+		t.Fatalf("nonce replacement status = %q", m.status.Text)
+	}
+	if slices.Contains(h.order, "compensate") {
+		t.Fatalf("nonce replacement was already classified as claimed but still compensated: %#v", h.order)
+	}
+}
+
+func TestCreateFlowLaunchRevalidatesStartupRootAfterMetadata(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	h.metadataMutate = func(record *flowstore.FlowRecord) {
 		record.Phases[0].Status = flowstore.PhaseBlocked
@@ -728,6 +1009,428 @@ func TestCreateFlowLaunchCancellationDoesNotRecoverAfterGenerationLoss(t *testin
 	}
 }
 
+func TestCreateFlowLaunchStaleMetadataFailureFencesSurvivingWorktree(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+	})
+	h.metadataErr = errors.New("database busy")
+	m, cmd := h.admit(t, h.model(t))
+	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateMetadata)
+	if event.Err == "" {
+		t.Fatal("test metadata event unexpectedly succeeded")
+	}
+
+	m.flowCreateSeq++
+	m.activeFlowCreate = m.flowCreateSeq
+	m = m.setStatusNow(statusOther, "newer creation status")
+	m, cmd = m.handleFlowLaunchEvent(event)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if len(h.phaseUpdates) != 2 {
+		t.Fatalf("stale metadata recovery updates = %#v, want both captured roots fenced", h.phaseUpdates)
+	}
+	for _, update := range h.phaseUpdates {
+		if !strings.Contains(update.Notes, "/dev/alpha-worktrees/flow-new") {
+			t.Fatalf("stale metadata recovery omitted surviving worktree: %#v", update)
+		}
+	}
+	if h.releases != 1 || m.status.Text != "newer creation status" || m.activeFlowCreate == 0 {
+		t.Fatalf("stale metadata cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.activeFlowCreate)
+	}
+}
+
+func TestCreateFlowLaunchStaleUnknownPreparationDoesNotCompensate(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.preparationErr = errors.Join(flowstore.ErrPreparationUnknown, errors.New("database busy"))
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateBootstrap)
+	if !event.PreparationUnknown {
+		t.Fatalf("test preparation event = %#v, want unknown outcome", event)
+	}
+
+	m.readyBeadFlowCreateSeq++
+	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+	m = m.setStatusNow(statusOther, "newer Ready status")
+	m, cmd = m.handleFlowLaunchEvent(event)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("stale unknown preparation compensated possibly durable receipt: %#v", h.phaseUpdates)
+	}
+	if h.releases != 1 || m.status.Text != "newer Ready status" || m.activeReadyBeadFlowCreate == 0 {
+		t.Fatalf("stale unknown cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.activeReadyBeadFlowCreate)
+	}
+}
+
+func TestCreateFlowLaunchStaleReadyWriteCompensatesLaunchableRoots(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+	})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWritten)
+
+	m = m.invalidateReadyBeadFlowCreateRequest()
+	m, cmd = m.handleFlowLaunchEvent(event)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if len(h.phaseUpdates) != 2 {
+		t.Fatalf("stale Ready compensation updates = %#v, want every launchable root blocked", h.phaseUpdates)
+	}
+	if slices.Contains(h.order, "finalize") || slices.Contains(h.order, "worktree") {
+		t.Fatalf("stale Ready compensation crossed into preparation side effects: %#v", h.order)
+	}
+	if m.flowPreparationAdmission || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatal("stale Ready compensation stranded lifecycle ownership")
+	}
+}
+
+func TestCreateFlowLaunchReadyReservationFailureCompensatesLaunchableRoots(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current", true: "stale"}[stale], func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{
+				{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+				{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+			})
+			h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+			h.reserveErr = errors.New("database busy")
+			h.reserveReleaseOnError = true
+
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			if stale {
+				var event flowLaunchEventMsg
+				m, event = advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateReserved)
+				m.readyBeadFlowCreateSeq++
+				m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+				m = m.setStatusNow(statusOther, "newer Ready status")
+				m, cmd = m.handleFlowLaunchEvent(event)
+			}
+			m = drainCreateLaunch(t, m, cmd)
+
+			if len(h.phaseUpdates) != 2 {
+				t.Fatalf("Ready reservation compensation updates = %#v, want every launchable root blocked", h.phaseUpdates)
+			}
+			if slices.Contains(h.order, "finalize") || slices.Contains(h.order, "worktree") {
+				t.Fatalf("Ready reservation compensation crossed into preparation side effects: %#v", h.order)
+			}
+			if stale && m.status.Text != "newer Ready status" {
+				t.Fatalf("stale Ready reservation compensation status = %q", m.status.Text)
+			}
+			if !stale && !strings.Contains(m.status.Text, "reserve launch: database busy") {
+				t.Fatalf("Ready reservation compensation status = %q", m.status.Text)
+			}
+			if m.flowPreparationAdmission || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+				t.Fatal("Ready reservation compensation stranded lifecycle ownership")
+			}
+			if h.releases != 1 {
+				t.Fatalf("Ready reservation error releases = %d, want exactly one", h.releases)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchReadyWrongReservationIdentityCompensatesCreatedFlow(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current", true: "stale"}[stale], func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{
+				{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+				{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+			})
+			h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+			h.reserveMutate = func(record *flowstore.FlowRecord) { record.FlowID = "foreign-flow" }
+
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			if stale {
+				var event flowLaunchEventMsg
+				m, event = advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateReserved)
+				m.readyBeadFlowCreateSeq++
+				m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+				m = m.setStatusNow(statusOther, "newer Ready status")
+				m, cmd = m.handleFlowLaunchEvent(event)
+			}
+			m = drainCreateLaunch(t, m, cmd)
+
+			if len(h.phaseUpdates) != 2 || h.releases != 1 {
+				t.Fatalf("wrong-ID compensation updates = %#v, releases = %d", h.phaseUpdates, h.releases)
+			}
+			if slices.Contains(h.order, "worktree") || slices.Contains(h.order, "finalize") {
+				t.Fatalf("wrong-ID compensation crossed into preparation side effects: %#v", h.order)
+			}
+			if stale && m.status.Text != "newer Ready status" {
+				t.Fatalf("stale wrong-ID compensation status = %q", m.status.Text)
+			}
+			if !stale && !strings.Contains(m.status.Text, "foreign-flow") {
+				t.Fatalf("wrong-ID compensation status = %q", m.status.Text)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchReadyPreMetadataExitsUsePreparationFinalizer(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stage       flowLaunchStage
+		worktreeErr error
+		metadataErr error
+		stale       bool
+	}{
+		{name: "stale after reservation", stage: flowLaunchStageCreateReserved, stale: true},
+		{name: "worktree failure", stage: flowLaunchStageCreateWorktree, worktreeErr: errors.New("worktree failed")},
+		{name: "stale after worktree", stage: flowLaunchStageCreateWorktree, stale: true},
+		{name: "metadata failure", stage: flowLaunchStageCreateMetadata, metadataErr: errors.New("disk full")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{
+				{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+				{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+			})
+			h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+			h.worktreeErr = tc.worktreeErr
+			h.metadataErr = tc.metadataErr
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			m, event := advanceCreateLaunchToStage(t, m, cmd, tc.stage)
+			if tc.stale {
+				m = m.invalidateReadyBeadFlowCreateRequest()
+			}
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			if !slices.Contains(h.order, "compensate") {
+				t.Fatalf("pre-metadata exit bypassed preparation finalizer: %#v", h.order)
+			}
+			for _, call := range h.order {
+				if strings.HasPrefix(call, "block:") {
+					t.Fatalf("pre-metadata exit used unfenced SetPhase recovery: %#v", h.order)
+				}
+			}
+			if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+				t.Fatalf("pre-metadata cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchReadyCompensationRetriesWhenReservationTimesOut(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+	})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.reserveErr = errors.New("database busy")
+	h.compensateReservationRemaining = 1
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	compensateCalls := 0
+	for _, call := range h.order {
+		if call == "compensate" {
+			compensateCalls++
+		}
+	}
+	if compensateCalls != 2 {
+		t.Fatalf("Ready compensation calls = %d, want a retry after reservation timeout: %#v", compensateCalls, h.order)
+	}
+	if len(h.phaseUpdates) == 0 || h.phaseUpdates[0].Status != flowstore.PhaseBlocked {
+		t.Fatalf("retry did not block startup roots: %#v", h.phaseUpdates)
+	}
+	if m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatal("reservation-timeout retry stranded lifecycle ownership")
+	}
+}
+
+func TestCreateFlowLaunchReadyMetadataAcknowledgementContinuesWhenWriteLanded(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.metadataErr = errors.New("commit acknowledgement failed")
+	h.metadataPersists = true
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if slices.Contains(h.order, "compensate") {
+		t.Fatalf("landed metadata acknowledgement compensated the preparation: %#v", h.order)
+	}
+	if !slices.Contains(h.order, "finalize") || h.record.PreparedAt == nil {
+		t.Fatalf("landed metadata acknowledgement did not continue finalization: %#v receipt=%v", h.order, h.record.PreparedAt)
+	}
+	if len(h.contexts) != 1 || h.releases != 1 {
+		t.Fatalf("landed metadata acknowledgement result: contexts=%#v releases=%d", h.contexts, h.releases)
+	}
+}
+
+func TestCreateFlowLaunchReadyMetadataUnreadDoesNotBypassFinalizer(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.metadataErr = errors.New("commit acknowledgement failed")
+	h.readErrs = map[int]error{
+		1: errors.New("database busy"),
+		2: errors.New("database busy"),
+		3: errors.New("database busy"),
+	}
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if slices.Contains(h.order, "compensate") {
+		t.Fatalf("unreadable metadata reread compensated a possibly landed write: %#v", h.order)
+	}
+	for _, call := range h.order {
+		if strings.HasPrefix(call, "block:") {
+			t.Fatalf("unreadable metadata reread used unfenced SetPhase recovery: %#v", h.order)
+		}
+	}
+	if slices.Contains(h.order, "finalize") || h.record.PreparedAt != nil {
+		t.Fatalf("unreadable metadata reread continued finalization: %#v", h.order)
+	}
+	if !strings.Contains(m.status.Text, "record start metadata: commit acknowledgement failed") || !strings.Contains(m.status.Text, "reread start metadata: database busy") {
+		t.Fatalf("unreadable metadata status = %q", m.status.Text)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("unreadable metadata cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+}
+
+func TestCreateFlowLaunchRecoveryDoesNotRetryAlreadyBlockedRoots(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+	})
+	h.bootstrapErr = errors.New("hook failed")
+	h.phasePersistErrs = map[string]error{"plan": errors.New("commit acknowledgement failed")}
+	m := h.start(t, h.model(t))
+
+	planBlocks := 0
+	for _, update := range h.phaseUpdates {
+		if update.PhaseID == "plan" {
+			planBlocks++
+		}
+	}
+	if planBlocks != 1 {
+		t.Fatalf("durable plan block was retried: %#v", h.phaseUpdates)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("durable root-block cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+}
+
+func TestCreateFlowLaunchRecoveryRetriesFailedBlockAfterLandedLaunchID(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.addErr = errors.New("write failed")
+	h.addPersists = true
+	h.phaseErrRemaining = map[string]int{"plan": 1}
+	m := h.start(t, h.model(t))
+
+	planBlocks := 0
+	for _, update := range h.phaseUpdates {
+		if update.PhaseID == "plan" {
+			planBlocks++
+		}
+	}
+	if planBlocks != 2 {
+		t.Fatalf("running launch-ID root was not retried: %#v", h.phaseUpdates)
+	}
+	if h.releases != 1 || !strings.Contains(m.status.Text, "AddPhaseLaunchID: write failed") {
+		t.Fatalf("landed launch-ID recovery: releases=%d status=%q", h.releases, m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchRecoveryRetriesFailedRootBlocks(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+	})
+	h.bootstrapErr = errors.New("hook failed")
+	h.phaseErrRemaining = map[string]int{"plan": 1}
+	m := h.start(t, h.model(t))
+
+	planBlocks := 0
+	implementationBlocks := 0
+	for _, update := range h.phaseUpdates {
+		switch update.PhaseID {
+		case "plan":
+			planBlocks++
+		case "implementation":
+			implementationBlocks++
+		}
+	}
+	if planBlocks != 2 || implementationBlocks != 1 {
+		t.Fatalf("root-block retries = %#v, want plan retried once and implementation blocked on the first pass", h.phaseUpdates)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("root-block retry cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+	if !strings.Contains(m.status.Text, "run bootstrap: hook failed") {
+		t.Fatalf("root-block retry status = %q", m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchReadyCompensationRetriesWhenWritesDoNotLand(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+	})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.worktreeErr = errors.New("worktree failed")
+	h.compensateIncompleteRemaining = 1
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWorktree)
+	m, cmd = m.handleFlowLaunchEvent(event)
+	m = drainCreateLaunch(t, m, cmd)
+
+	compensateCalls := 0
+	for _, call := range h.order {
+		if call == "compensate" {
+			compensateCalls++
+		}
+	}
+	if compensateCalls != 2 {
+		t.Fatalf("Ready compensation calls = %d, want a retry after the unlanded write: %#v", compensateCalls, h.order)
+	}
+	if len(h.phaseUpdates) == 0 || h.phaseUpdates[0].Status != flowstore.PhaseBlocked {
+		t.Fatalf("retry did not block startup roots: %#v", h.phaseUpdates)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("retry cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+}
+
+func TestCreateFlowLaunchReadyWorktreeFailureHoldsReservationThroughCompensation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stage       flowLaunchStage
+		worktreeErr error
+		stale       bool
+	}{
+		{name: "worktree failure", stage: flowLaunchStageCreateWorktree, worktreeErr: errors.New("worktree failed")},
+		{name: "stale after reservation", stage: flowLaunchStageCreateReserved, stale: true},
+		{name: "stale after worktree", stage: flowLaunchStageCreateWorktree, stale: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{
+				{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+				{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+			})
+			h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+			h.worktreeErr = tc.worktreeErr
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			m, event := advanceCreateLaunchToStage(t, m, cmd, tc.stage)
+			if tc.stale {
+				m = m.invalidateReadyBeadFlowCreateRequest()
+			}
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			if !slices.Contains(h.order, "compensate") {
+				t.Fatalf("Ready compensation skipped: %#v", h.order)
+			}
+			if h.releasesAtCompensate != 0 {
+				t.Fatalf("releases at Compensate = %d, want the launch reservation held through compensation", h.releasesAtCompensate)
+			}
+			if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+				t.Fatalf("Ready compensation cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+			}
+		})
+	}
+}
+
 func TestCreateFlowLaunchParkedMetadataRejectsGenerationLoss(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "merge", Kind: flowstore.KindMerge, Status: flowstore.PhasePending}})
 	h.record.CreatedAt = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -754,7 +1457,7 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 		{name: "after worktree", stage: flowLaunchStageCreateWorktree, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
 		{name: "after bootstrap", stage: flowLaunchStageCreateBootstrap, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
 		{name: "after launch id", stage: flowLaunchStageCreateLaunchID, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
-		{name: "after metadata", stage: flowLaunchStageCreateMetadata, wantMetadata: true, wantBlocks: 1, wantRelease: 1},
+		{name: "after metadata", stage: flowLaunchStageCreateMetadata, wantMetadata: true, wantBlocks: 2, wantRelease: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCreateLaunchHarness([]flowstore.FlowPhase{
@@ -776,35 +1479,13 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 			if metadata != tc.wantMetadata || len(h.phaseUpdates) != tc.wantBlocks || h.releases != tc.wantRelease {
 				t.Fatalf("cancellation result: order=%#v updates=%#v releases=%d", h.order, h.phaseUpdates, h.releases)
 			}
+			if tc.stage == flowLaunchStageCreateWorktree && h.record.Commit != "abc123" {
+				t.Fatalf("stale post-worktree recovery commit = %q, want abc123", h.record.Commit)
+			}
 			if m.status.Text != "newer creation status" || m.activeFlowCreate == 0 || len(h.contexts) != 0 {
 				t.Fatalf("newer presentation changed: status=%q active=%d contexts=%#v", m.status.Text, m.activeFlowCreate, h.contexts)
 			}
 		})
-	}
-}
-
-func TestCreateFlowLaunchCancellationRetriesFailedWorktreeMetadata(t *testing.T) {
-	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
-	h.metadataErr = errors.New("database busy")
-	m, cmd := h.admit(t, h.model(t))
-	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWorktree)
-	if event.ErrOp != "record start metadata" || event.Worktree.WorktreePath == "" {
-		t.Fatalf("worktree metadata failure event = %#v", event)
-	}
-	h.metadataErr = nil
-	m.flowCreateSeq++
-	m.activeFlowCreate = m.flowCreateSeq
-	m, cmd = m.handleFlowLaunchEvent(event)
-	_ = drainCreateLaunch(t, m, cmd)
-
-	metadataCalls := 0
-	for _, call := range h.order {
-		if call == "metadata" {
-			metadataCalls++
-		}
-	}
-	if metadataCalls != 2 || h.record.WorktreePath != event.Worktree.WorktreePath || h.record.Branch != event.Worktree.Branch {
-		t.Fatalf("metadata recovery calls/record = %d/%#v", metadataCalls, h.record)
 	}
 }
 
@@ -842,8 +1523,8 @@ func TestCreateFlowLaunchParkedMetadataFailureDoesNotMutatePhases(t *testing.T) 
 func TestCreateFlowLaunchInteractivePrefillKeepsOriginFenceUntilResult(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	m, prefill := startInteractiveCreateUntilPrefill(t, h)
-	if m.activeFlowCreate != prefill.Create.Request {
-		t.Fatalf("active create request = %d, want pending prefill request %d", m.activeFlowCreate, prefill.Create.Request)
+	if m.activeFlowCreate != prefill.Create.Presentation.Request {
+		t.Fatalf("active create request = %d, want pending prefill request %d", m.activeFlowCreate, prefill.Create.Presentation.Request)
 	}
 	if len(m.embeddedTerminals) != 1 || !m.embeddedTerminals[0].PrefillPending {
 		t.Fatalf("pending terminals = %#v", m.embeddedTerminals)

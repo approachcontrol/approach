@@ -1,12 +1,10 @@
 package model
 
 import (
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -26,49 +24,6 @@ func closedGuardRecord(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
 		Status:       flowstore.StatusInProgress,
 		Phases:       phases,
 	}
-}
-
-type preparedFlowFinalizerForInternalTest struct {
-	latest *flowstore.FlowRecord
-}
-
-func (f preparedFlowFinalizerForInternalTest) Finalize(callback func() error) (flowstore.FlowRecord, error) {
-	if callback != nil {
-		if err := callback(); err != nil {
-			return flowstore.FlowRecord{}, err
-		}
-	}
-	prepared := *f.latest
-	stamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	prepared.PreparedAt = &stamp
-	*f.latest = prepared
-	return prepared, nil
-}
-
-func newPreparedFlowStarterForInternalTest(opts FlowStarterOptions) FlowStarter {
-	if opts.CreatePreparation == nil && opts.CreateFlow != nil {
-		createFlow := opts.CreateFlow
-		setStartMetadata := opts.SetStartMetadata
-		var latest flowstore.FlowRecord
-		opts.CreatePreparation = func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
-			created, err := createFlow(record, createOpts)
-			if err != nil {
-				return flowstore.FlowRecord{}, nil, err
-			}
-			latest = created
-			return created, preparedFlowFinalizerForInternalTest{latest: &latest}, nil
-		}
-		if setStartMetadata != nil {
-			opts.SetStartMetadata = func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-				started, err := setStartMetadata(update)
-				if err == nil {
-					latest = started
-				}
-				return started, err
-			}
-		}
-	}
-	return NewFlowStarter(opts)
 }
 
 // flowPhaseCanLaunchAtIndex has two branches that bypass PhaseLaunchEligible —
@@ -210,73 +165,6 @@ func TestActiveFlowRecordsDropsClosedFlows(t *testing.T) {
 	active := activeFlowRecords([]flowstore.FlowRecord{open, closed, merged})
 	if len(active) != 1 || active[0].FlowID != "flow-open" {
 		t.Fatalf("activeFlowRecords() = %#v, want only the open Flow", active)
-	}
-}
-
-// A close committed between launch bookkeeping and the spawn would leave a
-// launch ID for an agent that never started, so the reservation has to be held
-// across both rather than acquired at the terminal-open step.
-func TestFlowStarterPlanHoldsLaunchReservationAcrossBookkeeping(t *testing.T) {
-	var order []string
-	released := 0
-	starterOptions := func(reserveErr error) FlowStarterOptions {
-		return FlowStarterOptions{
-			CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
-				record.FlowID = "created-flow"
-				record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady, Order: 1}}
-				return record, nil
-			},
-			CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
-				return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/created", Branch: "flow/created"}, nil
-			},
-			ReserveLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
-				if reserveErr != nil {
-					return flowstore.FlowRecord{}, nil, reserveErr
-				}
-				order = append(order, "reserve:"+flowID)
-				return flowstore.FlowRecord{FlowID: flowID}, func() { released++ }, nil
-			},
-			AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-				order = append(order, "launch-id:"+update.FlowID)
-				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-			},
-			ResolveCommit: func(string) string { return "abc123" },
-			NewLaunchID:   func() string { return "launch-1" },
-		}
-	}
-
-	result, err := newPreparedFlowStarterForInternalTest(starterOptions(nil)).StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
-	if err != nil {
-		t.Fatalf("StartPlan() error = %v", err)
-	}
-	want := []string{"reserve:created-flow", "reserve:created-flow", "launch-id:created-flow"}
-	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] || order[2] != want[2] {
-		t.Fatalf("call order = %v, want preparation and launch reservations before launch bookkeeping %v", order, want)
-	}
-	if result.LaunchRelease == nil {
-		t.Fatal("StartPlan must hand the held reservation to the caller that spawns")
-	}
-	if released != 1 {
-		t.Fatalf("release count = %d, want preparation released and launch reservation held at return", released)
-	}
-	result.LaunchRelease()
-	if released != 2 {
-		t.Fatalf("release count = %d, want 2 after the caller releases", released)
-	}
-
-	// A Flow closed during startup must fail the launch outright rather than
-	// persisting a launch ID for an agent that will be refused.
-	closedErr := errors.New("cannot launch an agent for flow \"created-flow\" because it is closed")
-	order = nil
-	failed, err := newPreparedFlowStarterForInternalTest(starterOptions(closedErr)).StartPlan(FlowStartRequest{RepoPath: "/dev/alpha", Title: "New flow"})
-	if err == nil || !strings.Contains(err.Error(), "closed") {
-		t.Fatalf("StartPlan() error = %v, want the closed-Flow refusal", err)
-	}
-	if len(order) != 0 {
-		t.Fatalf("call order = %v, want no launch bookkeeping after a refused reservation", order)
-	}
-	if failed.LaunchRelease != nil {
-		t.Fatal("a refused reservation must not hand back a release")
 	}
 }
 

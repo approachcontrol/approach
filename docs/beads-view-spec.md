@@ -191,13 +191,13 @@ it claims a child before preparing that child's new Flow.
   children in established order for an open marked receipt-less or
   prepared-pending exact-link Flow, independently of current Ready state. It
   reserves and revalidates the Flow generation and current direct-child
-  membership, repeats the same-actor idempotent claim, then surfaces incomplete preparation
-  or adopts the prepared match before choosing the first ready direct child for
-  a new Flow. Partial listings, multiple exact
+  membership, repeats the same-actor idempotent claim, then surfaces incomplete
+  preparation or adopts the prepared match before choosing the first ready
+  direct child for a new Flow through `flowCreator.Create`. Partial listings, multiple exact
   matches, missing receipts, running state, deliberate closure, failure
   terminals, success terminals, and unknown statuses all refuse enablement.
   Before new-Flow preparation, it refreshes both direct children and Ready state
-  and refuses a selected child that is no longer in both sets. `PrepareFlow`
+  and refuses a selected child that is no longer in both sets. `flowCreator.Create`
   persists the receipt-less exact-link identity, then claims through the isolated
   `beadsmutate` adapter before any worktree side effect. A claim error surfaces
   the child-specific cause, retains that marked identity, and leaves progression

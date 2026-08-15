@@ -259,18 +259,8 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 		msg := cmd()
 		switch msg := msg.(type) {
 		case flowLaunchCreateRequestedMsg:
-			if msg.Create.Request == 0 {
-				msg.Create.Request = request
-			}
-			return msg
-		case PlanLaunchRequestedMsg:
-			if msg.Request == 0 {
-				msg.Request = request
-			}
-			return msg
-		case FlowEmbeddedLaunchRequestedMsg:
-			if msg.Request == 0 {
-				msg.Request = request
+			if msg.Create.Presentation.Request == 0 {
+				msg.Create.Presentation.Request = request
 			}
 			return msg
 		case FlowCreatedMsg:
@@ -624,7 +614,10 @@ func (m Model) handleReadyBeadFlowCreate(intent readyBeadFlowIntent) (Model, tea
 	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
 	var request uint64
 	m, request = m.nextReadyBeadFlowCreateRequest()
-	return m, m.createReadyBeadFlow(repoPath, title, instructions, beadLink, request, m.flowPreparationOwner.Token, intent)
+	if intent == readyBeadFlowCreateOnly {
+		return m, m.createReadyBeadFlowOnly(repoPath, title, instructions, beadLink, request, m.flowPreparationOwner.Token)
+	}
+	return m, m.requestReadyBeadFlowLaunch(repoPath, title, instructions, beadLink, request)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
@@ -2700,7 +2693,7 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		validatePlanLaunchInput,
 		func(input string) tea.Cmd {
 			ctx.InitialPrompt = input
-			return func() tea.Msg { return PlanLaunchRequestedMsg{LaunchContext: ctx} }
+			return func() tea.Msg { return agentLaunchRequestedMsg{LaunchContext: ctx} }
 		},
 	)
 	return m, nil
@@ -2883,45 +2876,6 @@ func (m Model) launchAgentWithContextStatus(ctx actions.AgentLaunchContext, rele
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
 	return m.runAgentLaunchWithStatus(ctx, launch, release, launchedStatus)
-}
-
-func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
-	if msg.LaunchRelease != nil {
-		defer msg.LaunchRelease()
-	}
-	return m.launchTrackedFlowEmbedded(msg.LaunchContext, msg.LaunchRelease != nil)
-}
-
-// launchTrackedFlowEmbedded opens a tracked embedded Flow launch. It is what is
-// left of the pre-lifecycle embedded opener now that repair routes through the
-// lifecycle; only creation-time Flow starts call it directly.
-func (m Model) launchTrackedFlowEmbedded(ctx actions.AgentLaunchContext, launchReserved bool) (Model, tea.Cmd) {
-	ctx.Embedded = true
-	ctx.FlowLaunchTracked = true
-	if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
-		return m.startFlowLaunchFailure(ctx, "Flow phase launch canceled because a repair terminal is already open for this Flow")
-	}
-	needsTick := !m.hasRunningEmbeddedTerminal()
-	open := m.openFlowEmbeddedTerminal
-	if launchReserved {
-		open = m.openFlowEmbeddedTerminalReserved
-	}
-	next, opened, err, prefillCmd := open(ctx)
-	if err != nil || !opened {
-		errText := "Maximum embedded terminals reached"
-		if err != nil {
-			errText = err.Error()
-		}
-		return next.startFlowLaunchFailure(ctx, errText)
-	}
-	if prefillCmd == nil {
-		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
-	}
-	var tickCmd tea.Cmd
-	if needsTick {
-		next, tickCmd = next.startEmbeddedTerminalTick()
-	}
-	return next, batchNonNil(prefillCmd, tickCmd)
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
@@ -3129,7 +3083,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		if attempt.Kind == flowLaunchKindCreatePhase {
 			presentCreate = m.createFlowLaunchOriginCurrent(attempt.Create)
 			if msg.Create == nil {
-				m = m.clearFlowCreateRequest(attempt.Create.Request)
+				m = m.clearFlowLaunchCreatePresentation(attempt.Create)
 			}
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
@@ -3139,7 +3093,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 	// ID, so it must not depend on finding the old attempt; attempt release above
 	// remains token-fenced and cannot touch the winner.
 	if msg.Create != nil {
-		m = m.clearFlowCreateRequest(msg.Create.Request)
+		m = m.clearFlowLaunchCreatePresentation(*msg.Create)
 	}
 	if !presentCreate {
 		return m, nil

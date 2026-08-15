@@ -16,6 +16,72 @@ func savedSessionLifecycleModel(opts Options) Model {
 	return NewWithOptions([]scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, opts)
 }
 
+func TestSavedSessionResumeRefreshesCachedNonFlowAssociationBeforeRouting(t *testing.T) {
+	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"}
+	fresh := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-b",
+		RepoPath: "/repo", WorktreePath: "/repo/worktree", CWD: "/repo/worktree",
+	}
+	flow := flowstore.FlowRecord{FlowID: "flow-b", Status: flowstore.StatusInProgress}
+	reads := 0
+	var started actions.AgentLaunchContext
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) {
+			reads++
+			return fresh, nil
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() {}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+			started = ctx
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.launchSeams.NewLaunchID = func() string { return "token" }
+	m, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginSessionsPane)
+	for i := 0; cmd != nil && i < 4; i++ {
+		raw := cmd()
+		msg, ok := raw.(flowLaunchEventMsg)
+		if !ok {
+			if started.FlowSavedSessionResume {
+				break
+			}
+			t.Fatalf("cached non-Flow route bypassed lifecycle with %T", raw)
+		}
+		m, cmd = m.handleFlowLaunchEvent(msg)
+	}
+	if reads != 2 || started.FlowID != fresh.FlowID || !started.FlowSavedSessionResume {
+		t.Fatalf("refreshed resume: reads=%d started=%#v", reads, started)
+	}
+}
+
+func TestSavedSessionResumeIgnoresCachedFlowOccupancyBeforeAuthoritativeTransfer(t *testing.T) {
+	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-a"}
+	fresh := cached
+	fresh.FlowID = "flow-b"
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) { return fresh, nil },
+	})
+	m.launchSeams.NewLaunchID = func() string { return "resume-token" }
+	m, _ = m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token: "unrelated", Kind: flowLaunchKindManualPhase, FlowID: "flow-a",
+	}, flowLaunchStateReading)
+
+	m, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginSessionsPane)
+	if cmd == nil {
+		t.Fatalf("cached Flow occupancy blocked exact session refresh: status=%q", m.status.Text)
+	}
+	m, flowRead := m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if flowRead == nil || !m.flowLaunchAttemptOccupied("flow-a") || !m.flowLaunchAttemptOccupied("flow-b") {
+		t.Fatalf("authoritative transfer: flowRead=%v attempts=%#v", flowRead != nil, m.flowLaunchAttempts)
+	}
+}
+
 func TestSavedSessionResumeTransfersAtoBAndInstallsUntrackedRetainedSlot(t *testing.T) {
 	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-prefix", FlowID: "flow-a"}
 	fresh := sessions.SessionRecord{

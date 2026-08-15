@@ -7,11 +7,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -33,15 +35,28 @@ func testStashes() []gitquery.Stash {
 	}
 }
 
-// testFlowRecords mirrors every Flow record a test feeds into a pane so the
-// authoritative ReadFlow seam can answer with the same record the surface
-// shows. Package tests never run in parallel, so one registry is enough.
+// The test record registries mirror Flow and session records fed into panes so
+// authoritative read seams can answer with the same records the surfaces show.
+// Package tests never run in parallel, so process-wide registries are enough.
 var testFlowRecords = map[string]flowstore.FlowRecord{}
+var testSessionRecords = map[string]sessions.SessionRecord{}
 
 func recordTestFlowRecords(records []flowstore.FlowRecord) {
 	for _, record := range records {
 		if record.FlowID != "" {
 			testFlowRecords[record.FlowID] = record
+		}
+	}
+}
+
+func testSessionRecordKey(provider sessions.Provider, sessionID string) string {
+	return string(provider) + "\x00" + sessionID
+}
+
+func recordTestSessionRecords(records []sessions.SessionRecord) {
+	for _, record := range records {
+		if record.SessionID != "" {
+			testSessionRecords[testSessionRecordKey(record.Provider, record.SessionID)] = record
 		}
 	}
 }
@@ -53,6 +68,14 @@ func recordTestFlowRecords(records []flowstore.FlowRecord) {
 func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 	if opts.ClaimBead == nil {
 		opts.ClaimBead = func(string, string) error { return nil }
+	}
+	if opts.ReadSession == nil {
+		opts.ReadSession = func(provider sessions.Provider, sessionID string) (sessions.SessionRecord, error) {
+			if record, ok := testSessionRecords[testSessionRecordKey(provider, sessionID)]; ok {
+				return record, nil
+			}
+			return sessions.SessionRecord{}, fmt.Errorf("session %s/%s not found", provider, sessionID)
+		}
 	}
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
@@ -102,28 +125,35 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return record, func() {}, nil
 		}
 	}
-	if opts.EnsureFlowWorktree == nil {
-		// The production default runs real git and a real bootstrap hook, so a
-		// test model that launches a phase on a worktree-less Flow would shell
-		// out to a repository that does not exist. This stands in for the
-		// worktree the launch now creates instead of falling back to the repo.
-		opts.EnsureFlowWorktree = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			if record.WorktreePath != "" {
-				return record, nil
-			}
-			record.WorktreePath = record.RepoPath + "-worktrees/" + record.FlowID
-			if record.Branch == "" {
-				record.Branch = "flow/" + record.FlowID
-			}
+	modelValue := model.NewWithOptions(repos, opts)
+	modelValue = model.WithFlowLaunchEnsureWorktreeForTest(modelValue, func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		if record.WorktreePath != "" {
 			return record, nil
 		}
-	}
-	m := model.NewWithOptions(repos, opts)
-	return model.WithFlowWorktreeInspectionForTest(m, func(string) error { return nil })
+		record.WorktreePath = record.RepoPath + "-worktrees/" + record.FlowID
+		if record.Branch == "" {
+			record.Branch = "flow/" + record.FlowID
+		}
+		return record, nil
+	})
+	return model.WithFlowWorktreeInspectionForTest(modelValue, func(string) error { return nil })
+}
+
+type flowTerminalOpenRequest struct {
+	LaunchContext actions.AgentLaunchContext
 }
 
 // update sends a message and returns the concrete Model.
 func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
+	if request, ok := msg.(flowTerminalOpenRequest); ok {
+		return model.OpenFlowEmbeddedTerminalForTest(m, request.LaunchContext)
+	}
+	switch msg := msg.(type) {
+	case model.SessionResultMsg:
+		recordTestSessionRecords(msg.Sessions)
+	case model.WorktreeSessionResultMsg:
+		recordTestSessionRecords(msg.Sessions)
+	}
 	msg = stampListRequest(m, msg)
 	tm, cmd := m.Update(msg)
 	return tm.(model.Model), cmd
@@ -150,6 +180,31 @@ func testCommandMessages(cmd tea.Cmd) []tea.Msg {
 		messages = append(messages, testCommandMessages(nested)...)
 	}
 	return messages
+}
+
+func resumeSavedSessionForTest(t *testing.T, m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := update(m, msg)
+	if cmd == nil {
+		return m, nil
+	}
+	return update(m, cmd())
+}
+
+func selectSavedSessionForTest(t *testing.T, m model.Model) (model.Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		return m, nil
+	}
+	msg := cmd()
+	m, cmd = update(m, msg)
+	if cmd == nil {
+		return m, nil
+	}
+	msg = cmd()
+	m, cmd = update(m, msg)
+	return m, cmd
 }
 
 func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {

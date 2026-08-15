@@ -23,6 +23,13 @@ Flow's in-process owner and cannot be detached; it remains occupancy after the
 agent exits until the slot is dismissed. `U` autofix is a separate prompted
 intent whose headless/tmux routing remains unchanged.
 
+All Flow-associated launches enter the Model's one Flow launch lifecycle before
+any reservation, Flow write, or process start. That boundary changes no storage
+ownership: provider hooks and the session store still own capture and transcript
+metadata, the Flow store still owns phase launch/session mirrors, and the
+embedded terminal still owns the live process. The lifecycle only coordinates
+their ordering and exact-Flow occupancy.
+
 ## Manual Hook Setup
 
 For agent sessions that are not launched by Approach, configure Claude Code or
@@ -140,7 +147,7 @@ subsequent hooks. Sessions missing a provider session ID cannot be resumed;
 Approach reports this in the status line instead of starting a fresh provider
 session.
 
-A record cached with a Flow association takes one lifecycle route from all
+A record cached with a Flow association takes the same lifecycle route from all
 three sources: Sessions-pane `r`, the embedded dock's global session picker,
 and Enter on an inline worktree session. The cached Flow is only the initial
 reservation hint. Approach first reads the exact provider plus raw session ID

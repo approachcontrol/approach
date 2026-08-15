@@ -538,24 +538,28 @@ The database and its records have separate compatibility gates:
   to the empty string. Version 3 adds `flows.prepared_at TEXT NOT NULL DEFAULT
   ''`, the exact protected-receipt trigger, and
   `epic_progressions(repo_path, epic_id, enabled, updated_at, record)` with a
-  composite primary key and no enabled-scan index yet. Version 4 leaves those
-  columns and the progression codec version unchanged, adds required boolean
-  `done` inside each progression record, and installs insert and record-update
-  triggers that reject missing, null, or non-boolean `done`. Version 5 leaves
-  those columns unchanged and installs the progression-claim marker
-  compatibility trigger. Under the bootstrap
+  composite primary key and no enabled-scan index yet. Version 4 adds
+  required boolean `done` inside each progression record and installs insert
+  and record-update triggers that reject missing, null, or non-boolean `done`.
+  Version 5 leaves those columns unchanged and installs the progression-claim
+  marker compatibility trigger. Version 6 adds
+  `flows.preparation_nonce TEXT NOT NULL DEFAULT ''` plus a compatibility
+  trigger that keeps the projection and storage-only JSON field identical.
+  Under the bootstrap
   lease, existing version 0
   (unstamped v1 layout) and version 1 databases are validated against the exact
   predecessor table-and-index contract; version 2 is validated against its
   exact columns, indexes, and Bead trigger; version 3 is validated against its
   full schema before any record changes; version 4 is validated against the
-  parent-release contract (done triggers, no claim trigger). All upgrade
-  transactionally in place
-  to version 5. The v3→v4 step strictly decodes every legacy progression
-  blob and rewrites it with `done:false`, preserving identity, enabled/halt
-  state, timestamps, and SQL projections exactly. The v4→v5 step installs only
-  the claim-marker trigger. Historical disabled rows are
-  conservative normal-off rows because their cause cannot be recovered.
+  parent-release contract (done triggers, no claim or nonce trigger); version 5
+  is validated against the claim-marker trigger without a nonce projection. All
+  upgrade transactionally in place
+  to version 6. The v3→v4 step strictly decodes
+  every legacy progression blob and rewrites it with `done:false`, preserving
+  identity, enabled/halt state, timestamps, and SQL projections exactly. The
+  v4→v5 step installs only the claim-marker trigger. The v5→v6 step adds the
+  nonce projection and trigger. Historical disabled rows
+  are conservative normal-off rows because their cause cannot be recovered.
   Existing Flow JSON blobs, earlier projections, and retained `flows/` files
   are not rewritten or removed. A malformed predecessor progression aborts and
   rolls back every rewrite, new trigger, and the version stamp. Other malformed
@@ -569,7 +573,9 @@ The database and its records have separate compatibility gates:
   rejects an older rewrite that removes or changes a prepared Flow's JSON
   receipt while its projection remains protected. Version 5's claim-marker
   trigger likewise rejects an older rewrite that removes a persisted
-  progression-claim marker. A value newer than this build
+  progression-claim marker. Version 6's nonce trigger also rejects a
+  predecessor process that was already open when migration ran and then tries
+  to erase a receipt-less preparation's exact generation token. A value newer than this build
   supports prevents the store from opening and reports that Approach must be
   upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a

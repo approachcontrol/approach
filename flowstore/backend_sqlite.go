@@ -27,7 +27,11 @@ const (
 // future schema change has something to branch on, and so an older binary can
 // tell "a newer approach wrote this" apart from "this file is corrupt" —
 // without it, both surface as a raw column-set mismatch dump.
-const databaseSchemaVersion = 5
+//
+// Current sequence: v3 prepared_at + receipt trigger; v4 epic-progression
+// `done` JSON + compatibility triggers; v5 progression-claim marker trigger;
+// v6 flows.preparation_nonce projection, backfill, and nonce-protection trigger.
+const databaseSchemaVersion = 6
 
 // errDatabaseFromNewerBuild marks the one validation failure that is NOT a
 // damaged database. The file is fine; this binary is old. It must stay
@@ -70,6 +74,21 @@ CREATE TABLE IF NOT EXISTS flows (
  )`
 
 const flowTableSchemaV4 = flowTableSchemaV3
+
+const flowTableSchemaV5 = flowTableSchemaV4
+
+const flowTableSchemaV6 = `
+CREATE TABLE IF NOT EXISTS flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL,
+    bead_id TEXT NOT NULL DEFAULT '',
+    epic_id TEXT NOT NULL DEFAULT '',
+    prepared_at TEXT NOT NULL DEFAULT '',
+    preparation_nonce TEXT NOT NULL DEFAULT ''
+ )`
 
 const epicProgressionTableSchema = `
 CREATE TABLE IF NOT EXISTS epic_progressions (
@@ -130,7 +149,15 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove epic progression done state');
 END`
 
-const flowSchemaSQL = flowTableSchemaV4 + `;
+const flowPreparationNonceCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_preparation_nonce_update
+BEFORE UPDATE OF record, preparation_nonce ON flows
+WHEN OLD.preparation_nonce <> '' AND (NEW.preparation_nonce <> OLD.preparation_nonce OR COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.preparation_nonce'), '') <> OLD.preparation_nonce)
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted preparation nonce');
+END`
+
+const flowSchemaSQL = flowTableSchemaV6 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
@@ -142,7 +169,8 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
 ` + flowPreparedCompatibilityTrigger + `;
 ` + flowProgressionClaimCompatibilityTrigger + `;
 ` + epicProgressionDoneInsertCompatibilityTrigger + `;
-` + epicProgressionDoneUpdateCompatibilityTrigger + `;`
+` + epicProgressionDoneUpdateCompatibilityTrigger + `;
+` + flowPreparationNonceCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -343,7 +371,7 @@ func validateSQLiteSchema(db *sql.DB) error {
 
 // validateSQLiteSchemaVersion checks one exact physical generation. The
 // bootstrap migrator uses v1 to reject corrupt or arbitrary v0/v1 layouts
-// before any ALTER TABLE statement runs; normal readers validate only v5.
+// before any ALTER TABLE statement runs; normal readers validate only v6.
 func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	// An empty file reads as version 0 with no tables, so the version check above
 	// cannot catch it and the column comparison below would report it as a diff
@@ -396,6 +424,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0"}
 	case 3, 4, 5:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0"}
+	case 6:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
@@ -416,12 +446,18 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 			return err
 		}
 		if version >= 4 {
+			if err := validateSQLiteEpicProgressionDoneCompatibilityTriggers(db); err != nil {
+				return err
+			}
 			if version >= 5 {
 				if err := validateSQLiteProgressionClaimCompatibilityTrigger(db); err != nil {
 					return err
 				}
 			}
-			return validateSQLiteEpicProgressionDoneCompatibilityTriggers(db)
+			if version >= 6 {
+				return validateSQLitePreparationNonceCompatibilityTrigger(db)
+			}
+			return nil
 		}
 	}
 	return nil
@@ -440,8 +476,12 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV2
 	case 3:
 		want = flowTableSchemaV3
-	case 4, 5:
+	case 4:
 		want = flowTableSchemaV4
+	case 5:
+		want = flowTableSchemaV5
+	case 6:
+		want = flowTableSchemaV6
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
 	}
@@ -506,6 +546,9 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 			if version >= 5 {
 				want = append(want, "trigger:guard_progression_claim_record_update:flows")
 			}
+			if version >= 6 {
+				want = append(want, "trigger:guard_preparation_nonce_update:flows")
+			}
 		}
 		sort.Strings(want)
 	}
@@ -519,7 +562,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 && version != 3 && version != 4 && version != 5 {
+	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string
@@ -571,6 +614,17 @@ func validateSQLiteEpicProgressionDoneCompatibilityTriggers(db *sql.DB) error {
 		if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(contract.want) {
 			return fmt.Errorf("flow database has incompatible epic progression done compatibility trigger %q: got %q, want %q", contract.name, normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(contract.want))
 		}
+	}
+	return nil
+}
+
+func validateSQLitePreparationNonceCompatibilityTrigger(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_preparation_nonce_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database preparation nonce compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowPreparationNonceCompatibilityTrigger) {
+		return fmt.Errorf("flow database has incompatible preparation nonce compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowPreparationNonceCompatibilityTrigger))
 	}
 	return nil
 }
@@ -709,20 +763,20 @@ func (b *sqliteBackend) get(flowID string) (storedFlow, bool, error) {
 		return storedFlow{}, false, err
 	}
 	return queryStoredFlow(b.db.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows WHERE flow_id = ?", flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", flowID,
 	), flowID)
 }
 
 func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (storedFlow, bool, error) {
-	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
+	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
 	var record []byte
-	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &record); err != nil {
+	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storedFlow{}, false, nil
 		}
 		return storedFlow{}, false, fmt.Errorf("read flow %q row: %w", requestedID, err)
 	}
-	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, record)
+	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
 	if err != nil {
 		return storedFlow{}, false, err
 	}
@@ -730,7 +784,7 @@ func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (s
 }
 
 func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
-	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows"
+	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows"
 	var args []any
 	if filter.RepoPath != "" {
 		query += " WHERE repo_path = ?"
@@ -744,13 +798,13 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 	flows := make([]storedFlow, 0)
 	partial := &PartialListError{}
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
 		var record []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &record); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan flow list row: %w", err)
 		}
-		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, record)
+		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
 		if err != nil {
 			partial.Entries = append(partial.Entries, PartialListEntry{FlowID: flowID, Cause: err})
 			continue
@@ -846,7 +900,7 @@ type sqliteSession struct {
 
 func (s sqliteSession) get() (storedFlow, bool, error) {
 	return queryStoredFlow(s.tx.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows WHERE flow_id = ?", s.flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", s.flowID,
 	), s.flowID)
 }
 
@@ -867,17 +921,18 @@ func (s sqliteSession) save(record FlowRecord) error {
 		return err
 	}
 	_, err = s.tx.Exec(`
-INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(flow_id) DO UPDATE SET
     repo_path=excluded.repo_path,
     status=excluded.status,
     updated_at=excluded.updated_at,
     bead_id=excluded.bead_id,
-    epic_id=excluded.epic_id,
+	epic_id=excluded.epic_id,
 	prepared_at=excluded.prepared_at,
+	preparation_nonce=excluded.preparation_nonce,
     record=excluded.record`,
-		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, data)
+		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, data)
 	if err != nil {
 		return fmt.Errorf("save flow %q: %w", record.FlowID, err)
 	}

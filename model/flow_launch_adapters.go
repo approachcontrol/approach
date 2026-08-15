@@ -16,10 +16,12 @@ import (
 type flowLaunchSeams struct {
 	AllocateFlowID           func(title string) (string, error)
 	CreateFlow               func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
+	CreatePreparation        func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error)
 	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
 	ReadSession              func(sessions.Provider, string) (sessions.SessionRecord, error)
 	ListFlowSessions         func(flowID string) ([]sessions.SessionRecord, error)
 	ReserveLaunch            func(flowID string) (flowstore.FlowRecord, func(), error)
+	EnsureWorktree           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	CreateWorktree           func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	ResolveCommit            func(worktreePath string) string
 	BootstrapHookForRepo     func(repoPath string) (actions.BootstrapHook, bool)

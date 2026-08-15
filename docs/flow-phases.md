@@ -345,17 +345,47 @@ plan's own phase status rather than trusting either return value.
 
 ## Prepared child Flows and epic progression
 
-`FlowStarter.PrepareFlow` creates the Flow and worktree, records start metadata,
-runs the repository bootstrap hook, and only then consumes its one-shot store
-finalizer. It holds that Flow generation's launch/close reservation from the
-post-create read through claim admission, metadata, finalization, and any
-startup-failure compensation. A successful finalizer stamps `PreparedAt`; callback failure keeps
-the existing startup-phase blocking behavior. If receipt persistence reports a
-commit error, the store reads the Flow back: a matching receipt is success, a
-confirmed nil receipt is incomplete and blocks launchable phases, and an
-unreadable result is unknown and is not compensated because the receipt may be
-durable. A generation mismatch is separately stale and is also not compensated,
-because the same Flow ID now names an unrelated replacement.
+`flowCreator.Create` creates the Flow and worktree, records start metadata, and
+consumes the store's one-shot `CreatePreparation` finalizer around the
+repository bootstrap hook. It holds that Flow generation's launch/close
+reservation from the post-create read through claim admission, metadata,
+finalization, and any startup-failure compensation. A reservation or start-metadata
+failure consumes that same finalizer so a receipt-less nonce-bearing Flow is
+not left launchable-looking; claim-admission failure keeps the marked recovery
+Flow uncompensated so a later retry can finish preparation. A successful finalizer
+stamps `PreparedAt`; callback failure keeps the existing startup-phase blocking
+behavior. A failed identity read before bootstrap leaves the one-shot finalizer
+usable, so callers can retry or compensate a still-receipt-less Flow. If receipt
+persistence reports a commit error, the store reads the Flow back: a matching
+receipt is success, a confirmed nil receipt is incomplete and blocks launchable
+phases, and an unreadable result is unknown and is not compensated because the
+receipt may be durable. A generation mismatch is
+separately stale and is also not compensated, because the same Flow ID now
+names an unrelated replacement. Ready-Bead create-and-launch uses the same
+preparation finalizer before it records the initial phase launch ID. Each
+preparation also carries a storage-only random generation nonce. A nonce-bearing
+Flow is unlaunchable until that receipt is stamped, so another process cannot
+persist a launch ID or start a phase-untracked Flow agent (`s`, `R`, `U`) in
+the gap before the creator's reservation. Reservation
+failure, stale presentation, or another post-create exit consumes the finalizer
+through an atomic compensation path: under the launch/close reservation it
+revalidates that exact nonce and blocks only the authoritative launchable
+roots. When create-phase already holds that reservation, compensation keeps it
+through the async command instead of releasing and re-acquiring. If both
+compensation writes reconcile as unlanded, Compensate times out acquiring
+the launch/close reservation, or an in-transaction get/save fails and
+reconciliation confirms that no root-blocking mutation landed, the one-shot
+finalizer remains usable and Ready recovery reschedules that same capability
+instead of dropping it. Semantic claim, staleness, and already-prepared
+refusals still consume the capability. A same-ID replacement or already-claimed
+Flow is never overwritten. Ready start-metadata failure rereads the exact
+generation before compensating: a write that landed for this attempt continues
+finalization, a confirmed-absent write uses that compensation path, and an
+unreadable reread neither compensates nor falls back to unfenced SetPhase.
+After a consumed finalizer, create-path SetPhase recovery keeps the launch
+reservation, reconciles each failed write against authoritative ordered phase
+state, and retries only still-launchable roots plus this attempt's running
+launch-ID token.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
@@ -409,7 +439,7 @@ disable, not as a successful disable.
 When no exact-link Flow exists, epic enablement refreshes the epic's direct
 children and the repository Ready set before the sole sanctioned Beads mutation,
 and aborts without mutation if the selected child is no longer in both.
-`PrepareFlow` then persists the receipt-less exact-link identity and runs
+`flowCreator.Create` then persists the receipt-less exact-link identity and runs
 `bd update --claim -- <child-id>` through its post-persistence admission hook
 before any worktree side effect. Generated Flow instructions use
 `bd show -- <child-id>`. A claim error retains that marked unprepared identity;
@@ -445,8 +475,8 @@ Two layers enforce that, and they behave differently on purpose:
   unusable triple and writes no record, for both the create-time default and any
   phase that declares its own settings.
 - The TUI creation mapping drops before it stores. The shared capture helper
-  used by `FlowStarter` compatibility paths and the `createPhase` lifecycle
-  discards an unusable triple rather than passing it down, so Flow creation
+  used by parked creation and the `createPhase` lifecycle discards an unusable
+  triple rather than passing it down, so Flow creation
   cannot start failing on an agent selection that used to be accepted. A
   dropped triple stamps nothing, which reads as "resolve from the global
   setting at launch".

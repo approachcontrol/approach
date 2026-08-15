@@ -135,6 +135,33 @@ func FlowLaunchAttemptHeldForTest(m Model, flowID string) bool {
 	return m.flowLaunchAttemptOccupied(flowID)
 }
 
+func WithFlowLaunchEnsureWorktreeForTest(m Model, ensure func(flowstore.FlowRecord) (flowstore.FlowRecord, error)) Model {
+	m.launchSeams.EnsureWorktree = ensure
+	return m
+}
+
+func OpenFlowEmbeddedTerminalForTest(m Model, ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	ctx.Embedded = true
+	needsTick := !m.hasRunningEmbeddedTerminal()
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
+	if err != nil || !opened {
+		return next, nil
+	}
+	if prefillCmd == nil {
+		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
+	}
+	var tickCmd tea.Cmd
+	if needsTick {
+		next, tickCmd = next.startEmbeddedTerminalTick()
+	}
+	if ctx.FlowID != "" && next.flowRefreshSurfaceVisible() {
+		var fetchCmd tea.Cmd
+		next, fetchCmd = next.startFlowSurfaceFetch()
+		return next, batchNonNil(fetchCmd, prefillCmd, tickCmd)
+	}
+	return next, batchNonNil(prefillCmd, tickCmd)
+}
+
 func FlowPhaseDoneInstructionForTest() string {
 	return flowPhaseDoneInstruction
 }

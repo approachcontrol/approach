@@ -516,25 +516,8 @@ type flowLaunchFailurePersistedMsg struct {
 	preparationToken          uint64
 }
 
-type PlanLaunchRequestedMsg struct {
-	LaunchContext    actions.AgentLaunchContext
-	Request          uint64
-	ReadyBeadRequest uint64
-	LaunchRelease    func()
-	preparationKind  flowPreparationKind
-	preparationToken uint64
-}
-
-// FlowEmbeddedLaunchRequestedMsg is what remains of the pre-lifecycle embedded
-// launch path. Ready-Bead F emits it; new-Flow Plan Now and the other migrated
-// launch sources route through the lifecycle.
-type FlowEmbeddedLaunchRequestedMsg struct {
-	LaunchContext    actions.AgentLaunchContext
-	Request          uint64
-	ReadyBeadRequest uint64
-	LaunchRelease    func()
-	preparationKind  flowPreparationKind
-	preparationToken uint64
+type agentLaunchRequestedMsg struct {
+	LaunchContext actions.AgentLaunchContext
 }
 
 type FlowCreatedMsg struct {

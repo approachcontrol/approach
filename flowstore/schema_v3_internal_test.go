@@ -50,12 +50,12 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 	defer store.Close()
 	backend := store.backend.(*sqliteBackend)
 	var gotBlob []byte
-	var preparedAt string
-	if err := backend.db.QueryRow("SELECT record, prepared_at FROM flows WHERE flow_id = ?", record.FlowID).Scan(&gotBlob, &preparedAt); err != nil {
+	var preparedAt, preparationNonce string
+	if err := backend.db.QueryRow("SELECT record, prepared_at, preparation_nonce FROM flows WHERE flow_id = ?", record.FlowID).Scan(&gotBlob, &preparedAt, &preparationNonce); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(gotBlob, blob) || preparedAt != "" {
-		t.Fatalf("v2 Flow changed during migration: blobEqual=%t prepared_at=%q", bytes.Equal(gotBlob, blob), preparedAt)
+	if !bytes.Equal(gotBlob, blob) || preparedAt != "" || preparationNonce != "" {
+		t.Fatalf("v2 Flow changed during migration: blobEqual=%t prepared_at=%q nonce=%q", bytes.Equal(gotBlob, blob), preparedAt, preparationNonce)
 	}
 	var version int
 	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
@@ -164,14 +164,14 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 			defer store.Close()
 			backend := store.backend.(*sqliteBackend)
 			var gotBlob []byte
-			var beadID, epicID, preparedAt string
-			if err := backend.db.QueryRow("SELECT record, bead_id, epic_id, prepared_at FROM flows WHERE flow_id = ?", record.FlowID).
-				Scan(&gotBlob, &beadID, &epicID, &preparedAt); err != nil {
+			var beadID, epicID, preparedAt, preparationNonce string
+			if err := backend.db.QueryRow("SELECT record, bead_id, epic_id, prepared_at, preparation_nonce FROM flows WHERE flow_id = ?", record.FlowID).
+				Scan(&gotBlob, &beadID, &epicID, &preparedAt, &preparationNonce); err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Equal(gotBlob, blob) || beadID != "" || epicID != "" || preparedAt != "" {
-				t.Fatalf("v%d Flow migration changed legacy content: blobEqual=%t bead=%q epic=%q prepared=%q",
-					version, bytes.Equal(gotBlob, blob), beadID, epicID, preparedAt)
+			if !bytes.Equal(gotBlob, blob) || beadID != "" || epicID != "" || preparedAt != "" || preparationNonce != "" {
+				t.Fatalf("v%d Flow migration changed legacy content: blobEqual=%t bead=%q epic=%q prepared=%q nonce=%q",
+					version, bytes.Equal(gotBlob, blob), beadID, epicID, preparedAt, preparationNonce)
 			}
 		})
 	}

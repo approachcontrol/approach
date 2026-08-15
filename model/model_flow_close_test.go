@@ -121,7 +121,7 @@ func TestModel_CloseFlowPersistsReasonAndRerendersRow(t *testing.T) {
 		t.Fatal("submitting a reason should return a command")
 	}
 	raw := cmd()
-	if _, ok := raw.(model.FlowEmbeddedLaunchRequestedMsg); ok {
+	if _, ok := raw.(flowTerminalOpenRequest); ok {
 		t.Fatal("closing a Flow must not launch a phase")
 	}
 	if _, ok := raw.(model.FlowClosedMsg); !ok {
@@ -511,7 +511,7 @@ func TestModel_ClosedFlowRefusesRelaunchKeysButKeepsHeadless(t *testing.T) {
 
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
 			if cmd != nil {
-				if _, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg); ok {
+				if _, ok := cmd().(flowTerminalOpenRequest); ok {
 					t.Fatalf("%c launched an agent on a closed Flow", key)
 				}
 			}

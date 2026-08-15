@@ -111,9 +111,23 @@ type flowLaunchEventMsg struct {
 	// CreatedRecord is create-phase-only: the exact create result is retained
 	// across tracked reservation so the winner can detect a cross-process claim.
 	CreatedRecord flowstore.FlowRecord
-	Context       actions.AgentLaunchContext
-	Route         flowLaunchRoute
-	Skipped       bool
+	// PreparationFinalizer is create-phase-only and present only for Ready-Bead
+	// launches. It is the one-shot capability that stamps PreparedAt after the
+	// worktree metadata and bootstrap hook succeed, before launch persistence.
+	PreparationFinalizer flowstore.PreparationFinalizer
+	PreparationUnknown   bool
+	// CompensationRetryable is set when Ready compensation left the one-shot
+	// finalizer usable: either both writer attempts reconciled as unlanded, or
+	// Compensate could not acquire the launch/close reservation.
+	CompensationRetryable bool
+	// RootBlockRetryable is set when create-path SetPhase recovery failed to
+	// block every captured startup root. The recovered-event handler keeps the
+	// launch reservation and retries only the still-unblocked roots.
+	RootBlockRetryable  bool
+	CompensationRetries int
+	Context             actions.AgentLaunchContext
+	Route               flowLaunchRoute
+	Skipped             bool
 	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.
@@ -162,7 +176,6 @@ type flowLaunchEventMsg struct {
 	Commit         string
 	Proof          flowLaunchCreateProof
 	GenerationLost bool
-	Parked         bool
 	RecoveryErrs   []string
 	Settings       flowLaunchAgentSettingsSnapshot
 	ErrOp          string
@@ -180,7 +193,7 @@ type flowLaunchAgentSettingsSnapshot struct {
 	PromptTemplates  FlowPromptTemplates
 }
 
-func snapshotFlowLaunchAgentSettings(launcher FlowPhaseLauncher) flowLaunchAgentSettingsSnapshot {
+func snapshotFlowLaunchAgentSettings(launcher flowLaunchPreparation) flowLaunchAgentSettingsSnapshot {
 	return flowLaunchAgentSettingsSnapshot{
 		Preferences:      launcher.AgentPreferences,
 		Command:          launcher.AgentCommand,
@@ -191,7 +204,7 @@ func snapshotFlowLaunchAgentSettings(launcher FlowPhaseLauncher) flowLaunchAgent
 	}
 }
 
-func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher FlowPhaseLauncher) FlowPhaseLauncher {
+func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher flowLaunchPreparation) flowLaunchPreparation {
 	launcher.AgentPreferences = snapshot.Preferences
 	launcher.AgentCommand = snapshot.Command
 	launcher.Model = snapshot.Model
@@ -226,7 +239,7 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 	case flowLaunchKindSavedSessionResume:
 		return m.admitSavedSessionFlowLaunch(intent)
 	default:
-		// Later beads route the remaining kinds; nothing submits them yet.
+		// Reject values outside the lifecycle's closed intent-kind set.
 		return m, nil, false
 	}
 }
@@ -338,9 +351,9 @@ func (m Model) cachedFlowLaunchTarget(intent flowLaunchIntent) (flowstore.FlowRe
 	return record, phase, true
 }
 
-// flowLaunchAdmissionOccupied reports whether anything already owns this Flow.
-// It spans the lifecycle's own attempts and every launch source that has not
-// been migrated yet, which is what keeps the two mutually exclusive per Flow.
+// flowLaunchAdmissionOccupied reports whether the lifecycle attempt map or an
+// installed Flow terminal already owns this Flow. Those ownership forms are
+// mutually exclusive per exact Flow ID.
 func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {
@@ -440,8 +453,8 @@ func flowRecordHasOtherRunningPhase(record flowstore.FlowRecord, phaseID string)
 // lifecycle's own seams. NewLaunchID is pinned to the admission token: a second
 // generated ID would make every LaunchID-keyed fence miss and strand the
 // attempt.
-func (m Model) flowLaunchLauncher(token string) FlowPhaseLauncher {
-	launcher := m.flowPhaseLauncher()
+func (m Model) flowLaunchLauncher(token string) flowLaunchPreparation {
+	launcher := m.flowLaunchPreparation()
 	launcher.PlanMarkdownPath = m.launchSeams.PlanMarkdownPath
 	launcher.ReadPlan = m.launchSeams.ReadPlan
 	launcher.AddFlowPhaseLaunchID = m.launchSeams.AddPhaseLaunchID
@@ -506,7 +519,7 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			event.Err = flowLaunchPhaseSessionLiveStatus(phase.PhaseID)
 			return event
 		}
-		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{
+		prepared, err := launcher.preflight(flowPhaseLaunchRequest{
 			Record:   record,
 			Phase:    phase,
 			Headless: record.Headless,
@@ -517,7 +530,7 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 		}
 		// Last, because it is the only step that touches the filesystem: every
 		// cheap refusal above, and the session check, must get to say no first.
-		prepared, err = launcher.EnsureLaunchWorktree(prepared)
+		prepared, err = launcher.ensureWorktree(prepared)
 		if err != nil {
 			event.Err = err.Error()
 			return event
@@ -541,7 +554,7 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 // is normative: two checks can both hold and they yield different outcomes, and
 // Preflight runs before the session list because it is in-memory while
 // ListFlowSessions scans the whole session store once per poll.
-func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, intent flowLaunchIntent, token string) tea.Cmd {
+func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation, intent flowLaunchIntent, token string) tea.Cmd {
 	return func() tea.Msg {
 		event := flowLaunchEventMsg{
 			Token:   token,
@@ -577,7 +590,7 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}
-		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{
+		prepared, err := launcher.preflight(flowPhaseLaunchRequest{
 			Record:     record,
 			Phase:      phase,
 			AutoLaunch: true,
@@ -602,7 +615,7 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 		}
 		// Last, and behind the session check, so a phase a live session already
 		// owns never costs a `git worktree add`.
-		prepared, err = launcher.EnsureLaunchWorktree(prepared)
+		prepared, err = launcher.ensureWorktree(prepared)
 		// The identity fields are set before the branch returns either way: the
 		// blocked handler writes against msg.PhaseID, and the intent still carries
 		// the spelling an earlier poll captured rather than the record's own.
@@ -616,7 +629,7 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, in
 			// and re-arms, and a Flow closed mid-read has no candidate left to
 			// block. Blocking either would answer a wait with a stop.
 			event.Outcome = flowLaunchOutcomeBlocked
-			var worktreeErr FlowPhaseLaunchWorktreeError
+			var worktreeErr flowPhaseLaunchWorktreeError
 			if errors.As(err, &worktreeErr) {
 				switch {
 				case worktreeErr.Stale:
@@ -665,8 +678,8 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			return event
 		}
 	}
-	prepared := FlowPhaseLaunchPreparedRequest{
-		FlowPhaseLaunchRequest: FlowPhaseLaunchRequest{
+	prepared := flowPhaseLaunchPreparedRequest{
+		flowPhaseLaunchRequest: flowPhaseLaunchRequest{
 			Record: msg.Record,
 			Phase:  phase,
 			// Resolved once in the read stage. Re-deriving it from the record
@@ -690,7 +703,7 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			return event
 		}
 		event.Release = release
-		result, err := launcher.Prepare(prepared)
+		result, err := launcher.prepare(prepared)
 		if err != nil {
 			event.Err = err.Error()
 			return event
@@ -702,9 +715,9 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 		event.Context = result.Context
 		event.FallbackNote = result.FallbackNote
 		switch result.Route {
-		case FlowPhaseLaunchEmbedded:
+		case flowPhaseLaunchEmbedded:
 			event.Route = flowLaunchRouteEmbedded
-		case FlowPhaseLaunchTmux:
+		case flowPhaseLaunchTmux:
 			event.Route = flowLaunchRouteTmux
 		default:
 			event.Err = fmt.Sprintf("unsupported flow phase launch route %d", result.Route)
@@ -903,7 +916,7 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 }
 
 // blockAutoFlowLaunchPhase records a permanent AutoMode refusal on the phase.
-// It reuses FlowStarter's blocked-phase precedent rather than
+// It reuses flowCreator's blocked-phase precedent rather than
 // flowLaunchFailureUpdate, which would stamp needs_attention on every kind, and
 // it does not re-arm the drain: nothing about this refusal clears on its own.
 //
@@ -961,10 +974,8 @@ func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
 	}
 }
 
-// installFlowLaunchEmbedded reproduces everything the
-// FlowEmbeddedLaunchRequestedMsg path does, including the Flow surface refresh
-// that lives in its Update case, and only removes the attempt once the slot
-// that replaces it as the Flow's owner exists.
+// installFlowLaunchEmbedded transfers lifecycle ownership to an embedded slot
+// and only removes the attempt once that replacement owner exists.
 func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	if attempt.Kind != flowLaunchKindCreatePhase {
 		defer releaseFlowLaunchReservation(msg.Release)
@@ -1031,7 +1042,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		// prefill result lands. That final asynchronous hop must not focus the old
 		// terminal or present its failure after a repo change/newer creation.
 		if prefillCmd == nil {
-			m = m.clearFlowCreateRequest(attempt.Create.Request)
+			m = m.clearFlowLaunchCreatePresentation(attempt.Create)
 		}
 		releaseFlowLaunchReservation(msg.Release)
 	}
@@ -1050,7 +1061,7 @@ func (m Model) failCreateFlowLaunchEmbedded(attempt flowLaunchAttempt, ctx actio
 	if !ok {
 		releaseFlowLaunchReservation(release)
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
-			clearFlowCreateRequest(attempt.Create.Request).
+			clearFlowLaunchCreatePresentation(attempt.Create).
 			setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText), nil
 	}
 	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
@@ -1278,7 +1289,7 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 		m = finishSlot(m)
 		if msg.Create != nil {
 			present := m.createFlowLaunchOriginCurrent(*msg.Create)
-			m = m.clearFlowCreateRequest(msg.Create.Request)
+			m = m.clearFlowLaunchCreatePresentation(*msg.Create)
 			if !present {
 				return m, nil
 			}
@@ -1302,7 +1313,7 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 	}
 	if msg.Create != nil {
 		attempt.Kind = flowLaunchKindCreatePhase
-		attempt.Origin = flowLaunchOriginNewFlow
+		attempt.Origin = msg.Create.Presentation.Origin
 		attempt.Create = *msg.Create
 	}
 	next, reserved := m.reserveFlowLaunchAttempt(attempt, flowLaunchStateFailurePersisting)
@@ -1311,7 +1322,7 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 		if msg.Create != nil {
 			// A newer exact-Flow attempt owns phase recovery now. The stale create
 			// may release only its request and slot, never mutate the winner's phase.
-			return m.clearFlowCreateRequest(msg.Create.Request), nil
+			return m.clearFlowLaunchCreatePresentation(*msg.Create), nil
 		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}

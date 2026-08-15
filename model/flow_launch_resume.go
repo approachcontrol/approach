@@ -279,7 +279,7 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 	reserve := m.reserveTrackedFlowLaunch
 	addPhaseLaunchID := m.launchSeams.AddPhaseLaunchID
 	sessionStateRoot := settings.SessionStateRoot
-	// A resume does not go through FlowPhaseLauncher.Prepare, so the tmux
+	// A resume does not go through flowLaunchPreparation.prepare, so the tmux
 	// decision is made here instead. It is taken on the Model, before the
 	// closure runs, for the same reason the launcher snapshots it at admission:
 	// the route this launch takes must be the one it was admitted with. A resume
