@@ -195,12 +195,23 @@ func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
 				if cmd != nil {
 					t.Fatalf("ctrl+a return issued unexpected command %T", cmd)
 				}
-				assertListRequestsUnchanged(t, before, m)
+				assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
 			} else {
 				if cmd == nil {
 					t.Fatal("ctrl+a returning to Flows returned nil refresh command")
 				}
-				assertOnlyListRequestChanged(t, before, m, tc.wantFetch)
+				for mode, request := range before {
+					got := m.ListRequest(mode)
+					if mode == ui.ModeActiveFlows || mode == tc.wantFetch {
+						if got == request {
+							t.Fatalf("ListRequest(%d) = %d, want changed from previous request", mode, got)
+						}
+						continue
+					}
+					if got != request {
+						t.Fatalf("ListRequest(%d) = %d, want unchanged %d", mode, got, request)
+					}
+				}
 			}
 		})
 	}

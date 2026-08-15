@@ -62,6 +62,37 @@ func TestTakeoverTransitionMatrixPreservesOneOriginalSnapshot(t *testing.T) {
 	}
 }
 
+func TestActiveFlowsToPRBabysitterInvalidatesOldRefresh(t *testing.T) {
+	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)}, nil
+		},
+	})
+	m.activePane = ui.PaneBottom
+	m.contentPane = ui.PaneBottom
+
+	m, activeCmd := m.handleActiveFlowsToggle()
+	if activeCmd == nil || m.flowRefreshInFlightMode != ui.ModeActiveFlows {
+		t.Fatalf("Active Flows entry = cmd %T refresh mode %d", activeCmd, m.flowRefreshInFlightMode)
+	}
+	activeRequest := m.currentListRequest(ui.ModeActiveFlows)
+	activeGeneration := m.flowRefreshTickGen
+
+	m, prCmd := m.handlePRBabysitterToggle()
+	if prCmd == nil || !m.prBabysitterSurfaceVisible() {
+		t.Fatalf("PR Babysitter cross-switch = cmd %T visible %v", prCmd, m.prBabysitterSurfaceVisible())
+	}
+	if m.currentListRequest(ui.ModeActiveFlows) == activeRequest {
+		t.Fatalf("Active Flows request remained current after cross-switch: %d", activeRequest)
+	}
+	if m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0 {
+		t.Fatalf("Active Flows retained refresh ownership after cross-switch: request=%d mode=%d", m.flowRefreshInFlight, m.flowRefreshInFlightMode)
+	}
+	if m.flowRefreshTickGen != activeGeneration+1 {
+		t.Fatalf("flow refresh generation = %d, want %d", m.flowRefreshTickGen, activeGeneration+1)
+	}
+}
+
 func TestPRBabysitterRefreshFiltersOrdersAndReplacesPerRowFailures(t *testing.T) {
 	records := []flowstore.FlowRecord{
 		babysitterFlow("flow-b", "/dev/beta", flowstore.PhaseReady, flowstore.MergePending),

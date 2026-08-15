@@ -284,11 +284,11 @@ Resuming a CLI `codex` or `claude` session, launching a CLI Flow phase, or
 repairing a stalled Flow opens
 a runtime-only terminal in one shared full-width dock — a top-level pane below
 the repo, content, and shortcut panes, directly above the status bar.
-The dock persists while switching among Git, sessions, plans, flows, and
-Active Flows. Its terminal numbers and active selection are global, so a
-session resume and a Flow launch appear in the same numbered header. The
-current list remains usable above the dock; in particular, the saved-session
-table is never replaced by the terminal surface.
+The dock persists while switching among Git, sessions, plans, flows, Active
+Flows, and PR Babysitter. Its terminal numbers and active selection are
+global, so a session resume and a Flow launch appear in the same numbered
+header. The current list remains usable above the dock; in particular, the
+saved-session table is never replaced by the terminal surface.
 
 Press `ctrl+t` from repo or list focus to store whether the dock is requested
 open or manually hidden. An expanded dock shrinks before either stored pane is

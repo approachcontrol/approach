@@ -375,6 +375,9 @@ func (m Model) handleTakeoverToggle(target takeoverMode) (Model, tea.Cmd) {
 	if current != target {
 		previousMode := m.takeoverUIMode(current)
 		m = m.cancelTakeoverFetch(current)
+		if current == takeoverActiveFlows {
+			m.flowRefreshTickGen++
+		}
 		m = m.setTakeover(target)
 		m = m.resetModeCursorsForSwitch(previousMode, m.takeoverUIMode(target))
 		return m.startTakeoverFetch(target)
@@ -382,12 +385,6 @@ func (m Model) handleTakeoverToggle(target takeoverMode) (Model, tea.Cmd) {
 
 	m = m.cancelTakeoverFetch(current)
 	m = m.setTakeover(takeoverNone)
-	// Active Flows owns the shared refresh slot while its takeover is visible.
-	// Clear that ownership before deciding whether the restored Flows pane is
-	// visible, otherwise a hidden takeover request can block its next refresh.
-	hadFlowRefreshOwnership := m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0
-	m.flowRefreshInFlight = 0
-	m.flowRefreshInFlightMode = 0
 	if m.activeFlowReturnSet {
 		m.activePane = m.activeFlowReturnPane
 		m.contentPane = m.activeFlowReturnContent
@@ -400,9 +397,9 @@ func (m Model) handleTakeoverToggle(target takeoverMode) (Model, tea.Cmd) {
 		next, refreshCmd := m.startFlowsModeFetchWithRefreshTick()
 		return next, batchNonNil(refreshCmd, expansionCmd)
 	}
-	// No replacement refresh will advance the generation for a hidden stored
-	// pane, so invalidate the takeover's outstanding tick explicitly.
-	if hadFlowRefreshOwnership {
+	// No replacement refresh will advance the generation for a hidden or
+	// unavailable stored pane, so invalidate the Active Flows tick explicitly.
+	if current == takeoverActiveFlows {
 		m.flowRefreshTickGen++
 	}
 	return m, expansionCmd
@@ -446,9 +443,15 @@ func (m Model) cancelTakeoverFetch(mode takeoverMode) Model {
 	if mode == takeoverPRBabysitter {
 		return m.cancelPRBabysitterRefresh()
 	}
-	// Active Flow results and ticks already require that surface to remain
-	// visible before they are accepted. Leave their request generation intact:
-	// the exit path either replaces the shared refresh owner with a stored-Flow
-	// fetch or invalidates the outstanding tick exactly once.
+	if m.currentListRequest(ui.ModeActiveFlows) != 0 {
+		m, _ = m.nextListFetchRequest(ui.ModeActiveFlows)
+	}
+	if m.flowRefreshInFlightMode == ui.ModeActiveFlows {
+		m.flowRefreshInFlight = 0
+		m.flowRefreshInFlightMode = 0
+	}
+	// Active Flows cannot cancel its synchronous list command, so fence its
+	// result and release the shared refresh owner. The caller advances the tick
+	// generation directly or starts the replacement stored-Flow refresh.
 	return m
 }
