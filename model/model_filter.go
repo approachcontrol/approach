@@ -158,6 +158,9 @@ func (m Model) activeSearchQuery() string {
 }
 
 func (m Model) activeItemPaneQuery() string {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows.Query()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.Query()
 	}
@@ -165,6 +168,9 @@ func (m Model) activeItemPaneQuery() string {
 }
 
 func (m Model) activeItemPaneSourceCount() int {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows.ItemCount()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.ItemCount()
 	}
@@ -234,6 +240,11 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		m = m.setExpandedFlowID("")
 		return m
 	}
+	if m.prBabysitterSurfaceVisible() {
+		m.prBabysitterFlows = m.prBabysitterFlows.SetQuery(query)
+		m = m.setExpandedFlowID("")
+		return m
+	}
 
 	// The query only applies to the active pane; every other pane keeps its
 	// own filter so switching views restores that view's previous filter.
@@ -286,6 +297,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowPlans()
 	m = m.reflowFlows()
 	m = m.reflowActiveFlows()
+	m = m.reflowPRBabysitter()
 	m = m.reflowAllBeads()
 	if m.flowSurfaceVisible() && m.activePane != ui.PaneRepos && m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()

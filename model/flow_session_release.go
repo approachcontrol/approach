@@ -223,7 +223,7 @@ func (m Model) handleFlowPhaseSessionReleaseProbed(msg flowPhaseSessionReleasePr
 	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	if m.modal.IsOpen() {
@@ -307,7 +307,7 @@ func flowPhaseSessionReleaseLaunchSuffix(launchID string) string {
 // a second one. While any agent is provably live on the phase, release refuses
 // entirely.
 func (m Model) handleFlowPhaseSessionReleaseConfirmed(msg flowPhaseSessionReleaseConfirmedMsg) (Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	record, phase, ok := m.flowPhaseByID(msg.FlowID, msg.PhaseID)

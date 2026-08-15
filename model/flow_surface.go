@@ -9,10 +9,21 @@ import (
 )
 
 func (m Model) activeFlowSurfaceVisible() bool {
-	return m.activeFlowSurface
+	return m.takeover == takeoverActiveFlows || m.activeFlowSurface
+}
+
+func (m Model) prBabysitterSurfaceVisible() bool {
+	return m.takeover == takeoverPRBabysitter
+}
+
+func (m Model) takeoverVisible() bool {
+	return m.activeFlowSurfaceVisible() || m.prBabysitterSurfaceVisible()
 }
 
 func (m Model) focusedMode() ui.Mode {
+	if m.prBabysitterSurfaceVisible() {
+		return ui.ModePRBabysitter
+	}
 	if m.activeFlowSurfaceVisible() {
 		return ui.ModeActiveFlows
 	}
@@ -41,7 +52,7 @@ func (m Model) modeStored(mode ui.Mode) bool {
 // is unknown, so stored modes remain provisionally visible for startup fetch
 // and refresh bookkeeping.
 func (m Model) storedModeVisible(mode ui.Mode) bool {
-	if m.activeFlowSurfaceVisible() || !m.modeStored(mode) {
+	if m.takeoverVisible() || !m.modeStored(mode) {
 		return false
 	}
 	if m.height <= 0 {
@@ -57,7 +68,7 @@ func (m Model) storedModeVisible(mode ui.Mode) bool {
 }
 
 func (m Model) flowSurfaceVisible() bool {
-	return m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible()
+	return m.focusedMode() == ui.ModeFlows || m.takeoverVisible()
 }
 
 func (m Model) flowRefreshSurfaceVisible() bool {
@@ -71,6 +82,9 @@ func (m Model) flowRefreshSurfaceVisible() bool {
 }
 
 func (m Model) activeContentFetchMode() ui.Mode {
+	if m.prBabysitterSurfaceVisible() {
+		return ui.ModePRBabysitter
+	}
 	if m.activeFlowSurfaceVisible() {
 		return ui.ModeActiveFlows
 	}
@@ -153,6 +167,13 @@ func (m Model) selectedActiveFlow() (flowstore.FlowRecord, bool) {
 	return m.activeFlows.Selected()
 }
 
+func (m Model) selectedPRBabysitterFlow() (flowstore.FlowRecord, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return flowstore.FlowRecord{}, false
+	}
+	return m.prBabysitterFlows.Selected()
+}
+
 func (m Model) selectedActiveFlowID() string {
 	record, ok := m.selectedActiveFlow()
 	if !ok {
@@ -162,6 +183,9 @@ func (m Model) selectedActiveFlowID() string {
 }
 
 func (m Model) currentFlowPane() pane.Pane[flowstore.FlowRecord] {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows
 	}
@@ -169,6 +193,9 @@ func (m Model) currentFlowPane() pane.Pane[flowstore.FlowRecord] {
 }
 
 func (m Model) currentFlowSelectedIndex() int {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows.SelectedIndex()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.SelectedIndex()
 	}
@@ -176,6 +203,9 @@ func (m Model) currentFlowSelectedIndex() int {
 }
 
 func (m Model) currentFlowScroll() int {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows.Scroll()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.Scroll()
 	}
@@ -183,6 +213,9 @@ func (m Model) currentFlowScroll() int {
 }
 
 func (m Model) currentExpandedFlowID() string {
+	if m.prBabysitterSurfaceVisible() {
+		return m.expandedPRBabysitterFlowID
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.expandedActiveFlowID
 	}
@@ -190,6 +223,9 @@ func (m Model) currentExpandedFlowID() string {
 }
 
 func (m Model) currentSelectedFlowPhaseID() string {
+	if m.prBabysitterSurfaceVisible() {
+		return m.selectedPRBabysitterPhaseID
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.selectedActiveFlowPhaseID
 	}
@@ -197,6 +233,10 @@ func (m Model) currentSelectedFlowPhaseID() string {
 }
 
 func (m Model) setCurrentSelectedFlowPhaseID(phaseID string) Model {
+	if m.prBabysitterSurfaceVisible() {
+		m.selectedPRBabysitterPhaseID = phaseID
+		return m
+	}
 	if m.activeFlowSurfaceVisible() {
 		m.selectedActiveFlowPhaseID = phaseID
 		return m
@@ -214,6 +254,9 @@ func (m Model) currentFilteredFlows() []flowstore.FlowRecord {
 }
 
 func (m Model) flowSurfaceContentHeight() int {
+	if m.prBabysitterSurfaceVisible() {
+		return m.paneContentHeight(ui.ModePRBabysitter)
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.paneContentHeight(ui.ModeActiveFlows)
 	}
@@ -225,6 +268,10 @@ func (m Model) flowSurfaceItemHeight(expandedFlowID string) pane.ItemHeight[flow
 }
 
 func (m Model) setCurrentFlowPane(p pane.Pane[flowstore.FlowRecord]) Model {
+	if m.prBabysitterSurfaceVisible() {
+		m.prBabysitterFlows = p
+		return m
+	}
 	if m.activeFlowSurfaceVisible() {
 		m.activeFlows = p
 		return m
@@ -306,18 +353,35 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 }
 
 func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() {
+	return m.handleTakeoverToggle(takeoverActiveFlows)
+}
+
+func (m Model) handlePRBabysitterToggle() (Model, tea.Cmd) {
+	return m.handleTakeoverToggle(takeoverPRBabysitter)
+}
+
+func (m Model) handleTakeoverToggle(target takeoverMode) (Model, tea.Cmd) {
+	current := m.currentTakeover()
+	if current == takeoverNone {
 		previousMode := m.focusedMode()
 		m.activeFlowReturnPane = m.activePane
 		m.activeFlowReturnContent = m.contentPane
 		m.activeFlowReturnSet = true
 		m = m.clearBeadExpansion()
-		m.activeFlowSurface = true
-		m = m.resetModeCursorsForSwitch(previousMode, ui.ModeActiveFlows)
-		return m.startActiveFlowsFetchWithRefreshTick()
+		m = m.setTakeover(target)
+		m = m.resetModeCursorsForSwitch(previousMode, m.takeoverUIMode(target))
+		return m.startTakeoverFetch(target)
+	}
+	if current != target {
+		previousMode := m.takeoverUIMode(current)
+		m = m.cancelTakeoverFetch(current)
+		m = m.setTakeover(target)
+		m = m.resetModeCursorsForSwitch(previousMode, m.takeoverUIMode(target))
+		return m.startTakeoverFetch(target)
 	}
 
-	m.activeFlowSurface = false
+	m = m.cancelTakeoverFetch(current)
+	m = m.setTakeover(takeoverNone)
 	// Active Flows owns the shared refresh slot while its takeover is visible.
 	// Clear that ownership before deciding whether the restored Flows pane is
 	// visible, otherwise a hidden takeover request can block its next refresh.
@@ -330,7 +394,7 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 		m.activeFlowReturnSet = false
 	}
 	returnMode := m.focusedMode()
-	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
+	m = m.resetModeCursorsForSwitch(m.takeoverUIMode(current), returnMode)
 	m, expansionCmd := m.reconcileBeadExpansion()
 	if m.flowRefreshSurfaceVisible() {
 		next, refreshCmd := m.startFlowsModeFetchWithRefreshTick()
@@ -342,4 +406,49 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 		m.flowRefreshTickGen++
 	}
 	return m, expansionCmd
+}
+
+func takeoverFromStartup(active bool) takeoverMode {
+	if active {
+		return takeoverActiveFlows
+	}
+	return takeoverNone
+}
+
+func (m Model) currentTakeover() takeoverMode {
+	if m.takeover == takeoverNone && m.activeFlowSurface {
+		return takeoverActiveFlows
+	}
+	return m.takeover
+}
+
+func (m Model) setTakeover(mode takeoverMode) Model {
+	m.takeover = mode
+	m.activeFlowSurface = mode == takeoverActiveFlows
+	return m
+}
+
+func (m Model) takeoverUIMode(mode takeoverMode) ui.Mode {
+	if mode == takeoverPRBabysitter {
+		return ui.ModePRBabysitter
+	}
+	return ui.ModeActiveFlows
+}
+
+func (m Model) startTakeoverFetch(mode takeoverMode) (Model, tea.Cmd) {
+	if mode == takeoverPRBabysitter {
+		return m.startPRBabysitterRefresh()
+	}
+	return m.startActiveFlowsFetchWithRefreshTick()
+}
+
+func (m Model) cancelTakeoverFetch(mode takeoverMode) Model {
+	if mode == takeoverPRBabysitter {
+		return m.cancelPRBabysitterRefresh()
+	}
+	// Active Flow results and ticks already require that surface to remain
+	// visible before they are accepted. Leave their request generation intact:
+	// the exit path either replaces the shared refresh owner with a stored-Flow
+	// fetch or invalidates the outstanding tick exactly once.
+	return m
 }

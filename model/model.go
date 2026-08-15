@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -62,62 +63,75 @@ type flowDegradationState struct {
 	diagnostic *flowstore.PartialListError
 }
 
+type takeoverMode uint8
+
+const (
+	takeoverNone takeoverMode = iota
+	takeoverActiveFlows
+	takeoverPRBabysitter
+)
+
 // Model is the bubbletea application model.
 type Model struct {
-	repos                     pane.Pane[scanner.Repo]
-	width                     int
-	height                    int
-	topMode                   ui.Mode
-	bottomMode                ui.Mode
-	contentPane               ui.Pane
-	lastGitMode               ui.Mode
-	lastBeadsMode             ui.Mode
-	rows                      pane.Pane[gitquery.BranchRow]
-	stashes                   pane.Pane[gitquery.Stash]
-	worktrees                 pane.Pane[gitquery.Worktree]
-	worktreeSessions          pane.Pane[sessions.SessionRecord]
-	commits                   pane.Pane[gitquery.Commit]
-	reflogs                   pane.Pane[gitquery.ReflogEntry]
-	sessions                  pane.Pane[sessions.SessionRecord]
-	plans                     pane.Pane[planstore.PlanRecord]
-	flows                     pane.Pane[flowstore.FlowRecord]
-	activeFlowRecords         []flowstore.FlowRecord
-	latestFlowMutations       []cachedFlowMutation
-	pendingFlowHeadlessWrites []pendingFlowHeadlessWrite
-	activeFlows               pane.Pane[flowstore.FlowRecord]
-	beads                     [beadSubviewCount]beadSubviewState
-	beadExpansion             beadExpansionSnapshot
-	beadExpansionSeq          uint64
-	expandedPlanID            string
-	expandedFlowID            string
-	expandedActiveFlowID      string
-	selectedPlanPhaseID       string
-	selectedFlowPhaseID       string
-	selectedActiveFlowPhaseID string
-	modal                     modal.Modal
-	diffRequestSeq            uint64
-	activeViewRequest         uint64
-	activeViewKind            FetchKind
-	activeViewMode            ui.Mode
-	listRequestSeq            uint64
-	worktreeSessionRequestSeq uint64
-	activeWorktreeSessionReq  uint64
-	inlineWorktreeSessionRepo string
-	inlineWorktreeSessionPath string
-	pendingInlineSessionRepo  string
-	pendingInlineSessionPath  string
-	pendingInlineSessionList  uint64
-	worktreeCreateSeq         uint64
-	activeWorktreeCreate      uint64
-	repoCreateSeq             uint64
-	activeRepoCreate          uint64
-	flowCreateSeq             uint64
-	activeFlowCreate          uint64
-	readyBeadFlowCreateSeq    uint64
-	activeReadyBeadFlowCreate uint64
-	flowPreparationAdmission  bool
-	flowPreparationSeq        uint64
-	flowPreparationOwner      flowPreparationOwner
+	repos                       pane.Pane[scanner.Repo]
+	width                       int
+	height                      int
+	topMode                     ui.Mode
+	bottomMode                  ui.Mode
+	contentPane                 ui.Pane
+	lastGitMode                 ui.Mode
+	lastBeadsMode               ui.Mode
+	rows                        pane.Pane[gitquery.BranchRow]
+	stashes                     pane.Pane[gitquery.Stash]
+	worktrees                   pane.Pane[gitquery.Worktree]
+	worktreeSessions            pane.Pane[sessions.SessionRecord]
+	commits                     pane.Pane[gitquery.Commit]
+	reflogs                     pane.Pane[gitquery.ReflogEntry]
+	sessions                    pane.Pane[sessions.SessionRecord]
+	plans                       pane.Pane[planstore.PlanRecord]
+	flows                       pane.Pane[flowstore.FlowRecord]
+	activeFlowRecords           []flowstore.FlowRecord
+	latestFlowMutations         []cachedFlowMutation
+	pendingFlowHeadlessWrites   []pendingFlowHeadlessWrite
+	activeFlows                 pane.Pane[flowstore.FlowRecord]
+	prBabysitterRecords         []flowstore.FlowRecord
+	prBabysitterFlows           pane.Pane[flowstore.FlowRecord]
+	prBabysitterStatuses        map[string]actions.PullRequestStatus
+	beads                       [beadSubviewCount]beadSubviewState
+	beadExpansion               beadExpansionSnapshot
+	beadExpansionSeq            uint64
+	expandedPlanID              string
+	expandedFlowID              string
+	expandedActiveFlowID        string
+	selectedPlanPhaseID         string
+	selectedFlowPhaseID         string
+	selectedActiveFlowPhaseID   string
+	expandedPRBabysitterFlowID  string
+	selectedPRBabysitterPhaseID string
+	modal                       modal.Modal
+	diffRequestSeq              uint64
+	activeViewRequest           uint64
+	activeViewKind              FetchKind
+	activeViewMode              ui.Mode
+	listRequestSeq              uint64
+	worktreeSessionRequestSeq   uint64
+	activeWorktreeSessionReq    uint64
+	inlineWorktreeSessionRepo   string
+	inlineWorktreeSessionPath   string
+	pendingInlineSessionRepo    string
+	pendingInlineSessionPath    string
+	pendingInlineSessionList    uint64
+	worktreeCreateSeq           uint64
+	activeWorktreeCreate        uint64
+	repoCreateSeq               uint64
+	activeRepoCreate            uint64
+	flowCreateSeq               uint64
+	activeFlowCreate            uint64
+	readyBeadFlowCreateSeq      uint64
+	activeReadyBeadFlowCreate   uint64
+	flowPreparationAdmission    bool
+	flowPreparationSeq          uint64
+	flowPreparationOwner        flowPreparationOwner
 
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
@@ -128,9 +142,11 @@ type Model struct {
 	activePane                ui.Pane
 	repoPaneCollapsed         bool
 	activeFlowSurface         bool
+	takeover                  takeoverMode
 	activeFlowReturnPane      ui.Pane
 	activeFlowReturnContent   ui.Pane
 	activeFlowReturnSet       bool
+	prBabysitterCancel        context.CancelFunc
 	destructive               bool
 	status                    statusError
 	statusSeq                 uint64
@@ -172,6 +188,7 @@ type Model struct {
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
+	lookupPRStatus            func(context.Context, int, string) (actions.PullRequestStatus, error)
 	markFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	closeFlow                 func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
@@ -329,6 +346,7 @@ type Options struct {
 	SetFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	SetFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	LookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
+	LookupPRStatus            func(context.Context, int, string) (actions.PullRequestStatus, error)
 	MarkFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	CloseFlow                 func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
 	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
@@ -615,6 +633,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	lookupPRMerge := opts.LookupPRMerge
 	if lookupPRMerge == nil {
 		lookupPRMerge = actions.LookupGitHubPRMerge
+	}
+	lookupPRStatus := opts.LookupPRStatus
+	if lookupPRStatus == nil {
+		lookupPRStatus = actions.LookupGitHubPRStatus
 	}
 	markFlowManualMerge := opts.MarkFlowManualMerge
 	if markFlowManualMerge == nil {
@@ -903,6 +925,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
 		activeFlows:           newFlowPane(),
+		prBabysitterFlows:     newFlowPane(),
+		prBabysitterStatuses:  make(map[string]actions.PullRequestStatus),
 		beads:                 newBeadSubviews(),
 		terminalDockVisible:   true,
 		flowRefreshTickGen:    1,
@@ -910,6 +934,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bottomMode:            bottomMode,
 		contentPane:           contentPane,
 		activeFlowSurface:     activeFlowSurface,
+		takeover:              takeoverFromStartup(activeFlowSurface),
 		agentCommand:          agent.NormalizeStored(opts.AgentCommand),
 		codexModel:            agent.NormalizeModel(opts.CodexModel),
 		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
@@ -947,6 +972,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchSeams:               launchSeams,
 		setFlowAutoMode:           setFlowAutoMode,
 		setFlowHeadless:           setFlowHeadless,
+		lookupPRStatus:            lookupPRStatus,
 		lookupPRMerge:             lookupPRMerge,
 		markFlowManualMerge:       markFlowManualMerge,
 		closeFlow:                 closeFlow,
@@ -1345,6 +1371,9 @@ func (m Model) View() string {
 	if m.activeFlowSurfaceVisible() {
 		flows, flowSelected, flowScroll = m.activeFlows.View()
 	}
+	if m.prBabysitterSurfaceVisible() {
+		flows, flowSelected, flowScroll = m.prBabysitterFlows.View()
+	}
 	flowAutoModeSelected := false
 	if flowSelected >= 0 && flowSelected < len(flows) {
 		flowAutoModeSelected = flows[flowSelected].AutoMode
@@ -1370,140 +1399,144 @@ func (m Model) View() string {
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
-		Repos:                        repos,
-		ActiveTerminalRepoPaths:      m.activeTerminalRepoPaths(),
-		Selected:                     selected,
-		Width:                        m.width,
-		Height:                       m.height,
-		Mode:                         mode,
-		TopMode:                      m.topMode,
-		BottomMode:                   m.bottomMode,
-		ContentPane:                  m.contentPane,
-		ActiveFlows:                  m.activeFlowSurfaceVisible(),
-		Branches:                     rows,
-		Stashes:                      stashes,
-		BranchSelected:               branchSelected,
-		StashSelected:                stashSelected,
-		Overlay:                      m.overlayState(),
-		OverlayDiff:                  modalView.Diff,
-		OverlayScroll:                modalView.Scroll,
-		ConfirmPrompt:                modalView.Prompt,
-		ConfirmForce:                 modalView.Force,
-		InputPrompt:                  modalView.Prompt,
-		InputPlaceholder:             modalView.Placeholder,
-		InputValue:                   modalView.Input,
-		InputError:                   modalView.InputErr,
-		InputMode:                    uiInputMode(modalView.InputMode),
-		InputHeight:                  modalView.InputHeight,
-		InputCursor:                  modalView.InputCursor,
-		WorktreeInputPrompt:          modalView.Prompt,
-		WorktreeInputPlaceholder:     modalView.Placeholder,
-		WorktreeInput:                modalView.Input,
-		WorktreeInputErr:             modalView.InputErr,
-		SelectPrompt:                 modalView.Prompt,
-		SelectItems:                  uiSelectItems(modalView.SelectItems),
-		SelectSelected:               modalView.SelectIndex,
-		SelectWidth:                  modalView.SelectLayout.Width,
-		SelectHeight:                 modalView.SelectLayout.Height,
-		SelectPlacement:              uiSelectPlacement(modalView.SelectLayout.Placement),
-		Form:                         uiFormView(modalView.Form),
-		BranchScroll:                 branchScroll,
-		RepoScroll:                   repoScroll,
-		StashScroll:                  stashScroll,
-		ActivePane:                   m.activePane,
-		RepoPaneCollapsed:            m.repoPaneCollapsed,
-		Destructive:                  m.destructive,
-		Worktrees:                    worktrees,
-		WorktreeSelected:             worktreeSelected,
-		WorktreeScroll:               worktreeScroll,
-		WorktreeSessions:             worktreeSessions,
-		WorktreeSessionSelected:      worktreeSessionSelected,
-		WorktreeSessionScroll:        worktreeSessionScroll,
-		InlineWorktreeSessions:       m.inlineWorktreeSessionPath != "",
-		Commits:                      commits,
-		CommitSelected:               commitSelected,
-		CommitScroll:                 commitScroll,
-		Reflogs:                      reflogs,
-		ReflogSelected:               reflogSelected,
-		ReflogScroll:                 reflogScroll,
-		Sessions:                     sessions,
-		SessionSelected:              sessionSelected,
-		SessionScroll:                sessionScroll,
-		EmbeddedTerminals:            m.embeddedTerminalTabs(),
-		EmbeddedTerminalLines:        m.embeddedTerminalLines(),
-		EmbeddedTerminalPrefix:       m.terminalPrefixActive,
-		EmbeddedTerminalVisible:      m.terminalDockVisible,
-		EmbeddedTerminalFocused:      m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal,
-		Plans:                        plans,
-		PlanSelected:                 planSelected,
-		PlanScroll:                   planScroll,
-		Flows:                        flows,
-		FlowSelected:                 flowSelected,
-		FlowScroll:                   flowScroll,
-		FlowDegradationWarning:       m.flowDegradationWarning(ui.ModeFlows),
-		ActiveFlowDegradationWarning: m.flowDegradationWarning(ui.ModeActiveFlows),
-		BeadsOpen:                    beadsActive,
-		BeadsOpenSelected:            beadsSelected,
-		BeadsOpenScroll:              beadsScroll,
-		BeadsOpenAvailable:           beadsAvailable,
-		BeadsOpenPending:             beadsPending,
-		ReadyBeadFlowCreateAvailable: m.canCreateReadyBeadFlow(),
-		ReadyBeadFlowStartAvailable:  m.canStartReadyBeadFlow(),
-		ReadyBeadFlowKeysOwned:       m.readyBeadFlowKeysOwned(),
-		EpicAutoOnAvailable:          m.canEnableEpicProgression(),
-		EpicAutoOffAvailable:         m.canDisableEpicProgression(),
-		EpicAutoKeyOwned:             m.epicProgressionKeysOwned(),
-		BeadsError:                   beadsError,
-		BeadsQuery:                   beadsQuery,
-		BeadsSourceCount:             beadsSourceCount,
-		BeadsClosedTotal:             beadsClosedTotal,
-		BeadExpansion:                cloneBeadExpansion(m.beadExpansion.projection),
-		FlowTerminalActivity:         m.flowTerminalActivity(),
-		ExpandedPlanID:               m.expandedPlanID,
-		ExpandedFlowID:               m.currentExpandedFlowID(),
-		SelectedPlanPhaseID:          m.selectedPlanPhaseID,
-		SelectedFlowPhaseID:          m.currentSelectedFlowPhaseID(),
-		FlowHeadless:                 m.selectedFlowHeadless(),
-		FlowAutoModeSelected:         flowAutoModeSelected,
-		FlowIssueTargetSelected:      flowIssueTargetSelected,
-		FlowPRTargetSelected:         flowPRTargetSelected,
-		FlowAgentLabel:               m.flowAgentShortcutLabel(),
-		FlowModel:                    m.flowModelLabel(),
-		FlowReasoningEffort:          m.flowReasoningEffortLabel(),
-		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
-		FlowWorktreeAgentReady:       m.selectedFlowWorktreeAgentReady(),
-		FlowRepairReady:              m.selectedFlowRepairReady(),
-		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
-		FlowAutofixReadySelected:     m.selectedFlowAutofixReady(),
-		FlowCloseActionSelected:      m.selectedFlowCloseActionHint(),
-		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
-		FlowPhaseReleaseSelected:     m.selectedFlowPhaseSessionReleasable(),
-		FlowPhaseResumableSelected:   m.selectedFlowPhaseResumable(),
-		OverlayText:                  modalView.Text,
-		TransientError:               m.visibleStatusText(),
-		TransientErrorFadeStep:       m.visibleStatusFadeStep(),
-		SearchActive:                 m.searchActive,
-		RepoSearch:                   m.repos.Query(),
-		ItemSearch:                   m.activeItemPaneQuery(),
-		ItemSourceCount:              m.activeItemPaneSourceCount(),
-		TopItemSearch:                m.itemPaneQuery(m.topMode),
-		BottomItemSearch:             m.itemPaneQuery(m.bottomMode),
-		TopItemSourceCount:           m.itemPaneSourceCount(m.topMode),
-		BottomItemSourceCount:        m.itemPaneSourceCount(m.bottomMode),
-		RepoEmptyMessage:             repoEmptyMessage,
-		RightEmptyMessage:            rightEmptyMessage,
-		TopListError:                 m.currentListError(m.topMode),
-		BottomListError:              m.currentListError(m.bottomMode),
-		ActiveFlowsListError:         m.currentListError(ui.ModeActiveFlows),
-		FetchAvailable:               m.canFetch(),
-		FetchVisibleAvailable:        m.canFetchVisibleRepos(),
-		RepoCreateAvailable:          m.canCreateRepo(),
-		PullAvailable:                m.canPull(),
-		WorktreeMoveAvailable:        m.canMoveWorktree(),
-		WorktreeSessionsOpen:         m.inlineWorktreeSessionPath != "",
-		AgentAvailable:               m.canLaunchAgent(),
-		NewAgentAvailable:            m.canCreateAndLaunchAgent(),
-		TmuxAttachAvailable:          m.tmuxModeAttachAvailable(),
+		Repos:                          repos,
+		ActiveTerminalRepoPaths:        m.activeTerminalRepoPaths(),
+		Selected:                       selected,
+		Width:                          m.width,
+		Height:                         m.height,
+		Mode:                           mode,
+		TopMode:                        m.topMode,
+		BottomMode:                     m.bottomMode,
+		ContentPane:                    m.contentPane,
+		ActiveFlows:                    m.activeFlowSurfaceVisible(),
+		PRBabysitter:                   m.prBabysitterSurfaceVisible(),
+		Branches:                       rows,
+		Stashes:                        stashes,
+		BranchSelected:                 branchSelected,
+		StashSelected:                  stashSelected,
+		Overlay:                        m.overlayState(),
+		OverlayDiff:                    modalView.Diff,
+		OverlayScroll:                  modalView.Scroll,
+		ConfirmPrompt:                  modalView.Prompt,
+		ConfirmForce:                   modalView.Force,
+		InputPrompt:                    modalView.Prompt,
+		InputPlaceholder:               modalView.Placeholder,
+		InputValue:                     modalView.Input,
+		InputError:                     modalView.InputErr,
+		InputMode:                      uiInputMode(modalView.InputMode),
+		InputHeight:                    modalView.InputHeight,
+		InputCursor:                    modalView.InputCursor,
+		WorktreeInputPrompt:            modalView.Prompt,
+		WorktreeInputPlaceholder:       modalView.Placeholder,
+		WorktreeInput:                  modalView.Input,
+		WorktreeInputErr:               modalView.InputErr,
+		SelectPrompt:                   modalView.Prompt,
+		SelectItems:                    uiSelectItems(modalView.SelectItems),
+		SelectSelected:                 modalView.SelectIndex,
+		SelectWidth:                    modalView.SelectLayout.Width,
+		SelectHeight:                   modalView.SelectLayout.Height,
+		SelectPlacement:                uiSelectPlacement(modalView.SelectLayout.Placement),
+		Form:                           uiFormView(modalView.Form),
+		BranchScroll:                   branchScroll,
+		RepoScroll:                     repoScroll,
+		StashScroll:                    stashScroll,
+		ActivePane:                     m.activePane,
+		RepoPaneCollapsed:              m.repoPaneCollapsed,
+		Destructive:                    m.destructive,
+		Worktrees:                      worktrees,
+		WorktreeSelected:               worktreeSelected,
+		WorktreeScroll:                 worktreeScroll,
+		WorktreeSessions:               worktreeSessions,
+		WorktreeSessionSelected:        worktreeSessionSelected,
+		WorktreeSessionScroll:          worktreeSessionScroll,
+		InlineWorktreeSessions:         m.inlineWorktreeSessionPath != "",
+		Commits:                        commits,
+		CommitSelected:                 commitSelected,
+		CommitScroll:                   commitScroll,
+		Reflogs:                        reflogs,
+		ReflogSelected:                 reflogSelected,
+		ReflogScroll:                   reflogScroll,
+		Sessions:                       sessions,
+		SessionSelected:                sessionSelected,
+		SessionScroll:                  sessionScroll,
+		EmbeddedTerminals:              m.embeddedTerminalTabs(),
+		EmbeddedTerminalLines:          m.embeddedTerminalLines(),
+		EmbeddedTerminalPrefix:         m.terminalPrefixActive,
+		EmbeddedTerminalVisible:        m.terminalDockVisible,
+		EmbeddedTerminalFocused:        m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal,
+		Plans:                          plans,
+		PlanSelected:                   planSelected,
+		PlanScroll:                     planScroll,
+		Flows:                          flows,
+		PRBabysitterRows:               m.prBabysitterRows(flows),
+		FlowSelected:                   flowSelected,
+		FlowScroll:                     flowScroll,
+		FlowDegradationWarning:         m.flowDegradationWarning(ui.ModeFlows),
+		ActiveFlowDegradationWarning:   m.flowDegradationWarning(ui.ModeActiveFlows),
+		PRBabysitterDegradationWarning: m.flowDegradationWarning(ui.ModePRBabysitter),
+		BeadsOpen:                      beadsActive,
+		BeadsOpenSelected:              beadsSelected,
+		BeadsOpenScroll:                beadsScroll,
+		BeadsOpenAvailable:             beadsAvailable,
+		BeadsOpenPending:               beadsPending,
+		ReadyBeadFlowCreateAvailable:   m.canCreateReadyBeadFlow(),
+		ReadyBeadFlowStartAvailable:    m.canStartReadyBeadFlow(),
+		ReadyBeadFlowKeysOwned:         m.readyBeadFlowKeysOwned(),
+		EpicAutoOnAvailable:            m.canEnableEpicProgression(),
+		EpicAutoOffAvailable:           m.canDisableEpicProgression(),
+		EpicAutoKeyOwned:               m.epicProgressionKeysOwned(),
+		BeadsError:                     beadsError,
+		BeadsQuery:                     beadsQuery,
+		BeadsSourceCount:               beadsSourceCount,
+		BeadsClosedTotal:               beadsClosedTotal,
+		BeadExpansion:                  cloneBeadExpansion(m.beadExpansion.projection),
+		FlowTerminalActivity:           m.flowTerminalActivity(),
+		ExpandedPlanID:                 m.expandedPlanID,
+		ExpandedFlowID:                 m.currentExpandedFlowID(),
+		SelectedPlanPhaseID:            m.selectedPlanPhaseID,
+		SelectedFlowPhaseID:            m.currentSelectedFlowPhaseID(),
+		FlowHeadless:                   m.selectedFlowHeadless(),
+		FlowAutoModeSelected:           flowAutoModeSelected,
+		FlowIssueTargetSelected:        flowIssueTargetSelected,
+		FlowPRTargetSelected:           flowPRTargetSelected,
+		FlowAgentLabel:                 m.flowAgentShortcutLabel(),
+		FlowModel:                      m.flowModelLabel(),
+		FlowReasoningEffort:            m.flowReasoningEffortLabel(),
+		FlowNextLaunchReady:            m.selectedFlowHasLaunchablePhase(),
+		FlowWorktreeAgentReady:         m.selectedFlowWorktreeAgentReady(),
+		FlowRepairReady:                m.selectedFlowRepairReady(),
+		FlowManualMergeReadySelected:   m.selectedFlowManualMergeReady(),
+		FlowAutofixReadySelected:       m.selectedFlowAutofixReady(),
+		FlowCloseActionSelected:        m.selectedFlowCloseActionHint(),
+		FlowPhaseResetReadySelected:    m.selectedFlowPhaseResettable(),
+		FlowPhaseReleaseSelected:       m.selectedFlowPhaseSessionReleasable(),
+		FlowPhaseResumableSelected:     m.selectedFlowPhaseResumable(),
+		OverlayText:                    modalView.Text,
+		TransientError:                 m.visibleStatusText(),
+		TransientErrorFadeStep:         m.visibleStatusFadeStep(),
+		SearchActive:                   m.searchActive,
+		RepoSearch:                     m.repos.Query(),
+		ItemSearch:                     m.activeItemPaneQuery(),
+		ItemSourceCount:                m.activeItemPaneSourceCount(),
+		TopItemSearch:                  m.itemPaneQuery(m.topMode),
+		BottomItemSearch:               m.itemPaneQuery(m.bottomMode),
+		TopItemSourceCount:             m.itemPaneSourceCount(m.topMode),
+		BottomItemSourceCount:          m.itemPaneSourceCount(m.bottomMode),
+		RepoEmptyMessage:               repoEmptyMessage,
+		RightEmptyMessage:              rightEmptyMessage,
+		TopListError:                   m.currentListError(m.topMode),
+		BottomListError:                m.currentListError(m.bottomMode),
+		ActiveFlowsListError:           m.currentListError(ui.ModeActiveFlows),
+		PRBabysitterListError:          m.currentListError(ui.ModePRBabysitter),
+		FetchAvailable:                 m.canFetch(),
+		FetchVisibleAvailable:          m.canFetchVisibleRepos(),
+		RepoCreateAvailable:            m.canCreateRepo(),
+		PullAvailable:                  m.canPull(),
+		WorktreeMoveAvailable:          m.canMoveWorktree(),
+		WorktreeSessionsOpen:           m.inlineWorktreeSessionPath != "",
+		AgentAvailable:                 m.canLaunchAgent(),
+		NewAgentAvailable:              m.canCreateAndLaunchAgent(),
+		TmuxAttachAvailable:            m.tmuxModeAttachAvailable(),
 	})
 }
 
@@ -1541,7 +1574,7 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	}
 	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
-		if m.activeFlowSurfaceVisible() {
+		if m.takeoverVisible() {
 			return "No flow results for " + m.activeItemPaneQuery()
 		}
 		return "No " + modeResultName(mode) + " results for " + m.activeItemPaneQuery()
@@ -1556,6 +1589,12 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	if m.activeFlowSurfaceVisible() {
 		return "No active flows"
 	}
+	if m.prBabysitterSurfaceVisible() {
+		if m.prBabysitterCancel != nil && m.prBabysitterFlows.Len() == 0 {
+			return "loading PR babysitter"
+		}
+		return "No PRs awaiting merge"
+	}
 	if state, ok := m.activeBeadSubview(); ok {
 		if state.available {
 			return "no " + beadsModeName(mode) + " beads"
@@ -1566,6 +1605,9 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 }
 
 func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen int) (int, int) {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows.ItemCount(), filteredFlows
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.ItemCount(), filteredFlows
 	}
@@ -1588,6 +1630,8 @@ func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredSta
 		return m.flows.ItemCount(), filteredFlows
 	case ui.ModeActiveFlows:
 		return m.activeFlows.ItemCount(), filteredFlows
+	case ui.ModePRBabysitter:
+		return m.prBabysitterFlows.ItemCount(), filteredFlows
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		state, _ := m.activeBeadSubview()
 		return state.pane.ItemCount(), filteredBeadsOpen
@@ -1616,6 +1660,8 @@ func modeDataName(mode ui.Mode) string {
 		return "flows"
 	case ui.ModeActiveFlows:
 		return "active flows"
+	case ui.ModePRBabysitter:
+		return "PR babysitter"
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		return beadsModeName(mode) + " beads"
 	default:
@@ -1642,6 +1688,8 @@ func modeResultName(mode ui.Mode) string {
 	case ui.ModeFlows:
 		return "flow"
 	case ui.ModeActiveFlows:
+		return "flow"
+	case ui.ModePRBabysitter:
 		return "flow"
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		return "bead"
@@ -1685,6 +1733,10 @@ func modeEmptyMessage(mode ui.Mode) string {
 		return "No plans"
 	case ui.ModeFlows:
 		return "No flows"
+	case ui.ModeActiveFlows:
+		return "No active flows"
+	case ui.ModePRBabysitter:
+		return "No PRs awaiting merge"
 	default:
 		return "nothing here yet"
 	}
@@ -1902,6 +1954,11 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		return m.startFlowSurfaceRefreshFetch()
+	case prBabysitterPollMsg:
+		if !m.prBabysitterSurfaceVisible() || msg.Generation != m.currentListRequest(ui.ModePRBabysitter) {
+			return m, nil
+		}
+		return m.startPRBabysitterRefresh()
 	case autoAdvanceTickMsg:
 		return m.startAutoAdvanceFetch()
 	case AutoAdvanceResultMsg:
@@ -1988,6 +2045,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next, autoLaunchCmd := m.handleActiveFlowResult(msg)
 		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeActiveFlows, msg.ListRequest)
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
+	case PRBabysitterResultMsg:
+		return m.handlePRBabysitterResult(msg)
 	case BeadsReadyResultMsg:
 		next, accepted := m.handleBeadsResult(ui.ModeBeadsReady, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
 		if !accepted {
@@ -2180,7 +2239,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
 		next, statusCmd := m.handleActionFailed(msg)
-		if next.flowSurfaceVisible() && (next.activeFlowSurfaceVisible() || next.isCurrentRepo(msg.RepoPath)) {
+		if next.flowSurfaceVisible() && (next.takeoverVisible() || next.isCurrentRepo(msg.RepoPath)) {
 			var refreshCmd tea.Cmd
 			next, refreshCmd = next.startFlowSurfaceFetch()
 			return next, batchNonNil(statusCmd, refreshCmd)
@@ -2285,6 +2344,9 @@ func (m Model) selectedPlan() (planstore.PlanRecord, bool) {
 func (m Model) selectedFlow() (flowstore.FlowRecord, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return flowstore.FlowRecord{}, false
+	}
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterFlows.Selected()
 	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.Selected()
@@ -2510,6 +2572,9 @@ func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flow
 }
 
 func (m Model) flowLookupRecords() []flowstore.FlowRecord {
+	if m.prBabysitterSurfaceVisible() {
+		return m.prBabysitterRecords
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlowRecords
 	}
@@ -2547,6 +2612,10 @@ func (m Model) clearSelectedPlanPhase() Model {
 }
 
 func (m Model) clearSelectedFlowPhase() Model {
+	if m.prBabysitterSurfaceVisible() {
+		m.selectedPRBabysitterPhaseID = ""
+		return m
+	}
 	if m.activeFlowSurfaceVisible() {
 		m.selectedActiveFlowPhaseID = ""
 		return m
@@ -2567,6 +2636,12 @@ func (m Model) setExpandedPlanID(planID string) Model {
 }
 
 func (m Model) setExpandedFlowID(flowID string) Model {
+	if m.prBabysitterSurfaceVisible() {
+		m.expandedPRBabysitterFlowID = flowID
+		m.selectedPRBabysitterPhaseID = ""
+		m.prBabysitterFlows = m.prBabysitterFlows.SetItemHeight(flowItemHeight(flowID))
+		return m.reflowPRBabysitter()
+	}
 	if m.activeFlowSurfaceVisible() {
 		m.expandedActiveFlowID = flowID
 		m.selectedActiveFlowPhaseID = ""
@@ -2907,7 +2982,7 @@ func (m Model) reflowPlans() Model {
 
 func (m Model) reflowFlows() Model {
 	m.flows = m.flows.Reflow(m.contentHeightForMode(ui.ModeFlows), m.contentWidth())
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		return m
 	}
 	if m.selectedFlowPhaseID != "" {

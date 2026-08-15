@@ -125,7 +125,7 @@ func (intent flowLaunchIntent) resumeSessionIdentity() flowSessionIdentity {
 }
 
 func (m Model) flowLaunchOrigin() flowLaunchOrigin {
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		return flowLaunchOriginActiveFlows
 	}
 	return flowLaunchOriginFlows

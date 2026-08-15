@@ -941,10 +941,13 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 }
 
 func (m Model) resetStoredPanesForRepoRefresh() Model {
-	if !m.activeFlowSurfaceVisible() {
+	if !m.takeoverVisible() {
 		return m.resetRightPaneCursors()
 	}
 	m = m.resetStoredPaneCursors()
+	if m.prBabysitterSurfaceVisible() {
+		return m.syncPRBabysitterFromCache()
+	}
 	return m.syncActiveFlowsFromCache()
 }
 
@@ -1041,7 +1044,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	m = m.clearWorktreeCreateRequest(msg.Request)
-	m.activeFlowSurface = false
+	m = m.setTakeover(takeoverNone)
 	m, _ = m.selectStoredMode(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.ResetSelection()
 	m, fetchCmd := m.startFetchMode(ui.ModeWorktrees)
@@ -1063,7 +1066,7 @@ func (m Model) handleWorktreeBootstrapFailed(msg WorktreeBootstrapFailedMsg) (te
 	} else {
 		errText = "bootstrap hook failed: " + errText
 	}
-	m.activeFlowSurface = false
+	m = m.setTakeover(takeoverNone)
 	m, _ = m.selectStoredMode(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.ResetSelection()
 	m = m.setStatus(statusGitMutation, errText)
@@ -1325,7 +1328,7 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.activeFlowSurface = false
+		m = m.setTakeover(takeoverNone)
 		m, _ = m.selectStoredMode(ui.ModeBranches)
 		m.rows = m.rows.SetQuery("")
 		m.pendingBranchSelection = msg.Name
@@ -1426,7 +1429,7 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 		// undoing newer drain state.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
-	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
+	if m.takeoverVisible() || m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusOther, msg.Err)
 		return m, nil
 	}
@@ -1571,6 +1574,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	}
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
+	m = m.replacePRBabysitterRepoCache(msg.RepoPath, flows)
 	m = m.clampSelectionsAfterFilter()
 	if m.focusedMode() == ui.ModeFlows && m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
@@ -1600,14 +1604,14 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 }
 
 func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {
-	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+	if msg.FlowID == "" || (!m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
 	return m.replaceFlowRecord(msg.Flow, flowMutationAutoMode, flowAutoModeOverlay(msg.Enabled))
 }
 
 func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -1663,14 +1667,14 @@ func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
 }
 
 func (m Model) handleFlowManualMergeSet(msg FlowManualMergeSetMsg) Model {
-	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+	if msg.FlowID == "" || (!m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
 	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
 }
 
 func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) Model {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -1684,7 +1688,7 @@ func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) M
 }
 
 func (m Model) handleFlowClosed(msg FlowClosedMsg) Model {
-	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+	if msg.FlowID == "" || (!m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
 	// An unscoped poll disarms a drain on a closed Flow only after occupancy
@@ -1697,7 +1701,7 @@ func (m Model) handleFlowClosed(msg FlowClosedMsg) Model {
 }
 
 func (m Model) handleFlowCloseFailed(msg FlowCloseFailedMsg) Model {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -1708,14 +1712,14 @@ func (m Model) handleFlowCloseFailed(msg FlowCloseFailedMsg) Model {
 }
 
 func (m Model) handleFlowReopened(msg FlowReopenedMsg) Model {
-	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+	if msg.FlowID == "" || (!m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
 	return m.replaceFlowRecord(msg.Flow, flowMutationWholeRecord, nil)
 }
 
 func (m Model) handleFlowReopenFailed(msg FlowReopenFailedMsg) Model {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -1791,10 +1795,41 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord, field flowMutationFi
 	if replacedActive {
 		m.activeFlowRecords = activeRecords
 	}
-	if !replacedFlows && !replacedActive {
+	prRecords := append([]flowstore.FlowRecord(nil), m.prBabysitterRecords...)
+	replacedPR := false
+	for i := range prRecords {
+		if prRecords[i].FlowID != flow.FlowID {
+			continue
+		}
+		candidate := flow
+		if overlayOnly {
+			candidate = apply(prRecords[i])
+		} else if flow.UpdatedAt.Before(prRecords[i].UpdatedAt) {
+			break
+		}
+		if prBabysitterEligible(candidate) {
+			prRecords[i] = candidate
+		} else {
+			prRecords = append(prRecords[:i], prRecords[i+1:]...)
+			statuses := make(map[string]actions.PullRequestStatus, len(m.prBabysitterStatuses))
+			for flowID, status := range m.prBabysitterStatuses {
+				if flowID != flow.FlowID {
+					statuses[flowID] = status
+				}
+			}
+			m.prBabysitterStatuses = statuses
+		}
+		replacedPR = true
+		break
+	}
+	if replacedPR {
+		m.prBabysitterRecords = prRecords
+	}
+	if !replacedFlows && !replacedActive && !replacedPR {
 		return m
 	}
 	m = m.syncActiveFlowsFromCache()
+	m = m.syncPRBabysitterFromCache()
 	return m.clampSelectionsAfterFilter()
 }
 
@@ -1807,7 +1842,7 @@ func (m Model) flowMutationSuperseded(flow flowstore.FlowRecord, field flowMutat
 			return true
 		}
 	}
-	for _, records := range [][]flowstore.FlowRecord{m.flows.Items(), m.activeFlowRecords} {
+	for _, records := range [][]flowstore.FlowRecord{m.flows.Items(), m.activeFlowRecords, m.prBabysitterRecords} {
 		for _, record := range records {
 			if record.FlowID == flow.FlowID &&
 				sameRepoPath(record.RepoPath, flow.RepoPath) &&
@@ -1977,6 +2012,9 @@ func (m Model) pruneAcknowledgedFlowMutations() Model {
 	if active := m.currentListRequest(ui.ModeActiveFlows); m.activeFlowSurfaceVisible() && active < threshold {
 		threshold = active
 	}
+	if babysitter := m.currentListRequest(ui.ModePRBabysitter); m.prBabysitterSurfaceVisible() && babysitter < threshold {
+		threshold = babysitter
+	}
 	retained := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
 	for _, mutation := range m.latestFlowMutations {
 		if mutation.field.overlayOnly() || mutation.generation >= threshold {
@@ -2014,7 +2052,7 @@ func (m Model) rememberFlowMutation(flow flowstore.FlowRecord, field flowMutatio
 }
 
 func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	m = m.clearDeletedFlowState(msg.FlowID)
@@ -2022,7 +2060,7 @@ func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowPhaseReset(msg flowPhaseResetMsg) (tea.Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	phaseID := strings.TrimSpace(msg.PhaseID)
@@ -2034,7 +2072,7 @@ func (m Model) handleFlowPhaseReset(msg flowPhaseResetMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -2050,7 +2088,7 @@ func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Mode
 // a successful call proves nothing was persisted. The surface refresh is what
 // shows the truth.
 func (m Model) handleFlowPhaseSessionReleased(msg flowPhaseSessionReleasedMsg) (tea.Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	phaseID := strings.TrimSpace(msg.PhaseID)
@@ -2066,7 +2104,7 @@ func (m Model) handleFlowPhaseSessionReleased(msg flowPhaseSessionReleasedMsg) (
 }
 
 func (m Model) handleFlowPhaseSessionReleaseFailed(msg flowPhaseSessionReleaseFailedMsg) (tea.Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -2087,7 +2125,7 @@ func (m Model) handleFlowPhaseSessionReleaseFailed(msg flowPhaseSessionReleaseFa
 }
 
 func (m Model) handleFlowDeleteFailed(msg FlowDeleteFailedMsg) (tea.Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	if msg.NotFound {
@@ -2117,12 +2155,35 @@ func (m Model) clearDeletedFlowState(flowID string) Model {
 		m.selectedActiveFlowPhaseID = ""
 		m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
 	}
+	if m.expandedPRBabysitterFlowID == flowID {
+		m.expandedPRBabysitterFlowID = ""
+		m.selectedPRBabysitterPhaseID = ""
+		m.prBabysitterFlows = m.prBabysitterFlows.SetItemHeight(flowItemHeight(""))
+	}
 	if record, ok := m.flows.Selected(); ok && record.FlowID == flowID {
 		m.selectedFlowPhaseID = ""
 	}
 	if record, ok := m.activeFlows.Selected(); ok && record.FlowID == flowID {
 		m.selectedActiveFlowPhaseID = ""
 	}
+	if record, ok := m.prBabysitterFlows.Selected(); ok && record.FlowID == flowID {
+		m.selectedPRBabysitterPhaseID = ""
+	}
+	retainedPRs := make([]flowstore.FlowRecord, 0, len(m.prBabysitterRecords))
+	for _, record := range m.prBabysitterRecords {
+		if record.FlowID != flowID {
+			retainedPRs = append(retainedPRs, record)
+		}
+	}
+	m.prBabysitterRecords = retainedPRs
+	statuses := make(map[string]actions.PullRequestStatus, len(m.prBabysitterStatuses))
+	for id, status := range m.prBabysitterStatuses {
+		if id != flowID {
+			statuses[id] = status
+		}
+	}
+	m.prBabysitterStatuses = statuses
+	m = m.syncPRBabysitterFromCache()
 	retainedMutations := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
 	for _, mutation := range m.latestFlowMutations {
 		if mutation.record.FlowID != flowID {
@@ -2171,7 +2232,7 @@ func (m Model) restoreExpandedFlowSelection(flowID, phaseID string) Model {
 	m.expandedFlowID = flowID
 	m.selectedFlowPhaseID = phaseID
 	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		return m
 	}
 	return m.reflowFlows()
