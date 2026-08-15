@@ -215,7 +215,11 @@ in-memory drain for that Flow; each poll picks the first ready non-merge
 launchable phase from the poll snapshot and launches it only when no phase in
 that Flow is `running`, no flow-scoped embedded terminal is still open or
 auto-closing, no manual resume or repair on that Flow is mid-write, and no
-session recorded against the candidate phase is still live. The candidate is
+session recorded against the candidate phase is still live. A live tracked
+tmux phase agent also occupies the Flow through its kernel lease even after its
+phase becomes completed or skipped. Held or unreadable leases leave the drain
+armed without invoking tmux; exit releases the lease and a later poll retries.
+The candidate is
 then re-validated — not re-selected — against the authoritative record before
 it launches, so an earlier phase becoming ready in that window does not steal
 the launch; the already-chosen candidate proceeds as long as it is still
@@ -509,6 +513,13 @@ phase's effective settings; a graph-wide obstruction has no target phase and
 therefore resolves entirely from globals. Session resume and the generic Flow
 worktree agent keep their existing provider rules because neither is a new
 target-phase launch.
+
+For a tracked tmux phase launch or resume, the launch/close reservation is held
+across a second lease inspection, the launch-ID write, and the private
+ready/commit/started handshake. The reservation is released only after the
+runner owns the lease and the matching start result is consumed. A held lease
+refuses before mutation; an inspection error fails closed. Creation-time Plan
+Now remains embedded and does not use this lease path.
 
 Replace the complete stamp with:
 

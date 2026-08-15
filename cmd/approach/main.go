@@ -15,6 +15,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
@@ -24,6 +25,10 @@ import (
 
 func main() {
 	if err := run(os.Args, runDeps{}); err != nil {
+		var processExit flowlease.ProcessExitError
+		if errors.As(err, &processExit) {
+			os.Exit(processExit.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -50,6 +55,12 @@ type startProgramOptions struct {
 
 func run(args []string, deps runDeps) error {
 	deps = fillRunDeps(deps)
+	if len(args) > 1 && args[1] == flowlease.TmuxSpawnCommand {
+		return flowlease.RunTmuxSpawn(args[2:], deps.stderr)
+	}
+	if len(args) > 1 && args[1] == flowlease.LeaseRunCommand {
+		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr)
+	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)
 		return nil

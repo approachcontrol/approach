@@ -2,13 +2,18 @@ package actions
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/internal/flowlease"
 )
 
 // repoTmuxSessionPrefix keeps tmux-mode sessions disjoint from the per-worktree
@@ -227,6 +232,10 @@ func RepoTmuxAgentLaunch(ctx AgentLaunchContext) (RepoTmuxAgentSpec, error) {
 }
 
 func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmuxAgentSpec, error) {
+	return repoTmuxAgentLaunchWithExecutable(ctx, lookPath, os.Executable)
+}
+
+func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPathFunc, executable func() (string, error)) (RepoTmuxAgentSpec, error) {
 	if !commandExists("tmux", lookPath) {
 		return RepoTmuxAgentSpec{}, ErrRepoTmuxUnavailable
 	}
@@ -256,6 +265,78 @@ func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmu
 	sessionName := RepoAgentSessionName(sessionSource)
 	windowName := repoTmuxWindowName(ctx)
 	agentEnv := envWithoutKeys(cmd.Env, "TMUX", "ZELLIJ")
+	if ctx.FlowLaunchTracked {
+		canonicalRoot, err := flowlease.ResolveRoot(ctx.SessionStateRoot)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("prepare tracked Flow lease: %w", err)
+		}
+		executablePath, err := executable()
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("resolve current Approach executable: %w", err)
+		}
+		if !filepath.IsAbs(executablePath) {
+			return RepoTmuxAgentSpec{}, errors.New("current Approach executable path must be absolute")
+		}
+		handoffSuffix, err := randomHex(8)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("allocate Flow launch handoff suffix: %w", err)
+		}
+		nonce, err := randomHex(16)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("allocate Flow launch handoff nonce: %w", err)
+		}
+		handoffDir, err := flowlease.NewHandoffPath(canonicalRoot, ctx.LaunchID, handoffSuffix)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("prepare Flow launch handoff path: %w", err)
+		}
+		windowName = repoTmuxLeasedWindowName(ctx, handoffSuffix)
+		now := time.Now()
+		privateSpec := flowlease.PrivateSpec{
+			SessionName:      sessionName,
+			WindowName:       windowName,
+			CWD:              cmd.Dir,
+			Root:             canonicalRoot,
+			FlowID:           ctx.FlowID,
+			PhaseID:          ctx.FlowPhaseID,
+			LaunchID:         ctx.LaunchID,
+			HandoffDir:       handoffDir,
+			Nonce:            nonce,
+			DecisionDeadline: now.Add(10 * time.Second),
+			StartedDeadline:  now.Add(20 * time.Second),
+			CleanupDeadline:  now.Add(25 * time.Second),
+		}
+		termCommand, err := newTerminalCommandWithArgvBuilder(cmd.Dir, agentEnv, sessionName, "", func(scriptPath string) ([]string, error) {
+			privateSpec.ScriptPath = scriptPath
+			return flowlease.LeaseRunArgv(executablePath, privateSpec, argv)
+		})
+		if err != nil {
+			return RepoTmuxAgentSpec{}, err
+		}
+		spawnArgv, err := flowlease.SpawnArgv(executablePath, privateSpec)
+		if err != nil {
+			termCommand.cleanup()
+			return RepoTmuxAgentSpec{}, err
+		}
+		spawnCmd := exec.Command(spawnArgv[0], spawnArgv[1:]...)
+		spawnCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+		stderr := &boundedBuffer{limit: repoTmuxStderrLimit}
+		spawnCmd.Stderr = stderr
+		spawnCmd.WaitDelay = repoTmuxStderrDrainDelay
+		cleanup := func() {
+			termCommand.cleanup()
+			if _, err := os.Lstat(privateSpec.HandoffDir); err == nil {
+				_ = flowlease.CancelExact(privateSpec)
+			}
+		}
+		return RepoTmuxAgentSpec{
+			SessionName: sessionName, WindowName: windowName,
+			AttachCommand: RepoTmuxAttachCommand(sessionName),
+			Launch: TerminalLaunchSpec{
+				Cmd: spawnCmd, Detached: true, Cleanup: cleanup,
+				ErrorDetail: stderr.String,
+			},
+		}, nil
+	}
 	// sessionName is passed for parity with the other transports' scripts; only
 	// terminalLaunchWithOptions reads it back, and this path never calls that.
 	termCommand, err := newTerminalCommand(cmd.Dir, agentEnv, argv, sessionName)
@@ -291,6 +372,14 @@ func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmu
 			ErrorDetail: stderr.String,
 		},
 	}, nil
+}
+
+func randomHex(byteCount int) (string, error) {
+	data := make([]byte, byteCount)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data), nil
 }
 
 // repoTmuxStderrLimit bounds what a failed tmux invocation can push into a
@@ -335,6 +424,21 @@ func repoTmuxWindowName(ctx AgentLaunchContext) string {
 	if name == "" {
 		name = "agent"
 	}
+	if suffix := repoTmuxLaunchSuffix(ctx.LaunchID); suffix != "" {
+		name += "-" + suffix
+	}
+	return name
+}
+
+func repoTmuxLeasedWindowName(ctx AgentLaunchContext, handoffSuffix string) string {
+	name := sanitizeSessionSuffix(ctx.FlowPhaseKind)
+	if name == "" {
+		name = sanitizeSessionSuffix(agent.Normalize(ctx.Command))
+	}
+	if name == "" {
+		name = "agent"
+	}
+	name += "-" + strings.Trim(sanitizeSessionSuffix(handoffSuffix), ".-")
 	if suffix := repoTmuxLaunchSuffix(ctx.LaunchID); suffix != "" {
 		name += "-" + suffix
 	}

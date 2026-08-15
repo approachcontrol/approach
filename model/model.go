@@ -21,6 +21,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/model/pane"
 	"github.com/approachcontrol/approach/planstore"
@@ -219,6 +220,7 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
+	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
 	tmuxAttachHint            bool
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
@@ -381,9 +383,12 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
-	StartEmbeddedTerminal    EmbeddedTerminalStarter
-	FinalizeAgentSession     func(actions.AgentLaunchContext) error
-	SessionStateRoot         string
+	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
+	// manual admission, and AutoMode. It must never invoke tmux or fork.
+	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
+	StartEmbeddedTerminal EmbeddedTerminalStarter
+	FinalizeAgentSession  func(actions.AgentLaunchContext) error
+	SessionStateRoot      string
 	// FlowStore is the process's already-open Flow store. When set, the fallback
 	// mutators below reuse it instead of opening a second one against the same
 	// approach.db: two pools would bootstrap twice and then contend for SQLite's
@@ -823,6 +828,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	inspectFlowLease := opts.InspectFlowLease
+	if inspectFlowLease == nil {
+		inspectFlowLease = flowlease.Inspect
+	}
 	startEmbeddedTerminal := opts.StartEmbeddedTerminal
 	if startEmbeddedTerminal == nil {
 		startEmbeddedTerminal = defaultEmbeddedTerminalStarter
@@ -1004,6 +1013,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		inspectFlowLease:          inspectFlowLease,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
 		startEmbeddedTerminal:     startEmbeddedTerminal,
 		finalizeAgentSession:      finalizeAgentSession,
@@ -2263,10 +2273,16 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	// through this handler with no attempt and must reach main's behaviour
 	// below unchanged.
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
+		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
 			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+	} else if msg.FlowLaunchRelease != nil {
+		// A stale or duplicate lifecycle result is fenced completely: it cannot
+		// release a reservation now owned by a newer attempt, persist failure, or
+		// fall through to generic detached-launch status handling.
+		return m, nil
 	}
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)

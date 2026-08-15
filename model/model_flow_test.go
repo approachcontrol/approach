@@ -11904,6 +11904,10 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	sessionRoot := filepath.Join(root, "sessions")
+	if err := os.Mkdir(sessionRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	term := &fakeEmbeddedTerminal{lines: []string{"Codex ready", "agent output"}, state: "running"}
 	var started actions.AgentLaunchContext
@@ -11912,7 +11916,7 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		AgentCommand:         "codex",
 		CodexModel:           "gpt-5.6-sol",
 		CodexReasoningEffort: "high",
-		SessionStateRoot:     filepath.Join(root, "sessions"),
+		SessionStateRoot:     sessionRoot,
 		FlowStore:            store,
 		LaunchBackend:        "tmux",
 		TmuxLaunchAvailable:  func() bool { return true },

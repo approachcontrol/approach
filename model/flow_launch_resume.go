@@ -122,6 +122,11 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	if flowID == "" {
 		return m, nil, false
 	}
+	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
+	} else if occupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
 	if m.flowLaunchAdmissionOccupied(flowID) {
 		// The two predicates overlap rather than nest: the broad one requires a
 		// non-nil Terminal and ignores FlowRepair, the repair one requires
@@ -306,6 +311,16 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		// launch, close, repair, or resume on this Flow would block until the
 		// lock timed out, in this process and in peers.
 		event.Release = release
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		}
 		updated, err := addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   msg.FlowID,
 			PhaseID:  msg.PhaseID,

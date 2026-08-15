@@ -13,6 +13,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -82,6 +83,10 @@ type manualLaunchHarness struct {
 	readFlowCalls      int
 	launchReservations int
 	launchReleases     int
+	leaseInspections   int
+	leaseState         flowlease.LeaseState
+	leaseErr           error
+	leaseInspect       func(call int, root, flowID string) (flowlease.LeaseState, error)
 	repairReservations int
 	repairReleases     int
 	// flowListCalls counts Flow surface fetches. A refused repair refreshes the
@@ -133,8 +138,16 @@ func (h *manualLaunchHarness) options() Options {
 	}
 	return Options{
 		AgentCommand:        command,
+		SessionStateRoot:    "/state",
 		LaunchBackend:       h.launchBackend,
 		TmuxLaunchAvailable: func() bool { return h.tmuxAvailable },
+		InspectFlowLease: func(root, flowID string) (flowlease.LeaseState, error) {
+			h.leaseInspections++
+			if h.leaseInspect != nil {
+				return h.leaseInspect(h.leaseInspections, root, flowID)
+			}
+			return h.leaseState, h.leaseErr
+		},
 		RepoTmuxLaunchWindowLive: func(repoPath string, launchIDs ...string) bool {
 			h.tmuxWindowProbes = append(h.tmuxWindowProbes, append([]string(nil), launchIDs...))
 			// windowLive is the whole-argument-list hook; the launch-ID and
@@ -2679,6 +2692,133 @@ func TestManualFlowLaunchRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
 	// it on success would race the agent's own start.
 	if h.tmuxLaunchCleanups != 0 {
 		t.Fatalf("cleanups = %d, want none on a successful launch", h.tmuxLaunchCleanups)
+	}
+}
+
+func TestFlowLeaseWithdrawsFooterAndManualAdmission(t *testing.T) {
+	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+	h.leaseState = flowlease.Held
+	m := h.model()
+
+	if m.selectedFlowHasLaunchablePhase() {
+		t.Fatal("footer must not advertise a successor while a tracked tmux lease is held")
+	}
+	next, cmd := h.press(m)
+	if cmd != nil {
+		t.Fatal("held lease must refuse before authoritative Flow reads or mutation")
+	}
+	if next.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", next.status.Text, flowLeaseOccupiedStatus)
+	}
+	if h.readFlowCalls != 0 || len(h.launchUpdates) != 0 || h.launchReservations != 0 {
+		t.Fatalf("held lease performed work: reads=%d updates=%d reservations=%d", h.readFlowCalls, len(h.launchUpdates), h.launchReservations)
+	}
+}
+
+func TestFlowLeaseInspectionErrorFailsManualAdmissionClosed(t *testing.T) {
+	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+	h.leaseErr = errors.New("unsafe flow-leases directory")
+	next, cmd := h.press(h.model())
+	if cmd != nil {
+		t.Fatal("lease setup error must refuse before launch work")
+	}
+	if !strings.Contains(next.status.Text, "occupancy could not be inspected") || !strings.Contains(next.status.Text, "unsafe flow-leases directory") {
+		t.Fatalf("status = %q, want actionable lease setup error", next.status.Text)
+	}
+}
+
+func TestFlowLeaseIsRecheckedUnderLaunchReservationBeforeMutation(t *testing.T) {
+	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+	h.leaseInspect = func(call int, _, _ string) (flowlease.LeaseState, error) {
+		if call >= 3 {
+			return flowlease.Held, nil
+		}
+		return flowlease.Free, nil
+	}
+	m := h.launch(h.model())
+
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations=%d releases=%d, want protected recheck and release", h.launchReservations, h.launchReleases)
+	}
+	if len(h.launchUpdates) != 0 || len(h.tmuxContexts) != 0 || len(h.launchContexts) != 0 {
+		t.Fatalf("late lease started work: updates=%d tmux=%d embedded=%d", len(h.launchUpdates), len(h.tmuxContexts), len(h.launchContexts))
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
+	}
+}
+
+func TestFlowLeaseDefersAutoAdvanceWithoutTmuxProbe(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.leaseState = flowlease.Held
+	m := h.autoDrain(h.model(), record)
+
+	if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatal("AutoMode must not read, mutate, or spawn while the lease is held")
+	}
+	if len(h.tmuxWindowProbes) != 0 {
+		t.Fatalf("periodic lease occupancy invoked tmux probes: %#v", h.tmuxWindowProbes)
+	}
+	if !h.drainArmed(m, record.FlowID) {
+		t.Fatal("held lease must leave the AutoMode drain armed for a later poll")
+	}
+}
+
+func TestTmuxHandoffCarriesReservationThroughResultDelivery(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	m := h.model()
+	m.contentPane = ui.PaneTop
+	attempt := flowLaunchAttempt{
+		Token: "launch-queue", Kind: flowLaunchKindManualPhase,
+		FlowID: h.record.FlowID, PhaseID: h.record.Phases[0].PhaseID,
+	}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	if !ok {
+		t.Fatal("reserveFlowLaunchAttempt() failed")
+	}
+	releases := 0
+	msg := flowLaunchEventMsg{
+		Context: actions.AgentLaunchContext{
+			Command: "codex", LaunchID: attempt.Token, RepoPath: h.record.RepoPath,
+			FlowID: attempt.FlowID, FlowPhaseID: attempt.PhaseID, FlowLaunchTracked: true,
+		},
+		Release: func() { releases++ },
+	}
+	m, cmd := m.handoffFlowLaunchTmux(attempt, msg)
+	if cmd == nil {
+		t.Fatal("handoff command = nil")
+	}
+	result, ok := cmd().(AgentResultMsg)
+	if !ok {
+		t.Fatalf("handoff result type = %T, want AgentResultMsg", cmd())
+	}
+	if releases != 0 {
+		t.Fatalf("releases after parent command exit = %d, want 0 until delivery", releases)
+	}
+	if !m.flowLaunchAdmissionOccupied(attempt.FlowID) {
+		t.Fatal("handoffPending attempt must block peers before result delivery")
+	}
+	m, _ = m.handleAgentResultAfterFinalization(result, nil)
+	if releases != 1 {
+		t.Fatalf("releases after matching delivery = %d, want 1", releases)
+	}
+	if m.flowLaunchAttemptOccupied(attempt.FlowID) {
+		t.Fatal("matching success must consume the handoffPending attempt")
+	}
+}
+
+func TestStaleTmuxLifecycleResultCannotReleaseOrPersist(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	m := h.model()
+	releases := 0
+	next, cmd := m.handleAgentResultAfterFinalization(AgentResultMsg{
+		LaunchContext: actions.AgentLaunchContext{FlowID: h.record.FlowID, LaunchID: "stale"},
+		Err:           "stale failure", Detached: true, FlowLaunchRelease: func() { releases++ },
+	}, nil)
+	if releases != 0 || cmd != nil || next.status.Text != m.status.Text || len(h.phaseUpdates) != 0 {
+		t.Fatalf("stale result changed state: releases=%d cmd=%v status=%q updates=%#v", releases, cmd != nil, next.status.Text, h.phaseUpdates)
 	}
 }
 

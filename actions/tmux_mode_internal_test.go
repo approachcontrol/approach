@@ -9,10 +9,22 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/approachcontrol/approach/internal/flowlease"
 )
 
-func tmuxModeContext() AgentLaunchContext {
+func tmuxModeContext(t *testing.T) AgentLaunchContext {
+	t.Helper()
 	ctx := planAgentContext()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := flowlease.ResolveRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.SessionStateRoot = canonical
 	ctx.RepoPath = "/repo"
 	ctx.WorktreePath = "/repo/worktree"
 	ctx.FlowID = "flow-1"
@@ -73,7 +85,7 @@ func TestRepoAgentSessionNameHasNoTmuxTargetSeparators(t *testing.T) {
 }
 
 func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
-	_, err := repoTmuxAgentLaunch(tmuxModeContext(), fakeLookPath())
+	_, err := repoTmuxAgentLaunch(tmuxModeContext(t), fakeLookPath())
 	if !errors.Is(err, ErrRepoTmuxUnavailable) {
 		t.Fatalf("expected ErrRepoTmuxUnavailable, got %v", err)
 	}
@@ -81,7 +93,7 @@ func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
@@ -107,15 +119,14 @@ func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	}
 
 	args := spec.Launch.Cmd.Args
-	if len(args) < 4 || args[0] != "sh" || args[1] != "-c" {
-		t.Fatalf("expected sh -c script, got %#v", args)
+	if len(args) < 2 || args[1] != flowlease.TmuxSpawnCommand {
+		t.Fatalf("expected private Flow tmux parent command, got %#v", args)
 	}
-	if args[2] != repoTmuxLaunchScript {
-		t.Fatal("the launch must run the shared tmux script")
-	}
-	wantArgs := []string{spec.SessionName, spec.WindowName, ctx.WorktreePath}
-	if !strings.HasPrefix(strings.Join(args[4:], "\x00"), strings.Join(wantArgs, "\x00")) {
-		t.Fatalf("script args = %#v, want prefix %#v", args[4:], wantArgs)
+	joined := strings.Join(args, "\x00")
+	for _, want := range []string{spec.SessionName, spec.WindowName, ctx.WorktreePath, ctx.FlowID, ctx.FlowPhaseID, ctx.LaunchID} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("private spawn args = %#v, want %q", args, want)
+		}
 	}
 }
 
@@ -238,8 +249,9 @@ func TestRepoTmuxLaunchScriptReportsTheFinalFailure(t *testing.T) {
 // /dev/null and every tmux failure reads as a bare exit status.
 func TestRepoTmuxAgentLaunchCapturesSpawnStderr(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
+	ctx.FlowLaunchTracked = false
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
 	if err != nil {
@@ -283,7 +295,7 @@ func TestRepoTmuxAgentLaunchStripsMultiplexerEnv(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")
 	t.Setenv("ZELLIJ", "0")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
@@ -305,7 +317,7 @@ func TestRepoTmuxAgentLaunchStripsMultiplexerEnv(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchDeliversPromptInArgv(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 	ctx.InitialPrompt = "Implement the plan."
 
@@ -332,7 +344,7 @@ func TestRepoTmuxAgentLaunchDeliversPromptInArgv(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchWindowNamesAreUniquePerLaunch(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	first := tmuxModeContext()
+	first := tmuxModeContext(t)
 	first.WorktreePath = t.TempDir()
 	first.LaunchID = "approach-1700000000000000000-aabbccddeeff"
 	second := first
@@ -357,6 +369,70 @@ func TestRepoTmuxAgentLaunchWindowNamesAreUniquePerLaunch(t *testing.T) {
 	}
 }
 
+func TestRepoTmuxTrackedLaunchNamesStayUniqueWhenLaunchSuffixesCollide(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	first := tmuxModeContext(t)
+	first.WorktreePath = t.TempDir()
+	first.LaunchID = "approach-1700000000000000000-aabbccdd"
+	second := first
+	second.LaunchID = "another-1700000000000000001-aabbccdd"
+
+	firstSpec, err := repoTmuxAgentLaunch(first, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("first launch error: %v", err)
+	}
+	defer firstSpec.Launch.Cleanup()
+	secondSpec, err := repoTmuxAgentLaunch(second, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("second launch error: %v", err)
+	}
+	defer secondSpec.Launch.Cleanup()
+
+	if firstSpec.WindowName == secondSpec.WindowName {
+		t.Fatalf("collision-bearing tracked windows both = %q", firstSpec.WindowName)
+	}
+	for _, name := range []string{firstSpec.WindowName, secondSpec.WindowName} {
+		if !strings.HasSuffix(name, "aabbccdd") {
+			t.Fatalf("window %q no longer preserves the launch-ID suffix probe", name)
+		}
+	}
+}
+
+func TestRepoTmuxTrackedLaunchRejectsMissingLeaseIdentity(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	tests := []struct {
+		name   string
+		mutate func(*AgentLaunchContext)
+	}{
+		{name: "flow id", mutate: func(ctx *AgentLaunchContext) { ctx.FlowID = "" }},
+		{name: "phase id", mutate: func(ctx *AgentLaunchContext) { ctx.FlowPhaseID = "" }},
+		{name: "launch id", mutate: func(ctx *AgentLaunchContext) { ctx.LaunchID = "../bad" }},
+		{name: "state root", mutate: func(ctx *AgentLaunchContext) { ctx.SessionStateRoot = "relative" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := tmuxModeContext(t)
+			ctx.WorktreePath = t.TempDir()
+			tc.mutate(&ctx)
+			if _, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux")); err == nil {
+				t.Fatal("tracked launch error = nil, want hard lease validation failure")
+			}
+		})
+	}
+}
+
+func TestRepoTmuxTrackedLaunchRejectsSelfExecutableResolutionFailure(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	_, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		return "", errors.New("executable unavailable")
+	})
+	if err == nil || !strings.Contains(err.Error(), "executable unavailable") {
+		t.Fatalf("launch error = %v, want executable resolution failure", err)
+	}
+}
+
 // TestRepoTmuxWindowNameNeverEmpty pins the fallback chain. tmux names an
 // unnamed window after its command, so an empty -n would silently rename the
 // window to the launch script's path.
@@ -378,10 +454,11 @@ func TestRepoTmuxWindowNameNeverEmpty(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := tmuxModeContext()
+			ctx := tmuxModeContext(t)
 			ctx.WorktreePath = t.TempDir()
 			ctx.FlowPhaseKind = tc.phaseKind
 			ctx.LaunchID = tc.launchID
+			ctx.FlowLaunchTracked = false
 
 			spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
 			if err != nil {
@@ -512,7 +589,7 @@ func TestLaunchWindowRunningInListingMatchesAnyOfAPhasesLaunches(t *testing.T) {
 // back to that launch ID, and must not match a different launch's window.
 func TestRepoTmuxLaunchWindowLiveMatchesTheLaunchsOwnWindow(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 	ctx.LaunchID = "approach-1700000000000000000-aabbccddeeff"
 
@@ -540,7 +617,7 @@ func TestRepoTmuxLaunchWindowLiveMatchesTheLaunchsOwnWindow(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchCleanupRemovesScript(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))

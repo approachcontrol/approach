@@ -1,0 +1,222 @@
+package flowlease
+
+import (
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestHandoffRecordsAreImmutableAndIdentityBound(t *testing.T) {
+	root := secureTempRoot(t)
+	attempt := handoffAttempt{
+		Root:       root,
+		FlowID:     "flow-1",
+		PhaseID:    "implementation",
+		LaunchID:   "launch-1",
+		Nonce:      "0123456789abcdef",
+		HandoffDir: filepath.Join(root, handoffCollection, "launch-1-deadbeef"),
+	}
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordReady, ""); err != nil {
+		t.Fatalf("publish ready error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordReady, ""); !errors.Is(err, errRecordExists) {
+		t.Fatalf("publish duplicate ready error = %v, want errRecordExists", err)
+	}
+	if _, err := readHandoffRecord(attempt, recordReady); err != nil {
+		t.Fatalf("read ready error = %v", err)
+	}
+
+	if err := publishHandoffRecord(attempt, recordDecision, decisionCommit); err != nil {
+		t.Fatalf("publish commit error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordDecision, decisionAbort); !errors.Is(err, errRecordExists) {
+		t.Fatalf("publish competing abort error = %v, want errRecordExists", err)
+	}
+	record, err := readHandoffRecord(attempt, recordDecision)
+	if err != nil {
+		t.Fatalf("read decision error = %v", err)
+	}
+	if record.Outcome != decisionCommit {
+		t.Fatalf("decision outcome = %q, want %q", record.Outcome, decisionCommit)
+	}
+
+	wrong := attempt
+	wrong.Nonce = "wrong-nonce"
+	if _, err := readHandoffRecord(wrong, recordReady); err == nil {
+		t.Fatal("read ready with wrong nonce error = nil, want error")
+	}
+
+	if err := cleanupHandoff(attempt); err != nil {
+		t.Fatalf("cleanupHandoff() error = %v", err)
+	}
+	if _, err := os.Lstat(attempt.HandoffDir); !os.IsNotExist(err) {
+		t.Fatalf("Lstat(cleaned handoff) error = %v, want not exist", err)
+	}
+}
+
+func TestRunnerHoldsLeaseUntilAgentExits(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "agent-started")
+	stop := filepath.Join(t.TempDir(), "agent-stop")
+	agentArgv := []string{"/bin/sh", "-c", "printf started > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.01; done", "runner-test", marker, stop}
+	argv, err := LeaseRunArgv("/absolute/approach", spec, agentArgv)
+	if err != nil {
+		t.Fatalf("LeaseRunArgv() error = %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard) }()
+
+	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
+		t.Fatalf("wait ready error = %v", err)
+	}
+	if state, err := Inspect(spec.Root, spec.FlowID); err != nil || state != Held {
+		t.Fatalf("Inspect(ready) = %v, %v, want Held", state, err)
+	}
+	if err := publishHandoffRecord(attempt, recordDecision, decisionCommit); err != nil {
+		t.Fatalf("publish commit error = %v", err)
+	}
+	if _, err := waitForRecord(attempt, recordStarted, spec.StartedDeadline); err != nil {
+		t.Fatalf("wait started error = %v", err)
+	}
+	waitForPath(t, marker)
+	if err := os.WriteFile(stop, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(stop) error = %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("RunLeaseRunner() error = %v", err)
+	}
+	if state, err := Inspect(spec.Root, spec.FlowID); err != nil || state != Free {
+		t.Fatalf("Inspect(exited) = %v, %v, want Free", state, err)
+	}
+	if err := cleanupHandoff(attempt); err != nil {
+		t.Fatalf("cleanupHandoff() error = %v", err)
+	}
+}
+
+func TestRunnerAbortNeverStartsAgent(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "must-not-start")
+	argv, err := LeaseRunArgv("/absolute/approach", spec, []string{"/bin/sh", "-c", "touch \"$1\"", "runner-test", marker})
+	if err != nil {
+		t.Fatalf("LeaseRunArgv() error = %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard) }()
+	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
+		t.Fatalf("wait ready error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordDecision, decisionAbort); err != nil {
+		t.Fatalf("publish abort error = %v", err)
+	}
+	if err := <-errCh; err == nil {
+		t.Fatal("RunLeaseRunner(abort) error = nil, want error")
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("Lstat(agent marker) error = %v, want not exist", err)
+	}
+	if state, err := Inspect(spec.Root, spec.FlowID); err != nil || state != Free {
+		t.Fatalf("Inspect(aborted) = %v, %v, want Free", state, err)
+	}
+}
+
+func TestExactWindowTargetRejectsTmuxParsingCharacters(t *testing.T) {
+	target, err := ExactWindowTarget("approach-repo-1234", "implementation-deadbeef-12345678")
+	if err != nil {
+		t.Fatalf("ExactWindowTarget() error = %v", err)
+	}
+	if target != "=approach-repo-1234:=implementation-deadbeef-12345678" {
+		t.Fatalf("target = %q", target)
+	}
+	for _, value := range []string{"prefix:other", "prefix.other", "prefix;other", "=marker", "line\nbreak"} {
+		if _, err := ExactWindowTarget(value, "window"); err == nil {
+			t.Fatalf("ExactWindowTarget(%q, window) error = nil, want rejection", value)
+		}
+		if _, err := ExactWindowTarget("session", value); err == nil {
+			t.Fatalf("ExactWindowTarget(session, %q) error = nil, want rejection", value)
+		}
+	}
+}
+
+func TestHandoffRejectsReusedOrUnsafeAttemptDirectory(t *testing.T) {
+	root := secureTempRoot(t)
+	attempt := handoffAttempt{
+		Root:       root,
+		FlowID:     "flow-1",
+		PhaseID:    "implementation",
+		LaunchID:   "launch-1",
+		Nonce:      "0123456789abcdef",
+		HandoffDir: filepath.Join(root, handoffCollection, "launch-1-deadbeef"),
+	}
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	if err := createHandoff(attempt); err == nil {
+		t.Fatal("createHandoff(reuse) error = nil, want error")
+	}
+
+	unsafe := attempt
+	unsafe.HandoffDir = filepath.Join(root, handoffCollection, "..", "escape")
+	if err := createHandoff(unsafe); err == nil {
+		t.Fatal("createHandoff(escape) error = nil, want error")
+	}
+}
+
+func secureTempRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatalf("Chmod(root) error = %v", err)
+	}
+	canonical, err := ResolveRoot(root)
+	if err != nil {
+		t.Fatalf("ResolveRoot() error = %v", err)
+	}
+	return canonical
+}
+
+func testPrivateSpec(t *testing.T) PrivateSpec {
+	t.Helper()
+	root := secureTempRoot(t)
+	now := time.Now()
+	return PrivateSpec{
+		SessionName:      "approach-repo-1234",
+		WindowName:       "implementation-deadbeef-12345678",
+		CWD:              root,
+		ScriptPath:       "/absolute/launch-script",
+		Root:             root,
+		FlowID:           "flow-1",
+		PhaseID:          "implementation",
+		LaunchID:         "launch-1",
+		HandoffDir:       filepath.Join(root, handoffCollection, "launch-1-deadbeef"),
+		Nonce:            "0123456789abcdef",
+		DecisionDeadline: now.Add(2 * time.Second),
+		StartedDeadline:  now.Add(4 * time.Second),
+		CleanupDeadline:  now.Add(6 * time.Second),
+	}
+}
+
+func waitForPath(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
+}

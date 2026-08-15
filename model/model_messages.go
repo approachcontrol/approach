@@ -488,6 +488,10 @@ type FlowPhaseAgentSettingsSetFailedMsg struct {
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
+	// FlowLaunchRelease is carried only by a lifecycle-owned tmux start result.
+	// The command must retain the cross-process reservation after it exits until
+	// a matching handoffPending attempt consumes this result.
+	FlowLaunchRelease func()
 	// Detached reports that the agent was launched into an external
 	// terminal/multiplexer session that keeps running after the launch command
 	// returns. Detached launches must not finalize the captured session here;

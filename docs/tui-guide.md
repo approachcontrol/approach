@@ -406,6 +406,14 @@ Lifecycle and ownership:
   `tmux attach`.
 - A window closes when its agent exits. The session ends with its last window
   and the next launch recreates it.
+- A tracked Flow phase window owns a Flow-scoped kernel lease for as long as
+  its agent process remains alive. Finishing the phase does not release that
+  ownership: `g`, tracked `r`, and AutoMode defer the successor even after a
+  completed phase reaches its CLI prompt. The same lease is visible after a TUI
+  restart and to other Approach processes sharing the artifact root.
+- Exiting the agent or killing its window releases the lease automatically.
+  Manual launch can retry immediately; AutoMode retries on a later one-second
+  poll. The stable unlocked `.lock` file is normal and does not occupy the Flow.
 - If `tmux` is missing, launches fall back to their default-backend route and
   the status line says `tmux unavailable`. The availability check never refuses
   a launch; a tmux launch that then fails to spawn fails like any other launch
@@ -423,7 +431,10 @@ Limitations:
 - Removing a worktree while a tmux window is still `cd`'d into it is not
   fenced. Worktree removal is already destructive-gated; close the window
   first.
-- **The live-agent guard is a probe, not a slot.** In the embedded dock, a running
+- **The reset/resume/repair live-agent guard is a probe, not a slot.** Flow
+  successor admission uses the cheap kernel lease above and never invokes tmux
+  from rendering or AutoMode. The older one-shot guard remains for `x`, repeat
+  `r`, `R`, and session release. In the embedded dock, a running
   slot is what stops `x` (reset), a repeat `r` (resume), and `R` (repair) from
   starting a second agent on a phase that already has one. Persisted session
   state cannot stand in for it — Claude records a session only when the agent
@@ -459,15 +470,14 @@ Limitations:
   recorded: `running` and awaiting session capture if none ever fired. The probe
   then finds no window, so `x` resets it normally; use repair (`R`) if it needs
   more than a reset.
-- **A finished phase's window does not hold the Flow.** An embedded terminal
-  occupies its Flow until the process exits, so the next phase cannot start
-  while the previous agent's terminal is open. A tmux window is not owned that
-  way: while a phase is `running` it occupies the Flow as usual, but once the
-  agent marks its own phase completed, `g` and AutoMode will start the next
-  phase even though that agent's CLI is still sitting at a prompt in its window.
-  Both agents are then in the same worktree, so if you go back and type into the
-  older window you have two agents editing at once. Close a window when you are
-  done with it.
+- Lease inspection fails closed. If the shared state root, lease directory, or
+  lock file is unsafe or unreadable, the footer withdraws launch eligibility,
+  manual launch reports the setup error, and AutoMode waits silently. Repair
+  the artifact-root permissions or unsafe node and retry.
+- Renaming a tracked phase window does not defeat successor admission: the
+  lease is tied to the supervising process, not the window name. Out-of-band
+  commands that replace the pane command or otherwise bypass Approach's private
+  runner are ordinary tmux activity and do not acquire a Flow lease.
 
 ## Plans View (bottom `2`)
 
