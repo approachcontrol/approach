@@ -30,4 +30,3 @@ Flag real bugs, security regressions, and broken load-bearing invariants. Skip g
 
 - Formatting that `make fmt-check` already owns.
 - Test helpers that talk to real git or `bd` instead of mocks.
-- Next.js artifact regeneration under `web/` when the PR did not intend to change the viewer.
