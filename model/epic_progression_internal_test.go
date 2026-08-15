@@ -144,6 +144,54 @@ func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testin
 	}
 }
 
+func TestDisableEpicProgressionReconciliationMatrix(t *testing.T) {
+	target := beadExpansionTarget{repoPath: "/repo", epicID: "epic"}
+	writeErr := errors.New("write failed")
+	for _, tt := range []struct {
+		name            string
+		setErr          error
+		found           bool
+		read            flowstore.EpicProgression
+		readErr         error
+		wantKnown       bool
+		wantEnabled     bool
+		wantDisposition epicProgressionBaselineDisposition
+		wantStatus      string
+	}{
+		{name: "success", found: true, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "Disabled auto-progression"},
+		{name: "error reread absent", setErr: writeErr, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "is off; disable outcome could not be confirmed"},
+		{name: "error reread normal off", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic"}, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "is off; disable outcome could not be confirmed"},
+		{name: "error reread halted", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Halt: &flowstore.EpicProgressionHalt{ChildBeadID: "epic.1", Status: flowstore.StatusBlocked, Message: "blocked"}}, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "is halted; disable outcome could not be confirmed"},
+		{name: "error reread done", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Done: true}, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "completed before disable could be confirmed"},
+		{name: "error reread active", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Enabled: true}, wantKnown: true, wantEnabled: true, wantStatus: "Could not disable"},
+		{name: "error reread error", setErr: writeErr, readErr: errors.New("read failed"), wantStatus: "Could not confirm auto-progression state"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				setEpicProgression: func(update flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+					if update.Enabled || update.Done {
+						t.Fatalf("manual disable update = %#v, want enabled=false done=false", update)
+					}
+					return flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic"}, tt.setErr
+				},
+				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+					return tt.read, tt.found, tt.readErr
+				},
+			}
+			msg, ok := m.disableEpicProgressionCmd(target)().(epicProgressionToggleResultMsg)
+			if !ok {
+				t.Fatal("disable command returned unexpected message")
+			}
+			if msg.known != tt.wantKnown || msg.enabled != tt.wantEnabled || msg.baselineDisposition != tt.wantDisposition || !strings.Contains(msg.status, tt.wantStatus) {
+				t.Fatalf("disable result = %#v", msg)
+			}
+			if tt.read.Done && strings.Contains(msg.status, "Disabled auto-progression") {
+				t.Fatalf("done reread claimed direct disable: %q", msg.status)
+			}
+		})
+	}
+}
+
 func TestEnableEpicProgressionRevalidationFailureDoesNotInstallIneligibleBaseline(t *testing.T) {
 	stamp := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 	prepared := flowstore.FlowRecord{

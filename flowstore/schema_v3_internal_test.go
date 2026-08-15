@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestSQLiteV2ToV3PreservesFlowBlobAndAddsProgressionObjects(t *testing.T) {
+func TestSQLiteV2ToV4PreservesFlowBlobAndAddsProgressionObjects(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, databaseFilename)
 	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rwc"}}))
@@ -58,7 +58,7 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 		t.Fatalf("v2 Flow changed during migration: blobEqual=%t prepared_at=%q", bytes.Equal(gotBlob, blob), preparedAt)
 	}
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
 		t.Fatalf("user_version = %d, err %v", version, err)
 	}
 	if _, _, err := store.ReadEpicProgression(EpicProgressionKey{RepoPath: record.RepoPath, EpicID: "epic"}); err != nil {
@@ -66,7 +66,7 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 	}
 }
 
-func TestSQLiteV0AndV1ToV3AddEveryProjectionWithoutReencodingFlows(t *testing.T) {
+func TestSQLiteV0AndV1ToV4AddEveryProjectionWithoutReencodingFlows(t *testing.T) {
 	for _, version := range []int{0, 1} {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			root := t.TempDir()
@@ -119,7 +119,7 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 	}
 }
 
-func TestSQLiteV2ToV3RejectsInvalidPredecessorWithoutPartialObjects(t *testing.T) {
+func TestSQLiteV2ToV4RejectsInvalidPredecessorWithoutPartialObjects(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, databaseFilename)
 	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rwc"}}))
@@ -127,7 +127,7 @@ func TestSQLiteV2ToV3RejectsInvalidPredecessorWithoutPartialObjects(t *testing.T
 		t.Fatal(err)
 	}
 	// Deliberately omit one required v2 index. Predecessor validation must fail
-	// before any v3 ALTER/CREATE statement is allowed to land.
+	// before any v4 ALTER/CREATE statement is allowed to land.
 	if _, err := db.Exec(flowTableSchemaV2 + `;
 CREATE INDEX idx_flows_updated ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX idx_flows_repo_updated ON flows(repo_path, updated_at DESC, flow_id ASC);

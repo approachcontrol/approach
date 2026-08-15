@@ -1,11 +1,13 @@
 package flowstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,16 +43,19 @@ type EpicProgression struct {
 	RepoPath      string
 	EpicID        string
 	Enabled       bool
+	Done          bool
 	Halt          *EpicProgressionHalt
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
 
-// EpicProgressionUpdate enables or disables one epic. Enabling clears a sticky
-// halt; disabling retains an existing halt and otherwise writes normal off.
+// EpicProgressionUpdate requests one complete target state. Enabling clears
+// done and halt; explicit normal off clears done and retains a sticky halt;
+// done may be newly established only from authoritative active state.
 type EpicProgressionUpdate struct {
 	Key     EpicProgressionKey
 	Enabled bool
+	Done    bool
 }
 
 // PreparedEpicProgressionUpdate binds enablement to one exact prepared child
@@ -95,6 +100,7 @@ type storedEpicProgressionDTO struct {
 	RepoPath      string               `json:"repo_path"`
 	EpicID        string               `json:"epic_id"`
 	Enabled       *bool                `json:"enabled"`
+	Done          *bool                `json:"done"`
 	Halt          *EpicProgressionHalt `json:"halt,omitempty"`
 	CreatedAt     string               `json:"created_at"`
 	UpdatedAt     string               `json:"updated_at"`
@@ -119,7 +125,7 @@ func (s *Store) ReadEpicProgression(key EpicProgressionKey) (EpicProgression, bo
 	return backend.readEpicProgression(key)
 }
 
-// SetEpicProgression atomically upserts one normal enabled/disabled state.
+// SetEpicProgression atomically applies one active, normal-off, or done target.
 // Redundant writes preserve both timestamps and perform no row update.
 func (s *Store) SetEpicProgression(update EpicProgressionUpdate) (EpicProgression, error) {
 	key, err := normalizeEpicProgressionKey(update.Key)
@@ -192,7 +198,7 @@ func (s *Store) EnableEpicProgressionForPreparedFlow(update PreparedEpicProgress
 	if err != nil {
 		return EpicProgression{}, FlowRecord{}, err
 	}
-	if !progressionFound || !progression.Enabled || progression.Halt != nil {
+	if !progressionFound || !progression.Enabled || progression.Done || progression.Halt != nil {
 		stamp := s.now().UTC()
 		if !progressionFound {
 			progression = EpicProgression{
@@ -205,6 +211,7 @@ func (s *Store) EnableEpicProgressionForPreparedFlow(update PreparedEpicProgress
 			stamp = epicProgressionMutationTime(progression, stamp)
 		}
 		progression.Enabled = true
+		progression.Done = false
 		progression.Halt = nil
 		progression.UpdatedAt = stamp
 		data, updatedAt, err := encodeEpicProgression(progression)
@@ -273,7 +280,7 @@ func (s *Store) ReconcileEpicProgressionSuccessor(update EpicProgressionSuccesso
 		return retryable(err)
 	}
 	result := EpicProgressionSuccessorResult{Progression: progression}
-	if !found || !progression.Enabled || progression.Halt != nil {
+	if !found || !progression.Enabled || progression.Done || progression.Halt != nil {
 		result.Outcome = EpicProgressionSuccessorInactive
 	} else {
 		stored, flowFound, readErr := queryStoredFlow(tx.QueryRow(
@@ -334,6 +341,12 @@ func validateEpicProgression(record EpicProgression) error {
 	if record.Enabled && record.Halt != nil {
 		return errors.New("enabled epic progression cannot be halted")
 	}
+	if record.Enabled && record.Done {
+		return errors.New("enabled epic progression cannot be done")
+	}
+	if record.Done && record.Halt != nil {
+		return errors.New("done epic progression cannot be halted")
+	}
 	if record.Halt == nil {
 		return nil
 	}
@@ -363,11 +376,13 @@ func encodeEpicProgression(record EpicProgression) ([]byte, string, error) {
 		return nil, "", err
 	}
 	enabled := record.Enabled
+	done := record.Done
 	data, err := json.MarshalIndent(storedEpicProgressionDTO{
 		SchemaVersion: record.SchemaVersion,
 		RepoPath:      record.RepoPath,
 		EpicID:        record.EpicID,
 		Enabled:       &enabled,
+		Done:          &done,
 		Halt:          record.Halt,
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
@@ -386,6 +401,9 @@ func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt strin
 	if dto.Enabled == nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: enabled is required", repoPath, epicID)
 	}
+	if dto.Done == nil {
+		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: done is required", repoPath, epicID)
+	}
 	created, err := parseCanonicalStorageTime(dto.CreatedAt)
 	if err != nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q created_at: %w", repoPath, epicID, err)
@@ -399,6 +417,7 @@ func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt strin
 		RepoPath:      dto.RepoPath,
 		EpicID:        dto.EpicID,
 		Enabled:       *dto.Enabled,
+		Done:          *dto.Done,
 		Halt:          dto.Halt,
 		CreatedAt:     created,
 		UpdatedAt:     updated,
@@ -458,6 +477,9 @@ func queryEpicProgression(row interface{ Scan(...any) error }, key EpicProgressi
 }
 
 func (b *sqliteBackend) setEpicProgression(update EpicProgressionUpdate, now func() time.Time) (EpicProgression, error) {
+	if update.Enabled && update.Done {
+		return EpicProgression{}, errors.New("epic progression update cannot be both enabled and done")
+	}
 	tx, err := b.beginTx(context.Background())
 	if err != nil {
 		return EpicProgression{}, fmt.Errorf("begin epic progression update %q/%q: %w", update.Key.RepoPath, update.Key.EpicID, err)
@@ -475,22 +497,33 @@ func (b *sqliteBackend) setEpicProgression(update EpicProgressionUpdate, now fun
 		if update.Enabled {
 			halt = nil
 		}
-		if current.Enabled == update.Enabled && current.Halt == halt {
+		if update.Done {
+			halt = nil
+			if !current.Done && (!current.Enabled || current.Halt != nil) {
+				return EpicProgression{}, fmt.Errorf("epic progression %q/%q can only become done from active state", update.Key.RepoPath, update.Key.EpicID)
+			}
+		}
+		if current.Enabled == update.Enabled && current.Done == update.Done && current.Halt == halt {
 			if err := tx.Commit(); err != nil {
 				return EpicProgression{}, fmt.Errorf("commit epic progression update %q/%q: %w", update.Key.RepoPath, update.Key.EpicID, err)
 			}
 			return current, nil
 		}
 		current.Enabled = update.Enabled
+		current.Done = update.Done
 		current.Halt = halt
 		current.UpdatedAt = epicProgressionMutationTime(current, now())
 	} else {
+		if update.Done {
+			return EpicProgression{}, fmt.Errorf("epic progression %q/%q can only become done from active state", update.Key.RepoPath, update.Key.EpicID)
+		}
 		stamp := now().UTC()
 		current = EpicProgression{
 			SchemaVersion: epicProgressionSchemaVersion,
 			RepoPath:      update.Key.RepoPath,
 			EpicID:        update.Key.EpicID,
 			Enabled:       update.Enabled,
+			Done:          false,
 			CreatedAt:     stamp,
 			UpdatedAt:     stamp,
 		}
@@ -513,6 +546,72 @@ ON CONFLICT(repo_path, epic_id) DO UPDATE SET
 		return EpicProgression{}, fmt.Errorf("commit epic progression update %q/%q: %w", current.RepoPath, current.EpicID, err)
 	}
 	return current, nil
+}
+
+// decodeLegacyV3EpicProgression decodes the exact record shape written by the
+// v3 database generation. It deliberately does not infer completion from the
+// compatibility enabled projection; every migrated predecessor becomes
+// Done=false.
+func decodeLegacyV3EpicProgression(repoPath, epicID string, enabled int, updatedAt string, data []byte) (EpicProgression, error) {
+	type legacyDTO struct {
+		SchemaVersion int                  `json:"schema_version"`
+		RepoPath      string               `json:"repo_path"`
+		EpicID        string               `json:"epic_id"`
+		Enabled       *bool                `json:"enabled"`
+		Halt          *EpicProgressionHalt `json:"halt,omitempty"`
+		CreatedAt     string               `json:"created_at"`
+		UpdatedAt     string               `json:"updated_at"`
+	}
+	var dto legacyDTO
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&dto); err != nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: %w", repoPath, epicID, err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("trailing JSON value")
+		}
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: %w", repoPath, epicID, err)
+	}
+	if dto.Enabled == nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: enabled is required", repoPath, epicID)
+	}
+	created, err := parseCanonicalStorageTime(dto.CreatedAt)
+	if err != nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q created_at: %w", repoPath, epicID, err)
+	}
+	updated, err := parseCanonicalStorageTime(dto.UpdatedAt)
+	if err != nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q updated_at: %w", repoPath, epicID, err)
+	}
+	record := EpicProgression{
+		SchemaVersion: dto.SchemaVersion,
+		RepoPath:      dto.RepoPath,
+		EpicID:        dto.EpicID,
+		Enabled:       *dto.Enabled,
+		Done:          false,
+		Halt:          dto.Halt,
+		CreatedAt:     created,
+		UpdatedAt:     updated,
+	}
+	if err := validateEpicProgression(record); err != nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: %w", repoPath, epicID, err)
+	}
+	if record.RepoPath != repoPath || record.EpicID != epicID {
+		return EpicProgression{}, fmt.Errorf("legacy epic progression projection %q/%q disagrees with record %q/%q", repoPath, epicID, record.RepoPath, record.EpicID)
+	}
+	if enabled != 0 && enabled != 1 {
+		return EpicProgression{}, fmt.Errorf("legacy epic progression %q/%q has invalid enabled projection %d", repoPath, epicID, enabled)
+	}
+	if record.Enabled != (enabled == 1) {
+		return EpicProgression{}, fmt.Errorf("legacy epic progression %q/%q enabled projection disagrees with record", repoPath, epicID)
+	}
+	wantUpdated, _ := formatStorageTime(record.UpdatedAt)
+	if updatedAt != wantUpdated {
+		return EpicProgression{}, fmt.Errorf("legacy epic progression %q/%q updated_at projection %q disagrees with record %q", repoPath, epicID, updatedAt, wantUpdated)
+	}
+	return record, nil
 }
 
 func boolToSQLite(value bool) int {

@@ -146,12 +146,14 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		closeDB = false
 		return nil
 	}
-	if version != 0 && version != 1 && version != 2 {
+	if version != 0 && version != 1 && version != 2 && version != 3 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	predecessor := int64(1)
 	if version == 2 {
 		predecessor = 2
+	} else if version == 3 {
+		predecessor = 3
 	}
 	if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
 		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
@@ -166,7 +168,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		}
 		return cause
 	}
-	statements := make([]string, 0, 7)
+	statements := make([]string, 0, 9)
 	if predecessor == 1 {
 		statements = append(statements,
 			"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
@@ -174,12 +176,28 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 			flowBeadCompatibilityTrigger,
 		)
 	}
-	statements = append(statements,
-		"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
-		epicProgressionTableSchema,
-		flowPreparedCompatibilityTrigger,
+	if predecessor <= 2 {
+		statements = append(statements,
+			"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
+			epicProgressionTableSchema,
+			flowPreparedCompatibilityTrigger,
+		)
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
+		}
+	}
+	if predecessor == 3 {
+		if err := migrateLegacyV3EpicProgressions(tx); err != nil {
+			return rollback(err)
+		}
+	}
+	statements = []string{
+		epicProgressionDoneInsertCompatibilityTrigger,
+		epicProgressionDoneUpdateCompatibilityTrigger,
 		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
-	)
+	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
@@ -192,6 +210,58 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		return fmt.Errorf("close authoritative flow database migration handle: %w", err)
 	}
 	closeDB = false
+	return nil
+}
+
+func migrateLegacyV3EpicProgressions(tx *sql.Tx) error {
+	type migrationRow struct {
+		repoPath  string
+		epicID    string
+		enabled   int
+		updatedAt string
+		record    []byte
+	}
+	rows, err := tx.Query("SELECT repo_path, epic_id, enabled, updated_at, record FROM epic_progressions ORDER BY repo_path, epic_id")
+	if err != nil {
+		return fmt.Errorf("read v3 epic progressions for migration: %w", err)
+	}
+	var pending []migrationRow
+	for rows.Next() {
+		var row migrationRow
+		if err := rows.Scan(&row.repoPath, &row.epicID, &row.enabled, &row.updatedAt, &row.record); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan v3 epic progression for migration: %w", err)
+		}
+		row.record = append([]byte(nil), row.record...)
+		pending = append(pending, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate v3 epic progressions for migration: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close v3 epic progression migration rows: %w", err)
+	}
+	for _, row := range pending {
+		record, err := decodeLegacyV3EpicProgression(row.repoPath, row.epicID, row.enabled, row.updatedAt, row.record)
+		if err != nil {
+			return fmt.Errorf("migrate v3 epic progression: %w", err)
+		}
+		data, migratedUpdatedAt, err := encodeEpicProgression(record)
+		if err != nil {
+			return fmt.Errorf("encode migrated epic progression %q/%q: %w", row.repoPath, row.epicID, err)
+		}
+		if migratedUpdatedAt != row.updatedAt {
+			return fmt.Errorf("migrate v3 epic progression %q/%q changed updated_at projection", row.repoPath, row.epicID)
+		}
+		result, err := tx.Exec("UPDATE epic_progressions SET record = ? WHERE repo_path = ? AND epic_id = ?", data, row.repoPath, row.epicID)
+		if err != nil {
+			return fmt.Errorf("rewrite v3 epic progression %q/%q: %w", row.repoPath, row.epicID, err)
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			return fmt.Errorf("rewrite v3 epic progression %q/%q affected %d rows: %v", row.repoPath, row.epicID, affected, err)
+		}
+	}
 	return nil
 }
 
