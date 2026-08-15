@@ -44,6 +44,7 @@ type createLaunchHarness struct {
 	terminalErr           error
 	terminal              EmbeddedTerminal
 	releases              int
+	releasesAtCompensate  int
 }
 
 type createLaunchPreparationFinalizer struct {
@@ -69,10 +70,15 @@ func (f createLaunchPreparationFinalizer) Finalize(callback func() error) (flows
 	return f.h.record, nil
 }
 
+func (f createLaunchPreparationFinalizer) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	return f.Compensate(notes)
+}
+
 func (f createLaunchPreparationFinalizer) Compensate(notes string) (flowstore.FlowRecord, error) {
 	if f.h.record.PreparationNonce != f.nonce {
 		return f.h.record, errors.New("preparation generation changed")
 	}
+	f.h.releasesAtCompensate = f.h.releases
 	f.h.order = append(f.h.order, "compensate")
 	for _, root := range launchablePhases(f.h.record) {
 		update := blockedPhaseUpdate(f.h.record.FlowID, root, notes)
@@ -1168,6 +1174,45 @@ func TestCreateFlowLaunchReadyPreMetadataExitsUsePreparationFinalizer(t *testing
 			}
 			if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
 				t.Fatalf("pre-metadata cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+			}
+		})
+	}
+}
+
+func TestCreateFlowLaunchReadyWorktreeFailureHoldsReservationThroughCompensation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stage       flowLaunchStage
+		worktreeErr error
+		stale       bool
+	}{
+		{name: "worktree failure", stage: flowLaunchStageCreateWorktree, worktreeErr: errors.New("worktree failed")},
+		{name: "stale after reservation", stage: flowLaunchStageCreateReserved, stale: true},
+		{name: "stale after worktree", stage: flowLaunchStageCreateWorktree, stale: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCreateLaunchHarness([]flowstore.FlowPhase{
+				{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+				{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+			})
+			h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+			h.worktreeErr = tc.worktreeErr
+			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+			m, event := advanceCreateLaunchToStage(t, m, cmd, tc.stage)
+			if tc.stale {
+				m = m.invalidateReadyBeadFlowCreateRequest()
+			}
+			m, cmd = m.handleFlowLaunchEvent(event)
+			m = drainCreateLaunch(t, m, cmd)
+
+			if !slices.Contains(h.order, "compensate") {
+				t.Fatalf("Ready compensation skipped: %#v", h.order)
+			}
+			if h.releasesAtCompensate != 0 {
+				t.Fatalf("releases at Compensate = %d, want the launch reservation held through compensation", h.releasesAtCompensate)
+			}
+			if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+				t.Fatalf("Ready compensation cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
 			}
 		})
 	}

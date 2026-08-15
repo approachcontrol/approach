@@ -770,8 +770,7 @@ before bootstrap or launch-ID persistence, so an interrupted bootstrap retains
 the artifact identity for recovery. The first canonical launchable root starts;
 parallel roots remain available unless startup recovery must block the captured
 root set. A graph with no launchable root is parked after metadata without a
-launch ID. Embedders that explicitly provide `Options.StartFlowPlan` override
-this default Plan Now lifecycle with that compatibility seam.
+launch ID.
 
 On a Flow row or an expanded phase row:
 

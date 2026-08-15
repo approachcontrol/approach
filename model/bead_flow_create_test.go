@@ -674,6 +674,46 @@ func TestEpicAutoProgressionRetryRejectsReplacementOfMigratedMarkedChild(t *test
 	}
 }
 
+func TestEpicAutoProgressionRetryRejectsReplacementWithDifferentNonce(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	listed := flowstore.FlowRecord{
+		FlowID: "flow-nonce-replaced", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparedAt: &preparedAt, PreparationNonce: "nonce-a",
+	}
+	replacement := listed
+	replacement.PreparationNonce = "nonce-b"
+	claims := 0
+	releases := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Nonce child"}, {ID: "epic-1.2", Title: "Ready sibling"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{listed}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return replacement, func() { releases++ }, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claims != 0 || releases != 1 {
+		t.Fatalf("nonce replacement retry claims/releases = %d/%d, want 0/1", claims, releases)
+	}
+	if got := m.TransientError(); got != "Flow flow-nonce-replaced changed before claim recovery; auto-progression remains off" {
+		t.Fatalf("nonce replacement retry status = %q", got)
+	}
+}
+
 func TestEpicAutoProgressionRetryRecoversMigratedMarkedChildWithoutGeneration(t *testing.T) {
 	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 	migratedChildFlow := flowstore.FlowRecord{

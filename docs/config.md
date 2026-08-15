@@ -551,12 +551,14 @@ The database and its records have separate compatibility gates:
   predecessor table-and-index contract; version 2 is validated against its
   exact columns, indexes, and Bead trigger; version 3 is validated against its
   full schema before any record changes; version 4 is validated against the
-  parent-release contract (done and nonce triggers, no claim trigger). All
+  parent-release contract (done triggers, no claim or nonce trigger); version 5
+  is validated against the claim-marker trigger without a nonce projection. All
   upgrade transactionally in place
-  to version 5. The v3→v4 step adds the nonce projection and strictly decodes
+  to version 6. The v3→v4 step strictly decodes
   every legacy progression blob and rewrites it with `done:false`, preserving
   identity, enabled/halt state, timestamps, and SQL projections exactly. The
-  v4→v5 step installs only the claim-marker trigger. Historical disabled rows
+  v4→v5 step installs only the claim-marker trigger. The v5→v6 step adds the
+  nonce projection and trigger. Historical disabled rows
   are conservative normal-off rows because their cause cannot be recovered.
   Existing Flow JSON blobs, earlier projections, and retained `flows/` files
   are not rewritten or removed. A malformed predecessor progression aborts and
@@ -569,11 +571,11 @@ The database and its records have separate compatibility gates:
   retaining the physical projections. Restart that older process with the
   upgraded build before retrying its write. Version 3's receipt trigger likewise
   rejects an older rewrite that removes or changes a prepared Flow's JSON
-  receipt while its projection remains protected. Version 4's nonce trigger
-  also rejects a predecessor process that was already open when migration ran
-  and then tries to erase a receipt-less preparation's exact generation token.
-  Version 5's claim-marker trigger likewise rejects an older rewrite that
-  removes a persisted progression-claim marker. A value newer than this build
+  receipt while its projection remains protected. Version 5's claim-marker
+  trigger likewise rejects an older rewrite that removes a persisted
+  progression-claim marker. Version 6's nonce trigger also rejects a
+  predecessor process that was already open when migration ran and then tries
+  to erase a receipt-less preparation's exact generation token. A value newer than this build
   supports prevents the store from opening and reports that Approach must be
   upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a

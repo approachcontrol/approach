@@ -230,6 +230,38 @@ func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *tes
 	}
 }
 
+func TestPreparationFinalizerCompensatesUnderHeldLaunchReservation(t *testing.T) {
+	const lockTimeout = 150 * time.Millisecond
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir(), LockTimeout: lockTimeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "held-reservation", Title: "Held", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, release, err := store.ReserveAgentLaunch(created.FlowID); err != nil {
+		t.Fatal(err)
+	} else {
+		defer release()
+	}
+
+	start := time.Now()
+	compensated, err := finalizer.CompensateUnderReservation("create worktree: worktree failed")
+	if err != nil {
+		t.Fatalf("CompensateUnderReservation() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= lockTimeout {
+		t.Fatalf("CompensateUnderReservation() took %s, want no second lock acquire under the held reservation", elapsed)
+	}
+	if phase, _, ok := flowstore.FirstLaunchablePhase(compensated); ok {
+		t.Fatalf("CompensateUnderReservation() left launchable phase %#v", phase)
+	}
+}
+
 func TestPreparationFinalizerSnapshotIsolatedFromReturnedRecordMutation(t *testing.T) {
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
 	if err != nil {

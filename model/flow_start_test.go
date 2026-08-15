@@ -24,6 +24,10 @@ func (f preparationFinalizerFuncForTest) Compensate(string) (flowstore.FlowRecor
 	return flowstore.FlowRecord{}, nil
 }
 
+func (f preparationFinalizerFuncForTest) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	return f.Compensate(notes)
+}
+
 func (f preparedFlowFinalizerForTest) Finalize(callback func() error) (flowstore.FlowRecord, error) {
 	if callback != nil {
 		if err := callback(); err != nil {
@@ -39,6 +43,10 @@ func (f preparedFlowFinalizerForTest) Finalize(callback func() error) (flowstore
 
 func (f preparedFlowFinalizerForTest) Compensate(string) (flowstore.FlowRecord, error) {
 	return *f.latest, nil
+}
+
+func (f preparedFlowFinalizerForTest) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	return f.Compensate(notes)
 }
 
 func newFlowCreatorForTest(opts flowCreatorOptions) flowCreator {
@@ -377,6 +385,47 @@ func TestFlowCreatorPreparationReservationRejectsReplacementBeforeAdmission(t *t
 	}
 }
 
+func TestFlowCreatorPreparationReservationRejectsNonceReplacementBeforeAdmission(t *testing.T) {
+	created := flowstore.FlowRecord{FlowID: "flow-1", Title: "Original", RepoPath: "/dev/alpha", PreparationNonce: "nonce-a"}
+	replacement := created
+	replacement.Title = "Replacement"
+	replacement.PreparationNonce = "nonce-b"
+	sideEffects := 0
+	released := false
+	creator := newFlowCreator(flowCreatorOptions{
+		CreatePreparation: func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			return created, preparationFinalizerFuncForTest(func(func() error) (flowstore.FlowRecord, error) {
+				t.Fatal("nonce replacement reservation reached finalization")
+				return flowstore.FlowRecord{}, nil
+			}), nil
+		},
+		ReserveLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return replacement, func() { released = true }, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			sideEffects++
+			return actions.FlowWorktreeCreateResult{}, nil
+		},
+	})
+
+	result, err := creator.Create(FlowStartRequest{
+		RepoPath: "/dev/alpha", Title: created.Title,
+		AfterFlowPersisted: func() error {
+			sideEffects++
+			return nil
+		},
+	})
+	if !flowstore.IsPreparationStale(err) {
+		t.Fatalf("Create() error = %v, want stale reservation", err)
+	}
+	if sideEffects != 0 || !released {
+		t.Fatalf("nonce replacement reservation side effects/released = %d/%t, want 0/true", sideEffects, released)
+	}
+	if result.Flow.Title != created.Title {
+		t.Fatalf("Create() result = %#v, want original nonce", result.Flow)
+	}
+}
+
 func TestFlowCreatorCreateRunsBootstrapDuringPreparation(t *testing.T) {
 	var gotCtx actions.BootstrapContext
 	var gotHook actions.BootstrapHook
@@ -680,6 +729,54 @@ func TestFlowCreatorCreateBootstrapFailureSkipsCompensationOnGenerationMismatch(
 	}
 	if !strings.Contains(err.Error(), "changed before compensation could run") {
 		t.Fatalf("error = %q, want generation-mismatch compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation against a replaced Flow", phaseUpdate)
+	}
+}
+
+func TestFlowCreatorCreateBootstrapFailureSkipsCompensationOnNonceMismatch(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	creator := newFlowCreatorForTest(flowCreatorOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:           update.FlowID,
+				WorktreePath:     update.WorktreePath,
+				PreparationNonce: "nonce-a",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: flowID, PreparationNonce: "nonce-b"}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := creator.Create(FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("Create returned nil error, want bootstrap failure")
+	}
+	if !strings.Contains(err.Error(), "changed before compensation could run") {
+		t.Fatalf("error = %q, want nonce-mismatch compensation refusal", err)
 	}
 	if (phaseUpdate != flowstore.PhaseUpdate{}) {
 		t.Fatalf("phase update = %#v, want no compensation against a replaced Flow", phaseUpdate)

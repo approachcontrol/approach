@@ -28,6 +28,10 @@ var (
 type PreparationFinalizer interface {
 	Finalize(func() error) (FlowRecord, error)
 	Compensate(notes string) (FlowRecord, error)
+	// CompensateUnderReservation is Compensate for a caller that already holds
+	// this Flow's launch/close reservation. Compensate acquires that reservation
+	// itself and must not be used while one is already held.
+	CompensateUnderReservation(notes string) (FlowRecord, error)
 }
 
 type preparationFinalizer struct {
@@ -197,24 +201,46 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 }
 
 // Compensate atomically turns every currently launchable root of this exact
-// receipt-less preparation into a blocked phase. It owns the same launch/close
-// reservation as agent spawn, then revalidates the generation and pending state
-// inside the writer transaction so a stale creator cannot overwrite a claimant
-// or a same-ID replacement.
+// receipt-less preparation into a blocked phase. It acquires the same
+// launch/close reservation as agent spawn, then revalidates the generation and
+// pending state inside the writer transaction so a stale creator cannot
+// overwrite a claimant or a same-ID replacement. Callers that already hold
+// that reservation must use CompensateUnderReservation instead.
 func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
-	if err := f.consume(); err != nil {
+	notes, err := f.beginCompensation(notes)
+	if err != nil {
 		return FlowRecord{}, err
-	}
-	notes = strings.TrimSpace(notes)
-	if notes == "" {
-		return FlowRecord{}, errors.New("flow preparation compensation requires notes")
 	}
 	release, err := f.store.acquireLaunchCloseLock(f.flowID)
 	if err != nil {
 		return FlowRecord{}, err
 	}
 	defer release()
+	return f.compensateUnderReservation(notes)
+}
 
+// CompensateUnderReservation is Compensate without taking a second launch/close
+// reservation. The caller must already hold that fence for this Flow.
+func (f *preparationFinalizer) CompensateUnderReservation(notes string) (FlowRecord, error) {
+	notes, err := f.beginCompensation(notes)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	return f.compensateUnderReservation(notes)
+}
+
+func (f *preparationFinalizer) beginCompensation(notes string) (string, error) {
+	if err := f.consume(); err != nil {
+		return "", err
+	}
+	notes = strings.TrimSpace(notes)
+	if notes == "" {
+		return "", errors.New("flow preparation compensation requires notes")
+	}
+	return notes, nil
+}
+
+func (f *preparationFinalizer) compensateUnderReservation(notes string) (FlowRecord, error) {
 	record, updateErr, mutationErr := f.compensateOnce(notes)
 	if updateErr == nil || mutationErr != nil {
 		return record, updateErr
@@ -361,6 +387,19 @@ func (f *preparationFinalizer) consume() error {
 	}
 	f.consumed = true
 	return nil
+}
+
+// SamePreparationIdentity reports whether two records name the same
+// receipt-less preparation generation. Prefer the storage-only nonce whenever
+// either record carries one. Compare the legacy PreparationGeneration field
+// only for migrated records that have no nonce.
+func SamePreparationIdentity(a, b FlowRecord) bool {
+	aNonce := strings.TrimSpace(a.PreparationNonce)
+	bNonce := strings.TrimSpace(b.PreparationNonce)
+	if aNonce != "" || bNonce != "" {
+		return aNonce == bNonce
+	}
+	return a.PreparationGeneration == b.PreparationGeneration
 }
 
 func newPreparationNonce() (string, error) {

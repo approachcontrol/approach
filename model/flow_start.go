@@ -229,7 +229,7 @@ func (s flowCreator) Create(req FlowStartRequest) (FlowStartResult, error) {
 		return FlowStartResult{Flow: flow}, errors.Join(ErrFlowWorktreeUnreserved,
 			fmt.Errorf("preparation reserved flow %q instead of %q", reserved.FlowID, flow.FlowID))
 	}
-	if reserved.PreparationGeneration != flow.PreparationGeneration {
+	if !flowstore.SamePreparationIdentity(reserved, flow) {
 		return FlowStartResult{Flow: flow}, errors.Join(flowstore.ErrPreparationStale,
 			fmt.Errorf("flow %q generation changed before preparation admission", flow.FlowID))
 	}
@@ -337,6 +337,10 @@ func (f callbackPreparationFinalizer) Finalize(callback func() error) (flowstore
 		}
 	}
 	return f.flow, nil
+}
+
+func (f callbackPreparationFinalizer) CompensateUnderReservation(notes string) (flowstore.FlowRecord, error) {
+	return f.Compensate(notes)
 }
 
 func (f callbackPreparationFinalizer) Compensate(notes string) (flowstore.FlowRecord, error) {
@@ -524,7 +528,7 @@ func (s flowCreator) verifiedFreshFlow(flow flowstore.FlowRecord) (flowstore.Flo
 	if readErr != nil {
 		return flowstore.FlowRecord{}, fmt.Errorf("could not confirm current Flow state before compensating: %w", readErr)
 	}
-	if fresh.PreparationGeneration != flow.PreparationGeneration {
+	if !flowstore.SamePreparationIdentity(fresh, flow) {
 		return flowstore.FlowRecord{}, fmt.Errorf("flow %q changed before compensation could run", flow.FlowID)
 	}
 	return fresh, nil

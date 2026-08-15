@@ -205,8 +205,6 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 	case flowLaunchStageCreateWorktree:
 		if msg.Err != "" {
 			if attempt.Origin == flowLaunchOriginReadyBead {
-				releaseFlowLaunchReservation(msg.Release)
-				msg.Release = nil
 				return m.beginReadyPreparationCompensation(attempt, msg, []string{"create worktree: " + msg.Err})
 			}
 			return m.beginCreateFlowRecovery(attempt, msg, []string{"create worktree: " + msg.Err}, false, true)
@@ -488,7 +486,7 @@ func createFlowSameGeneration(created, current flowstore.FlowRecord) bool {
 	if created.FlowID == "" || current.FlowID != created.FlowID {
 		return false
 	}
-	if (created.PreparationNonce != "" || current.PreparationNonce != "") && created.PreparationNonce != current.PreparationNonce {
+	if !flowstore.SamePreparationIdentity(created, current) {
 		return false
 	}
 	if !created.CreatedAt.IsZero() && !current.CreatedAt.Equal(created.CreatedAt) {
@@ -791,15 +789,11 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		attempt.StartupRoots = append([]flowstore.FlowPhase(nil), msg.StartupRoots...)
 		m = m.withFlowLaunchAttempt(attempt)
 		if attempt.Origin == flowLaunchOriginReadyBead {
-			releaseFlowLaunchReservation(msg.Release)
-			msg.Release = nil
 			return m.beginReadyPreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateWorktree:
 		if attempt.Origin == flowLaunchOriginReadyBead {
-			releaseFlowLaunchReservation(msg.Release)
-			msg.Release = nil
 			parts := []string{"creation canceled after repository changed"}
 			if msg.Err != "" {
 				parts = append([]string{"create worktree: " + msg.Err}, parts...)
@@ -867,12 +861,21 @@ func (m Model) beginReadyPreparationCompensation(attempt flowLaunchAttempt, msg 
 func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []string) tea.Cmd {
 	return func() tea.Msg {
 		event := prior
-		event.Stage, event.From, event.Release = flowLaunchStageCreateRecovered, flowLaunchStateFailurePersisting, nil
+		event.Stage, event.From = flowLaunchStageCreateRecovered, flowLaunchStateFailurePersisting
 		errs := append([]string(nil), parts...)
 		if prior.PreparationFinalizer == nil {
 			errs = append(errs, "compensate preparation: finalizer unavailable")
 		} else {
-			record, err := prior.PreparationFinalizer.Compensate(strings.Join(parts, "; "))
+			notes := strings.Join(parts, "; ")
+			var (
+				record flowstore.FlowRecord
+				err    error
+			)
+			if prior.Release != nil {
+				record, err = prior.PreparationFinalizer.CompensateUnderReservation(notes)
+			} else {
+				record, err = prior.PreparationFinalizer.Compensate(notes)
+			}
 			event.Record = record
 			if err != nil {
 				errs = append(errs, "compensate preparation: "+err.Error())

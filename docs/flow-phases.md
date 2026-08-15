@@ -362,7 +362,9 @@ preparation also carries a storage-only random generation nonce. Reservation
 failure, stale presentation, or another post-create exit consumes the finalizer
 through an atomic compensation path: under the launch/close reservation it
 revalidates that exact nonce and blocks only the authoritative launchable
-roots. A same-ID replacement or already-claimed Flow is never overwritten.
+roots. When create-phase already holds that reservation, compensation keeps it
+through the async command instead of releasing and re-acquiring. A same-ID
+replacement or already-claimed Flow is never overwritten.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
