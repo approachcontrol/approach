@@ -555,8 +555,12 @@ type FlowRecord struct {
 	// SetHeadless or CreateOptions.Headless — a value set on a record passed to
 	// Create is ignored. It is written without omitempty so an explicit false
 	// stays distinguishable from a legacy record that predates the field.
-	Headless              bool               `json:"headless"`
-	Phases                []FlowPhase        `json:"phases"`
+	Headless bool        `json:"headless"`
+	Phases   []FlowPhase `json:"phases"`
+	// ProgressionClaim marks an identity created for the external Beads claim
+	// protocol. Recovery repeats the idempotent claim; the marker is retry
+	// provenance, not proof that ownership already landed.
+	ProgressionClaim      bool               `json:"progression_claim,omitempty"`
 	PreparationGeneration string             `json:"preparation_generation,omitempty"`
 	PreparedAt            *time.Time         `json:"prepared_at,omitempty"`
 	CreatedAt             time.Time          `json:"created_at"`

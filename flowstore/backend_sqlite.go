@@ -27,7 +27,7 @@ const (
 // future schema change has something to branch on, and so an older binary can
 // tell "a newer approach wrote this" apart from "this file is corrupt" —
 // without it, both surface as a raw column-set mismatch dump.
-const databaseSchemaVersion = 3
+const databaseSchemaVersion = 4
 
 // errDatabaseFromNewerBuild marks the one validation failure that is NOT a
 // damaged database. The file is fine; this binary is old. It must stay
@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS flows (
     prepared_at TEXT NOT NULL DEFAULT ''
  )`
 
+const flowTableSchemaV4 = flowTableSchemaV3
+
 const epicProgressionTableSchema = `
 CREATE TABLE IF NOT EXISTS epic_progressions (
     repo_path TEXT NOT NULL,
@@ -99,7 +101,16 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove persisted preparation receipt');
 END`
 
-const flowSchemaSQL = flowTableSchemaV3 + `;
+const flowProgressionClaimCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_progression_claim_record_update
+BEFORE UPDATE OF record ON flows
+WHEN COALESCE(json_extract(CAST(OLD.record AS TEXT), '$.progression_claim'), 0) = 1
+    AND COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.progression_claim'), 0) <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted progression claim marker');
+END`
+
+const flowSchemaSQL = flowTableSchemaV4 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
@@ -108,7 +119,8 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
     ON flows(status, updated_at DESC, flow_id ASC);
 ` + epicProgressionTableSchema + `;
 ` + flowBeadCompatibilityTrigger + `;
-` + flowPreparedCompatibilityTrigger + `;`
+` + flowPreparedCompatibilityTrigger + `;
+` + flowProgressionClaimCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -362,6 +374,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0"}
 	case 3:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0"}
+	case 4:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
@@ -374,11 +388,16 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	if err := validateSQLiteBeadCompatibilityTrigger(db, version); err != nil {
 		return err
 	}
-	if version == 3 {
+	if version >= 3 {
 		if err := validateSQLiteEpicProgressionTable(db); err != nil {
 			return err
 		}
-		return validateSQLitePreparedCompatibilityTrigger(db)
+		if err := validateSQLitePreparedCompatibilityTrigger(db); err != nil {
+			return err
+		}
+	}
+	if version >= 4 {
+		return validateSQLiteProgressionClaimCompatibilityTrigger(db)
 	}
 	return nil
 }
@@ -396,6 +415,8 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV2
 	case 3:
 		want = flowTableSchemaV3
+	case 4:
+		want = flowTableSchemaV4
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
 	}
@@ -447,11 +468,16 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 	if version >= 2 {
 		want = append(want, "trigger:guard_linked_flow_record_update:flows")
 	}
-	if version == 3 {
+	if version >= 3 {
 		want = append(want,
 			"table:epic_progressions:epic_progressions",
 			"trigger:guard_prepared_flow_record_update:flows",
 		)
+	}
+	if version >= 4 {
+		want = append(want, "trigger:guard_progression_claim_record_update:flows")
+	}
+	if version >= 3 {
 		sort.Strings(want)
 	}
 	if !equalStrings(objects, want) {
@@ -464,7 +490,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 && version != 3 {
+	if version != 2 && version != 3 && version != 4 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string
@@ -486,6 +512,17 @@ func validateSQLitePreparedCompatibilityTrigger(db *sql.DB) error {
 	}
 	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowPreparedCompatibilityTrigger) {
 		return fmt.Errorf("flow database has incompatible preparation compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowPreparedCompatibilityTrigger))
+	}
+	return nil
+}
+
+func validateSQLiteProgressionClaimCompatibilityTrigger(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_progression_claim_record_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database progression claim compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowProgressionClaimCompatibilityTrigger) {
+		return fmt.Errorf("flow database has incompatible progression claim compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowProgressionClaimCompatibilityTrigger))
 	}
 	return nil
 }

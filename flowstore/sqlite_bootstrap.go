@@ -146,12 +146,12 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		closeDB = false
 		return nil
 	}
-	if version != 0 && version != 1 && version != 2 {
+	if version != 0 && version != 1 && version != 2 && version != 3 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	predecessor := int64(1)
-	if version == 2 {
-		predecessor = 2
+	if version >= 2 {
+		predecessor = version
 	}
 	if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
 		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
@@ -174,10 +174,15 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 			flowBeadCompatibilityTrigger,
 		)
 	}
+	if predecessor <= 2 {
+		statements = append(statements,
+			"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
+			epicProgressionTableSchema,
+			flowPreparedCompatibilityTrigger,
+		)
+	}
 	statements = append(statements,
-		"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
-		epicProgressionTableSchema,
-		flowPreparedCompatibilityTrigger,
+		flowProgressionClaimCompatibilityTrigger,
 		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
 	)
 	for _, statement := range statements {

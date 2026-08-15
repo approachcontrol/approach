@@ -48,6 +48,10 @@ type FlowStartRequest struct {
 	PlanPhaseTitle              string
 	PlanPhaseStatus             string
 	Headless                    *bool
+	// AfterFlowPersisted admits the receipt-less Flow before any worktree side
+	// effect. The Flow retains its progression claim marker on failure so a
+	// retry can reconcile an externally uncertain admission outcome.
+	AfterFlowPersisted func() error
 }
 
 // FlowStartResult is the prepared or launch-ready result of creating a new Flow.
@@ -89,36 +93,38 @@ type FlowStarterOptions struct {
 // FlowStarter owns the persistence, worktree, bootstrap, and recovery sequence
 // for the initial Flow plan phase.
 type FlowStarter struct {
-	createFlow           func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
-	createPreparation    func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error)
-	createWorktree       func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
-	attachWorktree       func(repoPath, branch string) (actions.FlowWorktreeCreateResult, error)
-	setStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
-	setPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
-	addPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
-	reserveLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
-	bootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
-	resolveCommit        func(string) string
-	newLaunchID          func() string
-	flowPromptTemplates  FlowPromptTemplates
+	createFlow                       func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
+	createPreparation                func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error)
+	createWorktree                   func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
+	attachWorktree                   func(repoPath, branch string) (actions.FlowWorktreeCreateResult, error)
+	setStartMetadata                 func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
+	setPhase                         func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	addPhaseLaunchID                 func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	reserveLaunch                    func(flowID string) (flowstore.FlowRecord, func(), error)
+	bootstrapHookForRepo             func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook                 func(actions.BootstrapContext, actions.BootstrapHook) error
+	resolveCommit                    func(string) string
+	newLaunchID                      func() string
+	flowPromptTemplates              FlowPromptTemplates
+	preparationReservationConfigured bool
 }
 
 func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 	starter := FlowStarter{
-		createFlow:           opts.CreateFlow,
-		createPreparation:    opts.CreatePreparation,
-		createWorktree:       opts.CreateWorktree,
-		attachWorktree:       opts.AttachWorktree,
-		setStartMetadata:     opts.SetStartMetadata,
-		setPhase:             opts.SetPhase,
-		addPhaseLaunchID:     opts.AddPhaseLaunchID,
-		reserveLaunch:        opts.ReserveLaunch,
-		bootstrapHookForRepo: opts.BootstrapHookForRepo,
-		runBootstrapHook:     opts.RunBootstrapHook,
-		resolveCommit:        opts.ResolveCommit,
-		newLaunchID:          opts.NewLaunchID,
-		flowPromptTemplates:  opts.FlowPromptTemplates,
+		createFlow:                       opts.CreateFlow,
+		createPreparation:                opts.CreatePreparation,
+		createWorktree:                   opts.CreateWorktree,
+		attachWorktree:                   opts.AttachWorktree,
+		setStartMetadata:                 opts.SetStartMetadata,
+		setPhase:                         opts.SetPhase,
+		addPhaseLaunchID:                 opts.AddPhaseLaunchID,
+		reserveLaunch:                    opts.ReserveLaunch,
+		bootstrapHookForRepo:             opts.BootstrapHookForRepo,
+		runBootstrapHook:                 opts.RunBootstrapHook,
+		resolveCommit:                    opts.ResolveCommit,
+		newLaunchID:                      opts.NewLaunchID,
+		flowPromptTemplates:              opts.FlowPromptTemplates,
+		preparationReservationConfigured: opts.ReserveLaunch != nil,
 	}
 	if starter.createFlow == nil {
 		starter.createFlow = func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error) {
@@ -298,18 +304,50 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	if s.createPreparation == nil {
 		return FlowStartResult{}, fmt.Errorf("flow starter missing CreatePreparation")
 	}
+	if !s.preparationReservationConfigured {
+		return FlowStartResult{}, fmt.Errorf("flow starter missing authoritative ReserveLaunch for preparation")
+	}
 	flow, finalizer, err := s.createPreparation(flowstore.FlowRecord{
-		Title:        req.Title,
-		Instructions: req.Instructions,
-		Bead:         req.Bead,
-		RepoPath:     req.RepoPath,
-		BaseRef:      req.BaseRef,
+		Title:            req.Title,
+		Instructions:     req.Instructions,
+		Bead:             req.Bead,
+		RepoPath:         req.RepoPath,
+		BaseRef:          req.BaseRef,
+		ProgressionClaim: req.AfterFlowPersisted != nil,
 	}, flowstore.CreateOptions{
 		Headless:   req.Headless,
 		PhaseAgent: phaseAgentSettingsForRequest(req),
 	})
 	if err != nil {
 		return FlowStartResult{}, err
+	}
+	reserved, release, err := s.reserveLaunch(flow.FlowID)
+	if err != nil {
+		return FlowStartResult{Flow: flow}, fmt.Errorf("reserve flow preparation identity: %w", err)
+	}
+	releaseIdentity := func() {
+		if release != nil {
+			release()
+			release = nil
+		}
+	}
+	defer releaseIdentity()
+	if reserved.FlowID != "" && reserved.FlowID != flow.FlowID {
+		return FlowStartResult{Flow: flow}, errors.Join(ErrFlowWorktreeUnreserved,
+			fmt.Errorf("preparation reserved flow %q instead of %q", reserved.FlowID, flow.FlowID))
+	}
+	if reserved.PreparationGeneration != flow.PreparationGeneration {
+		return FlowStartResult{Flow: flow}, errors.Join(flowstore.ErrPreparationStale,
+			fmt.Errorf("flow %q generation changed before preparation admission", flow.FlowID))
+	}
+	if flowstore.FlowClosed(reserved) || flowstore.DeriveStatus(reserved) != flowstore.StatusPending {
+		return FlowStartResult{Flow: reserved}, errors.Join(flowstore.ErrPreparationIncomplete,
+			fmt.Errorf("flow %q state changed before preparation admission", flow.FlowID))
+	}
+	if req.AfterFlowPersisted != nil {
+		if err := req.AfterFlowPersisted(); err != nil {
+			return FlowStartResult{Flow: flow}, err
+		}
 	}
 	phaseID := ""
 	if phase, ok := initialFlowLaunchPhase(flow, req.PlanPhaseID); ok {
@@ -319,7 +357,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 
 	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
 	if err != nil {
-		compensated, compensationErr := s.blockStartupFailurePhases(flow, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
+		compensated, compensationErr := s.blockStartupFailurePhasesReserved(flow, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
 		result.Flow = compensated
 		return result, compensationErr
 	}
@@ -346,7 +384,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		return bootstrapErr
 	})
 	if err != nil {
-		if flowstore.IsPreparationUnknown(err) {
+		if flowstore.IsPreparationUnknown(err) || flowstore.IsPreparationStale(err) {
 			return result, err
 		}
 		if finalized.FlowID == flow.FlowID {
@@ -357,13 +395,13 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		if bootstrapErr != nil {
 			errText = "Bootstrap hook failed: " + bootstrapErr.Error()
 		}
-		compensated, compensationErr := s.blockStartupFailurePhases(flow, phaseID, errText, errText)
+		compensated, compensationErr := s.blockStartupFailurePhasesReserved(flow, phaseID, errText, errText)
 		result.Flow = compensated
 		return result, compensationErr
 	}
 	if finalized.PreparedAt == nil {
 		errText := "Preparation receipt persistence failed: finalizer returned no preparation receipt"
-		compensated, compensationErr := s.blockStartupFailurePhases(flow, phaseID, errText, errText)
+		compensated, compensationErr := s.blockStartupFailurePhasesReserved(flow, phaseID, errText, errText)
 		result.Flow = compensated
 		return result, compensationErr
 	}
@@ -542,26 +580,11 @@ func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) er
 	return fmt.Errorf("%s", resultErr)
 }
 
-func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes, resultErr string) (flowstore.FlowRecord, error) {
-	// A receipt-less Flow is visible to other Approach processes while worktree
-	// creation and bootstrap run. Take the same reservation every launch uses,
-	// then classify the authoritative record while holding it. This closes the
-	// check-to-block race and prevents stale startup compensation from replacing
-	// a live phase with blocked.
-	authoritative, release, err := s.reserveLaunch(flow.FlowID)
-	if err != nil {
-		return flow, fmt.Errorf("%s; reserve flow before startup compensation: %v", resultErr, err)
-	}
-	defer releaseFlowLaunchReservation(release)
-	if authoritative.FlowID != "" && authoritative.FlowID != flow.FlowID {
-		return flow, fmt.Errorf("%s; startup compensation reserved flow %q instead of %q", resultErr, authoritative.FlowID, flow.FlowID)
-	}
-	// Lightweight test seams historically return only the ID from ReserveLaunch;
-	// retain the supplied snapshot in that case. Production returns the complete
-	// authoritative record, including any phase that launched during bootstrap.
-	if len(authoritative.Phases) > 0 || len(flow.Phases) == 0 {
-		flow = authoritative
-	}
+// blockStartupFailurePhasesReserved compensates while PrepareFlow still owns
+// the preparation generation's launch/close reservation. Callers must not
+// release and reacquire by Flow ID around this mutation: a same-ID replacement
+// could otherwise receive the original generation's blocked phases.
+func (s FlowStarter) blockStartupFailurePhasesReserved(flow flowstore.FlowRecord, fallbackPhaseID, notes, resultErr string) (flowstore.FlowRecord, error) {
 	phases := launchablePhases(flow)
 	if len(phases) == 0 {
 		if len(flow.Phases) > 0 {

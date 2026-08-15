@@ -159,20 +159,24 @@ state alongside the direct-child and Ready snapshots. Press `a` when the
 footer shows `a: auto on` to prepare the first ready direct child's Flow and
 enable progression, or `a: auto off` to disable it. Enabled rows show
 `[epic]  [auto]`. Enablement reuses the Ready ordering and exact create-only
-request mapping. Before preparing a new child Flow it claims that child with
-`bd update --claim -- <id>`; the positional separator prevents flag-shaped IDs
-from being interpreted as options. After the Flow checks and immediately before
-claiming, Approach refreshes the epic's direct children and the repository Ready
-set; a child that is no longer both direct and ready stops the attempt without a
-claim. A claim error is shown with its cause and stops the attempt before any
-Flow record or worktree is created. Retrying uses the same Beads actor because a
-post-start claim error may mean the claim already landed. The generated Flow
+request mapping. After revalidating the selected child, Approach persists its
+receipt-less exact-link Flow identity, then claims the child with
+`bd update --claim -- <id>` before creating a worktree; the positional separator
+prevents flag-shaped IDs from being interpreted as options. A child that is no
+longer both direct and ready stops the attempt without a Flow or claim. A claim
+error is shown with its cause and retains the marked unprepared Flow identity so
+retry can repeat the same-actor idempotent claim when a post-start error may mean
+the claim already landed. The generated Flow
 instructions use `bd show -- <id>` so the same IDs remain positional on lookup.
-Enablement may instead adopt one already-prepared pending Flow with the exact
-Bead/epic link without claiming again, and refuses partial listings, ambiguity,
-incomplete preparation, running Flows, and terminal Flows. It does not start a
-phase or launch an agent. With no ready child it reports that progression
-remains off and writes neither a claim, Flow, nor progression state.
+Before choosing a new ready sibling, enablement recovers a direct child's open
+marked receipt-less or prepared-pending exact-link Flow independently of Ready
+state; retry reserves and revalidates both that Flow identity and current direct
+membership, then reclaims it idempotently before adopting a prepared Flow or
+surfacing incomplete preparation instead of skipping it. Partial listings,
+ambiguity, running Flows, and terminal Flows still refuse enablement. It does
+not start a phase or launch an
+agent. With no ready or recoverable child it reports that progression remains
+off and writes neither a claim, Flow, nor progression state.
 
 The Ready selection owns both keys while either request is in flight, preventing
 repeated or mixed presses from creating duplicates. `F` is advertised only when
@@ -262,8 +266,9 @@ first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
 records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
 and agent sessions remain file-backed. SQLite schema v3 adds protected Flow
-preparation receipts and the `epic_progressions` table. Versions 0, 1, and 2
-upgrade transactionally without rewriting existing Flow JSON blobs.
+preparation receipts and the `epic_progressions` table; schema v4 adds the
+compatibility guard for progression-claim recovery markers. Versions 0 through
+3 upgrade transactionally without rewriting existing Flow JSON blobs.
 
 ## Development
 

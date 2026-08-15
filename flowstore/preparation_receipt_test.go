@@ -131,8 +131,8 @@ func TestPreparationFinalizerRejectsReplacementFlowGenerationBeforeCallback(t *t
 		t.Fatal(err)
 	}
 	callbacks := 0
-	if _, err := finalizer.Finalize(func() error { callbacks++; return nil }); !flowstore.IsPreparationIncomplete(err) || !strings.Contains(err.Error(), "generation changed") {
-		t.Fatalf("Finalize() error = %v, want incomplete generation refusal", err)
+	if _, err := finalizer.Finalize(func() error { callbacks++; return nil }); !flowstore.IsPreparationStale(err) || flowstore.IsPreparationIncomplete(err) || !strings.Contains(err.Error(), "generation changed") {
+		t.Fatalf("Finalize() error = %v, want stale non-incomplete generation refusal", err)
 	}
 	if callbacks != 0 {
 		t.Fatalf("stale finalizer ran %d callbacks, want 0", callbacks)

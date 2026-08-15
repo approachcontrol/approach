@@ -347,12 +347,15 @@ plan's own phase status rather than trusting either return value.
 
 `FlowStarter.PrepareFlow` creates the Flow and worktree, records start metadata,
 runs the repository bootstrap hook, and only then consumes its one-shot store
-finalizer. A successful finalizer stamps `PreparedAt`; callback failure keeps
+finalizer. It holds that Flow generation's launch/close reservation from the
+post-create read through claim admission, metadata, finalization, and any
+startup-failure compensation. A successful finalizer stamps `PreparedAt`; callback failure keeps
 the existing startup-phase blocking behavior. If receipt persistence reports a
 commit error, the store reads the Flow back: a matching receipt is success, a
 confirmed nil receipt is incomplete and blocks launchable phases, and an
 unreadable result is unknown and is not compensated because the receipt may be
-durable.
+durable. A generation mismatch is separately stale and is also not compensated,
+because the same Flow ID now names an unrelated replacement.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite
@@ -362,20 +365,21 @@ reservation, but does not dispatch a phase or advance to another child. A
 restart installs no baseline and performs no catch-up; live-edge advancement is
 owned by the later sequential-advance slice.
 
-When no exact-link Flow exists, epic enablement first runs the sole sanctioned
-Beads mutation, it refreshes the epic's direct children and the repository Ready
-set and aborts without mutation if the selected child is no longer in both. It
-then runs `bd update --claim -- <child-id>` and waits for success before it calls
-`PrepareFlow`. Generated Flow instructions use `bd show -- <child-id>`. A claim
-error therefore aborts before any new Flow record or worktree side effect from
-that attempt. Beads and Approach storage do not share a transaction: an error
-after the process starts may leave ownership uncertain or already claimed, so
-Approach does not probe or automatically unclaim. Retry deliberately preserves
-`BEADS_ACTOR` and relies on same-actor claim idempotency. After a confirmed
-claim, `PrepareFlow` keeps its existing partial-failure contract described above;
-failures may leave only the claim, or the claim plus an incomplete/blocked Flow
-or worktree. Adoption of an already prepared exact-link Flow and manual Ready
-`f`/`F` creation remain claim-free.
+When no exact-link Flow exists, epic enablement refreshes the epic's direct
+children and the repository Ready set before the sole sanctioned Beads mutation,
+and aborts without mutation if the selected child is no longer in both.
+`PrepareFlow` then persists the receipt-less exact-link identity and runs
+`bd update --claim -- <child-id>` through its post-persistence admission hook
+before any worktree side effect. Generated Flow instructions use
+`bd show -- <child-id>`. A claim error retains that marked unprepared identity;
+an uncertain process-started error is never compensated with an automatic
+unclaim. After a confirmed claim, every later failure likewise leaves the
+exact-link Flow discoverable. Retry refreshes direct-child membership and
+searches for an open marked
+receipt-less or prepared-pending exact-link Flow before consulting Ready state,
+then repeats the same-actor idempotent claim before it adopts the prepared Flow
+or surfaces incomplete preparation instead of skipping to a sibling. Unmarked
+manual Ready `f`/`F` Flows do not enter this recovery path.
 
 ## Per-phase agent settings
 

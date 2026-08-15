@@ -20,6 +20,14 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
+func runFlowPreparationAdmission(t *testing.T, req model.FlowStartRequest) error {
+	t.Helper()
+	if req.AfterFlowPersisted == nil {
+		t.Fatal("progression Flow request omitted post-persistence admission")
+	}
+	return req.AfterFlowPersisted()
+}
+
 func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *testing.T) {
 	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 	var preparedRequest model.FlowStartRequest
@@ -57,6 +65,9 @@ func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *tes
 		},
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			order = append(order, "create")
+			if err := runFlowPreparationAdmission(t, req); err != nil {
+				return model.FlowStartResult{}, err
+			}
 			preparedRequest = req
 			return model.FlowStartResult{Flow: preparedFlow}, nil
 		},
@@ -107,7 +118,7 @@ func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *tes
 	if launches != 0 || releases != 1 {
 		t.Fatalf("launches/releases = %d/%d, want 0/1", launches, releases)
 	}
-	if got, want := strings.Join(order, " -> "), "list -> children -> ready -> claim -> create -> reserve -> enable"; got != want {
+	if got, want := strings.Join(order, " -> "), "list -> children -> children -> ready -> create -> claim -> reserve -> enable"; got != want {
 		t.Fatalf("progression order = %q, want %q", got, want)
 	}
 	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-child is prepared" {
@@ -169,8 +180,8 @@ func TestEpicAutoProgressionRevalidatesSelectedChildBeforeClaim(t *testing.T) {
 				t.Fatal("enable returned nil command")
 			}
 			m, _ = update(m, cmd())
-			if childrenCalls != 2 || readyCalls != 2 {
-				t.Fatalf("children/ready calls = %d/%d, want 2/2", childrenCalls, readyCalls)
+			if childrenCalls != 3 || readyCalls != 2 {
+				t.Fatalf("children/ready calls = %d/%d, want 3/2", childrenCalls, readyCalls)
 			}
 			if claims != 0 || creates != 0 {
 				t.Fatalf("claims/creates = %d/%d, want 0/0", claims, creates)
@@ -192,6 +203,7 @@ func TestEpicAutoProgressionClaimFailureStopsBeforeFlowPreparation(t *testing.T)
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			claims := 0
+			creates := 0
 			downstream := 0
 			m := loadEpicProgressionTestModel(t, model.Options{
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
@@ -202,9 +214,9 @@ func TestEpicAutoProgressionClaimFailureStopsBeforeFlowPreparation(t *testing.T)
 					}
 					return tt.cause
 				},
-				CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-					downstream++
-					return model.FlowStartResult{}, nil
+				CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					creates++
+					return model.FlowStartResult{}, runFlowPreparationAdmission(t, req)
 				},
 				ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
 					downstream++
@@ -221,8 +233,8 @@ func TestEpicAutoProgressionClaimFailureStopsBeforeFlowPreparation(t *testing.T)
 				t.Fatal("claiming enable returned nil command")
 			}
 			m, _ = update(m, cmd())
-			if claims != 1 || downstream != 0 {
-				t.Fatalf("claim/downstream calls = %d/%d, want 1/0", claims, downstream)
+			if claims != 1 || creates != 1 || downstream != 0 {
+				t.Fatalf("claim/create/downstream calls = %d/%d/%d, want 1/1/0", claims, creates, downstream)
 			}
 			status := m.TransientError()
 			if !strings.Contains(status, "Could not claim child epic-1.1; auto-progression remains off") || !strings.Contains(status, tt.cause.Error()) {
@@ -235,6 +247,48 @@ func TestEpicAutoProgressionClaimFailureStopsBeforeFlowPreparation(t *testing.T)
 				t.Fatal("claim failure did not release admission for retry")
 			}
 		})
+	}
+}
+
+func TestEpicAutoProgressionStalePreClaimFailureDoesNotAdoptReplacement(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	replacement := flowstore.FlowRecord{
+		FlowID: "flow-replaced", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, PreparedAt: &preparedAt,
+	}
+	claims := 0
+	reads := 0
+	downstream := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: replacement.FlowID}}, flowstore.ErrPreparationStale
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			reads++
+			return replacement, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			downstream++
+			return replacement, func() {}, nil
+		},
+		EnableEpicProgression: func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			downstream++
+			return flowstore.EpicProgression{}, replacement, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claims != 0 || reads != 0 || downstream != 0 {
+		t.Fatalf("stale pre-claim claims/reads/downstream = %d/%d/%d, want 0/0/0", claims, reads, downstream)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Could not admit child epic-1.1 before Flow preparation") {
+		t.Fatalf("stale pre-claim status = %q", got)
 	}
 }
 
@@ -279,6 +333,304 @@ func TestEpicAutoProgressionAdoptsPreparedFlowWithoutClaim(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(m.View()), "[auto]") {
 		t.Fatalf("adoption did not enable progression:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func TestEpicAutoProgressionRetryAdoptsClaimedChildBeforeReadySibling(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	claimedChildFlow := flowstore.FlowRecord{
+		FlowID: "flow-claimed-child", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "claimed-generation", PreparedAt: &preparedAt,
+	}
+	claims := 0
+	creates := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "epic-1.1", Title: "Claimed child"},
+				{ID: "epic-1.2", Title: "Ready sibling"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{claimedChildFlow}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			creates++
+			return model.FlowStartResult{}, nil
+		},
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != claimedChildFlow.FlowID {
+				t.Fatalf("reserved Flow = %q, want claimed child Flow %q", flowID, claimedChildFlow.FlowID)
+			}
+			return claimedChildFlow, func() {}, nil
+		},
+		EnableEpicProgression: func(update flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			if update.Bead != claimedChildFlow.Bead {
+				t.Fatalf("enabled Bead = %#v, want claimed child %#v", update.Bead, claimedChildFlow.Bead)
+			}
+			return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, claimedChildFlow, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("retry enable returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if claims != 1 || creates != 0 {
+		t.Fatalf("retry claims/creates = %d/%d, want 1/0", claims, creates)
+	}
+	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-claimed-child is prepared" {
+		t.Fatalf("retry status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionRetryDiscoversNewlyMarkedDirectChildBeforeReadySibling(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	claimedChildFlow := flowstore.FlowRecord{
+		FlowID: "flow-newly-marked-child", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "newly-marked-generation", PreparedAt: &preparedAt,
+	}
+	childrenCalls := 0
+	claimedID := ""
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			childrenCalls++
+			if childrenCalls == 1 {
+				// The expansion snapshot predates the marked Flow and its child.
+				return []beadsquery.Bead{{ID: "epic-1.2", Title: "Ready sibling"}}, nil
+			}
+			return []beadsquery.Bead{
+				{ID: "epic-1.1", Title: "Newly marked child"},
+				{ID: "epic-1.2", Title: "Ready sibling"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{claimedChildFlow}, nil
+		},
+		ClaimBead: func(_ string, beadID string) error {
+			claimedID = beadID
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("retry created a Flow for the ready sibling")
+			return model.FlowStartResult{}, nil
+		},
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != claimedChildFlow.FlowID {
+				t.Fatalf("reserved Flow = %q, want newly marked child Flow %q", flowID, claimedChildFlow.FlowID)
+			}
+			return claimedChildFlow, func() {}, nil
+		},
+		EnableEpicProgression: func(update flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			if update.Bead != claimedChildFlow.Bead {
+				t.Fatalf("enabled Bead = %#v, want newly marked child %#v", update.Bead, claimedChildFlow.Bead)
+			}
+			return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, claimedChildFlow, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("retry enable returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if claimedID != "epic-1.1" {
+		t.Fatalf("claimed child = %q, want newly marked child", claimedID)
+	}
+	if childrenCalls != 3 {
+		t.Fatalf("child membership reads = %d, want expansion, discovery, and reserved revalidation", childrenCalls)
+	}
+	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-newly-marked-child is prepared" {
+		t.Fatalf("retry status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionRetryDoesNotSkipIncompleteClaimedChild(t *testing.T) {
+	incomplete := flowstore.FlowRecord{
+		FlowID: "flow-incomplete", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "incomplete-generation",
+	}
+	claims := 0
+	reserves := 0
+	downstream := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Claimed child"}, {ID: "epic-1.2", Title: "Ready sibling"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{incomplete}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			downstream++
+			return model.FlowStartResult{}, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			reserves++
+			return incomplete, func() {}, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claims != 1 || reserves != 1 || downstream != 0 {
+		t.Fatalf("incomplete retry claims/reserves/downstream = %d/%d/%d, want 1/1/0", claims, reserves, downstream)
+	}
+	if got := m.TransientError(); got != "Flow flow-incomplete exists but preparation is incomplete; auto-progression remains off" {
+		t.Fatalf("incomplete retry status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionRetryRevalidatesDirectChildBeforeClaim(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	marked := flowstore.FlowRecord{
+		FlowID: "flow-reparented", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "reparented-generation", PreparedAt: &preparedAt,
+	}
+	childrenCalls := 0
+	claims := 0
+	releases := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			childrenCalls++
+			if childrenCalls <= 2 {
+				return []beadsquery.Bead{{ID: "epic-1.1", Title: "Moved child"}, {ID: "epic-1.2", Title: "Ready sibling"}}, nil
+			}
+			return []beadsquery.Bead{{ID: "epic-1.2", Title: "Ready sibling"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{marked}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return marked, func() { releases++ }, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if childrenCalls != 3 || claims != 0 || releases != 1 {
+		t.Fatalf("reparented retry children/claims/releases = %d/%d/%d, want 3/0/1", childrenCalls, claims, releases)
+	}
+	if got := m.TransientError(); got != "Child epic-1.1 is no longer a direct child of epic epic-1; auto-progression remains off" {
+		t.Fatalf("reparented retry status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionRetryRejectsReplacementBeforeClaim(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	listed := flowstore.FlowRecord{
+		FlowID: "flow-replaced", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "original-generation", PreparedAt: &preparedAt,
+	}
+	replacement := listed
+	replacement.ProgressionClaim = false
+	replacement.PreparationGeneration = ""
+	claims := 0
+	releases := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Claimed child"}, {ID: "epic-1.2", Title: "Ready sibling"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{listed}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return replacement, func() { releases++ }, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claims != 0 || releases != 1 {
+		t.Fatalf("replacement retry claims/releases = %d/%d, want 0/1", claims, releases)
+	}
+	if got := m.TransientError(); got != "Flow flow-replaced changed before claim recovery; auto-progression remains off" {
+		t.Fatalf("replacement retry status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionManualPreparedChildDoesNotBlockReadySibling(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	manual := flowstore.FlowRecord{
+		FlowID: "flow-manual", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, PreparedAt: &preparedAt,
+	}
+	preparedSibling := flowstore.FlowRecord{
+		FlowID: "flow-ready-sibling", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.2", EpicID: "epic-1"}, PreparedAt: &preparedAt,
+	}
+	claimedID := ""
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Manual child"}, {ID: "epic-1.2", Title: "Ready sibling"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{manual}, nil
+		},
+		ClaimBead: func(_ string, beadID string) error {
+			claimedID = beadID
+			return nil
+		},
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if err := runFlowPreparationAdmission(t, req); err != nil {
+				return model.FlowStartResult{}, err
+			}
+			return model.FlowStartResult{Flow: preparedSibling}, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return preparedSibling, func() {}, nil
+		},
+		EnableEpicProgression: func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, preparedSibling, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claimedID != "epic-1.2" {
+		t.Fatalf("claimed child = %q, want ready sibling", claimedID)
+	}
+	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-ready-sibling is prepared" {
+		t.Fatalf("manual-child retry status = %q", got)
 	}
 }
 
@@ -330,7 +682,8 @@ func TestEpicAutoProgressionDisableDoesNotConsultChildrenOrFlows(t *testing.T) {
 }
 
 func TestEpicAutoProgressionEnableWithNoReadyChildCreatesNothing(t *testing.T) {
-	sideEffects := 0
+	flowReads := 0
+	mutations := 0
 	m := inBeadsPane(newTestModel(testRepos(), model.Options{
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
@@ -341,15 +694,15 @@ func TestEpicAutoProgressionEnableWithNoReadyChildCreatesNothing(t *testing.T) {
 			return flowstore.EpicProgression{}, false, nil
 		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			sideEffects++
+			flowReads++
 			return nil, nil
 		},
 		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			sideEffects++
+			mutations++
 			return model.FlowStartResult{}, nil
 		},
 		SetEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
-			sideEffects++
+			mutations++
 			return flowstore.EpicProgression{}, nil
 		},
 	}))
@@ -364,8 +717,8 @@ func TestEpicAutoProgressionEnableWithNoReadyChildCreatesNothing(t *testing.T) {
 		t.Fatal("no-ready enable returned nil command instead of status result")
 	}
 	m, _ = update(m, cmd())
-	if sideEffects != 0 {
-		t.Fatalf("no-ready enable performed %d side effects", sideEffects)
+	if flowReads != 1 || mutations != 0 {
+		t.Fatalf("no-ready enable performed %d Flow reads and %d mutations, want 1/0", flowReads, mutations)
 	}
 	if got := m.TransientError(); got != "No ready child for epic epic-1; auto-progression remains off" {
 		t.Fatalf("status = %q", got)
@@ -412,8 +765,7 @@ func TestEpicAutoProgressionDeterministicEnableRefusalsRemainKnownDisabled(t *te
 			},
 		},
 		{
-			name:       "preparation failed before Flow identity",
-			wantClaims: 1,
+			name: "preparation failed before Flow identity",
 			options: func() model.Options {
 				return model.Options{
 					ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
@@ -429,7 +781,10 @@ func TestEpicAutoProgressionDeterministicEnableRefusalsRemainKnownDisabled(t *te
 			options: func() model.Options {
 				return model.Options{
 					ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
-					CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+					CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+						if err := runFlowPreparationAdmission(t, req); err != nil {
+							return model.FlowStartResult{}, err
+						}
 						return model.FlowStartResult{Flow: prepared}, errors.New("receipt write failed")
 					},
 					ReadFlow: func(string) (flowstore.FlowRecord, error) {
@@ -448,7 +803,10 @@ func TestEpicAutoProgressionDeterministicEnableRefusalsRemainKnownDisabled(t *te
 					ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 						return nil, nil
 					},
-					CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+					CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+						if err := runFlowPreparationAdmission(t, req); err != nil {
+							return model.FlowStartResult{}, err
+						}
 						return model.FlowStartResult{Flow: prepared}, nil
 					},
 					ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
@@ -514,7 +872,10 @@ func TestEpicAutoProgressionUnknownPreparationRefreshesVisibleFlow(t *testing.T)
 			listCalls++
 			return nil, nil
 		},
-		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if err := runFlowPreparationAdmission(t, req); err != nil {
+				return model.FlowStartResult{}, err
+			}
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-uncertain"}}, errors.New("receipt write failed")
 		},
 		ReadFlow: func(string) (flowstore.FlowRecord, error) {
@@ -599,7 +960,10 @@ func TestEpicAutoProgressionEnableWriteReconciliation(t *testing.T) {
 					claims++
 					return nil
 				},
-				CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+				CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					if err := runFlowPreparationAdmission(t, req); err != nil {
+						return model.FlowStartResult{}, err
+					}
 					return model.FlowStartResult{Flow: prepared}, nil
 				},
 				ReadEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
@@ -913,6 +1277,11 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 	for _, injected := range []string{"CreateFlow", "StartFlowPlan"} {
 		t.Run(injected, func(t *testing.T) {
 			testRoot := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: filepath.Join(testRoot, "state")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
 			repoPath := filepath.Join(testRoot, "repo")
 			if err := os.MkdirAll(repoPath, 0o755); err != nil {
 				t.Fatal(err)
@@ -941,8 +1310,11 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 
 			var calls []string
 			opts := model.Options{
-				AgentCommand:     "codex",
-				SessionStateRoot: filepath.Join(testRoot, "state"),
+				AgentCommand:      "codex",
+				SessionStateRoot:  filepath.Join(testRoot, "state"),
+				FlowStore:         store,
+				ReadFlow:          store.Read,
+				ReserveFlowLaunch: store.ReserveAgentLaunch,
 				ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 					return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
 				},
@@ -1388,13 +1760,12 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 
 func TestEpicProgressionClaimAndPreparationKeepSharedAdmissionUntilResult(t *testing.T) {
 	for _, tt := range []struct {
-		name        string
-		claimErr    error
-		prepareErr  error
-		wantCreates int
+		name       string
+		claimErr   error
+		prepareErr error
 	}{
 		{name: "claim failure", claimErr: errors.New("already claimed")},
-		{name: "post-claim preparation failure", prepareErr: errors.New("worktree unavailable"), wantCreates: 1},
+		{name: "post-claim preparation failure", prepareErr: errors.New("worktree unavailable")},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			claims := 0
@@ -1415,8 +1786,11 @@ func TestEpicProgressionClaimAndPreparationKeepSharedAdmissionUntilResult(t *tes
 					claims++
 					return tt.claimErr
 				},
-				CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+				CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					creates++
+					if err := runFlowPreparationAdmission(t, req); err != nil {
+						return model.FlowStartResult{}, err
+					}
 					return model.FlowStartResult{}, tt.prepareErr
 				},
 			}))
@@ -1442,8 +1816,8 @@ func TestEpicProgressionClaimAndPreparationKeepSharedAdmissionUntilResult(t *tes
 			}
 
 			m, _ = update(m, admitted())
-			if claims != 1 || creates != tt.wantCreates {
-				t.Fatalf("claims/creates = %d/%d, want 1/%d", claims, creates, tt.wantCreates)
+			if claims != 1 || creates != 1 {
+				t.Fatalf("claims/creates = %d/%d, want 1/1", claims, creates)
 			}
 			if tt.claimErr != nil && !strings.Contains(m.TransientError(), tt.claimErr.Error()) {
 				t.Fatalf("stale claim failure status = %q, want cause %q", m.TransientError(), tt.claimErr)
@@ -1816,8 +2190,16 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 			{ID: "deliver", Title: "Deliver", Kind: flowstore.KindPRCreation, DependsOn: []string{"execute"}},
 		},
 	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: []flowstore.Preset{preset}})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 	m, repoPath := setupModelRepoWithOptions(t, model.Options{
 		SessionStateRoot:      root,
+		FlowStore:             store,
+		ReadFlow:              store.Read,
+		ReserveFlowLaunch:     store.ReserveAgentLaunch,
 		AgentCommand:          "claude",
 		ClaudeModel:           "claude-opus-5",
 		ClaudeReasoningEffort: "high",
@@ -1834,15 +2216,12 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, readyCmd())
 	_, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	created, ok := createCmd().(model.ReadyBeadFlowCreatedMsg)
+	message := createCmd()
+	created, ok := message.(model.ReadyBeadFlowCreatedMsg)
 	if !ok {
-		t.Fatalf("Ready create command did not return ReadyBeadFlowCreatedMsg")
+		t.Fatalf("Ready create command returned %T (%#v), want ReadyBeadFlowCreatedMsg", message, message)
 	}
 
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: []flowstore.Preset{preset}})
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	record, err := store.Read(created.FlowID)
 	if err != nil {
 		t.Fatalf("Read(%q) error = %v", created.FlowID, err)

@@ -25,12 +25,16 @@ launch.
 - Enabled and halted state survive restart. Advancement is edge-triggered only
   from success-terminal transitions observed while the TUI is running. Startup
   performs no catch-up for completions that occurred while Approach was down.
-- A progression-created child Flow is claimed synchronously immediately before
-  `FlowStarter.PrepareFlow`, after a fresh check that it remains both a direct
-  child and Ready. There is no cross-system transaction: an uncertain claim
-  error or a later Approach failure is never compensated with an automatic
-  unclaim. Already-prepared exact-link adoption and manual Ready Flow creation
-  remain claim-free. This slice does not start a phase or launch an agent. Child
+- A progression-created child Flow persists its receipt-less exact-link identity
+  before synchronously claiming the freshly revalidated direct-and-Ready child;
+  claim admission runs before worktree creation and retains the marked identity
+  on a claim error. After a successful claim, the identity remains discoverable
+  across later preparation or enablement failure. Retry prioritizes an open
+  marked receipt-less or prepared-pending exact-link Flow over a later Ready
+  sibling and repeats the same-actor idempotent claim before adoption.
+  There is no cross-system transaction and no automatic unclaim. Prepared
+  exact-link adoption and manual Ready Flow creation remain claim-free. This
+  slice does not start a phase or launch an agent. Child
   launching is deferred to `approach-y7g.9`; selecting and advancing subsequent
   children is deferred to `approach-y7g.5`.
 

@@ -187,19 +187,24 @@ it claims a child before preparing that child's new Flow.
   children and readiness snapshots are loaded. With no ready direct child, the
   action reports `No ready child for epic <id>; auto-progression remains off`
   and creates or writes nothing.
-- Enabling chooses the first ready direct child in the expansion's established
-  order. It lists the complete repository Flow corpus and either prepares a new
-  Flow through `PrepareFlow` or adopts the sole open `pending` exact-link match
-  carrying a persisted preparation receipt. Partial listings, multiple exact
+- Enabling lists the complete repository Flow corpus and first searches direct
+  children in established order for an open marked receipt-less or
+  prepared-pending exact-link Flow, independently of current Ready state. It
+  reserves and revalidates the Flow generation and current direct-child
+  membership, repeats the same-actor idempotent claim, then surfaces incomplete preparation
+  or adopts the prepared match before choosing the first ready direct child for
+  a new Flow. Partial listings, multiple exact
   matches, missing receipts, running state, deliberate closure, failure
   terminals, success terminals, and unknown statuses all refuse enablement.
   Before new-Flow preparation, it refreshes both direct children and Ready state
-  and refuses a selected child that is no longer in both sets. It then claims
-  the child through the isolated `beadsmutate` adapter. Any claim error aborts
-  before `PrepareFlow`, surfaces the child-specific cause, and leaves progression
-  known off; an error after process start may mean ownership is uncertain or
-  already applied, so the claim is never compensated and same-actor retry is
-  intentional. Exact-link adoption remains claim-free. Preparation uses the
+  and refuses a selected child that is no longer in both sets. `PrepareFlow`
+  persists the receipt-less exact-link identity, then claims through the isolated
+  `beadsmutate` adapter before any worktree side effect. A claim error surfaces
+  the child-specific cause, retains that marked identity, and leaves progression
+  known off; an error after process start may still mean ownership is uncertain
+  or already applied, so retry repeats the same-actor idempotent claim rather
+  than compensating with an unclaim. Unmarked, Ready exact-link adoption remains
+  claim-free. Preparation uses the
   Ready create-only title, a durable-requirements prompt containing
   `bd show -- <id>`, the Bead/epic link, and captured agent settings. It does not
   start a phase or launch an agent.

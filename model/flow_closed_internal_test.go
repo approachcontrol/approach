@@ -249,19 +249,19 @@ func TestFlowStarterPlanHoldsLaunchReservationAcrossBookkeeping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartPlan() error = %v", err)
 	}
-	want := []string{"reserve:created-flow", "launch-id:created-flow"}
-	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] {
-		t.Fatalf("call order = %v, want the reservation before launch bookkeeping %v", order, want)
+	want := []string{"reserve:created-flow", "reserve:created-flow", "launch-id:created-flow"}
+	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] || order[2] != want[2] {
+		t.Fatalf("call order = %v, want preparation and launch reservations before launch bookkeeping %v", order, want)
 	}
 	if result.LaunchRelease == nil {
 		t.Fatal("StartPlan must hand the held reservation to the caller that spawns")
 	}
-	if released != 0 {
-		t.Fatalf("release count = %d, want the reservation still held at return", released)
+	if released != 1 {
+		t.Fatalf("release count = %d, want preparation released and launch reservation held at return", released)
 	}
 	result.LaunchRelease()
-	if released != 1 {
-		t.Fatalf("release count = %d, want 1 after the caller releases", released)
+	if released != 2 {
+		t.Fatalf("release count = %d, want 2 after the caller releases", released)
 	}
 
 	// A Flow closed during startup must fail the launch outright rather than

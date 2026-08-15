@@ -50,6 +50,7 @@ type storedFlowDTO struct {
 	AutoMode              bool                  `json:"auto_mode,omitempty"`
 	Headless              bool                  `json:"headless"`
 	Phases                []FlowPhase           `json:"phases"`
+	ProgressionClaim      bool                  `json:"progression_claim,omitempty"`
 	PreparationGeneration string                `json:"preparation_generation,omitempty"`
 	PreparedAt            string                `json:"prepared_at,omitempty"`
 	CreatedAt             time.Time             `json:"created_at"`
@@ -94,6 +95,7 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 		AutoMode:              record.AutoMode,
 		Headless:              record.Headless,
 		Phases:                record.Phases,
+		ProgressionClaim:      record.ProgressionClaim,
 		PreparationGeneration: record.PreparationGeneration,
 		CreatedAt:             record.CreatedAt,
 		UpdatedAt:             record.UpdatedAt,
@@ -130,6 +132,7 @@ func (dto storedFlowDTO) record() FlowRecord {
 		AutoMode:              dto.AutoMode,
 		Headless:              dto.Headless,
 		Phases:                dto.Phases,
+		ProgressionClaim:      dto.ProgressionClaim,
 		PreparationGeneration: dto.PreparationGeneration,
 		CreatedAt:             dto.CreatedAt,
 		UpdatedAt:             dto.UpdatedAt,

@@ -609,17 +609,22 @@ For a selected epic with loaded children and readiness, `a: auto on` enables
 progression from the first ready direct child. After a complete Flow listing
 rules out ambiguous or unusable candidates, a new-Flow path refreshes the epic's
 direct children and the repository Ready set. If the selected child is no longer
-both direct and ready, the attempt stops without a claim. Otherwise it runs
-`bd update --claim -- <child-id>` and waits for it to finish before the first
-Flow record or worktree side effect. The Flow instructions use
-`bd show -- <child-id>`. Any claim error is shown with the child ID and
-underlying cause, progression remains known off, and no Flow is prepared by that attempt.
+both direct and ready, the attempt stops without a claim. Otherwise it persists
+the receipt-less exact-link Flow identity, runs
+`bd update --claim -- <child-id>`, and waits for it before creating a worktree.
+The Flow instructions use `bd show -- <child-id>`. Any claim error is shown with
+the child ID and underlying cause, retains the marked unprepared identity for
+same-actor retry, and leaves progression known off.
 Because a process-started error can leave ownership uncertain or already
 claimed, Approach neither probes nor unclaims; retry uses the same actor. A
 successful claim is likewise retained if later Flow preparation, reservation,
-or progression enablement fails. If one exact-link pending Flow is already
-prepared, enablement adopts it without claiming again. This action prepares or
-adopts only; it does not start a phase or launch an agent.
+or progression enablement fails. Before choosing another ready sibling, retry
+finds the claimed direct child's open marked receipt-less or prepared-pending
+exact-link Flow even though that child is no longer Ready; it reserves the Flow,
+revalidates its generation and current direct-child membership, repeats the
+idempotent claim, then surfaces incomplete preparation or adopts the prepared
+Flow. Unmarked manual Flows do not enter this recovery path. This action
+prepares or adopts only; it does not start a phase or launch an agent.
 
 The two keys share one admission token. Repeated or mixed presses cannot create
 duplicate Flows. A repository change — cursor move or rescan — invalidates a

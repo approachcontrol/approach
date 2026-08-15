@@ -138,7 +138,10 @@ func TestEnableEpicProgressionRevalidationFailureDoesNotInstallIneligibleBaselin
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{prepared}, nil
 		},
-		reserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.1", Title: "Child"}}, nil
+		},
+		reserveFlowPreparation: func(string) (flowstore.FlowRecord, func(), error) {
 			return prepared, func() {}, nil
 		},
 		enableEpicProgression: func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {

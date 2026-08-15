@@ -176,6 +176,7 @@ type Model struct {
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
+	reserveFlowPreparation    func(string) (flowstore.FlowRecord, func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -655,26 +656,20 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
-		// The compatibility reservation above intentionally returns identity only,
-		// but create-phase startup must snapshot the authoritative post-create graph
-		// or it cannot distinguish a launchable Flow from a parked one. Reread via
-		// the caller's configured storage boundary while retaining the same no-op
-		// reservation ownership used by existing custom persistence integrations.
-		createReserveFlowLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
-			record, release, err := reserveFlowLaunch(flowID)
-			if err != nil {
-				return flowstore.FlowRecord{}, release, err
-			}
-			authoritative, err := readFlow(flowID)
-			if err != nil {
-				releaseFlowLaunchReservation(release)
-				return flowstore.FlowRecord{}, nil, err
-			}
-			if authoritative.FlowID != record.FlowID {
-				releaseFlowLaunchReservation(release)
-				return flowstore.FlowRecord{}, nil, fmt.Errorf("reserve launch reread returned flow %q", authoritative.FlowID)
-			}
-			return authoritative, release, nil
+		// Custom phase persistence may belong to a different backend, so its
+		// compatibility reservation above deliberately owns no lock. That is safe
+		// for legacy launch seams but cannot authorize preparation side effects.
+		// Reuse an explicitly provided Store when it is the shared backend;
+		// otherwise leave this nil so FlowStarter refuses before persistence.
+		createReserveFlowLaunch = nil
+		if opts.FlowStore != nil {
+			createReserveFlowLaunch = opts.FlowStore.ReserveAgentLaunch
+		}
+	}
+	reserveFlowPreparation := createReserveFlowLaunch
+	if reserveFlowPreparation == nil {
+		reserveFlowPreparation = func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, fmt.Errorf("authoritative Flow preparation reservation is unavailable")
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -823,7 +818,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		SetStartMetadata:     setFlowStartMetadata,
 		SetPhase:             setFlowPhase,
 		AddPhaseLaunchID:     addFlowPhaseLaunchID,
-		ReserveLaunch:        reserveFlowLaunch,
+		ReserveLaunch:        createReserveFlowLaunch,
 		BootstrapHookForRepo: bootstrapHookForRepo,
 		RunBootstrapHook:     runBootstrapHook,
 		ResolveCommit:        actions.ResolveWorktreeCommit,
@@ -933,6 +928,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reopenFlow:                reopenFlow,
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
+		reserveFlowPreparation:    reserveFlowPreparation,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,
 		deleteFlow:                deleteFlow,
