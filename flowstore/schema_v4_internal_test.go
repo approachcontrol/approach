@@ -215,6 +215,40 @@ func TestSQLiteV3ToV4DuplicateProgressionFieldRollsBackEveryRewrite(t *testing.T
 	}
 }
 
+func TestDecodeLegacyV3EpicProgressionRejectsCaseVariantAliases(t *testing.T) {
+	stamp := time.Date(2026, 8, 14, 19, 45, 0, 0, time.UTC)
+	record := EpicProgression{
+		SchemaVersion: 1,
+		RepoPath:      "/repo",
+		EpicID:        "alias",
+		Enabled:       true,
+		Halt:          nil,
+		CreatedAt:     stamp,
+		UpdatedAt:     stamp,
+	}
+	valid := legacyV3EpicProgressionBlob(t, record)
+	updatedAt, _ := formatStorageTime(stamp)
+	for _, tt := range []struct {
+		name string
+		blob []byte
+	}{
+		{
+			name: "single top-level alias",
+			blob: []byte(strings.Replace(string(valid), "\"enabled\": true", "\"Enabled\": true", 1)),
+		},
+		{
+			name: "canonical plus top-level alias",
+			blob: []byte(strings.Replace(string(valid), "\"enabled\": true", "\"enabled\": true,\n  \"Enabled\": true", 1)),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := decodeLegacyV3EpicProgression(record.RepoPath, record.EpicID, 1, updatedAt, tt.blob); err == nil {
+				t.Fatal("decodeLegacyV3EpicProgression() accepted case-variant field alias")
+			}
+		})
+	}
+}
+
 func TestEpicProgressionDoneCompatibilityTriggersRejectLegacyWrites(t *testing.T) {
 	store, err := NewStore(StoreOptions{Root: t.TempDir()})
 	if err != nil {
@@ -242,6 +276,7 @@ func TestEpicProgressionDoneCompatibilityTriggersRejectLegacyWrites(t *testing.T
 		{name: "number", from: "\"done\": false", to: "\"done\": 0"},
 		{name: "duplicate identical", from: "\"done\": false", to: "\"done\": false,\n  \"done\": false"},
 		{name: "duplicate conflicting", from: "\"done\": false", to: "\"done\": false,\n  \"done\": true"},
+		{name: "case-variant duplicate", from: "\"done\": false", to: "\"done\": false,\n  \"Done\": false"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			invalid := []byte(strings.Replace(string(valid), mutation.from, mutation.to, 1))

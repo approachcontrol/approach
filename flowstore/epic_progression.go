@@ -397,6 +397,9 @@ func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt strin
 	if err := validateUniqueJSONFields(data); err != nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: %w", repoPath, epicID, err)
 	}
+	if err := validateEpicProgressionJSONFieldNames(data); err != nil {
+		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: %w", repoPath, epicID, err)
+	}
 	var dto storedEpicProgressionDTO
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: %w", repoPath, epicID, err)
@@ -512,6 +515,45 @@ func validateUniqueJSONValue(decoder *json.Decoder) error {
 		}
 	default:
 		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+	return nil
+}
+
+func validateEpicProgressionJSONFieldNames(data []byte) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return err
+	}
+	if err := validateCanonicalJSONFieldNames(root, []string{
+		"schema_version",
+		"repo_path",
+		"epic_id",
+		"enabled",
+		"done",
+		"halt",
+		"created_at",
+		"updated_at",
+	}); err != nil {
+		return err
+	}
+	haltData, ok := root["halt"]
+	if !ok || bytes.Equal(bytes.TrimSpace(haltData), []byte("null")) {
+		return nil
+	}
+	var halt map[string]json.RawMessage
+	if err := json.Unmarshal(haltData, &halt); err != nil {
+		return err
+	}
+	return validateCanonicalJSONFieldNames(halt, []string{"child_bead_id", "status", "message"})
+}
+
+func validateCanonicalJSONFieldNames(fields map[string]json.RawMessage, canonical []string) error {
+	for field := range fields {
+		for _, want := range canonical {
+			if strings.EqualFold(field, want) && field != want {
+				return fmt.Errorf("JSON field %q must use canonical spelling %q", field, want)
+			}
+		}
 	}
 	return nil
 }
@@ -635,6 +677,9 @@ func decodeLegacyV3EpicProgression(repoPath, epicID string, enabled int, updated
 		UpdatedAt     string               `json:"updated_at"`
 	}
 	if err := validateUniqueJSONFields(data); err != nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: %w", repoPath, epicID, err)
+	}
+	if err := validateEpicProgressionJSONFieldNames(data); err != nil {
 		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: %w", repoPath, epicID, err)
 	}
 	var dto legacyDTO

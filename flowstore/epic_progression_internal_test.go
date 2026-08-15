@@ -309,6 +309,8 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 	nullDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": null", 1))
 	wrongTypeDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": \"false\"", 1))
 	duplicateDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": false,\n  \"done\": true", 1))
+	caseVariantDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": false,\n  \"Done\": false", 1))
+	caseVariantEnabled := []byte(strings.Replace(string(validData), "\"enabled\": false", "\"Enabled\": false", 1))
 	halted := valid
 	halted.Halt = &EpicProgressionHalt{ChildBeadID: "epic.1", Status: StatusBlocked, Message: "blocked"}
 	haltedData, _, err := encodeEpicProgression(halted)
@@ -316,6 +318,7 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicateNestedHalt := []byte(strings.Replace(string(haltedData), "\"child_bead_id\": \"epic.1\"", "\"child_bead_id\": \"epic.1\",\n    \"child_bead_id\": \"epic.1\"", 1))
+	caseVariantNestedHalt := []byte(strings.Replace(string(haltedData), "\"status\": \"blocked\"", "\"status\": \"blocked\",\n    \"Status\": \"blocked\"", 1))
 	for _, tt := range []struct {
 		name      string
 		enabled   int
@@ -329,7 +332,10 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 		{name: "null done", enabled: 0, updatedAt: validUpdatedAt, data: nullDone},
 		{name: "wrong type done", enabled: 0, updatedAt: validUpdatedAt, data: wrongTypeDone},
 		{name: "duplicate done", enabled: 0, updatedAt: validUpdatedAt, data: duplicateDone},
+		{name: "case-variant done", enabled: 0, updatedAt: validUpdatedAt, data: caseVariantDone},
+		{name: "case-variant enabled", enabled: 0, updatedAt: validUpdatedAt, data: caseVariantEnabled},
 		{name: "duplicate nested halt field", enabled: 0, updatedAt: validUpdatedAt, data: duplicateNestedHalt},
+		{name: "case-variant nested halt field", enabled: 0, updatedAt: validUpdatedAt, data: caseVariantNestedHalt},
 		{name: "projection mismatch", enabled: 1, updatedAt: validUpdatedAt, data: validData},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
