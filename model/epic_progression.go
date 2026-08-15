@@ -161,8 +161,15 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 						status: fmt.Sprintf("Could not reserve Flow %s before claim recovery; auto-progression remains off: %v", flow.FlowID, err)}
 				}
 				release = reservedRelease
+				// A migrated pre-receipt marked Flow carries no
+				// PreparationGeneration at all, so two matching empty
+				// generations are not evidence of drift on their own — but
+				// PreparationGeneration is assigned only at creation and is
+				// otherwise immutable, so any inequality, including an empty
+				// generation turning nonempty, still proves a same-ID
+				// replacement and must be rejected.
 				if reserved.FlowID != flow.FlowID || filepath.Clean(reserved.RepoPath) != filepath.Clean(target.repoPath) || reserved.Bead != link ||
-					!reserved.ProgressionClaim || reserved.PreparationGeneration == "" || reserved.PreparationGeneration != flow.PreparationGeneration {
+					!reserved.ProgressionClaim || reserved.PreparationGeneration != flow.PreparationGeneration {
 					return epicProgressionToggleResultMsg{target: target, flow: reserved, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
 						status: fmt.Sprintf("Flow %s changed before claim recovery; auto-progression remains off", flow.FlowID)}
 				}

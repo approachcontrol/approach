@@ -83,6 +83,7 @@ type FlowStarterOptions struct {
 	SetPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	AddPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ReserveLaunch        func(flowID string) (flowstore.FlowRecord, func(), error)
+	ReadFlow             func(flowID string) (flowstore.FlowRecord, error)
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 	ResolveCommit        func(string) string
@@ -101,6 +102,7 @@ type FlowStarter struct {
 	setPhase                         func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	addPhaseLaunchID                 func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	reserveLaunch                    func(flowID string) (flowstore.FlowRecord, func(), error)
+	readFlow                         func(flowID string) (flowstore.FlowRecord, error)
 	bootstrapHookForRepo             func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook                 func(actions.BootstrapContext, actions.BootstrapHook) error
 	resolveCommit                    func(string) string
@@ -119,6 +121,7 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 		setPhase:                         opts.SetPhase,
 		addPhaseLaunchID:                 opts.AddPhaseLaunchID,
 		reserveLaunch:                    opts.ReserveLaunch,
+		readFlow:                         opts.ReadFlow,
 		bootstrapHookForRepo:             opts.BootstrapHookForRepo,
 		runBootstrapHook:                 opts.RunBootstrapHook,
 		resolveCommit:                    opts.ResolveCommit,
@@ -153,6 +156,11 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 	if starter.reserveLaunch == nil {
 		starter.reserveLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
 			return flowstore.FlowRecord{FlowID: flowID}, func() {}, nil
+		}
+	}
+	if starter.readFlow == nil {
+		starter.readFlow = func(string) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, fmt.Errorf("flow starter missing ReadFlow")
 		}
 	}
 	if starter.bootstrapHookForRepo == nil {
@@ -387,13 +395,32 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		if flowstore.IsPreparationUnknown(err) || flowstore.IsPreparationStale(err) {
 			return result, err
 		}
-		if finalized.FlowID == flow.FlowID {
-			flow = finalized
-			result.Flow = finalized
-		}
 		errText := "Preparation receipt persistence failed: " + err.Error()
 		if bootstrapErr != nil {
 			errText = "Bootstrap hook failed: " + bootstrapErr.Error()
+		}
+		if finalized.FlowID == flow.FlowID {
+			flow = finalized
+			result.Flow = finalized
+		} else {
+			// Finalize returns an empty record ahead of its transactional read
+			// when bootstrap itself fails, so the pre-bootstrap snapshot in
+			// flow is otherwise all that is left to compensate. The held
+			// reservation only orders this against Close, not against a
+			// concurrent phase mutation, so re-read the authoritative record
+			// before selecting phases to block. An unreadable record or a
+			// generation mismatch means the snapshot cannot be trusted, so
+			// report the failure without blocking a phase we can no longer
+			// verify: guessing risks blocking a phase that already moved on.
+			fresh, readErr := s.readFlow(flow.FlowID)
+			if readErr != nil {
+				return result, fmt.Errorf("%s; could not confirm current Flow state before compensating: %w", errText, readErr)
+			}
+			if fresh.PreparationGeneration != flow.PreparationGeneration {
+				return result, fmt.Errorf("%s; flow %q changed before compensation could run", errText, flow.FlowID)
+			}
+			flow = fresh
+			result.Flow = fresh
 		}
 		compensated, compensationErr := s.blockStartupFailurePhasesReserved(flow, phaseID, errText, errText)
 		result.Flow = compensated

@@ -393,6 +393,107 @@ func TestEpicAutoProgressionRetryAdoptsClaimedChildBeforeReadySibling(t *testing
 	}
 }
 
+func TestEpicAutoProgressionRetryRejectsReplacementOfMigratedMarkedChild(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	listed := flowstore.FlowRecord{
+		FlowID: "flow-migrated-replaced", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparedAt: &preparedAt,
+	}
+	// PreparationGeneration is assigned only at creation and is otherwise
+	// immutable, so a same-ID replacement Flow that now carries one — even
+	// though it matches every other field, including the claim marker — must
+	// still be rejected as changed since the listing read.
+	replacement := listed
+	replacement.PreparationGeneration = "replacement-generation"
+	claims := 0
+	releases := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.1", Title: "Migrated child"}, {ID: "epic-1.2", Title: "Ready sibling"}}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{listed}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return replacement, func() { releases++ }, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claims != 0 || releases != 1 {
+		t.Fatalf("migrated replacement retry claims/releases = %d/%d, want 0/1", claims, releases)
+	}
+	if got := m.TransientError(); got != "Flow flow-migrated-replaced changed before claim recovery; auto-progression remains off" {
+		t.Fatalf("migrated replacement retry status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionRetryRecoversMigratedMarkedChildWithoutGeneration(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	migratedChildFlow := flowstore.FlowRecord{
+		FlowID: "flow-migrated-child", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparedAt: &preparedAt,
+	}
+	claims := 0
+	creates := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "epic-1.1", Title: "Migrated child"},
+				{ID: "epic-1.2", Title: "Ready sibling"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{migratedChildFlow}, nil
+		},
+		ClaimBead: func(string, string) error {
+			claims++
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			creates++
+			return model.FlowStartResult{}, nil
+		},
+		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if flowID != migratedChildFlow.FlowID {
+				t.Fatalf("reserved Flow = %q, want migrated child Flow %q", flowID, migratedChildFlow.FlowID)
+			}
+			return migratedChildFlow, func() {}, nil
+		},
+		EnableEpicProgression: func(update flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+			if update.Bead != migratedChildFlow.Bead {
+				t.Fatalf("enabled Bead = %#v, want migrated child %#v", update.Bead, migratedChildFlow.Bead)
+			}
+			return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, migratedChildFlow, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("retry enable returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if claims != 1 || creates != 0 {
+		t.Fatalf("migrated retry claims/creates = %d/%d, want 1/0", claims, creates)
+	}
+	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-migrated-child is prepared" {
+		t.Fatalf("migrated retry status = %q", got)
+	}
+}
+
 func TestEpicAutoProgressionRetryDiscoversNewlyMarkedDirectChildBeforeReadySibling(t *testing.T) {
 	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 	claimedChildFlow := flowstore.FlowRecord{

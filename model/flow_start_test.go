@@ -66,6 +66,14 @@ func newFlowStarterForTest(opts model.FlowStarterOptions) model.FlowStarter {
 			return latest, func() {}, nil
 		}
 	}
+	if opts.ReadFlow == nil && opts.CreatePreparation != nil {
+		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
+			if latest.FlowID == "" {
+				return flowstore.FlowRecord{FlowID: flowID}, nil
+			}
+			return latest, nil
+		}
+	}
 	return model.NewFlowStarter(opts)
 }
 
@@ -1224,6 +1232,167 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *te
 		phaseUpdates[1].Outcome != flowstore.OutcomeBlocked ||
 		!strings.Contains(phaseUpdates[1].Notes, "Bootstrap hook failed") {
 		t.Fatalf("second phase update = %#v, want blocked review with outcome", phaseUpdates[1])
+	}
+}
+
+func TestFlowStarterStartPlanBootstrapFailureRereadsPhasesBeforeCompensation(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			// The pre-bootstrap snapshot: a concurrent writer has not yet run.
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			// A concurrent `approach flow phase set` ran while bootstrap was in
+			// flight and moved the graph onto a different launchable phase.
+			return flowstore.FlowRecord{
+				FlowID: flowID,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+	if phaseUpdate.PhaseID != "research" {
+		t.Fatalf("blocked phase = %q, want the re-read record's research phase rather than the stale plan snapshot", phaseUpdate.PhaseID)
+	}
+}
+
+func TestFlowStarterStartPlanBootstrapFailureSkipsCompensationWhenRereadFails(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(string) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("store unavailable")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+	if !strings.Contains(err.Error(), "could not confirm current Flow state") || !strings.Contains(err.Error(), "store unavailable") {
+		t.Fatalf("error = %q, want unreadable-flow compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation without a trustworthy re-read", phaseUpdate)
+	}
+}
+
+func TestFlowStarterStartPlanBootstrapFailureSkipsCompensationOnGenerationMismatch(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := newFlowStarterForTest(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-race", Branch: "flow/race"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:                update.FlowID,
+				WorktreePath:          update.WorktreePath,
+				PreparationGeneration: "generation-a",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			// A same-ID replacement Flow: a different preparation generation
+			// means this is not the record that failed bootstrap.
+			return flowstore.FlowRecord{FlowID: flowID, PreparationGeneration: "generation-b"}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Race", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+	if !strings.Contains(err.Error(), "changed before compensation could run") {
+		t.Fatalf("error = %q, want generation-mismatch compensation refusal", err)
+	}
+	if (phaseUpdate != flowstore.PhaseUpdate{}) {
+		t.Fatalf("phase update = %#v, want no compensation against a replaced Flow", phaseUpdate)
 	}
 }
 
