@@ -917,6 +917,66 @@ func TestTerminalWriteAfterCloseReturnsClosedError(t *testing.T) {
 	}
 }
 
+func TestTerminalCloseUnblocksWhenEmulatorResponseWriteIsStuck(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "sleep 30"},
+		Width:   40,
+		Height:  10,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Terminate()
+
+	if err := term.closePTY(); err != nil {
+		t.Fatalf("closePTY returned error: %v", err)
+	}
+
+	term.mu.Lock()
+	emu := term.emulator
+	term.mu.Unlock()
+	if emu == nil {
+		t.Fatal("emulator was already shut down")
+	}
+
+	// One device-attribute query lets the drain read a response, fail the
+	// closed PTY write, and exit. A later write then blocks on that pipe.
+	if _, err := emu.Write([]byte("\x1b[c")); err != nil {
+		t.Fatalf("priming emulator write returned error: %v", err)
+	}
+	if !term.waitForDrainDone() {
+		t.Fatal("response drain did not finish after writing to the closed PTY")
+	}
+
+	started := make(chan struct{})
+	go func() {
+		term.emuMu.Lock()
+		close(started)
+		_, _ = emu.Write([]byte("\x1b[c"))
+		term.emuMu.Unlock()
+	}()
+	<-started
+	time.Sleep(20 * time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() { done <- term.Close() }()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("Close returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close deadlocked while an emulator write waited on a closed response drain")
+	}
+}
+
 func TestTerminalResizeClosedPTYIsNoop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

@@ -257,6 +257,7 @@ func (t *Terminal) Close() error {
 	if err := t.closePTY(); err != nil {
 		return err
 	}
+	t.unblockEmulatorWrites()
 	t.waitForReadDone()
 	t.saveFinalRows(t.snapshotRows())
 	t.shutdownEmulator()
@@ -294,6 +295,7 @@ func (t *Terminal) waitLoop() {
 	err := t.cmd.Wait()
 	if !t.waitForReadDone() {
 		_ = t.closePTY()
+		t.unblockEmulatorWrites()
 		<-t.readDone
 	}
 	finalRows := t.snapshotRows()
@@ -360,6 +362,15 @@ func closeEmulatorResponses(emu *vt.SafeEmulator) {
 	}
 }
 
+func (t *Terminal) unblockEmulatorWrites() {
+	t.mu.Lock()
+	emu := t.emulator
+	t.mu.Unlock()
+	if emu != nil {
+		closeEmulatorResponses(emu)
+	}
+}
+
 func (t *Terminal) shutdownEmulator() {
 	t.mu.Lock()
 	emu := t.emulator
@@ -368,9 +379,7 @@ func (t *Terminal) shutdownEmulator() {
 	if emu == nil {
 		return
 	}
-	t.emuMu.Lock()
 	closeEmulatorResponses(emu)
-	t.emuMu.Unlock()
 }
 
 func (t *Terminal) snapshotRows() []string {
