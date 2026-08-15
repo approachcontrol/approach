@@ -274,6 +274,7 @@ func TestEpicProgressionAdvanceChecksAuthoritativeStateBeforeSideEffects(t *test
 	}{
 		{name: "absent", found: false},
 		{name: "disabled", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic}},
+		{name: "done", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Done: true}},
 		{name: "halted", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &flowstore.EpicProgressionHalt{ChildBeadID: "epic.a", Status: flowstore.StatusBlocked, Message: "halted"}}},
 		{name: "unreadable", err: errors.New("corrupt row"), wantBaseline: true},
 	} {
@@ -452,13 +453,17 @@ func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 		setErr       error
 		readFound    bool
 		readEnabled  bool
+		readDone     bool
+		readHalt     bool
 		readErr      error
 		wantBaseline bool
 		wantStatus   string
 	}{
 		{name: "successful disable", wantStatus: "no ready children remain"},
-		{name: "write error reread absent", setErr: errors.New("write"), readFound: false, wantStatus: "no ready children remain"},
-		{name: "write error reread off", setErr: errors.New("write"), readFound: true, wantStatus: "no ready children remain"},
+		{name: "write error reread done", setErr: errors.New("write"), readFound: true, readDone: true, wantStatus: "no ready children remain"},
+		{name: "write error reread absent", setErr: errors.New("write"), readFound: false, wantStatus: "no longer active"},
+		{name: "write error reread off", setErr: errors.New("write"), readFound: true, wantStatus: "no longer active"},
+		{name: "write error reread halted", setErr: errors.New("write"), readFound: true, readHalt: true, wantStatus: "no longer active"},
 		{name: "write error reread enabled", setErr: errors.New("write"), readFound: true, readEnabled: true, wantBaseline: true, wantStatus: "Could not disable"},
 		{name: "write error reread error", setErr: errors.New("write"), readErr: errors.New("read"), wantStatus: "Could not confirm"},
 	} {
@@ -471,12 +476,19 @@ func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 					if reads == 1 {
 						return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 					}
-					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: tt.readEnabled}, tt.readFound, tt.readErr
+					progression := flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: tt.readEnabled, Done: tt.readDone}
+					if tt.readHalt {
+						progression.Halt = &flowstore.EpicProgressionHalt{ChildBeadID: "epic.a", Status: flowstore.StatusBlocked, Message: "blocked"}
+					}
+					return progression, tt.readFound, tt.readErr
 				},
 				listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { return nil, nil },
 				listReadyBeads:    func(string) ([]beadsquery.Bead, error) { return nil, nil },
 				listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
-				setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+				setEpicProgression: func(update flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+					if update.Enabled || !update.Done {
+						t.Fatalf("exhaustion update = %#v, want enabled=false done=true", update)
+					}
 					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, tt.setErr
 				},
 			}

@@ -368,7 +368,7 @@ Approach was down.
 
 Each live edge takes the shared, monotonically token-owned preparation
 admission. Before any Beads query or creation side effect, the worker re-reads
-the progression row; absent, disabled, or halted state cancels the edge, while
+the progression row; absent, disabled, done, or halted state cancels the edge, while
 an unreadable row leaves it armed for retry. With no successor already owned by
 that edge, it intersects a fresh direct-child query with fresh `bd ready` order,
 indexes the complete repository Flow corpus by exact canonical repository plus
@@ -393,10 +393,15 @@ released, an incomplete/closed/non-pending exact Flow is an owned obstruction,
 an open prepared pending Flow is accepted, and storage uncertainty is
 retryable. Only acceptance replaces the runtime baseline. If the Ready/direct
 child intersection is empty, or every intersecting child already has an exact
-linked Flow, the TUI disables normal progression and reports completion. A
-disable write error is reconciled by reread: confirmed off completes, confirmed
-on retries, and unreadable state removes runtime ownership fail-closed until an
-explicit successful re-enable installs a new baseline.
+linked Flow, the TUI requests the atomic active→done transition. The stored row
+keeps `enabled:false` for compatibility, but `done:true` is the only completion
+signal; ordinary disabled state is never inferred as complete. A write error is
+reconciled by reread: confirmed done reports completion, absent/normal-off/halted
+state reports inactive, confirmed active preserves runtime ownership for retry,
+and unreadable state removes runtime ownership fail-closed until an explicit
+successful re-enable installs a new baseline. Manual disable always requests
+`done:false`; a confirmed done reread is reported as completion preceding the
+disable, not as a successful disable.
 
 ## Per-phase agent settings
 

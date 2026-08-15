@@ -163,6 +163,11 @@ running Flows, and terminal Flows. It never claims the Bead, starts a phase, or
 launches an agent. With no ready child it reports that progression remains off
 and writes neither a Flow nor progression state.
 
+When an enabled epic exhausts its ready children, Approach persists an explicit
+completed progression state. Completion remains disabled for compatibility but
+is distinct from pressing `a` to turn progression off; disabled state alone is
+never interpreted as completion.
+
 The Ready selection owns both keys while either request is in flight, preventing
 repeated or mixed presses from creating duplicates. `F` is advertised only when
 an agent is configured; when it is not, the owned key is consumed instead of
@@ -250,9 +255,11 @@ Flows are stored in `<artifact-root>/approach.db` using SQLite WAL mode. On the
 first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
 records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
-and agent sessions remain file-backed. SQLite schema v3 adds protected Flow
-preparation receipts and the `epic_progressions` table. Versions 0, 1, and 2
-upgrade transactionally without rewriting existing Flow JSON blobs.
+and agent sessions remain file-backed. SQLite schema v4 retains the v3 protected
+Flow preparation receipts and `epic_progressions` table while adding the durable
+progression `done` field. Versions 0 through 3 upgrade transactionally; the
+v3→v4 migration rewrites only progression JSON records, conservatively setting
+historical rows to `done:false`, and never rewrites existing Flow JSON blobs.
 
 ## Development
 

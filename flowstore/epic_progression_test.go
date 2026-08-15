@@ -234,6 +234,65 @@ func TestEpicProgressionPersistsPerCanonicalRepositoryAndEpic(t *testing.T) {
 	}
 }
 
+func TestEpicProgressionDoneTransitionsRequireAuthoritativeActiveState(t *testing.T) {
+	for _, initial := range []string{"absent", "off", "halted"} {
+		t.Run(initial, func(t *testing.T) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			key := flowstore.EpicProgressionKey{RepoPath: filepath.Join(t.TempDir(), "repo"), EpicID: "epic"}
+			if initial == "off" {
+				if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if initial == "halted" {
+				// Halt creation is not public yet; an ordinary off row still proves
+				// that non-active authoritative state cannot be promoted to done.
+				if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, foundBefore, readErr := store.ReadEpicProgression(key)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true}); err == nil {
+				t.Fatalf("SetEpicProgression(done) from %s succeeded", initial)
+			}
+			after, foundAfter, readErr := store.ReadEpicProgression(key)
+			if readErr != nil || foundAfter != foundBefore || after != before {
+				t.Fatalf("rejected done changed row: before=%#v/%t after=%#v/%t err=%v", before, foundBefore, after, foundAfter, readErr)
+			}
+		})
+	}
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	key := flowstore.EpicProgressionKey{RepoPath: filepath.Join(t.TempDir(), "repo"), EpicID: "epic"}
+	active, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true})
+	if err != nil || done.Enabled || !done.Done || done.Halt != nil {
+		t.Fatalf("active -> done = %#v, err %v", done, err)
+	}
+	redundant, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true})
+	if err != nil || !redundant.UpdatedAt.Equal(done.UpdatedAt) {
+		t.Fatalf("done -> done = %#v, err %v", redundant, err)
+	}
+	off, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key})
+	if err != nil || off.Done || off.Enabled || !off.CreatedAt.Equal(active.CreatedAt) {
+		t.Fatalf("done -> manual off = %#v, err %v", off, err)
+	}
+}
+
 func TestEnableEpicProgressionRequiresExactPreparedPendingFlow(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(t.TempDir(), "repo")

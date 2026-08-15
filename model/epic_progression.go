@@ -164,7 +164,7 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 		if err != nil {
 			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", epicID, err))
 		}
-		if !found || !progression.Enabled || progression.Halt != nil {
+		if !found || !progression.Enabled || progression.Done || progression.Halt != nil {
 			return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
 		}
 
@@ -218,18 +218,21 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 				if intersection > 0 && linked == intersection {
 					status = fmt.Sprintf("Auto-progression complete for epic %s; every ready child already has a Flow", epicID)
 				}
-				_, disableErr := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false})
-				if disableErr == nil {
+				_, doneErr := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false, Done: true})
+				if doneErr == nil {
 					return result(epicProgressionAdvanceExhausted, status)
 				}
 				authoritative, stillFound, readErr := readProgression(key)
 				if readErr != nil {
 					return result(epicProgressionAdvanceExhaustedUnknown, fmt.Sprintf("Could not confirm auto-progression completion for epic %s: %v", epicID, readErr))
 				}
-				if !stillFound || !authoritative.Enabled || authoritative.Halt != nil {
+				if stillFound && authoritative.Done && !authoritative.Enabled && authoritative.Halt == nil {
 					return result(epicProgressionAdvanceExhausted, status)
 				}
-				return result(epicProgressionAdvanceExhaustedActive, fmt.Sprintf("Could not disable exhausted auto-progression for epic %s: %v", epicID, disableErr))
+				if !stillFound || !authoritative.Enabled || authoritative.Halt != nil {
+					return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
+				}
+				return result(epicProgressionAdvanceExhaustedActive, fmt.Sprintf("Could not disable exhausted auto-progression for epic %s: %v", epicID, doneErr))
 			}
 
 			link := flowstore.BeadLink{ID: candidate.ChildID, EpicID: epicID}
@@ -422,7 +425,7 @@ func (m Model) disableEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
 	readProgression := m.readEpicProgression
 	return func() tea.Msg {
 		key := flowstore.EpicProgressionKey{RepoPath: target.repoPath, EpicID: target.epicID}
-		progression, err := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false})
+		progression, err := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false, Done: false})
 		if err == nil {
 			return epicProgressionToggleResultMsg{target: target, progression: progression, known: true,
 				baselineDisposition: epicProgressionBaselineRemove,
@@ -433,10 +436,25 @@ func (m Model) disableEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
 			return epicProgressionToggleResultMsg{target: target, known: false,
 				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
 		}
-		if !found || !authoritative.Enabled {
+		if !found {
 			return epicProgressionToggleResultMsg{target: target, progression: authoritative, known: true,
 				baselineDisposition: epicProgressionBaselineRemove,
-				status:              fmt.Sprintf("Disabled auto-progression for epic %s", target.epicID)}
+				status:              fmt.Sprintf("Auto-progression for epic %s is off; disable outcome could not be confirmed", target.epicID)}
+		}
+		if authoritative.Done && !authoritative.Enabled && authoritative.Halt == nil {
+			return epicProgressionToggleResultMsg{target: target, progression: authoritative, known: true,
+				baselineDisposition: epicProgressionBaselineRemove,
+				status:              fmt.Sprintf("Auto-progression for epic %s completed before disable could be confirmed", target.epicID)}
+		}
+		if authoritative.Halt != nil && !authoritative.Enabled {
+			return epicProgressionToggleResultMsg{target: target, progression: authoritative, known: true,
+				baselineDisposition: epicProgressionBaselineRemove,
+				status:              fmt.Sprintf("Auto-progression for epic %s is halted; disable outcome could not be confirmed", target.epicID)}
+		}
+		if !authoritative.Enabled {
+			return epicProgressionToggleResultMsg{target: target, progression: authoritative, known: true,
+				baselineDisposition: epicProgressionBaselineRemove,
+				status:              fmt.Sprintf("Auto-progression for epic %s is off; disable outcome could not be confirmed", target.epicID)}
 		}
 		return epicProgressionToggleResultMsg{target: target, progression: authoritative, enabled: true, known: true,
 			status: fmt.Sprintf("Could not disable auto-progression for epic %s: %v", target.epicID, err)}
@@ -544,7 +562,7 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			return epicProgressionToggleResultMsg{target: target, flow: resultFlow, release: release,
 				status: fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", target.epicID, readErr)}
 		}
-		if found && confirmed.Enabled {
+		if found && confirmed.Enabled && !confirmed.Done {
 			if !flowstore.IsPreparedEpicProgressionCommitUnknown(err) {
 				return epicProgressionToggleResultMsg{target: target, progression: confirmed, flow: resultFlow,
 					enabled: true, known: true, release: release,
