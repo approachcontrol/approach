@@ -887,6 +887,9 @@ type AgentLaunchContext struct {
 	// FlowAutofix marks the distinct prompted, PR-gated untracked agent started
 	// by U. It shares prompt delivery mechanics with FlowAgent but not policy.
 	FlowAutofix bool
+	// FlowAutofixPRNumber is display-only typed metadata for the PR-gated
+	// FlowAutofix role. It is not exported to providers.
+	FlowAutofixPRNumber int
 	// FlowPhaseTerminal records that the persisted phase kept a terminal
 	// status (completed, skipped) when the launch was recorded, so launch
 	// failures must not regress the phase to needs_attention.
