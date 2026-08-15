@@ -218,18 +218,9 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateMetadata:
 		if msg.Err != "" {
-			return m.recoverCreateFlowMetadataFailure(attempt, msg)
+			return m.recoverCreateFlowMetadataFailure(attempt, msg, want, true)
 		}
-		if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
-			releaseFlowLaunchReservation(msg.Release)
-			return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed")
-		}
-		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateBootstrap)
-		if !ok {
-			releaseFlowLaunchReservation(msg.Release)
-			return m, nil
-		}
-		return next, createFlowLaunchBootstrapCmd(next.launchSeams, attempt, msg)
+		return m.continueCreateAfterMetadata(attempt, msg, want)
 
 	case flowLaunchStageCreateBootstrap:
 		if msg.Err != "" {
@@ -311,7 +302,7 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		return next.installFlowLaunchEmbedded(attempt, msg)
 
 	case flowLaunchStageCreateRecovered:
-		if next, cmd, ok := m.retryReadyPreparationCompensation(attempt, msg); ok {
+		if next, cmd, ok := m.retryCreateFlowRecovery(attempt, msg); ok {
 			return next, cmd
 		}
 		releaseFlowLaunchReservation(msg.Release)
@@ -813,7 +804,7 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
 	case flowLaunchStageCreateMetadata:
 		if msg.Err != "" {
-			return m.recoverCreateFlowMetadataFailure(attempt, msg)
+			return m.recoverCreateFlowMetadataFailure(attempt, msg, flowLaunchStateCreateMetadata, false)
 		}
 		if len(msg.StartupRoots) == 0 {
 			releaseFlowLaunchReservation(msg.Release)
@@ -835,7 +826,7 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
 	case flowLaunchStageCreateRecovered:
-		if next, cmd, ok := m.retryReadyPreparationCompensation(attempt, msg); ok {
+		if next, cmd, ok := m.retryCreateFlowRecovery(attempt, msg); ok {
 			return next, cmd
 		}
 		releaseFlowLaunchReservation(msg.Release)
@@ -852,7 +843,28 @@ func (m Model) beginCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunch
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
+	msg.RecoveryErrs = append([]string(nil), parts...)
+	msg.RootBlockRetryable = false
 	return next, createFlowLaunchRecoveryCmd(next.launchSeams, attempt, msg, parts, metadata, block)
+}
+
+func (m Model) retryCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd, bool) {
+	if next, cmd, ok := m.retryReadyPreparationCompensation(attempt, msg); ok {
+		return next, cmd, true
+	}
+	return m.retryCreateFlowRootBlocks(attempt, msg)
+}
+
+func (m Model) retryCreateFlowRootBlocks(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd, bool) {
+	if !msg.RootBlockRetryable || len(msg.StartupRoots) == 0 {
+		return m, nil, false
+	}
+	notes := msg.RecoveryErrs
+	if len(notes) == 0 {
+		notes = []string{"creation canceled after repository changed"}
+	}
+	next, cmd := m.beginCreateFlowRecovery(attempt, msg, notes, false, true)
+	return next, cmd, true
 }
 
 const readyPreparationCompensationAttemptLimit = 3
@@ -917,7 +929,20 @@ func compensationRetryable(err error) bool {
 	return flowstore.IsPreparationIncomplete(err) || flowstore.IsPreparationReservation(err)
 }
 
-func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+func (m Model) continueCreateAfterMetadata(attempt flowLaunchAttempt, msg flowLaunchEventMsg, want flowLaunchState) (Model, tea.Cmd) {
+	if !createFlowSameGeneration(msg.CreatedRecord, msg.Record) {
+		releaseFlowLaunchReservation(msg.Release)
+		return m.finishCreateAfterWrite(attempt, "record start metadata: flow generation changed")
+	}
+	next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateBootstrap)
+	if !ok {
+		releaseFlowLaunchReservation(msg.Release)
+		return m, nil
+	}
+	return next, createFlowLaunchBootstrapCmd(next.launchSeams, attempt, msg)
+}
+
+func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg flowLaunchEventMsg, want flowLaunchState, continueIfLanded bool) (Model, tea.Cmd) {
 	worktreeRecord := msg.Record
 	worktreeRecord.WorktreePath = msg.Worktree.WorktreePath
 	worktreeRecord.Branch = msg.Worktree.Branch
@@ -925,7 +950,74 @@ func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg f
 	if note := createdFlowWorktreeNote(worktreeRecord); note != "" {
 		parts = append(parts, note)
 	}
+	landed, record, readErr := reconcileCreateStartMetadata(m.launchSeams, attempt, msg)
+	if readErr != nil && attempt.Origin == flowLaunchOriginReadyBead && msg.PreparationFinalizer != nil {
+		for i := 0; i < 2 && readErr != nil; i++ {
+			landed, record, readErr = reconcileCreateStartMetadata(m.launchSeams, attempt, msg)
+		}
+		if readErr != nil {
+			// Do not Compensate: a landed own write looks like a foreign claim
+			// and would consume the finalizer without blocking or continuing.
+			// Do not SetPhase: that bypasses the nonce/claim fence.
+			releaseFlowLaunchReservation(msg.Release)
+			return m.finishCreateAfterWrite(attempt, strings.Join(parts, "; ")+"; reread start metadata: "+readErr.Error())
+		}
+	}
+	if readErr == nil && landed {
+		if continueIfLanded {
+			msg.Err = ""
+			msg.Record = record
+			return m.continueCreateAfterMetadata(attempt, msg, want)
+		}
+		return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
+	}
+	if attempt.Origin == flowLaunchOriginReadyBead && msg.PreparationFinalizer != nil {
+		return m.beginReadyPreparationCompensation(attempt, msg, parts)
+	}
 	return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
+}
+
+func reconcileCreateStartMetadata(seams flowLaunchSeams, attempt flowLaunchAttempt, msg flowLaunchEventMsg) (bool, flowstore.FlowRecord, error) {
+	if seams.ReadFlow == nil {
+		return false, flowstore.FlowRecord{}, fmt.Errorf("read seam unavailable")
+	}
+	fresh, err := seams.ReadFlow(msg.FlowID)
+	if err != nil {
+		return false, flowstore.FlowRecord{}, err
+	}
+	commit := strings.TrimSpace(msg.Commit)
+	if commit == "" && seams.ResolveCommit != nil {
+		commit = seams.ResolveCommit(msg.Worktree.WorktreePath)
+	}
+	return parkedStartMetadataLanded(fresh, msg.Worktree, attempt.Create.BaseRef, commit), fresh, nil
+}
+
+func createFlowRootBlockStillNeeded(seams flowLaunchSeams, flowID string, phase flowstore.FlowPhase, launchID string) bool {
+	if seams.ReadFlow == nil {
+		return true
+	}
+	record, err := seams.ReadFlow(flowID)
+	if err != nil {
+		return true
+	}
+	ordered := flowstore.OrderedPhases(record.Phases)
+	orderedFlow := record
+	orderedFlow.Phases = ordered
+	for i, current := range ordered {
+		if current.PhaseID != phase.PhaseID {
+			continue
+		}
+		if flowstore.PhaseGraphLaunchEligible(orderedFlow, i) {
+			return true
+		}
+		// AddPhaseLaunchID may have made this exact token running before the
+		// block write failed. Keep retrying that root; a foreign running phase
+		// without this token is a concurrent claim and is left alone.
+		return current.Status == flowstore.PhaseRunning &&
+			strings.TrimSpace(launchID) != "" &&
+			flowPhaseContainsLaunch(current, launchID)
+	}
+	return false
 }
 
 func createFlowLaunchRecoveryCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, prior flowLaunchEventMsg, parts []string, metadata, block bool) tea.Cmd {
@@ -948,14 +1040,25 @@ func createFlowLaunchRecoveryCmd(seams flowLaunchSeams, attempt flowLaunchAttemp
 			}
 		}
 		if block {
+			var remaining []flowstore.FlowPhase
 			for _, phase := range prior.StartupRoots {
 				if seams.SetPhase == nil {
 					errs = append(errs, "block phase "+phase.PhaseID+": seam unavailable")
+					remaining = append(remaining, phase)
 					continue
 				}
-				if _, err := seams.SetPhase(blockedPhaseUpdate(prior.FlowID, phase, strings.Join(parts, "; "))); err != nil {
+				notes := strings.Join(parts, "; ")
+				if _, err := seams.SetPhase(blockedPhaseUpdate(prior.FlowID, phase, notes)); err != nil {
 					errs = append(errs, "block phase "+phase.PhaseID+": "+err.Error())
+					if createFlowRootBlockStillNeeded(seams, prior.FlowID, phase, prior.Token) {
+						remaining = append(remaining, phase)
+					}
 				}
+			}
+			event.StartupRoots = remaining
+			if len(remaining) > 0 && prior.CompensationRetries+1 < readyPreparationCompensationAttemptLimit {
+				event.RootBlockRetryable = true
+				event.CompensationRetries = prior.CompensationRetries + 1
 			}
 		}
 		event.Err = strings.Join(errs, "; ")

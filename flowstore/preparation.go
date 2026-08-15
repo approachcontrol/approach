@@ -25,6 +25,10 @@ var (
 	// launch/close reservation, so the one-shot finalizer was not consumed and
 	// remains retryable.
 	ErrPreparationReservation = errors.New("flow preparation reservation is unavailable")
+	// errPreparationStorage marks an in-transaction get or save failure. Those
+	// mutations do not land, so Compensate restores the one-shot finalizer after
+	// reconciliation instead of treating the capability as consumed.
+	errPreparationStorage = errors.New("flow preparation storage mutation failed")
 )
 
 // PreparationFinalizer is a Flow-bound one-shot capability. The concrete type
@@ -210,11 +214,13 @@ func (f *preparationFinalizer) Finalize(bootstrap func() error) (FlowRecord, err
 // launch/close reservation as agent spawn before consuming this capability, then
 // revalidates the generation and pending state inside the writer transaction so
 // a stale creator cannot overwrite a claimant or a same-ID replacement. A
-// reservation timeout, or two writer attempts that reconcile as unlanded,
-// leaves the finalizer usable for a later retry. Callers that already hold that
+// reservation timeout, two writer attempts that reconcile as unlanded, or an
+// in-transaction get/save failure that left no durable mutation, leaves the
+// finalizer usable for a later retry. Callers that already hold that
 // reservation must use CompensateUnderReservation instead. A reservation
 // timeout is classified as ErrPreparationReservation so callers can retry
-// without treating the capability as consumed.
+// without treating the capability as consumed. Semantic claim, staleness, and
+// already-prepared refusals still consume the capability.
 func (f *preparationFinalizer) Compensate(notes string) (FlowRecord, error) {
 	notes, err := f.compensationNotes(notes)
 	if err != nil {
@@ -254,21 +260,21 @@ func (f *preparationFinalizer) compensationNotes(notes string) (string, error) {
 
 func (f *preparationFinalizer) compensateUnderReservation(notes string) (FlowRecord, error) {
 	record, updateErr, mutationErr := f.compensateOnce(notes)
-	if updateErr == nil || mutationErr != nil {
-		return record, updateErr
+	if record, err, done := compensationAttemptResult(record, updateErr, mutationErr); done {
+		return record, err
 	}
 	authoritative, visible, reconcileErr := f.reconcileCompensation(notes, updateErr)
 	if reconcileErr != nil || visible {
 		return authoritative, reconcileErr
 	}
 
-	// The acknowledgement failed and the authoritative read confirmed that the
-	// first transaction did not land. Retry once while this finalizer still owns
-	// the launch/close reservation; the nonce and claim checks run again inside
-	// the new writer transaction.
+	// The acknowledgement failed, or an in-transaction get/save failed, and the
+	// authoritative read confirmed that the first transaction did not land.
+	// Retry once while this finalizer still owns the launch/close reservation;
+	// the nonce and claim checks run again inside the new writer transaction.
 	record, updateErr, mutationErr = f.compensateOnce(notes)
-	if updateErr == nil || mutationErr != nil {
-		return record, updateErr
+	if record, err, done := compensationAttemptResult(record, updateErr, mutationErr); done {
+		return record, err
 	}
 	authoritative, visible, reconcileErr = f.reconcileCompensation(notes, updateErr)
 	if reconcileErr != nil || visible {
@@ -276,6 +282,16 @@ func (f *preparationFinalizer) compensateUnderReservation(notes string) (FlowRec
 	}
 	f.restore()
 	return authoritative, errors.Join(ErrPreparationIncomplete, updateErr)
+}
+
+func compensationAttemptResult(record FlowRecord, updateErr, mutationErr error) (FlowRecord, error, bool) {
+	if updateErr == nil {
+		return record, nil, true
+	}
+	if mutationErr != nil && !isPreparationStorage(mutationErr) {
+		return record, updateErr, true
+	}
+	return record, updateErr, false
 }
 
 func (f *preparationFinalizer) compensateOnce(notes string) (FlowRecord, error, error) {
@@ -291,7 +307,7 @@ func (f *preparationFinalizer) compensateOnce(notes string) (FlowRecord, error, 
 func (f *preparationFinalizer) compensateSession(sess flowSession, notes string) (FlowRecord, error) {
 	stored, found, err := sess.get()
 	if err != nil {
-		return FlowRecord{}, err
+		return FlowRecord{}, errors.Join(errPreparationStorage, err)
 	}
 	if !found {
 		return FlowRecord{}, flowNotFoundError(f.flowID)
@@ -340,7 +356,7 @@ func (f *preparationFinalizer) compensateSession(sess flowSession, notes string)
 	record = refreshPhaseReadiness(record, now)
 	record.Status = DeriveStatus(record)
 	if err := f.store.saveSession(sess, record); err != nil {
-		return FlowRecord{}, err
+		return FlowRecord{}, errors.Join(errPreparationStorage, err)
 	}
 	return record, nil
 }
@@ -483,3 +499,5 @@ func IsPreparationStale(err error) bool { return errors.Is(err, ErrPreparationSt
 // IsPreparationReservation reports that Compensate could not acquire the
 // launch/close reservation and therefore left the one-shot finalizer usable.
 func IsPreparationReservation(err error) bool { return errors.Is(err, ErrPreparationReservation) }
+
+func isPreparationStorage(err error) bool { return errors.Is(err, errPreparationStorage) }

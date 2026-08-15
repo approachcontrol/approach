@@ -372,10 +372,20 @@ through an atomic compensation path: under the launch/close reservation it
 revalidates that exact nonce and blocks only the authoritative launchable
 roots. When create-phase already holds that reservation, compensation keeps it
 through the async command instead of releasing and re-acquiring. If both
-compensation writes reconcile as unlanded, or Compensate times out acquiring
-the launch/close reservation, the one-shot finalizer remains usable and Ready
-recovery reschedules that same capability instead of dropping it. A
-same-ID replacement or already-claimed Flow is never overwritten.
+compensation writes reconcile as unlanded, Compensate times out acquiring
+the launch/close reservation, or an in-transaction get/save fails and
+reconciliation confirms that no root-blocking mutation landed, the one-shot
+finalizer remains usable and Ready recovery reschedules that same capability
+instead of dropping it. Semantic claim, staleness, and already-prepared
+refusals still consume the capability. A same-ID replacement or already-claimed
+Flow is never overwritten. Ready start-metadata failure rereads the exact
+generation before compensating: a write that landed for this attempt continues
+finalization, a confirmed-absent write uses that compensation path, and an
+unreadable reread neither compensates nor falls back to unfenced SetPhase.
+After a consumed finalizer, create-path SetPhase recovery keeps the launch
+reservation, reconciles each failed write against authoritative ordered phase
+state, and retries only still-launchable roots plus this attempt's running
+launch-ID token.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite

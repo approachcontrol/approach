@@ -120,10 +120,14 @@ type flowLaunchEventMsg struct {
 	// finalizer usable: either both writer attempts reconciled as unlanded, or
 	// Compensate could not acquire the launch/close reservation.
 	CompensationRetryable bool
-	CompensationRetries   int
-	Context               actions.AgentLaunchContext
-	Route                 flowLaunchRoute
-	Skipped               bool
+	// RootBlockRetryable is set when create-path SetPhase recovery failed to
+	// block every captured startup root. The recovered-event handler keeps the
+	// launch reservation and retries only the still-unblocked roots.
+	RootBlockRetryable  bool
+	CompensationRetries int
+	Context             actions.AgentLaunchContext
+	Route               flowLaunchRoute
+	Skipped             bool
 	// FallbackNote is set only when tmux mode wanted the tmux route and tmux
 	// was missing. It is attached to a successful embedded install's status; a
 	// failed install's own message wins instead.

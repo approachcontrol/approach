@@ -36,8 +36,11 @@ type createLaunchHarness struct {
 	preparationErr                 error
 	bootstrapCheck                 func(flowstore.FlowRecord) error
 	metadataErr                    error
+	metadataPersists               bool
 	metadataMutate                 func(*flowstore.FlowRecord)
 	phaseErrs                      map[string]error
+	phaseErrRemaining              map[string]int
+	phasePersistErrs               map[string]error
 	readErrs                       map[int]error
 	readMutate                     func(*flowstore.FlowRecord)
 	readCalls                      int
@@ -349,20 +352,37 @@ func (h *createLaunchHarness) model(t *testing.T) Model {
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			h.order = append(h.order, "metadata")
-			if h.metadataErr != nil {
+			if h.metadataErr != nil && !h.metadataPersists {
 				return flowstore.FlowRecord{}, h.metadataErr
 			}
 			h.record.WorktreePath, h.record.Branch, h.record.Commit = update.WorktreePath, update.Branch, update.Commit
 			if h.metadataMutate != nil {
 				h.metadataMutate(&h.record)
 			}
+			if h.metadataErr != nil {
+				return flowstore.FlowRecord{}, h.metadataErr
+			}
 			return h.record, nil
 		},
 		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			h.order = append(h.order, "block:"+update.PhaseID)
 			h.phaseUpdates = append(h.phaseUpdates, update)
+			if remaining := h.phaseErrRemaining[update.PhaseID]; remaining > 0 {
+				h.phaseErrRemaining[update.PhaseID]--
+				return flowstore.FlowRecord{}, errors.New("database busy")
+			}
 			if err := h.phaseErrs[update.PhaseID]; err != nil {
 				return flowstore.FlowRecord{}, err
+			}
+			if persistErr := h.phasePersistErrs[update.PhaseID]; persistErr != nil {
+				for i := range h.record.Phases {
+					if h.record.Phases[i].PhaseID == update.PhaseID {
+						h.record.Phases[i].Status = update.Status
+						h.record.Phases[i].Notes = update.Notes
+						h.record.Phases[i].Outcome = update.Outcome
+					}
+				}
+				return flowstore.FlowRecord{}, persistErr
 			}
 			return h.record, nil
 		},
@@ -632,8 +652,8 @@ func TestCreateFlowLaunchAddFailureProofControlsRecovery(t *testing.T) {
 		if m.status.Text != want {
 			t.Fatalf("joined recovery status = %q, want %q", m.status.Text, want)
 		}
-		if len(h.phaseUpdates) != 1 || h.releases != 1 {
-			t.Fatalf("unreadable recovery: updates=%#v releases=%d", h.phaseUpdates, h.releases)
+		if len(h.phaseUpdates) != readyPreparationCompensationAttemptLimit || h.releases != 1 {
+			t.Fatalf("unreadable recovery: updates=%#v releases=%d, want %d retried root-block writes", h.phaseUpdates, h.releases, readyPreparationCompensationAttemptLimit)
 		}
 	})
 }
@@ -1153,11 +1173,13 @@ func TestCreateFlowLaunchReadyPreMetadataExitsUsePreparationFinalizer(t *testing
 		name        string
 		stage       flowLaunchStage
 		worktreeErr error
+		metadataErr error
 		stale       bool
 	}{
 		{name: "stale after reservation", stage: flowLaunchStageCreateReserved, stale: true},
 		{name: "worktree failure", stage: flowLaunchStageCreateWorktree, worktreeErr: errors.New("worktree failed")},
 		{name: "stale after worktree", stage: flowLaunchStageCreateWorktree, stale: true},
+		{name: "metadata failure", stage: flowLaunchStageCreateMetadata, metadataErr: errors.New("disk full")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCreateLaunchHarness([]flowstore.FlowPhase{
@@ -1166,6 +1188,7 @@ func TestCreateFlowLaunchReadyPreMetadataExitsUsePreparationFinalizer(t *testing
 			})
 			h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
 			h.worktreeErr = tc.worktreeErr
+			h.metadataErr = tc.metadataErr
 			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
 			m, event := advanceCreateLaunchToStage(t, m, cmd, tc.stage)
 			if tc.stale {
@@ -1213,6 +1236,130 @@ func TestCreateFlowLaunchReadyCompensationRetriesWhenReservationTimesOut(t *test
 	}
 	if m.flowLaunchAttemptOccupied(h.record.FlowID) {
 		t.Fatal("reservation-timeout retry stranded lifecycle ownership")
+	}
+}
+
+func TestCreateFlowLaunchReadyMetadataAcknowledgementContinuesWhenWriteLanded(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.metadataErr = errors.New("commit acknowledgement failed")
+	h.metadataPersists = true
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if slices.Contains(h.order, "compensate") {
+		t.Fatalf("landed metadata acknowledgement compensated the preparation: %#v", h.order)
+	}
+	if !slices.Contains(h.order, "finalize") || h.record.PreparedAt == nil {
+		t.Fatalf("landed metadata acknowledgement did not continue finalization: %#v receipt=%v", h.order, h.record.PreparedAt)
+	}
+	if len(h.contexts) != 1 || h.releases != 1 {
+		t.Fatalf("landed metadata acknowledgement result: contexts=%#v releases=%d", h.contexts, h.releases)
+	}
+}
+
+func TestCreateFlowLaunchReadyMetadataUnreadDoesNotBypassFinalizer(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.metadataErr = errors.New("commit acknowledgement failed")
+	h.readErrs = map[int]error{
+		1: errors.New("database busy"),
+		2: errors.New("database busy"),
+		3: errors.New("database busy"),
+	}
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if slices.Contains(h.order, "compensate") {
+		t.Fatalf("unreadable metadata reread compensated a possibly landed write: %#v", h.order)
+	}
+	for _, call := range h.order {
+		if strings.HasPrefix(call, "block:") {
+			t.Fatalf("unreadable metadata reread used unfenced SetPhase recovery: %#v", h.order)
+		}
+	}
+	if slices.Contains(h.order, "finalize") || h.record.PreparedAt != nil {
+		t.Fatalf("unreadable metadata reread continued finalization: %#v", h.order)
+	}
+	if !strings.Contains(m.status.Text, "record start metadata: commit acknowledgement failed") || !strings.Contains(m.status.Text, "reread start metadata: database busy") {
+		t.Fatalf("unreadable metadata status = %q", m.status.Text)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("unreadable metadata cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+}
+
+func TestCreateFlowLaunchRecoveryDoesNotRetryAlreadyBlockedRoots(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+	})
+	h.bootstrapErr = errors.New("hook failed")
+	h.phasePersistErrs = map[string]error{"plan": errors.New("commit acknowledgement failed")}
+	m := h.start(t, h.model(t))
+
+	planBlocks := 0
+	for _, update := range h.phaseUpdates {
+		if update.PhaseID == "plan" {
+			planBlocks++
+		}
+	}
+	if planBlocks != 1 {
+		t.Fatalf("durable plan block was retried: %#v", h.phaseUpdates)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("durable root-block cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+}
+
+func TestCreateFlowLaunchRecoveryRetriesFailedBlockAfterLandedLaunchID(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.addErr = errors.New("write failed")
+	h.addPersists = true
+	h.phaseErrRemaining = map[string]int{"plan": 1}
+	m := h.start(t, h.model(t))
+
+	planBlocks := 0
+	for _, update := range h.phaseUpdates {
+		if update.PhaseID == "plan" {
+			planBlocks++
+		}
+	}
+	if planBlocks != 2 {
+		t.Fatalf("running launch-ID root was not retried: %#v", h.phaseUpdates)
+	}
+	if h.releases != 1 || !strings.Contains(m.status.Text, "AddPhaseLaunchID: write failed") {
+		t.Fatalf("landed launch-ID recovery: releases=%d status=%q", h.releases, m.status.Text)
+	}
+}
+
+func TestCreateFlowLaunchRecoveryRetriesFailedRootBlocks(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady},
+	})
+	h.bootstrapErr = errors.New("hook failed")
+	h.phaseErrRemaining = map[string]int{"plan": 1}
+	m := h.start(t, h.model(t))
+
+	planBlocks := 0
+	implementationBlocks := 0
+	for _, update := range h.phaseUpdates {
+		switch update.PhaseID {
+		case "plan":
+			planBlocks++
+		case "implementation":
+			implementationBlocks++
+		}
+	}
+	if planBlocks != 2 || implementationBlocks != 1 {
+		t.Fatalf("root-block retries = %#v, want plan retried once and implementation blocked on the first pass", h.phaseUpdates)
+	}
+	if h.releases != 1 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatalf("root-block retry cleanup releases=%d occupied=%t", h.releases, m.flowLaunchAttemptOccupied(h.record.FlowID))
+	}
+	if !strings.Contains(m.status.Text, "run bootstrap: hook failed") {
+		t.Fatalf("root-block retry status = %q", m.status.Text)
 	}
 }
 
