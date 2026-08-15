@@ -308,6 +308,14 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 	missingDone := []byte(strings.Replace(string(validData), "  \"done\": false,\n", "", 1))
 	nullDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": null", 1))
 	wrongTypeDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": \"false\"", 1))
+	duplicateDone := []byte(strings.Replace(string(validData), "\"done\": false", "\"done\": false,\n  \"done\": true", 1))
+	halted := valid
+	halted.Halt = &EpicProgressionHalt{ChildBeadID: "epic.1", Status: StatusBlocked, Message: "blocked"}
+	haltedData, _, err := encodeEpicProgression(halted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateNestedHalt := []byte(strings.Replace(string(haltedData), "\"child_bead_id\": \"epic.1\"", "\"child_bead_id\": \"epic.1\",\n    \"child_bead_id\": \"epic.1\"", 1))
 	for _, tt := range []struct {
 		name      string
 		enabled   int
@@ -320,6 +328,8 @@ func TestReadEpicProgressionReportsCorruptRowsAsErrors(t *testing.T) {
 		{name: "missing done", enabled: 0, updatedAt: validUpdatedAt, data: missingDone},
 		{name: "null done", enabled: 0, updatedAt: validUpdatedAt, data: nullDone},
 		{name: "wrong type done", enabled: 0, updatedAt: validUpdatedAt, data: wrongTypeDone},
+		{name: "duplicate done", enabled: 0, updatedAt: validUpdatedAt, data: duplicateDone},
+		{name: "duplicate nested halt field", enabled: 0, updatedAt: validUpdatedAt, data: duplicateNestedHalt},
 		{name: "projection mismatch", enabled: 1, updatedAt: validUpdatedAt, data: validData},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

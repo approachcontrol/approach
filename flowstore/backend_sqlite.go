@@ -104,6 +104,7 @@ CREATE TRIGGER IF NOT EXISTS guard_epic_progression_done_insert
 BEFORE INSERT ON epic_progressions
 WHEN json_type(CAST(NEW.record AS TEXT), '$.done') IS NULL
     OR json_type(CAST(NEW.record AS TEXT), '$.done') NOT IN ('true', 'false')
+    OR (SELECT count(*) FROM json_each(CAST(NEW.record AS TEXT)) WHERE key = 'done') != 1
 BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot write epic progression without done');
 END`
@@ -113,6 +114,7 @@ CREATE TRIGGER IF NOT EXISTS guard_epic_progression_done_record_update
 BEFORE UPDATE OF record ON epic_progressions
 WHEN json_type(CAST(NEW.record AS TEXT), '$.done') IS NULL
     OR json_type(CAST(NEW.record AS TEXT), '$.done') NOT IN ('true', 'false')
+    OR (SELECT count(*) FROM json_each(CAST(NEW.record AS TEXT)) WHERE key = 'done') != 1
 BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove epic progression done state');
 END`

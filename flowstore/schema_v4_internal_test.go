@@ -143,6 +143,78 @@ func TestSQLiteV3ToV4MalformedProgressionRollsBackEveryRewrite(t *testing.T) {
 	}
 }
 
+func TestSQLiteV3ToV4DuplicateProgressionFieldRollsBackEveryRewrite(t *testing.T) {
+	root := t.TempDir()
+	db := createV3Database(t, root)
+	stamp := time.Date(2026, 8, 14, 19, 30, 0, 0, time.UTC)
+	valid := EpicProgression{SchemaVersion: 1, RepoPath: "/repo", EpicID: "a-valid", Enabled: true, CreatedAt: stamp, UpdatedAt: stamp}
+	validBlob := legacyV3EpicProgressionBlob(t, valid)
+	duplicate := EpicProgression{
+		SchemaVersion: 1,
+		RepoPath:      "/repo",
+		EpicID:        "z-duplicate",
+		Halt:          &EpicProgressionHalt{ChildBeadID: "z-duplicate.1", Status: StatusBlocked, Message: "blocked"},
+		CreatedAt:     stamp,
+		UpdatedAt:     stamp,
+	}
+	duplicateBlob := legacyV3EpicProgressionBlob(t, duplicate)
+	duplicateBlob = []byte(strings.Replace(string(duplicateBlob), "\"child_bead_id\": \"z-duplicate.1\"", "\"child_bead_id\": \"z-duplicate.1\",\n    \"child_bead_id\": \"z-duplicate.1\"", 1))
+	updatedAt, _ := formatStorageTime(stamp)
+	for _, row := range []struct {
+		record EpicProgression
+		blob   []byte
+	}{
+		{record: valid, blob: validBlob},
+		{record: duplicate, blob: duplicateBlob},
+	} {
+		if _, err := db.Exec("INSERT INTO epic_progressions(repo_path, epic_id, enabled, updated_at, record) VALUES(?, ?, ?, ?, ?)", row.record.RepoPath, row.record.EpicID, boolToSQLite(row.record.Enabled), updatedAt, row.blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewStore(StoreOptions{Root: root}); err == nil {
+		t.Fatal("NewStore() accepted duplicate legacy progression field")
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(root, databaseFilename), map[string][]string{"mode": {"rw"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+		t.Fatalf("user_version after rollback = %d, err %v", version, err)
+	}
+	if err := validateSQLiteSchemaVersion(db, 3); err != nil {
+		t.Fatalf("rolled-back database is not exact v3: %v", err)
+	}
+	for epicID, want := range map[string]struct {
+		repoPath  string
+		epicID    string
+		enabled   int
+		updatedAt string
+		record    []byte
+	}{
+		"a-valid":     {repoPath: valid.RepoPath, epicID: valid.EpicID, enabled: 1, updatedAt: updatedAt, record: validBlob},
+		"z-duplicate": {repoPath: duplicate.RepoPath, epicID: duplicate.EpicID, enabled: 0, updatedAt: updatedAt, record: duplicateBlob},
+	} {
+		var gotRepoPath, gotEpicID, gotUpdatedAt string
+		var gotEnabled int
+		var gotRecord []byte
+		err := db.QueryRow("SELECT repo_path, epic_id, enabled, updated_at, record FROM epic_progressions WHERE epic_id=?", epicID).
+			Scan(&gotRepoPath, &gotEpicID, &gotEnabled, &gotUpdatedAt, &gotRecord)
+		if err != nil || gotRepoPath != want.repoPath || gotEpicID != want.epicID || gotEnabled != want.enabled || gotUpdatedAt != want.updatedAt || !bytes.Equal(gotRecord, want.record) {
+			t.Fatalf("row %s after rollback = repo %q, epic %q, enabled %d, updated %q, record %s, err %v; want %#v", epicID, gotRepoPath, gotEpicID, gotEnabled, gotUpdatedAt, gotRecord, err, want)
+		}
+	}
+	var triggers int
+	if err := db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='trigger' AND name GLOB 'guard_epic_progression_done*'").Scan(&triggers); err != nil || triggers != 0 {
+		t.Fatalf("v4 triggers after rollback = %d, err %v", triggers, err)
+	}
+}
+
 func TestEpicProgressionDoneCompatibilityTriggersRejectLegacyWrites(t *testing.T) {
 	store, err := NewStore(StoreOptions{Root: t.TempDir()})
 	if err != nil {
@@ -168,6 +240,8 @@ func TestEpicProgressionDoneCompatibilityTriggersRejectLegacyWrites(t *testing.T
 		{name: "null", from: "\"done\": false", to: "\"done\": null"},
 		{name: "string", from: "\"done\": false", to: "\"done\": \"false\""},
 		{name: "number", from: "\"done\": false", to: "\"done\": 0"},
+		{name: "duplicate identical", from: "\"done\": false", to: "\"done\": false,\n  \"done\": false"},
+		{name: "duplicate conflicting", from: "\"done\": false", to: "\"done\": false,\n  \"done\": true"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			invalid := []byte(strings.Replace(string(valid), mutation.from, mutation.to, 1))

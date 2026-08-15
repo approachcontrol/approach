@@ -394,6 +394,9 @@ func encodeEpicProgression(record EpicProgression) ([]byte, string, error) {
 }
 
 func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt string, data []byte) (EpicProgression, error) {
+	if err := validateUniqueJSONFields(data); err != nil {
+		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: %w", repoPath, epicID, err)
+	}
 	var dto storedEpicProgressionDTO
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return EpicProgression{}, fmt.Errorf("decode epic progression %q/%q: %w", repoPath, epicID, err)
@@ -442,6 +445,75 @@ func decodeEpicProgression(repoPath, epicID string, enabled int, updatedAt strin
 		return EpicProgression{}, fmt.Errorf("epic progression %q/%q projection: %w", repoPath, epicID, err)
 	}
 	return record, nil
+}
+
+func validateUniqueJSONFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := validateUniqueJSONValue(decoder); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func validateUniqueJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, compound := token.(json.Delim)
+	if !compound {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON field %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := validateUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim('}') {
+			return fmt.Errorf("unexpected JSON object delimiter %q", closing)
+		}
+	case '[':
+		for decoder.More() {
+			if err := validateUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim(']') {
+			return fmt.Errorf("unexpected JSON array delimiter %q", closing)
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+	return nil
 }
 
 func parseCanonicalStorageTime(value string) (time.Time, error) {
@@ -561,6 +633,9 @@ func decodeLegacyV3EpicProgression(repoPath, epicID string, enabled int, updated
 		Halt          *EpicProgressionHalt `json:"halt,omitempty"`
 		CreatedAt     string               `json:"created_at"`
 		UpdatedAt     string               `json:"updated_at"`
+	}
+	if err := validateUniqueJSONFields(data); err != nil {
+		return EpicProgression{}, fmt.Errorf("decode legacy epic progression %q/%q: %w", repoPath, epicID, err)
 	}
 	var dto legacyDTO
 	decoder := json.NewDecoder(bytes.NewReader(data))
