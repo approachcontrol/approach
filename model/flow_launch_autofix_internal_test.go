@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
@@ -455,50 +456,91 @@ func liveFlowSession(flowID, launchID, sessionID string) sessions.SessionRecord 
 }
 
 func TestAutofixLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
-	record := autofixFlowRecord()
-	h := newManualLaunchHarness(t, record)
+	for _, tc := range []struct {
+		name     string
+		provider string
+	}{
+		{name: "codex", provider: agent.CommandCodex},
+		{name: "claude", provider: agent.CommandClaude},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := autofixFlowRecord()
+			h := newManualLaunchHarness(t, record)
+			opts := h.options()
+			opts.AgentCommand = tc.provider
+			m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			m.width = 160
+			m.height = 40
 
-	m := h.autofix(h.model())
+			m, prepareCmd := h.stageAutofixLaunch(m)
+			preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+			if !ok {
+				t.Fatal("autofix prepare did not settle")
+			}
+			next, prefillCmd := m.Update(preparedMsg)
+			m = next.(Model)
+			if prefillCmd == nil {
+				t.Fatal("interactive autofix install returned no prefill command")
+			}
 
-	if len(h.launchContexts) != 1 {
-		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
-	}
-	ctx := h.launchContexts[0]
-	if ctx.Command != agent.CommandCodex ||
-		ctx.FlowID != record.FlowID ||
-		ctx.RepoPath != record.RepoPath ||
-		ctx.WorktreePath != record.WorktreePath ||
-		ctx.WorkingDir != record.WorktreePath ||
-		ctx.Branch != record.Branch ||
-		ctx.Commit != record.Commit ||
-		ctx.InitialPrompt != "autofix pr #116" ||
-		!ctx.FlowAutofix || ctx.FlowAgent ||
-		!ctx.Embedded ||
-		ctx.Headless ||
-		ctx.FlowPhaseID != "" ||
-		ctx.FlowLaunchTracked ||
-		ctx.FlowRepair ||
-		ctx.ResumeSessionID != "" {
-		t.Fatalf("autofix launch context = %#v", ctx)
-	}
-	if len(h.launchUpdates) != 0 {
-		t.Fatalf("an untracked launch must write no phase launch ID: %#v", h.launchUpdates)
-	}
-	if len(h.phaseUpdates) != 0 {
-		t.Fatalf("an untracked launch must write no phase status: %#v", h.phaseUpdates)
-	}
-	if len(h.agentContexts) != 0 {
-		t.Fatalf("a CLI autofix must open an embedded terminal, not hand off: %#v", h.agentContexts)
-	}
-	if got := embeddedFlowSlots(m, record.FlowID); got != 1 {
-		t.Fatalf("embedded Flow slots = %d, want exactly one", got)
-	}
-	if h.launchReservations != 1 || h.launchReleases != 1 {
-		t.Fatalf("launch reservations = %d, releases = %d, want one held then released",
-			h.launchReservations, h.launchReleases)
-	}
-	if m.flowLaunchAttemptOccupied(record.FlowID) {
-		t.Fatal("the installed slot owns the Flow, so the attempt must be released")
+			if len(h.launchContexts) != 1 {
+				t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
+			}
+			ctx := h.launchContexts[0]
+			if ctx.Command != tc.provider ||
+				ctx.FlowID != record.FlowID ||
+				ctx.RepoPath != record.RepoPath ||
+				ctx.WorktreePath != record.WorktreePath ||
+				ctx.WorkingDir != record.WorktreePath ||
+				ctx.Branch != record.Branch ||
+				ctx.Commit != record.Commit ||
+				ctx.InitialPrompt != "autofix pr #116" ||
+				ctx.FlowAutofixPRNumber != 116 ||
+				!ctx.FlowAutofix || ctx.FlowAgent ||
+				!ctx.Embedded ||
+				ctx.Headless ||
+				ctx.FlowPhaseID != "" ||
+				ctx.FlowLaunchTracked ||
+				ctx.FlowRepair ||
+				ctx.ResumeSessionID != "" {
+				t.Fatalf("autofix launch context = %#v", ctx)
+			}
+			if len(h.launchUpdates) != 0 {
+				t.Fatalf("an untracked launch must write no phase launch ID: %#v", h.launchUpdates)
+			}
+			if len(h.phaseUpdates) != 0 {
+				t.Fatalf("an untracked launch must write no phase status: %#v", h.phaseUpdates)
+			}
+			if len(h.agentContexts) != 0 {
+				t.Fatalf("a CLI autofix must open an embedded terminal, not hand off: %#v", h.agentContexts)
+			}
+			if got := embeddedFlowSlots(m, record.FlowID); got != 1 {
+				t.Fatalf("embedded Flow slots = %d, want exactly one", got)
+			}
+			if len(m.embeddedTerminals) != 1 {
+				t.Fatalf("embedded terminals = %#v, want exactly one slot", m.embeddedTerminals)
+			}
+			slot := m.embeddedTerminals[0]
+			if slot.Number != 1 || slot.Provider != tc.provider || slot.Identity != "autofix pr 116" ||
+				slot.Terminal.State() != "running" || !slot.PrefillPending {
+				t.Fatalf("autofix terminal slot = %#v", slot)
+			}
+			wantLabel := "1 " + tc.provider + " autofix pr 116 running"
+			view := ansi.Strip(m.View())
+			if !strings.Contains(view, wantLabel) {
+				t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
+			}
+			if strings.Contains(view, "1 "+tc.provider+" "+record.FlowID+" running") {
+				t.Fatalf("dock retained the Flow ID identity:\n%s", view)
+			}
+			if h.launchReservations != 1 || h.launchReleases != 1 {
+				t.Fatalf("launch reservations = %d, releases = %d, want one held then released",
+					h.launchReservations, h.launchReleases)
+			}
+			if m.flowLaunchAttemptOccupied(record.FlowID) {
+				t.Fatal("the installed slot owns the Flow, so the attempt must be released")
+			}
+		})
 	}
 }
 
@@ -727,6 +769,43 @@ func TestAutofixPrepareResolvesHeadlessFromTheReservation(t *testing.T) {
 	}
 	if m.flowLaunchAttemptOccupied(record.FlowID) {
 		t.Fatal("the installed slot owns the Flow, so the attempt must be released")
+	}
+}
+
+func TestAutofixPrepareUsesReservedPRNumber(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m.width = 160
+	m.height = 40
+
+	m, prepareCmd := h.stageAutofixLaunch(m)
+	h.record.PR.Number = 204
+	h.record.PR.URL = "https://github.com/approachcontrol/approach/pull/204"
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("prepare did not settle")
+	}
+	next, prefillCmd := m.Update(preparedMsg)
+	m = next.(Model)
+	if prefillCmd == nil {
+		t.Fatal("interactive autofix install returned no prefill command")
+	}
+
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
+	}
+	ctx := h.launchContexts[0]
+	if ctx.FlowAutofixPRNumber != 204 || ctx.InitialPrompt != "autofix pr #204" {
+		t.Fatalf("reserved PR launch metadata = number %d prompt %q, want 204 and %q",
+			ctx.FlowAutofixPRNumber, ctx.InitialPrompt, "autofix pr #204")
+	}
+	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].Identity != "autofix pr 204" {
+		t.Fatalf("reserved PR terminal slot = %#v", m.embeddedTerminals)
+	}
+	wantLabel := "1 codex autofix pr 204 running"
+	if view := ansi.Strip(m.View()); !strings.Contains(view, wantLabel) {
+		t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
 	}
 }
 

@@ -54,6 +54,7 @@ func TestEpicProgressionToggleReconcilesRuntimeBaselineBeforeReservationRelease(
 		msg         epicProgressionToggleResultMsg
 		wantFlowID  string
 		wantPresent bool
+		wantOwned   bool
 	}{
 		{
 			name: "confirmed enable installs baseline",
@@ -76,14 +77,17 @@ func TestEpicProgressionToggleReconcilesRuntimeBaselineBeforeReservationRelease(
 			},
 			wantFlowID:  oldFlow.FlowID,
 			wantPresent: true,
+			wantOwned:   true,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			baselines := map[string]flowstore.FlowRecord{key: oldFlow}
+			owned := map[string]epicProgressionOwnedSuccessor{key: {SourceFlowID: oldFlow.FlowID, ChildID: "epic.2", FlowID: "owned-flow"}}
 			m := Model{
-				beadExpansion:            beadExpansionSnapshot{target: beadExpansionTarget{token: 99}},
-				epicProgressionBaselines: baselines,
-				flowPreparationAdmission: true,
+				beadExpansion:                  beadExpansionSnapshot{target: beadExpansionTarget{token: 99}},
+				epicProgressionBaselines:       baselines,
+				epicProgressionOwnedSuccessors: owned,
+				flowPreparationAdmission:       true,
 			}
 			released := false
 			tt.msg.release = func() {
@@ -92,10 +96,18 @@ func TestEpicProgressionToggleReconcilesRuntimeBaselineBeforeReservationRelease(
 				if found != tt.wantPresent || flow.FlowID != tt.wantFlowID {
 					t.Fatalf("baseline at release = %#v, %t; want Flow %q, present %t", flow, found, tt.wantFlowID, tt.wantPresent)
 				}
+				_, ownedPresent := owned[key]
+				if ownedPresent != tt.wantOwned {
+					t.Fatalf("owned successor at release = %t, want %t", ownedPresent, tt.wantOwned)
+				}
 			}
 			next, _ := m.handleEpicProgressionToggleResult(tt.msg)
 			if !released || next.flowPreparationAdmission {
 				t.Fatalf("release called = %t, admission retained = %t", released, next.flowPreparationAdmission)
+			}
+			_, ownedPresent := next.epicProgressionOwnedSuccessors[key]
+			if ownedPresent != tt.wantOwned {
+				t.Fatalf("owned successor present = %t, want %t", ownedPresent, tt.wantOwned)
 			}
 		})
 	}
@@ -113,6 +125,9 @@ func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testin
 			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
 		},
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: baseline},
+		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
+			key: {SourceFlowID: baseline.FlowID, ChildID: "epic.2", FlowID: "owned-flow"},
+		},
 		flowPreparationAdmission: true,
 		beadExpansion:            beadExpansionSnapshot{target: beadExpansionTarget{token: 99}},
 	}
@@ -123,6 +138,57 @@ func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testin
 	next, _ := m.handleEpicProgressionToggleResult(msg)
 	if got := next.epicProgressionBaselines[key]; got.FlowID != baseline.FlowID {
 		t.Fatalf("confirmed-active disable replaced baseline with %#v", got)
+	}
+	if got := next.epicProgressionOwnedSuccessors[key]; got.FlowID != "owned-flow" {
+		t.Fatalf("confirmed-active disable replaced ownership with %#v", got)
+	}
+}
+
+func TestDisableEpicProgressionReconciliationMatrix(t *testing.T) {
+	target := beadExpansionTarget{repoPath: "/repo", epicID: "epic"}
+	writeErr := errors.New("write failed")
+	for _, tt := range []struct {
+		name            string
+		setErr          error
+		found           bool
+		read            flowstore.EpicProgression
+		readErr         error
+		wantKnown       bool
+		wantEnabled     bool
+		wantDisposition epicProgressionBaselineDisposition
+		wantStatus      string
+	}{
+		{name: "success", found: true, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "Disabled auto-progression"},
+		{name: "error reread absent", setErr: writeErr, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "is off; disable outcome could not be confirmed"},
+		{name: "error reread normal off", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic"}, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "is off; disable outcome could not be confirmed"},
+		{name: "error reread halted", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Halt: &flowstore.EpicProgressionHalt{ChildBeadID: "epic.1", Status: flowstore.StatusBlocked, Message: "blocked"}}, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "is halted; disable outcome could not be confirmed"},
+		{name: "error reread done", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Done: true}, wantKnown: true, wantDisposition: epicProgressionBaselineRemove, wantStatus: "completed before disable could be confirmed"},
+		{name: "error reread active", setErr: writeErr, found: true, read: flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic", Enabled: true}, wantKnown: true, wantEnabled: true, wantStatus: "Could not disable"},
+		{name: "error reread error", setErr: writeErr, readErr: errors.New("read failed"), wantStatus: "Could not confirm auto-progression state"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				setEpicProgression: func(update flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+					if update.Enabled || update.Done {
+						t.Fatalf("manual disable update = %#v, want enabled=false done=false", update)
+					}
+					return flowstore.EpicProgression{RepoPath: "/repo", EpicID: "epic"}, tt.setErr
+				},
+				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+					return tt.read, tt.found, tt.readErr
+				},
+			}
+			msg, ok := m.disableEpicProgressionCmd(target)().(epicProgressionToggleResultMsg)
+			if !ok {
+				t.Fatal("disable command returned unexpected message")
+			}
+			if msg.known != tt.wantKnown || msg.enabled != tt.wantEnabled || msg.baselineDisposition != tt.wantDisposition || !strings.Contains(msg.status, tt.wantStatus) {
+				t.Fatalf("disable result = %#v", msg)
+			}
+			if tt.read.Done && strings.Contains(msg.status, "Disabled auto-progression") {
+				t.Fatalf("done reread claimed direct disable: %q", msg.status)
+			}
+		})
 	}
 }
 
@@ -217,6 +283,38 @@ func TestStaleEpicProgressionToggleRefreshesVisibleFlowSurface(t *testing.T) {
 	}
 	if next.flowPreparationAdmission {
 		t.Fatal("stale toggle retained preparation admission")
+	}
+}
+
+func TestStaleEpicProgressionToggleOwnerCannotMutateNewerRuntimeState(t *testing.T) {
+	key := epicProgressionBaselineKey("/repo", "epic")
+	baseline := flowstore.FlowRecord{FlowID: "current-flow"}
+	owned := epicProgressionOwnedSuccessor{SourceFlowID: baseline.FlowID, ChildID: "epic.2", FlowID: "owned-flow"}
+	released := 0
+	m := Model{
+		flowPreparationAdmission: true,
+		flowPreparationOwner:     flowPreparationOwner{Kind: flowPreparationEpicToggle, Token: 2},
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: baseline},
+		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
+			key: owned,
+		},
+	}
+	next, _ := m.handleEpicProgressionToggleResult(epicProgressionToggleResultMsg{
+		target:              beadExpansionTarget{repoPath: "/repo", epicID: "epic"},
+		baselineDisposition: epicProgressionBaselineRemove,
+		status:              "stale status",
+		release:             func() { released++ },
+		preparationKind:     flowPreparationEpicToggle,
+		preparationToken:    1,
+	})
+	if released != 1 || next.flowPreparationOwner.Token != 2 || !next.flowPreparationAdmission {
+		t.Fatalf("release=%d owner=%#v admission=%t", released, next.flowPreparationOwner, next.flowPreparationAdmission)
+	}
+	if next.epicProgressionBaselines[key].FlowID != baseline.FlowID || next.epicProgressionOwnedSuccessors[key] != owned {
+		t.Fatalf("stale result changed baseline/ownership: %#v %#v", next.epicProgressionBaselines, next.epicProgressionOwnedSuccessors)
+	}
+	if next.status.Text != "" {
+		t.Fatalf("stale result surfaced status %q", next.status.Text)
 	}
 }
 

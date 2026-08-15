@@ -1,12 +1,40 @@
 package model
 
 import (
+	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 
 	"github.com/approachcontrol/approach/flowstore"
 )
+
+func TestCustomEpicSuccessorPersistenceDoesNotOpenDefaultStoreForReservation(t *testing.T) {
+	root := t.TempDir()
+	m := NewWithOptions(nil, Options{
+		SessionStateRoot: root,
+		ReconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
+			return flowstore.EpicProgressionSuccessorResult{}, nil
+		},
+	})
+
+	release, err := m.reserveEpicSuccessor("custom-flow")
+	if err != nil {
+		t.Fatalf("reserveEpicSuccessor() error = %v", err)
+	}
+	if release == nil {
+		t.Fatal("reserveEpicSuccessor() returned a nil release")
+	}
+	release()
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("ReadDir(%q) error = %v", root, err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("custom successor reservation created default-store artifacts: %#v", entries)
+	}
+}
 
 // openDescriptorCount counts the descriptors this process holds by probing each
 // number with F_GETFD. /proc is unavailable on macOS and /dev/fd entries there

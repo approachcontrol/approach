@@ -338,10 +338,11 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			// No FlowPhaseID, no FlowLaunchTracked, no FlowRepair: this is the
 			// phase-untracked autofix agent. FlowAutofix is the explicit signal the
 			// prefill boundary reads rather than inferring it from those absences.
-			FlowAutofix:   true,
-			Embedded:      true,
-			Headless:      headless,
-			InitialPrompt: autofixPromptForPR(record.PR.Number),
+			FlowAutofix:         true,
+			FlowAutofixPRNumber: record.PR.Number,
+			Embedded:            true,
+			Headless:            headless,
+			InitialPrompt:       autofixPromptForPR(record.PR.Number),
 		}
 		event.Context = ctx
 		event.Route = flowLaunchRouteEmbedded

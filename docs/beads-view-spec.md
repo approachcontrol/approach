@@ -209,11 +209,26 @@ it claims a child before preparing that child's new Flow.
   `bd show -- <id>`, the Bead/epic link, and captured agent settings. It does not
   start a phase or launch an agent.
 - One in-process admission ticket is shared by epic enable/disable and Ready
-  `f`/`F`. Navigation invalidates source projection/status identity but does not
-  release the ticket. A prepared/adopted Flow stays under its launch/close
+  `f`/`F`, and automatic epic advancement. Every acquisition has a shared
+  monotonically increasing owner token; delayed completion or launch-failure
+  cleanup releases only the matching operation kind and token. Navigation
+  invalidates source projection/status identity but does not release the
+  ticket. An accepted `F` embedded or external handoff transfers its Flow
+  reservation to the launch path and releases preparation admission
+  immediately, so a live agent does not block another preparation. A
+  prepared/adopted Flow stays under its launch/close
   reservation through fresh transactional revalidation and progression-write
   reconciliation. This prevents duplicate effects inside one Model; it does
   not promise cross-process create uniqueness.
+- Automatic sequential advancement preserves enablement's first-candidate
+  adoption policy but has its own skip-and-continue rule. On a live success
+  edge it obtains fresh direct children, fresh `bd ready` order, and the full
+  repository Flow corpus. It walks Ready order intersected with direct-child
+  IDs, skips every child with an exact canonical-repository plus
+  `{child ID, epic ID}` link, and prepares the first unlinked child with the
+  same Ready create-only title, durable-Bead instructions, link, and captured
+  agent preferences. A returned Flow ID becomes the edge's owned successor and
+  must reconcile or be released before another child can be selected.
 
 ## Testing Decisions
 
@@ -244,9 +259,10 @@ it claims a child before preparing that child's new Flow.
   --claim -- <child-id>`; the positional separator keeps flag-shaped IDs from
   becoming options. Create, start, close, reopen, edit, dependency changes,
   and automatic unclaim remain out of scope. Queries and manual Ready Flow
-  creation stay strictly read-only.
-- Advancing to later children, launching a prepared child's
-  phase, or startup catch-up for completions observed while Approach was down.
+  creation stay strictly read-only; creating an Approach-owned Flow artifact
+  is not a Beads mutation.
+- Launching a progression-prepared child's phase, or startup catch-up for
+  completions observed while Approach was down.
 - Background polling or auto-refresh while the view is visible.
 - Reading beads storage files directly, or any fallback path that bypasses the
   `bd` CLI.

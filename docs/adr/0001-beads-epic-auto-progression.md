@@ -20,9 +20,14 @@ launch.
   Claim failure halts the attempt before Flow preparation and surfaces its
   cause.
 - Progression is a separate `flowstore` entity keyed by canonical repository
-  path and epic Bead ID. It persists enabled state, an optional complete halt
-  tuple, and timestamps in the shared SQLite store.
-- Enabled and halted state survive restart. Advancement is edge-triggered only
+  path and epic Bead ID. It persists enabled state, an authoritative `done`
+  completion bit, an optional complete halt tuple, and timestamps in the shared
+  SQLite store. Disabled state never implies completion.
+- Enabled, done, and halted state survive restart. The four valid states are
+  active `(enabled, !done, no halt)`, normal off `(!enabled, !done, no halt)`,
+  successfully exhausted `(!enabled, done, no halt)`, and halted `(!enabled,
+  !done, halt)`. Enabled+done, done+halt, and enabled+halt are forbidden.
+  Advancement is edge-triggered only
   from success-terminal transitions observed while the TUI is running. Startup
   performs no catch-up for completions that occurred while Approach was down.
 - A progression-created child Flow persists its receipt-less exact-link identity
@@ -45,3 +50,9 @@ revalidates a prepared Flow while holding its launch/close reservation. The
 progression write and final Flow check share one SQLite writer transaction.
 This is a single-Model guarantee. Read-then-create uniqueness across separate
 Approach processes is not provided.
+
+Establishing `done` is an atomic active→done transition. A concurrent manual
+disable or halt therefore wins by making a queued completion fail rather than
+letting it overwrite authoritative state. Repeating done is a timestamp-
+preserving no-op. Explicit manual off clears prior completion while retaining a
+sticky halt; ordinary and prepared enable clear both done and halt.

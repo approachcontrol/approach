@@ -23,6 +23,7 @@ import (
 const (
 	flowRepairPendingStatus       = "A repair launch is already pending for this Flow"
 	flowRepairResumePendingStatus = "A phase resume is already pending for this Flow"
+	flowRepairPhasePendingStatus  = "A phase launch is already pending for this Flow"
 	flowRepairTerminalStatus      = "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"
 	flowRepairNotRepairableStatus = "Flow is no longer repairable"
 	flowRepairNoDirectoryStatus   = "Cannot find a usable worktree or repository directory for this Flow repair"
@@ -188,17 +189,17 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
-// flowRepairOccupancyRefusal names what is holding the Flow. The terminal rung
-// is written as the terminal predicates disjoined with attempt occupancy, not
-// as the terminals alone: a manualPhase or autoPhase attempt in flight reaches
-// it, and a rung that named only the terminals would fall through to the
-// headless message and tell the user something false.
+// flowRepairOccupancyRefusal names what is holding the Flow in this exact
+// order: repair attempt, phase-resume attempt, manual/auto phase attempt,
+// actual terminal or other-attempt fallback, then pending headless write.
 func (m Model) flowRepairOccupancyRefusal(flowID string) string {
 	switch m.flowLaunchAttemptKind(flowID) {
 	case flowLaunchKindRepair:
 		return flowRepairPendingStatus
 	case flowLaunchKindPhaseResume:
 		return flowRepairResumePendingStatus
+	case flowLaunchKindManualPhase, flowLaunchKindAutoPhase:
+		return flowRepairPhasePendingStatus
 	}
 	if m.hasFlowEmbeddedTerminalForFlow(flowID) ||
 		m.hasFlowRepairEmbeddedTerminalForFlow(flowID) ||

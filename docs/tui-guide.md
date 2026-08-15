@@ -634,6 +634,16 @@ lifecycle, later terminal or spawn failure cannot clear a newer Ready request.
 Every preparation result returns through the Ready handler, which refreshes a
 visible Flow surface and includes a persisted Flow ID in any post-creation error.
 
+Enabled epics advance from the same view-independent 1 Hz Flow poll. When the
+exact in-session baseline Flow is newly observed as `completed` or `merged`,
+Approach prepares the next unlinked direct child in fresh `bd ready` order; it
+does not claim the Bead or launch the new Flow. The status line reports the
+prepared child and Flow ID, retryable preparation/reconciliation errors, or an
+owned successor that blocks later children. When no creation candidate remains,
+it reports auto-progression completion and turns normal progression off. No
+startup catch-up occurs: explicitly toggle progression off and back on to
+install a new live baseline after reconciling an unknown drain state.
+
 Lowercase `f` produces the same parked Flow as a successful `n` form submission,
 so `g` on its first phase launches the agent inside the Flow's isolated
 worktree. An initial store failure leaves no Flow. If worktree creation fails,
@@ -839,7 +849,11 @@ On a Flow row or an expanded phase row:
   the agent in the repository root. The launch goes through the same lifecycle as
   `g`, so occupancy, the persisted `h` headless preference, tmux mode, and the
   current agent/model/effort all apply, and interactive embedded launches prefill
-  the dock for you to send.
+  the dock for you to send. Their dock tab/chip uses the display identity
+  `autofix pr <num>` without `#`, so PR 116 renders, for example,
+  `1 codex autofix pr 116 running`; the agent prompt remains exactly
+  `autofix pr #116`. Headless launches are unchanged and retain the existing
+  Flow identity rather than using the interactive autofix label.
 
   It is deliberately **phase-untracked**: it writes no phase state, marks no
   phase running, and attaches its session to no phase history, so an autofix run
@@ -911,9 +925,11 @@ terminal before repairing this Flow`. A repair in flight reserves the Flow from
 the key press onward, so a second `R` reports `A repair launch is already
 pending for this Flow` and a replayed launch message is a silent no-op; a phase
 resume already holding the Flow reports `A phase resume is already pending for
-this Flow`. Approach fresh-reads the persisted Flow and rechecks eligibility
-before allocating the terminal, so a Flow that stopped being repairable in the
-meantime reports `Flow is no longer repairable`.
+this Flow`. A pending manual or automatic phase launch reports `A phase launch
+is already pending for this Flow`; unlike a retained-terminal refusal, this can
+occur before any terminal slot exists. Approach fresh-reads the persisted Flow
+and rechecks eligibility before allocating the terminal, so a Flow that stopped
+being repairable in the meantime reports `Flow is no longer repairable`.
 
 Repair also refuses while the session store holds a live session belonging to
 any of the Flow's phase launches, with `Flow phase <phase-id> already has a

@@ -1778,6 +1778,17 @@ func (s *Store) ReserveAgentLaunch(flowID string) (FlowRecord, func(), error) {
 	return s.reserveLaunchAgainstClose(flowID, "launch an agent for")
 }
 
+// ReserveEpicProgressionSuccessor holds the Flow's launch/close lock while
+// sequential progression classifies it. Unlike launch reservations, this
+// reservation intentionally permits missing and closed Flows so the caller can
+// apply progression-first inactive precedence to every Flow condition.
+func (s *Store) ReserveEpicProgressionSuccessor(flowID string) (func(), error) {
+	if err := validateFlowID(flowID); err != nil {
+		return nil, err
+	}
+	return s.acquireLaunchCloseLock(flowID)
+}
+
 func (s *Store) reserveLaunchAgainstClose(flowID, action string) (FlowRecord, func(), error) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, nil, err
