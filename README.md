@@ -272,10 +272,11 @@ records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
 and agent sessions remain file-backed. SQLite schema v3 adds protected Flow
 preparation receipts and the `epic_progressions` table; schema v4 adds the
-compatibility guard for progression-claim recovery markers and the durable
-progression `done` field. Versions 0 through 3 upgrade transactionally; the
-v3→v4 migration rewrites only progression JSON records, conservatively setting
-historical rows to `done:false`, and never rewrites existing Flow JSON blobs.
+durable progression `done` field; schema v5 adds the compatibility guard for
+progression-claim recovery markers. Versions 0 through 4 upgrade
+transactionally; the v3→v4 migration rewrites only progression JSON records,
+conservatively setting historical rows to `done:false`, and never rewrites
+existing Flow JSON blobs.
 
 ## Development
 

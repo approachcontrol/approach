@@ -446,6 +446,196 @@ func TestEpicAutoProgressionRetryRejectsRunningMarkedChildInsteadOfClaimingSibli
 	}
 }
 
+func TestEpicAutoProgressionRetryIgnoresConsumedMarkedChildAndClaimsReadySibling(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	preparedSibling := flowstore.FlowRecord{
+		FlowID: "flow-ready-sibling", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.2", EpicID: "epic-1"}, PreparedAt: &preparedAt,
+	}
+	for _, tt := range []struct {
+		name   string
+		status string
+	}{
+		{name: "completed", status: flowstore.StatusCompleted},
+		{name: "merged", status: flowstore.StatusMerged},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			consumed := flowstore.FlowRecord{
+				FlowID: "flow-consumed", RepoPath: "/dev/alpha", Status: tt.status,
+				Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+				PreparationGeneration: "consumed-generation", PreparedAt: &preparedAt,
+			}
+			claimedID := ""
+			creates := 0
+			m := loadEpicProgressionTestModel(t, model.Options{
+				ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+					return []beadsquery.Bead{
+						{ID: "epic-1.1", Title: "Consumed child"},
+						{ID: "epic-1.2", Title: "Ready sibling"},
+					}, nil
+				},
+				ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+					return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+				},
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{consumed}, nil
+				},
+				ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+					if flowID != consumed.FlowID {
+						t.Fatalf("ReadFlow(%q), want consumed Flow", flowID)
+					}
+					return consumed, nil
+				},
+				ClaimBead: func(_ string, beadID string) error {
+					claimedID = beadID
+					return nil
+				},
+				CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					creates++
+					if err := runFlowPreparationAdmission(t, req); err != nil {
+						return model.FlowStartResult{}, err
+					}
+					return model.FlowStartResult{Flow: preparedSibling}, nil
+				},
+				ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
+					if flowID != preparedSibling.FlowID {
+						t.Fatalf("reserved Flow = %q, want ready sibling Flow %q", flowID, preparedSibling.FlowID)
+					}
+					return preparedSibling, func() {}, nil
+				},
+				EnableEpicProgression: func(update flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error) {
+					if update.Bead != preparedSibling.Bead {
+						t.Fatalf("enabled Bead = %#v, want ready sibling %#v", update.Bead, preparedSibling.Bead)
+					}
+					return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, preparedSibling, nil
+				},
+			})
+
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, _ = update(m, cmd())
+			if claimedID != "epic-1.2" || creates != 1 {
+				t.Fatalf("consumed %s retry claimed=%q creates=%d, want sibling epic-1.2 and 1 create", tt.status, claimedID, creates)
+			}
+			if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-ready-sibling is prepared" {
+				t.Fatalf("consumed %s retry status = %q", tt.status, got)
+			}
+		})
+	}
+}
+
+func TestEpicAutoProgressionRetryRefusesSiblingWhenConsumedMarkerBecomesActive(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	consumed := flowstore.FlowRecord{
+		FlowID: "flow-consumed", RepoPath: "/dev/alpha", Status: flowstore.StatusCompleted,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "consumed-generation", PreparedAt: &preparedAt,
+	}
+	reactivated := consumed
+	reactivated.Status = flowstore.StatusInProgress
+	claimedID := ""
+	creates := 0
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "epic-1.1", Title: "Consumed child"},
+				{ID: "epic-1.2", Title: "Ready sibling"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{consumed}, nil
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			if flowID != consumed.FlowID {
+				t.Fatalf("ReadFlow(%q), want consumed Flow", flowID)
+			}
+			return reactivated, nil
+		},
+		ClaimBead: func(_ string, beadID string) error {
+			claimedID = beadID
+			return nil
+		},
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			creates++
+			return model.FlowStartResult{}, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if claimedID != "" || creates != 0 {
+		t.Fatalf("reactivated marker claimed=%q creates=%d, want no sibling claim", claimedID, creates)
+	}
+	if got := m.TransientError(); got != "Flow flow-consumed changed before sibling claim; auto-progression remains off" {
+		t.Fatalf("reactivated marker status = %q", got)
+	}
+}
+
+func TestEpicAutoProgressionRetryRefusesSiblingWhenConsumedMarkerReactivatesAfterConfirmation(t *testing.T) {
+	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
+	consumed := flowstore.FlowRecord{
+		FlowID: "flow-consumed", RepoPath: "/dev/alpha", Status: flowstore.StatusCompleted,
+		Bead: flowstore.BeadLink{ID: "epic-1.1", EpicID: "epic-1"}, ProgressionClaim: true,
+		PreparationGeneration: "consumed-generation", PreparedAt: &preparedAt,
+	}
+	reactivated := consumed
+	reactivated.Status = flowstore.StatusInProgress
+	preparedSibling := flowstore.FlowRecord{
+		FlowID: "flow-ready-sibling", RepoPath: "/dev/alpha", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic-1.2", EpicID: "epic-1"}, PreparedAt: &preparedAt,
+	}
+	reads := 0
+	claimedID := ""
+	m := loadEpicProgressionTestModel(t, model.Options{
+		ListChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{
+				{ID: "epic-1.1", Title: "Consumed child"},
+				{ID: "epic-1.2", Title: "Ready sibling"},
+			}, nil
+		},
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic-1.2"}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{consumed}, nil
+		},
+		ReadFlow: func(flowID string) (flowstore.FlowRecord, error) {
+			if flowID != consumed.FlowID {
+				t.Fatalf("ReadFlow(%q), want consumed Flow", flowID)
+			}
+			reads++
+			if reads == 1 {
+				return consumed, nil
+			}
+			return reactivated, nil
+		},
+		ClaimBead: func(_ string, beadID string) error {
+			claimedID = beadID
+			return nil
+		},
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if err := runFlowPreparationAdmission(t, req); err != nil {
+				return model.FlowStartResult{}, err
+			}
+			return model.FlowStartResult{Flow: preparedSibling}, nil
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, cmd())
+	if reads < 2 {
+		t.Fatalf("ReadFlow calls = %d, want confirmation then claim-boundary revalidation", reads)
+	}
+	if claimedID != "" {
+		t.Fatalf("post-confirmation reactivation claimed %q, want no sibling claim", claimedID)
+	}
+	if got := m.TransientError(); got != "Flow flow-consumed changed before sibling claim; auto-progression remains off" {
+		t.Fatalf("post-confirmation reactivation status = %q", got)
+	}
+}
+
 func TestEpicAutoProgressionRetryRejectsReplacementOfMigratedMarkedChild(t *testing.T) {
 	preparedAt := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 	listed := flowstore.FlowRecord{

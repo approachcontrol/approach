@@ -419,7 +419,9 @@ exact-link Flow discoverable. Retry refreshes direct-child membership and
 searches for an open marked
 receipt-less or prepared-pending exact-link Flow before consulting Ready state,
 then repeats the same-actor idempotent claim before it adopts the prepared Flow
-or surfaces incomplete preparation instead of skipping to a sibling. Unmarked
+or surfaces incomplete preparation instead of skipping to a sibling. Consumed
+`completed`/`merged` markers are ignored so a later Ready sibling can be
+selected; unmarked
 manual Ready `f`/`F` Flows do not enter this recovery path.
 
 ## Per-phase agent settings

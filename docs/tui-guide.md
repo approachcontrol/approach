@@ -623,7 +623,8 @@ finds the claimed direct child's open marked receipt-less or prepared-pending
 exact-link Flow even though that child is no longer Ready; it reserves the Flow,
 revalidates its generation and current direct-child membership, repeats the
 idempotent claim, then surfaces incomplete preparation or adopts the prepared
-Flow. Unmarked manual Flows do not enter this recovery path. This action
+Flow. Consumed `completed`/`merged` markers are ignored so off/on recovery can
+select a later Ready sibling. Unmarked manual Flows do not enter this recovery path. This action
 prepares or adopts only; it does not start a phase or launch an agent.
 
 The two keys share one admission token. Repeated or mixed presses cannot create

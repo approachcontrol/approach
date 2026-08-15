@@ -13,6 +13,34 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
+func TestEpicProgressionRetryRelevantIgnoresConsumedSuccessfulMarkers(t *testing.T) {
+	stamp := time.Date(2026, 8, 14, 16, 0, 0, 0, time.UTC)
+	base := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusPending, PreparedAt: &stamp, ProgressionClaim: true}
+	tests := []struct {
+		name string
+		flow flowstore.FlowRecord
+		want bool
+	}{
+		{name: "pending", flow: base, want: true},
+		{name: "running", flow: func() flowstore.FlowRecord { f := base; f.Status = flowstore.StatusInProgress; return f }(), want: true},
+		{name: "blocked", flow: func() flowstore.FlowRecord { f := base; f.Status = flowstore.StatusBlocked; return f }(), want: true},
+		{name: "completed", flow: func() flowstore.FlowRecord { f := base; f.Status = flowstore.StatusCompleted; return f }(), want: false},
+		{name: "merged", flow: func() flowstore.FlowRecord { f := base; f.Status = flowstore.StatusMerged; return f }(), want: false},
+		{name: "closed pending", flow: func() flowstore.FlowRecord {
+			f := base
+			f.Closed = flowstore.Closure{Reason: "done", ClosedAt: &stamp}
+			return f
+		}(), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := epicProgressionRetryRelevant(tt.flow); got != tt.want {
+				t.Fatalf("epicProgressionRetryRelevant() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRejectEpicProgressionCandidateOrdersTerminalAndPreparationClasses(t *testing.T) {
 	stamp := time.Date(2026, 8, 14, 16, 0, 0, 0, time.UTC)
 	base := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusPending, PreparedAt: &stamp}

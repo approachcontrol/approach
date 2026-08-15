@@ -27,7 +27,7 @@ const (
 // future schema change has something to branch on, and so an older binary can
 // tell "a newer approach wrote this" apart from "this file is corrupt" —
 // without it, both surface as a raw column-set mismatch dump.
-const databaseSchemaVersion = 4
+const databaseSchemaVersion = 5
 
 // errDatabaseFromNewerBuild marks the one validation failure that is NOT a
 // damaged database. The file is fine; this binary is old. It must stay
@@ -343,7 +343,7 @@ func validateSQLiteSchema(db *sql.DB) error {
 
 // validateSQLiteSchemaVersion checks one exact physical generation. The
 // bootstrap migrator uses v1 to reject corrupt or arbitrary v0/v1 layouts
-// before any ALTER TABLE statement runs; normal readers validate only v4.
+// before any ALTER TABLE statement runs; normal readers validate only v5.
 func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	// An empty file reads as version 0 with no tables, so the version check above
 	// cannot catch it and the column comparison below would report it as a diff
@@ -394,7 +394,7 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0"}
 	case 2:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0"}
-	case 3, 4:
+	case 3, 4, 5:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
@@ -416,8 +416,10 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 			return err
 		}
 		if version >= 4 {
-			if err := validateSQLiteProgressionClaimCompatibilityTrigger(db); err != nil {
-				return err
+			if version >= 5 {
+				if err := validateSQLiteProgressionClaimCompatibilityTrigger(db); err != nil {
+					return err
+				}
 			}
 			return validateSQLiteEpicProgressionDoneCompatibilityTriggers(db)
 		}
@@ -438,7 +440,7 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV2
 	case 3:
 		want = flowTableSchemaV3
-	case 4:
+	case 4, 5:
 		want = flowTableSchemaV4
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
@@ -498,10 +500,12 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 		)
 		if version >= 4 {
 			want = append(want,
-				"trigger:guard_progression_claim_record_update:flows",
 				"trigger:guard_epic_progression_done_insert:epic_progressions",
 				"trigger:guard_epic_progression_done_record_update:epic_progressions",
 			)
+			if version >= 5 {
+				want = append(want, "trigger:guard_progression_claim_record_update:flows")
+			}
 		}
 		sort.Strings(want)
 	}
@@ -515,7 +519,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 && version != 3 && version != 4 {
+	if version != 2 && version != 3 && version != 4 && version != 5 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string

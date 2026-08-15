@@ -96,7 +96,7 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 	if err != nil {
 		return nil, err
 	}
-	if err := completeCutover(canonicalRoot, state, presets); err != nil {
+	if err := completeCutover(canonicalRoot, state, presets, lockTimeout); err != nil {
 		return nil, err
 	}
 	backend, err := openSQLiteBackend(canonicalRoot, lockTimeout)
@@ -146,14 +146,23 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		closeDB = false
 		return nil
 	}
-	if version != 0 && version != 1 && version != 2 && version != 3 {
+	if version != 0 && version != 1 && version != 2 && version != 3 && version != 4 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	predecessor := int64(1)
 	if version >= 2 {
 		predecessor = version
 	}
-	if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
+	stampOnly := false
+	if version == 4 {
+		if err := validateSQLiteSchemaVersion(db, 4); err != nil {
+			if validateSQLiteSchemaVersion(db, 5) == nil {
+				stampOnly = true
+			} else {
+				return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
+			}
+		}
+	} else if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
 		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
 	}
 	tx, err := db.Begin()
@@ -166,37 +175,44 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 		}
 		return cause
 	}
-	statements := make([]string, 0, 9)
-	if predecessor == 1 {
-		statements = append(statements,
-			"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
-			"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
-			flowBeadCompatibilityTrigger,
-		)
-	}
-	if predecessor <= 2 {
-		statements = append(statements,
-			"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
-			epicProgressionTableSchema,
-			flowPreparedCompatibilityTrigger,
-		)
-	}
-	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
-			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
+	statements := make([]string, 0, 10)
+	if !stampOnly {
+		if predecessor == 1 {
+			statements = append(statements,
+				"ALTER TABLE flows ADD COLUMN bead_id TEXT NOT NULL DEFAULT ''",
+				"ALTER TABLE flows ADD COLUMN epic_id TEXT NOT NULL DEFAULT ''",
+				flowBeadCompatibilityTrigger,
+			)
+		}
+		if predecessor <= 2 {
+			statements = append(statements,
+				"ALTER TABLE flows ADD COLUMN prepared_at TEXT NOT NULL DEFAULT ''",
+				epicProgressionTableSchema,
+				flowPreparedCompatibilityTrigger,
+			)
+		}
+		for _, statement := range statements {
+			if _, err := tx.Exec(statement); err != nil {
+				return rollback(fmt.Errorf("migrate flow database schema: %w", err))
+			}
+		}
+		if predecessor == 3 {
+			if err := migrateLegacyV3EpicProgressions(tx); err != nil {
+				return rollback(err)
+			}
+		}
+		statements = nil
+		if predecessor <= 3 {
+			statements = append(statements,
+				epicProgressionDoneInsertCompatibilityTrigger,
+				epicProgressionDoneUpdateCompatibilityTrigger,
+			)
+		}
+		if predecessor <= 4 {
+			statements = append(statements, flowProgressionClaimCompatibilityTrigger)
 		}
 	}
-	if predecessor == 3 {
-		if err := migrateLegacyV3EpicProgressions(tx); err != nil {
-			return rollback(err)
-		}
-	}
-	statements = []string{
-		flowProgressionClaimCompatibilityTrigger,
-		epicProgressionDoneInsertCompatibilityTrigger,
-		epicProgressionDoneUpdateCompatibilityTrigger,
-		fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion),
-	}
+	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return rollback(fmt.Errorf("migrate flow database schema: %w", err))
@@ -410,7 +426,7 @@ func inspectReservedDirectory(path string) (bool, error) {
 	return true, nil
 }
 
-func completeCutover(root string, state cutoverState, presets map[string]Preset) error {
+func completeCutover(root string, state cutoverState, presets map[string]Preset, lockTimeout time.Duration) error {
 	stagePath := filepath.Join(root, stageFilename)
 	legacyPath := filepath.Join(root, "flows")
 	tombstonePath := filepath.Join(root, "flows.legacy")
@@ -436,7 +452,16 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset)
 		// surface, because canonicalizeLegacyFlow is preset-dependent. A user who
 		// crashed mid-cutover and then edited a preset out of their config would
 		// get a mismatch on every subsequent launch and could never start again.
-		err := validateStagedDatabase(stagePath, nil, false)
+		// A predecessor-schema stage from an older build is still that durable
+		// corpus: upgrade it in place before current-schema validation, or the
+		// resume path treats a valid v4 stage as unusable and discards it.
+		err := migrateAuthoritativeDatabase(stagePath, lockTimeout)
+		if err == nil {
+			err = settleStagedSQLiteFile(stagePath)
+		}
+		if err == nil {
+			err = validateStagedDatabase(stagePath, nil, false)
+		}
 		switch {
 		case err == nil:
 			if err := os.Rename(stagePath, databasePath); err != nil {
@@ -1132,6 +1157,27 @@ func fileFingerprint(path string) (fingerprint, error) {
 		return fingerprint{}, err
 	}
 	return fingerprint{hash: sha256.Sum256(data), size: info.Size(), mode: info.Mode(), modTime: info.ModTime()}, nil
+}
+
+func settleStagedSQLiteFile(path string) error {
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rw"}}))
+	if err != nil {
+		return fmt.Errorf("open staged flow database to settle journal: %w", err)
+	}
+	var mode string
+	if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil || mode != "delete" {
+		_ = db.Close()
+		return fmt.Errorf("settle staged flow database rollback journal: mode=%q err=%w", mode, err)
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close staged flow database after settle: %w", err)
+	}
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove staged flow database sidecar %q: %w", path+suffix, err)
+		}
+	}
+	return nil
 }
 
 func requireNoSQLiteSidecars(path string) error {

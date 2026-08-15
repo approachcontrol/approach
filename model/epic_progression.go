@@ -487,7 +487,8 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				status: fmt.Sprintf("Could not refresh direct children for epic %s; auto-progression remains off: %v", target.epicID, err)}
 		}
 		childID, childTitle := epicProgressionRecoveryChild(target, directChildren, flows)
-		if childID == "" {
+		recovered := childID != ""
+		if !recovered {
 			for _, child := range projection.Children {
 				if projection.ReadyIDs[child.ID] {
 					childID = strings.TrimSpace(child.ID)
@@ -500,6 +501,13 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			return epicProgressionToggleResultMsg{target: target, known: true,
 				baselineDisposition: epicProgressionBaselineRemove,
 				status:              fmt.Sprintf("No ready child for epic %s; auto-progression remains off", target.epicID)}
+		}
+		ignoredConsumed := !recovered && hasConsumedProgressionMarker(target, flows)
+		if ignoredConsumed {
+			if detail := confirmConsumedProgressionMarkers(target, childID, flows, readFlow); detail != "" {
+				return epicProgressionToggleResultMsg{target: target, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail}
+			}
 		}
 		link := flowstore.BeadLink{ID: childID, EpicID: target.epicID}
 		matches := make([]flowstore.FlowRecord, 0, 1)
@@ -600,11 +608,18 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show -- %s` before planning or implementation.", childID, childID)
 			claimAttempted := false
 			var claimErr error
+			var siblingMarkerDetail string
 			result, createErr := createFlow(FlowStartRequest{
 				RepoPath: target.repoPath, Title: title, Instructions: instructions, Bead: link,
 				AgentCommand: command, Model: launchModel, ReasoningEffort: reasoningEffort,
 				AgentPreferences: preferences, AgentPreferencesProvided: true,
 				AfterFlowPersisted: func() error {
+					if ignoredConsumed {
+						if detail := confirmConsumedProgressionMarkersNow(target, childID, listFlows, readFlow); detail != "" {
+							siblingMarkerDetail = detail
+							return fmt.Errorf("%s", detail)
+						}
+					}
 					claimAttempted = true
 					claimErr = claimBead(target.repoPath, childID)
 					claimed = claimErr == nil
@@ -612,6 +627,10 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 				},
 			})
 			flow = result.Flow
+			if siblingMarkerDetail != "" {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: siblingMarkerDetail}
+			}
 			if claimErr != nil {
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
 					status: fmt.Sprintf("Could not claim child %s; auto-progression remains off: %v", childID, createErr), presentStatusOnStale: true}
@@ -642,6 +661,12 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			}
 		}
 
+		if ignoredConsumed {
+			if detail := confirmConsumedProgressionMarkersNow(target, childID, listFlows, readFlow); detail != "" {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, release: release, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: detail, presentStatusOnStale: claimed}
+			}
+		}
 		if release == nil {
 			var err error
 			authoritative, release, err = reserveFlow(flow.FlowID)
@@ -702,15 +727,72 @@ func epicProgressionRecoveryChild(target beadExpansionTarget, children []beadsqu
 }
 
 // epicProgressionRetryRelevant reports whether a marked Flow should still be
-// treated as its Bead's recovery candidate. It intentionally does not look at
-// prepared state or derived status beyond closure: a marked, open Flow that
-// is running, blocked, or otherwise mid-flight must still surface here so
+// treated as its Bead's recovery candidate. Closed Flows are ignored, and so
+// are consumed successful terminals (`completed`/`merged`) that remain
+// deliberately open: those markers have already done their job, and treating
+// them as retryable would make off/on recovery refuse enablement instead of
+// selecting a later Ready sibling. A marked Flow that is running, blocked,
+// abandoned, or otherwise mid-flight must still surface here so
 // rejectEpicProgressionCandidate can refuse enablement against it. Filtering
 // those out by status would make recovery silently fall through to a Ready
 // sibling, claiming and enabling progression against it while stranding the
 // mid-flight Flow's claim as an unrecoverable orphan.
 func epicProgressionRetryRelevant(flow flowstore.FlowRecord) bool {
-	return !flowstore.FlowClosed(flow)
+	return !flowstore.FlowClosed(flow) && !epicProgressionConsumedMarker(flow)
+}
+
+func epicProgressionConsumedMarker(flow flowstore.FlowRecord) bool {
+	if flowstore.FlowClosed(flow) || !flow.ProgressionClaim {
+		return false
+	}
+	status := strings.TrimSpace(flow.Status)
+	if status == "" {
+		status = flowstore.DeriveStatus(flow)
+	}
+	return status == flowstore.StatusCompleted || status == flowstore.StatusMerged
+}
+
+func hasConsumedProgressionMarker(target beadExpansionTarget, flows []flowstore.FlowRecord) bool {
+	for _, flow := range flows {
+		if filepath.Clean(flow.RepoPath) == filepath.Clean(target.repoPath) && flow.Bead.EpicID == target.epicID && epicProgressionConsumedMarker(flow) {
+			return true
+		}
+	}
+	return false
+}
+
+func confirmConsumedProgressionMarkers(target beadExpansionTarget, exceptChildID string, flows []flowstore.FlowRecord, readFlow func(string) (flowstore.FlowRecord, error)) string {
+	return confirmProgressionMarkersStillConsumed(target, exceptChildID, flows, readFlow)
+}
+
+func confirmConsumedProgressionMarkersNow(target beadExpansionTarget, exceptChildID string, listFlows func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error), readFlow func(string) (flowstore.FlowRecord, error)) string {
+	if listFlows == nil {
+		return "Could not refresh child Flows before sibling claim; auto-progression remains off"
+	}
+	flows, err := listFlows(flowstore.FlowFilter{RepoPath: target.repoPath})
+	if err != nil {
+		return fmt.Sprintf("Could not refresh child Flows before sibling claim; auto-progression remains off: %v", err)
+	}
+	return confirmProgressionMarkersStillConsumed(target, exceptChildID, flows, readFlow)
+}
+
+func confirmProgressionMarkersStillConsumed(target beadExpansionTarget, exceptChildID string, flows []flowstore.FlowRecord, readFlow func(string) (flowstore.FlowRecord, error)) string {
+	for _, flow := range flows {
+		if filepath.Clean(flow.RepoPath) != filepath.Clean(target.repoPath) || flow.Bead.EpicID != target.epicID || flow.Bead.ID == exceptChildID || !flow.ProgressionClaim {
+			continue
+		}
+		if readFlow == nil {
+			return fmt.Sprintf("Could not confirm consumed claim marker on Flow %s; auto-progression remains off", flow.FlowID)
+		}
+		fresh, err := readFlow(flow.FlowID)
+		if err != nil {
+			return fmt.Sprintf("Could not confirm consumed claim marker on Flow %s; auto-progression remains off: %v", flow.FlowID, err)
+		}
+		if epicProgressionRetryRelevant(fresh) {
+			return fmt.Sprintf("Flow %s changed before sibling claim; auto-progression remains off", flow.FlowID)
+		}
+	}
+	return ""
 }
 
 func rejectEpicProgressionCandidate(flow flowstore.FlowRecord) string {

@@ -58,8 +58,8 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 		t.Fatalf("v2 Flow changed during migration: blobEqual=%t prepared_at=%q", bytes.Equal(gotBlob, blob), preparedAt)
 	}
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
-		t.Fatalf("user_version = %d, err %v", version, err)
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	if _, _, err := store.ReadEpicProgression(EpicProgressionKey{RepoPath: record.RepoPath, EpicID: "epic"}); err != nil {
 		t.Fatalf("new progression table unreadable: %v", err)
@@ -116,8 +116,8 @@ PRAGMA user_version = 3;`); err != nil {
 		t.Fatal("v3 marked Flow changed during migration")
 	}
 	var version int
-	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
-		t.Fatalf("user_version = %d, err %v", version, err)
+	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	if got, err := store.Read(record.FlowID); err != nil || !got.ProgressionClaim {
 		t.Fatalf("marked Flow after migration = marker %t, err %v", got.ProgressionClaim, err)
