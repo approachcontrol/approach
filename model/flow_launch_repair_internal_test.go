@@ -1062,10 +1062,9 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 			wantStatus: flowRepairResumePendingStatus,
 		},
 		{
-			// The rung that has to be written as "terminal or any attempt": a
-			// manual or automatic launch in flight reaches it, and naming only
-			// the terminals would fall through to the headless message and tell
-			// the user something false.
+			// Manual and automatic phase launches have their own rung: while an
+			// attempt is in flight, no terminal necessarily exists yet, so the
+			// refusal must name the pending phase launch itself.
 			name: "manual phase attempt",
 			occupy: func(m Model) Model {
 				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
@@ -1076,7 +1075,7 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 				}, flowLaunchStateReading)
 				return next
 			},
-			wantStatus: flowRepairTerminalStatus,
+			wantStatus: "A phase launch is already pending for this Flow",
 		},
 		{
 			name: "auto phase attempt",
@@ -1086,6 +1085,36 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 					Kind:    flowLaunchKindAutoPhase,
 					FlowID:  record.FlowID,
 					PhaseID: record.Phases[0].PhaseID,
+				}, flowLaunchStateReading)
+				return next
+			},
+			wantStatus: "A phase launch is already pending for this Flow",
+		},
+		{
+			name: "manual phase attempt before retained flow terminal",
+			occupy: func(m Model) Model {
+				m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+					Scope:    embeddedTerminalScopeFlow,
+					FlowID:   record.FlowID,
+					Terminal: flowPhaseLaunchTestTerminal{state: "exited"},
+				})
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:   "manual-with-terminal-1",
+					Kind:    flowLaunchKindManualPhase,
+					FlowID:  record.FlowID,
+					PhaseID: record.Phases[0].PhaseID,
+				}, flowLaunchStateReading)
+				return next
+			},
+			wantStatus: "A phase launch is already pending for this Flow",
+		},
+		{
+			name: "other attempt kind",
+			occupy: func(m Model) Model {
+				next, _ := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+					Token:  "autofix-1",
+					Kind:   flowLaunchKindAutofix,
+					FlowID: record.FlowID,
 				}, flowLaunchStateReading)
 				return next
 			},
