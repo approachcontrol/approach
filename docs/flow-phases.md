@@ -353,7 +353,12 @@ reports a commit error, the store reads the Flow back: a matching receipt is
 success, a confirmed nil receipt is incomplete and blocks launchable phases,
 and an unreadable result is unknown and is not compensated because the receipt
 may be durable. Ready-Bead create-and-launch uses the same preparation finalizer
-before it records the initial phase launch ID.
+before it records the initial phase launch ID. Each preparation also carries a
+storage-only random generation nonce. Reservation failure, stale presentation,
+or another post-create exit consumes the finalizer through an atomic
+compensation path: under the launch/close reservation it revalidates that exact
+nonce and blocks only the authoritative launchable roots. A same-ID replacement
+or already-claimed Flow is never overwritten.
 
 Epic enablement accepts only one open `pending` exact-link Flow with that
 receipt. The TUI holds its launch/close reservation while a single SQLite

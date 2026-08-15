@@ -538,12 +538,14 @@ The database and its records have separate compatibility gates:
   to the empty string. Version 3 adds `flows.prepared_at TEXT NOT NULL DEFAULT
   ''`, the exact protected-receipt trigger, and
   `epic_progressions(repo_path, epic_id, enabled, updated_at, record)` with a
-  composite primary key and no enabled-scan index yet. Under the bootstrap
-  lease, existing version 0
+  composite primary key and no enabled-scan index yet. Version 4 adds
+  `flows.preparation_nonce TEXT NOT NULL DEFAULT ''` plus a compatibility
+  trigger that keeps the projection and storage-only JSON field identical.
+  Under the bootstrap lease, existing version 0
   (unstamped v1 layout) and version 1 databases are validated against the exact
-  predecessor table-and-index contract; version 2 is validated against its
-  exact columns, indexes, and Bead trigger. All upgrade transactionally in place
-  to version 3.
+  predecessor table-and-index contract; versions 2 and 3 are validated against
+  their exact columns, indexes, tables, and triggers. All upgrade transactionally
+  in place to version 4.
   Existing rows, JSON record blobs, earlier projections, and retained `flows/`
   files are not rewritten or removed. A malformed predecessor is rejected
   before any column, table, trigger, or version stamp changes. Version 2 also installed an
@@ -553,7 +555,10 @@ The database and its records have separate compatibility gates:
   retaining the physical projections. Restart that older process with the
   upgraded build before retrying its write. Version 3's receipt trigger likewise
   rejects an older rewrite that removes or changes a prepared Flow's JSON
-  receipt while its projection remains protected. A value newer than this build
+  receipt while its projection remains protected. Version 4's nonce trigger
+  also rejects a predecessor process that was already open when migration ran
+  and then tries to erase a receipt-less preparation's exact generation token.
+  A value newer than this build
   supports prevents the store from opening and reports that Approach must be
   upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a

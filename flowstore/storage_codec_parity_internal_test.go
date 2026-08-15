@@ -45,10 +45,11 @@ func populatedFlowRecord() FlowRecord {
 			Sessions:  []Session{{Provider: "claude", SessionID: "s1", LaunchID: "launch-1", Status: "ended", StartedAt: created, EndedAt: updated, TranscriptPath: "/tmp/t.jsonl"}},
 			CreatedAt: created, UpdatedAt: updated,
 		}},
-		PreparedAt:    &preparedAt,
-		CreatedAt:     created,
-		UpdatedAt:     updated,
-		GraphRecovery: GraphRecoveryState{Status: GraphRecoveryMissingEdgesUnresolved},
+		PreparedAt:       &preparedAt,
+		PreparationNonce: "0123456789abcdef0123456789abcdef",
+		CreatedAt:        created,
+		UpdatedAt:        updated,
+		GraphRecovery:    GraphRecoveryState{Status: GraphRecoveryMissingEdgesUnresolved},
 	}
 }
 
@@ -100,6 +101,9 @@ func TestStorageDTOCoversEveryFlowRecordField(t *testing.T) {
 	// graph_recovery is storage-only: FlowRecord carries GraphRecovery as
 	// `json:"-"` and the DTO persists the unresolved marker explicitly.
 	delete(dtoFields, "graph_recovery")
+	// preparation_nonce is likewise storage-only; ordinary JSON output must not
+	// expose the generation capability.
+	delete(dtoFields, "preparation_nonce")
 
 	for name, recordType := range recordFields {
 		dtoType, ok := dtoFields[name]
@@ -135,7 +139,7 @@ func TestStorageDTORoundTripsEveryPopulatedField(t *testing.T) {
 		field := typ.Field(i)
 		want := originalValue.Field(i).Interface()
 		got := roundValue.Field(i).Interface()
-		if field.Tag.Get("json") == "-" && field.Name != "GraphRecovery" {
+		if field.Tag.Get("json") == "-" && field.Name != "GraphRecovery" && field.Name != "PreparationNonce" {
 			continue
 		}
 		if originalValue.Field(i).IsZero() {

@@ -137,7 +137,7 @@ func (s *Store) EnableEpicProgressionForPreparedFlow(update PreparedEpicProgress
 	}
 	defer func() { _ = tx.Rollback() }()
 	stored, found, err := queryStoredFlow(tx.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, record FROM flows WHERE flow_id = ?", update.FlowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", update.FlowID,
 	), update.FlowID)
 	if err != nil {
 		return EpicProgression{}, FlowRecord{}, err

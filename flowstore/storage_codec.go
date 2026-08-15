@@ -10,13 +10,14 @@ import (
 const storageTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 type flowProjection struct {
-	flowID     string
-	repoPath   string
-	status     string
-	updatedAt  string
-	beadID     string
-	epicID     string
-	preparedAt string
+	flowID           string
+	repoPath         string
+	status           string
+	updatedAt        string
+	beadID           string
+	epicID           string
+	preparedAt       string
+	preparationNonce string
 }
 
 type storageGraphRecovery struct {
@@ -46,14 +47,15 @@ type storedFlowDTO struct {
 	// Closed is omitzero, deliberately unlike its omitempty neighbours:
 	// omitempty does not omit a zero struct, and this struct is what the
 	// default_seed golden is marshalled from.
-	Closed        Closure               `json:"closed,omitzero"`
-	AutoMode      bool                  `json:"auto_mode,omitempty"`
-	Headless      bool                  `json:"headless"`
-	Phases        []FlowPhase           `json:"phases"`
-	PreparedAt    string                `json:"prepared_at,omitempty"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
-	GraphRecovery *storageGraphRecovery `json:"graph_recovery,omitempty"`
+	Closed           Closure               `json:"closed,omitzero"`
+	AutoMode         bool                  `json:"auto_mode,omitempty"`
+	Headless         bool                  `json:"headless"`
+	Phases           []FlowPhase           `json:"phases"`
+	PreparedAt       string                `json:"prepared_at,omitempty"`
+	PreparationNonce string                `json:"preparation_nonce,omitempty"`
+	CreatedAt        time.Time             `json:"created_at"`
+	UpdatedAt        time.Time             `json:"updated_at"`
+	GraphRecovery    *storageGraphRecovery `json:"graph_recovery,omitempty"`
 }
 
 // storageGraphRecoveryStatusEncodable lists the statuses encode understands.
@@ -72,29 +74,30 @@ func storageGraphRecoveryStatusPersisted(status string) bool {
 
 func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 	dto := storedFlowDTO{
-		SchemaVersion: record.SchemaVersion,
-		FlowID:        record.FlowID,
-		Title:         record.Title,
-		Instructions:  record.Instructions,
-		Status:        record.Status,
-		RepoPath:      record.RepoPath,
-		WorktreePath:  record.WorktreePath,
-		Branch:        record.Branch,
-		BaseRef:       record.BaseRef,
-		Commit:        record.Commit,
-		PresetName:    record.PresetName,
-		PlanID:        record.PlanID,
-		PlanPath:      record.PlanPath,
-		Bead:          record.Bead,
-		Issue:         record.Issue,
-		PR:            record.PR,
-		Merge:         record.Merge,
-		Closed:        record.Closed,
-		AutoMode:      record.AutoMode,
-		Headless:      record.Headless,
-		Phases:        record.Phases,
-		CreatedAt:     record.CreatedAt,
-		UpdatedAt:     record.UpdatedAt,
+		SchemaVersion:    record.SchemaVersion,
+		FlowID:           record.FlowID,
+		Title:            record.Title,
+		Instructions:     record.Instructions,
+		Status:           record.Status,
+		RepoPath:         record.RepoPath,
+		WorktreePath:     record.WorktreePath,
+		Branch:           record.Branch,
+		BaseRef:          record.BaseRef,
+		Commit:           record.Commit,
+		PresetName:       record.PresetName,
+		PlanID:           record.PlanID,
+		PlanPath:         record.PlanPath,
+		Bead:             record.Bead,
+		Issue:            record.Issue,
+		PR:               record.PR,
+		Merge:            record.Merge,
+		Closed:           record.Closed,
+		AutoMode:         record.AutoMode,
+		Headless:         record.Headless,
+		Phases:           record.Phases,
+		PreparationNonce: record.PreparationNonce,
+		CreatedAt:        record.CreatedAt,
+		UpdatedAt:        record.UpdatedAt,
 	}
 	if record.PreparedAt != nil {
 		dto.PreparedAt = formatStorageTimeUnchecked(*record.PreparedAt)
@@ -107,29 +110,30 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 
 func (dto storedFlowDTO) record() FlowRecord {
 	record := FlowRecord{
-		SchemaVersion: dto.SchemaVersion,
-		FlowID:        dto.FlowID,
-		Title:         dto.Title,
-		Instructions:  dto.Instructions,
-		Status:        dto.Status,
-		RepoPath:      dto.RepoPath,
-		WorktreePath:  dto.WorktreePath,
-		Branch:        dto.Branch,
-		BaseRef:       dto.BaseRef,
-		Commit:        dto.Commit,
-		PresetName:    dto.PresetName,
-		PlanID:        dto.PlanID,
-		PlanPath:      dto.PlanPath,
-		Bead:          dto.Bead,
-		Issue:         dto.Issue,
-		PR:            dto.PR,
-		Merge:         dto.Merge,
-		Closed:        dto.Closed,
-		AutoMode:      dto.AutoMode,
-		Headless:      dto.Headless,
-		Phases:        dto.Phases,
-		CreatedAt:     dto.CreatedAt,
-		UpdatedAt:     dto.UpdatedAt,
+		SchemaVersion:    dto.SchemaVersion,
+		FlowID:           dto.FlowID,
+		Title:            dto.Title,
+		Instructions:     dto.Instructions,
+		Status:           dto.Status,
+		RepoPath:         dto.RepoPath,
+		WorktreePath:     dto.WorktreePath,
+		Branch:           dto.Branch,
+		BaseRef:          dto.BaseRef,
+		Commit:           dto.Commit,
+		PresetName:       dto.PresetName,
+		PlanID:           dto.PlanID,
+		PlanPath:         dto.PlanPath,
+		Bead:             dto.Bead,
+		Issue:            dto.Issue,
+		PR:               dto.PR,
+		Merge:            dto.Merge,
+		Closed:           dto.Closed,
+		AutoMode:         dto.AutoMode,
+		Headless:         dto.Headless,
+		Phases:           dto.Phases,
+		PreparationNonce: dto.PreparationNonce,
+		CreatedAt:        dto.CreatedAt,
+		UpdatedAt:        dto.UpdatedAt,
 	}
 	if dto.GraphRecovery != nil {
 		record.GraphRecovery.Status = dto.GraphRecovery.Status
@@ -172,13 +176,14 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
 	}
 	return data, flowProjection{
-		flowID:     record.FlowID,
-		repoPath:   filepath.Clean(record.RepoPath),
-		status:     record.Status,
-		updatedAt:  updatedAt,
-		beadID:     record.Bead.ID,
-		epicID:     record.Bead.EpicID,
-		preparedAt: preparedAt,
+		flowID:           record.FlowID,
+		repoPath:         filepath.Clean(record.RepoPath),
+		status:           record.Status,
+		updatedAt:        updatedAt,
+		beadID:           record.Bead.ID,
+		epicID:           record.Bead.EpicID,
+		preparedAt:       preparedAt,
+		preparationNonce: record.PreparationNonce,
 	}, nil
 }
 
@@ -250,10 +255,10 @@ func patchStoredFlowPhaseAgentSettings(data []byte, update phaseAgentSettingsSav
 }
 
 func decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID string, data []byte) (storedFlow, error) {
-	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", data)
+	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", "", data)
 }
 
-func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt string, data []byte) (storedFlow, error) {
+func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string, data []byte) (storedFlow, error) {
 	var dto storedFlowDTO
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
@@ -297,6 +302,9 @@ func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID
 	}
 	if dto.PreparedAt != preparedAt {
 		return storedFlow{}, fmt.Errorf("flow %q prepared_at projection %q disagrees with record %q", flowID, preparedAt, dto.PreparedAt)
+	}
+	if dto.PreparationNonce != preparationNonce {
+		return storedFlow{}, fmt.Errorf("flow %q preparation_nonce projection %q disagrees with record %q", flowID, preparationNonce, dto.PreparationNonce)
 	}
 	if record.PreparedAt != nil && (record.PreparedAt.Before(record.CreatedAt) || record.PreparedAt.After(record.UpdatedAt)) {
 		return storedFlow{}, fmt.Errorf("flow %q prepared_at must be between created_at and updated_at", flowID)

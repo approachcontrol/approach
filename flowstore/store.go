@@ -555,12 +555,15 @@ type FlowRecord struct {
 	// SetHeadless or CreateOptions.Headless — a value set on a record passed to
 	// Create is ignored. It is written without omitempty so an explicit false
 	// stays distinguishable from a legacy record that predates the field.
-	Headless      bool               `json:"headless"`
-	Phases        []FlowPhase        `json:"phases"`
-	PreparedAt    *time.Time         `json:"prepared_at,omitempty"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
-	GraphRecovery GraphRecoveryState `json:"-"`
+	Headless   bool        `json:"headless"`
+	Phases     []FlowPhase `json:"phases"`
+	PreparedAt *time.Time  `json:"prepared_at,omitempty"`
+	// PreparationNonce is storage-only generation identity minted by
+	// CreatePreparation. General creation strips caller-supplied values.
+	PreparationNonce string             `json:"-"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	GraphRecovery    GraphRecoveryState `json:"-"`
 }
 
 // GraphRecoveryState reports an unresolved graph discovered during one-time
@@ -746,9 +749,14 @@ func (s *Store) AllocateID(title string) (string, error) {
 // CreateWithOptions writes a new flow record, optionally seeding empty phase
 // lists from a preset instead of the default graph.
 func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRecord, error) {
+	return s.createWithOptions(record, opts, "")
+}
+
+func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, preparationNonce string) (FlowRecord, error) {
 	// A preparation receipt is a capability minted only by a successful
 	// preparation finalizer. General creation never trusts a caller-supplied one.
 	record.PreparedAt = nil
+	record.PreparationNonce = strings.TrimSpace(preparationNonce)
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, fmt.Errorf("flow title is required")
 	}

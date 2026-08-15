@@ -251,8 +251,9 @@ first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
 records, leaving that directory unchanged in place and reporting what it did
 both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
 and agent sessions remain file-backed. SQLite schema v3 adds protected Flow
-preparation receipts and the `epic_progressions` table. Versions 0, 1, and 2
-upgrade transactionally without rewriting existing Flow JSON blobs.
+preparation receipts and the `epic_progressions` table; schema v4 adds the
+protected per-preparation nonce projection. Versions 0 through 3 upgrade
+transactionally without rewriting existing Flow JSON blobs.
 
 ## Development
 

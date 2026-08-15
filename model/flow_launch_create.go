@@ -158,6 +158,9 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 			return m.finishCreateBeforeWrite(attempt, fmt.Sprintf("create flow %s: %s", msg.FlowID, msg.Err))
 		}
 		if msg.Record.FlowID != msg.FlowID {
+			if attempt.Origin == flowLaunchOriginReadyBead && msg.PreparationFinalizer != nil {
+				return m.beginReadyPreparationCompensation(attempt, msg, []string{fmt.Sprintf("create flow %s returned flow %q", msg.FlowID, msg.Record.FlowID)})
+			}
 			return m.finishCreateBeforeWrite(attempt, fmt.Sprintf("create flow %s returned flow %q", msg.FlowID, msg.Record.FlowID))
 		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateReserving)
@@ -169,10 +172,18 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 	case flowLaunchStageCreateReserved:
 		if msg.Err != "" {
 			releaseFlowLaunchReservation(msg.Release)
+			msg.Release = nil
+			if attempt.Origin == flowLaunchOriginReadyBead {
+				return m.beginReadyPreparationCompensation(attempt, msg, []string{"reserve launch: " + msg.Err})
+			}
 			return m.finishCreateAfterWrite(attempt, "reserve launch: "+msg.Err)
 		}
 		if msg.Record.FlowID != msg.FlowID {
 			releaseFlowLaunchReservation(msg.Release)
+			msg.Release = nil
+			if attempt.Origin == flowLaunchOriginReadyBead {
+				return m.beginReadyPreparationCompensation(attempt, msg, []string{fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID)})
+			}
 			return m.finishCreateAfterWrite(attempt, fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID))
 		}
 		if createFlowReservedRecordClaimed(msg.CreatedRecord, msg.Record) {
@@ -192,6 +203,11 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateWorktree:
 		if msg.Err != "" {
+			if attempt.Origin == flowLaunchOriginReadyBead {
+				releaseFlowLaunchReservation(msg.Release)
+				msg.Release = nil
+				return m.beginReadyPreparationCompensation(attempt, msg, []string{"create worktree: " + msg.Err})
+			}
 			return m.beginCreateFlowRecovery(attempt, msg, []string{"create worktree: " + msg.Err}, false, true)
 		}
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateMetadata)
@@ -471,6 +487,9 @@ func createFlowSameGeneration(created, current flowstore.FlowRecord) bool {
 	if created.FlowID == "" || current.FlowID != created.FlowID {
 		return false
 	}
+	if (created.PreparationNonce != "" || current.PreparationNonce != "") && created.PreparationNonce != current.PreparationNonce {
+		return false
+	}
 	if !created.CreatedAt.IsZero() && !current.CreatedAt.Equal(created.CreatedAt) {
 		return false
 	}
@@ -744,10 +763,23 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		if msg.Err != "" {
 			return m.finishCreateBeforeWrite(attempt, "")
 		}
+		if attempt.Origin == flowLaunchOriginReadyBead {
+			return m.beginReadyPreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
+		}
 		return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
 	case flowLaunchStageCreateReserved:
 		if msg.Err != "" || msg.Record.FlowID != msg.FlowID {
 			releaseFlowLaunchReservation(msg.Release)
+			msg.Release = nil
+			if attempt.Origin == flowLaunchOriginReadyBead {
+				parts := []string{"creation canceled after repository changed"}
+				if msg.Err != "" {
+					parts = append([]string{"reserve launch: " + msg.Err}, parts...)
+				} else {
+					parts = append([]string{fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID)}, parts...)
+				}
+				return m.beginReadyPreparationCompensation(attempt, msg, parts)
+			}
 			return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
 		}
 		if createFlowReservedRecordClaimed(msg.CreatedRecord, msg.Record) {
@@ -757,8 +789,29 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		msg.StartupRoots = launchablePhases(msg.Record)
 		attempt.StartupRoots = append([]flowstore.FlowPhase(nil), msg.StartupRoots...)
 		m = m.withFlowLaunchAttempt(attempt)
+		if attempt.Origin == flowLaunchOriginReadyBead {
+			releaseFlowLaunchReservation(msg.Release)
+			msg.Release = nil
+			return m.beginReadyPreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
+		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateWorktree:
+		if attempt.Origin == flowLaunchOriginReadyBead {
+			releaseFlowLaunchReservation(msg.Release)
+			msg.Release = nil
+			parts := []string{"creation canceled after repository changed"}
+			if msg.Err != "" {
+				parts = append([]string{"create worktree: " + msg.Err}, parts...)
+			} else {
+				worktreeRecord := msg.Record
+				worktreeRecord.WorktreePath = msg.Worktree.WorktreePath
+				worktreeRecord.Branch = msg.Worktree.Branch
+				if note := createdFlowWorktreeNote(worktreeRecord); note != "" {
+					parts = append(parts, note)
+				}
+			}
+			return m.beginReadyPreparationCompensation(attempt, msg, parts)
+		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
 	case flowLaunchStageCreateMetadata:
 		if msg.Err != "" {
@@ -799,6 +852,34 @@ func (m Model) beginCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunch
 		return m, nil
 	}
 	return next, createFlowLaunchRecoveryCmd(next.launchSeams, attempt, msg, parts, metadata, block)
+}
+
+func (m Model) beginReadyPreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg, parts []string) (Model, tea.Cmd) {
+	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
+	if !ok {
+		releaseFlowLaunchReservation(msg.Release)
+		return m, nil
+	}
+	return next, createReadyPreparationCompensationCmd(msg, parts)
+}
+
+func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []string) tea.Cmd {
+	return func() tea.Msg {
+		event := prior
+		event.Stage, event.From, event.Release = flowLaunchStageCreateRecovered, flowLaunchStateFailurePersisting, nil
+		errs := append([]string(nil), parts...)
+		if prior.PreparationFinalizer == nil {
+			errs = append(errs, "compensate preparation: finalizer unavailable")
+		} else {
+			record, err := prior.PreparationFinalizer.Compensate(strings.Join(parts, "; "))
+			event.Record = record
+			if err != nil {
+				errs = append(errs, "compensate preparation: "+err.Error())
+			}
+		}
+		event.Err = strings.Join(errs, "; ")
+		return event
+	}
 }
 
 func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {

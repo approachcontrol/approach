@@ -23,13 +23,13 @@ func TestPreparationReceiptCanOnlyBeMintedBySuccessfulOneShotFinalizer(t *testin
 	forged := stamp.Add(-time.Hour)
 	ordinary, err := store.Create(flowstore.FlowRecord{
 		FlowID: "ordinary", Title: "Ordinary", Instructions: "Test.", RepoPath: repo,
-		PreparedAt: &forged,
+		PreparedAt: &forged, PreparationNonce: "forged",
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if ordinary.PreparedAt != nil {
-		t.Fatalf("ordinary Create retained forged receipt %s", ordinary.PreparedAt)
+	if ordinary.PreparedAt != nil || ordinary.PreparationNonce != "" {
+		t.Fatalf("ordinary Create retained forged preparation state: receipt %v, nonce %q", ordinary.PreparedAt, ordinary.PreparationNonce)
 	}
 
 	prepared, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
@@ -38,8 +38,8 @@ func TestPreparationReceiptCanOnlyBeMintedBySuccessfulOneShotFinalizer(t *testin
 	if err != nil {
 		t.Fatalf("CreatePreparation() error = %v", err)
 	}
-	if prepared.PreparedAt != nil || finalizer == nil {
-		t.Fatalf("CreatePreparation() = receipt %v, finalizer %v", prepared.PreparedAt, finalizer)
+	if prepared.PreparedAt != nil || prepared.PreparationNonce == "" || finalizer == nil {
+		t.Fatalf("CreatePreparation() = receipt %v, nonce %q, finalizer %v", prepared.PreparedAt, prepared.PreparationNonce, finalizer)
 	}
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
@@ -98,6 +98,203 @@ func TestPreparationFinalizerFailureLeavesReceiptAbsentAndConsumesCapability(t *
 	}
 	if _, err := finalizer.Finalize(nil); err == nil || !strings.Contains(err.Error(), "already consumed") {
 		t.Fatalf("second Finalize() error = %v, want consumed capability", err)
+	}
+}
+
+func TestPreparationFinalizerCompensatesOnlyItsExactReceiptlessGeneration(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	_, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "compensated", Title: "Compensated", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compensated, err := finalizer.Compensate("creation canceled after repository changed")
+	if err != nil {
+		t.Fatalf("Compensate() error = %v", err)
+	}
+	phase, _, ok := flowstore.FirstLaunchablePhase(compensated)
+	if ok {
+		t.Fatalf("Compensate() left launchable phase %#v", phase)
+	}
+	actionable, ok := flowstore.NextActionablePhase(compensated)
+	if !ok || actionable.Status != flowstore.PhaseBlocked || !strings.Contains(actionable.Notes, "creation canceled") {
+		t.Fatalf("Compensate() actionable phase = %#v, %t", actionable, ok)
+	}
+	if _, err := finalizer.Finalize(nil); err == nil || !strings.Contains(err.Error(), "already consumed") {
+		t.Fatalf("Finalize() after Compensate() error = %v, want consumed capability", err)
+	}
+
+	stale, staleFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "reused", Title: "Stale", Instructions: "Stale.", RepoPath: filepath.Join(t.TempDir(), "stale-repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(stale.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, replacementFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: stale.FlowID, Title: stale.Title, Instructions: stale.Instructions, RepoPath: stale.RepoPath,
+		BaseRef: stale.BaseRef, Bead: stale.Bead, CreatedAt: stale.CreatedAt,
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staleFinalizer.Compensate("must not touch replacement"); err == nil {
+		t.Fatal("stale finalizer compensated a same-ID replacement")
+	}
+	authoritative, err := store.Read(replacement.FlowID)
+	if err != nil || authoritative.Title != replacement.Title || !authoritative.CreatedAt.Equal(stale.CreatedAt) {
+		t.Fatalf("same-ID replacement = %#v, %v", authoritative, err)
+	}
+	if _, _, ok := flowstore.FirstLaunchablePhase(authoritative); !ok {
+		t.Fatalf("old finalizer changed same-ID replacement: %#v", authoritative)
+	}
+	if _, err := replacementFinalizer.Compensate("test cleanup"); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, claimedFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "claimed", Title: "Claimed", Instructions: "Claimed.", RepoPath: filepath.Join(t.TempDir(), "claimed-repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchable, _, ok := flowstore.FirstLaunchablePhase(claimed)
+	if !ok {
+		t.Fatal("claimed preparation has no launchable phase")
+	}
+	claimed, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: claimed.FlowID, PhaseID: launchable.PhaseID, LaunchID: "claim",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := claimedFinalizer.Compensate("must not overwrite claimant"); err == nil {
+		t.Fatal("Compensate() overwrote a claimed preparation")
+	}
+	authoritative, err = store.Read(claimed.FlowID)
+	if err != nil || authoritative.Phases[0].Status != flowstore.PhaseRunning || len(authoritative.Phases[0].LaunchIDs) != 1 {
+		t.Fatalf("claimed preparation after Compensate() = %#v, %v", authoritative, err)
+	}
+
+	provisioned, provisionedFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "provisioned", Title: "Provisioned", Instructions: "Provisioned.", RepoPath: filepath.Join(t.TempDir(), "provisioned-repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: provisioned.FlowID, WorktreePath: filepath.Join(t.TempDir(), "provisioned-worktree"), Branch: "flow/provisioned",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provisionedFinalizer.Compensate("must not overwrite provisioner"); err == nil || !strings.Contains(err.Error(), "claimed") {
+		t.Fatalf("Compensate() provisioned Flow error = %v", err)
+	}
+	authoritative, err = store.Read(provisioned.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := flowstore.FirstLaunchablePhase(authoritative); !ok {
+		t.Fatalf("Compensate() blocked a provisioned Flow: %#v", authoritative)
+	}
+
+	baseClaimed, baseClaimedFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "base-claimed", Title: "Base claimed", Instructions: "Claimed.", RepoPath: filepath.Join(t.TempDir(), "base-claimed-repo"),
+		BaseRef: "main",
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: baseClaimed.FlowID, BaseRef: "release",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := baseClaimedFinalizer.Compensate("must not overwrite base-ref claimant"); err == nil || !strings.Contains(err.Error(), "claimed") {
+		t.Fatalf("Compensate() base-ref claim error = %v", err)
+	}
+	authoritative, err = store.Read(baseClaimed.FlowID)
+	if err != nil || authoritative.BaseRef != "release" {
+		t.Fatalf("base-ref claimed preparation = %#v, %v", authoritative, err)
+	}
+	if _, _, ok := flowstore.FirstLaunchablePhase(authoritative); !ok {
+		t.Fatalf("Compensate() blocked a base-ref claimed Flow: %#v", authoritative)
+	}
+}
+
+func TestPreparationFinalizerSnapshotIsolatedFromReturnedRecordMutation(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "snapshot", Title: "Snapshot", Instructions: "Test.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Phases) == 0 {
+		t.Fatal("created preparation has no phases")
+	}
+	created.Phases[0].Status = flowstore.PhaseRunning
+	created.Phases[0].LaunchIDs = append(created.Phases[0].LaunchIDs, "local-mutation")
+	created.Phases[0].Sessions = append(created.Phases[0].Sessions, flowstore.Session{Provider: "codex", SessionID: "local"})
+
+	compensated, err := finalizer.Compensate("creation canceled")
+	if err != nil {
+		t.Fatalf("Compensate() after returned-record mutation error = %v", err)
+	}
+	if _, _, ok := flowstore.FirstLaunchablePhase(compensated); ok {
+		t.Fatalf("Compensate() left launchable roots after returned-record mutation: %#v", compensated)
+	}
+}
+
+func TestPreparationFinalizerDoesNotReconcileForeignGenerationReceipt(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	stale, staleFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "finalize-reused", Title: "Same", Instructions: "Same.", RepoPath: filepath.Join(t.TempDir(), "repo"),
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(stale.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, replacementFinalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: stale.FlowID, Title: stale.Title, Instructions: stale.Instructions, RepoPath: stale.RepoPath,
+		BaseRef: stale.BaseRef, Bead: stale.Bead, CreatedAt: stale.CreatedAt,
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID: replacement.FlowID, WorktreePath: filepath.Join(t.TempDir(), "worktree"), Branch: "flow/replacement",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replacementFinalizer.Finalize(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	foreign, err := staleFinalizer.Finalize(nil)
+	if err == nil || !strings.Contains(err.Error(), "generation changed") {
+		t.Fatalf("stale Finalize() = %#v, %v", foreign, err)
+	}
+	if foreign.PreparedAt == nil || foreign.PreparationNonce == stale.PreparationNonce {
+		t.Fatalf("stale Finalize() did not return the foreign authoritative generation: %#v", foreign)
 	}
 }
 

@@ -268,6 +268,22 @@ func (f callbackPreparationFinalizer) Finalize(callback func() error) (flowstore
 	return f.flow, nil
 }
 
+func (f callbackPreparationFinalizer) Compensate(notes string) (flowstore.FlowRecord, error) {
+	flow := f.flow
+	for _, root := range launchablePhases(flow) {
+		for i := range flow.Phases {
+			if flow.Phases[i].PhaseID != root.PhaseID {
+				continue
+			}
+			update := blockedPhaseUpdate(flow.FlowID, root, notes)
+			flow.Phases[i].Status = update.Status
+			flow.Phases[i].Notes = update.Notes
+			flow.Phases[i].Outcome = update.Outcome
+		}
+	}
+	return flow, nil
+}
+
 // EnsureWorktree gives a worktree-less Flow the worktree its launch contract
 // already implies, in the same order parked creation uses. It reports failures instead of
 // blocking phases: the caller owns that decision, behind its own fence.
