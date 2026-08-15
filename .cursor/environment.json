@@ -1,0 +1,4 @@
+{
+  "name": "Approach",
+  "install": "go mod download && if [ -f web/package-lock.json ]; then npm --prefix web ci; fi"
+}
