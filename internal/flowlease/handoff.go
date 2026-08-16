@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
 )
@@ -20,9 +21,11 @@ const (
 	recordReady       = "ready"
 	recordDecision    = "decision"
 	recordStarted     = "started"
+	recordFailure     = "failure"
 	decisionCommit    = "commit"
 	decisionAbort     = "abort"
 	maxRecordBytes    = 4096
+	maxFailureDetail  = 2048
 )
 
 var errRecordExists = errors.New("handoff record already exists")
@@ -44,6 +47,7 @@ type handoffRecord struct {
 	LaunchID string `json:"launch_id"`
 	Nonce    string `json:"nonce"`
 	Outcome  string `json:"outcome,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 func createHandoff(attempt handoffAttempt) error {
@@ -112,22 +116,37 @@ func publishHandoffRecord(attempt handoffAttempt, kind, outcome string) error {
 	return publishHandoffRecordWithHook(attempt, kind, outcome, nil)
 }
 
+func publishHandoffFailure(attempt handoffAttempt, detail string) error {
+	detail = strings.TrimSpace(detail)
+	if len(detail) > maxFailureDetail {
+		detail = detail[:maxFailureDetail]
+		for !utf8.ValidString(detail) {
+			detail = detail[:len(detail)-1]
+		}
+	}
+	return publishHandoffRecordData(attempt, recordFailure, "", detail, nil)
+}
+
 // publishHandoffRecordWithHook stages and verifies a complete immutable record
 // before linking it at its protocol name. The final hard link is the atomic
 // publication point: a reader sees either ENOENT or the fully written payload,
 // never the O_EXCL-created file while it is still being written. beforePublish
 // exists only to make that boundary deterministic in package tests.
 func publishHandoffRecordWithHook(attempt handoffAttempt, kind, outcome string, beforePublish func()) error {
+	return publishHandoffRecordData(attempt, kind, outcome, "", beforePublish)
+}
+
+func publishHandoffRecordData(attempt handoffAttempt, kind, outcome, detail string, beforePublish func()) error {
 	if err := validateExistingHandoff(attempt); err != nil {
 		return err
 	}
-	if err := validateRecordKindOutcome(kind, outcome); err != nil {
+	if err := validateRecordPayload(kind, outcome, detail); err != nil {
 		return err
 	}
 	record := handoffRecord{
 		Version: protocolVersion, Kind: kind, FlowID: attempt.FlowID,
 		PhaseID: attempt.PhaseID, LaunchID: attempt.LaunchID,
-		Nonce: attempt.Nonce, Outcome: outcome,
+		Nonce: attempt.Nonce, Outcome: outcome, Detail: detail,
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -188,8 +207,10 @@ func readHandoffRecord(attempt handoffAttempt, kind string) (handoffRecord, erro
 	if err := validateExistingHandoff(attempt); err != nil {
 		return handoffRecord{}, err
 	}
-	if err := validateRecordKindOutcome(kind, map[string]string{recordDecision: decisionAbort}[kind]); err != nil && kind != recordDecision {
-		return handoffRecord{}, err
+	switch kind {
+	case recordReady, recordDecision, recordStarted, recordFailure:
+	default:
+		return handoffRecord{}, fmt.Errorf("unexpected Flow launch handoff record %q", kind)
 	}
 	path := filepath.Join(attempt.HandoffDir, kind)
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
@@ -229,21 +250,25 @@ func readHandoffRecord(attempt handoffAttempt, kind string) (handoffRecord, erro
 		record.LaunchID != attempt.LaunchID || record.Nonce != attempt.Nonce {
 		return handoffRecord{}, fmt.Errorf("Flow launch handoff %s identity mismatch", kind)
 	}
-	if err := validateRecordKindOutcome(kind, record.Outcome); err != nil {
+	if err := validateRecordPayload(kind, record.Outcome, record.Detail); err != nil {
 		return handoffRecord{}, err
 	}
 	return record, nil
 }
 
-func validateRecordKindOutcome(kind, outcome string) error {
+func validateRecordPayload(kind, outcome, detail string) error {
 	switch kind {
 	case recordReady, recordStarted:
-		if outcome != "" {
-			return fmt.Errorf("Flow launch handoff %s cannot have an outcome", kind)
+		if outcome != "" || detail != "" {
+			return fmt.Errorf("Flow launch handoff %s cannot have a payload", kind)
 		}
 	case recordDecision:
-		if outcome != decisionCommit && outcome != decisionAbort {
+		if detail != "" || (outcome != decisionCommit && outcome != decisionAbort) {
 			return fmt.Errorf("invalid Flow launch decision %q", outcome)
+		}
+	case recordFailure:
+		if outcome != "" || strings.TrimSpace(detail) == "" || len(detail) > maxFailureDetail {
+			return errors.New("invalid Flow launch runner failure detail")
 		}
 	default:
 		return fmt.Errorf("unexpected Flow launch handoff record %q", kind)
@@ -270,14 +295,14 @@ func cleanupHandoff(attempt handoffAttempt) error {
 			}
 			continue
 		}
-		if kind != recordReady && kind != recordDecision && kind != recordStarted {
+		if kind != recordReady && kind != recordDecision && kind != recordStarted && kind != recordFailure {
 			return fmt.Errorf("unexpected Flow launch handoff artifact %q", kind)
 		}
 		if _, err := readHandoffRecord(attempt, kind); err != nil {
 			return err
 		}
 	}
-	for _, kind := range []string{recordReady, recordDecision, recordStarted} {
+	for _, kind := range []string{recordReady, recordDecision, recordStarted, recordFailure} {
 		if err := os.Remove(filepath.Join(attempt.HandoffDir, kind)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove Flow launch handoff %s: %w", kind, err)
 		}

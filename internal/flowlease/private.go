@@ -204,7 +204,7 @@ func RunTmuxSpawn(args []string, stderr io.Writer) error {
 		terminal = true
 		return abortAndCancel(spec, false, fmt.Errorf("start tmux window: %w", err))
 	}
-	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
+	if _, err := waitForRecordOrFailure(attempt, recordReady, spec.DecisionDeadline); err != nil {
 		terminal = true
 		return abortAndCancel(spec, false, fmt.Errorf("wait for Flow lease readiness: %w", err))
 	}
@@ -222,7 +222,7 @@ func RunTmuxSpawn(args []string, stderr io.Writer) error {
 		return abortAndCancel(spec, false, errors.New("Flow lease handoff was aborted before commit"))
 	}
 	committed = true
-	if _, err := waitForRecord(attempt, recordStarted, spec.StartedDeadline); err != nil {
+	if _, err := waitForRecordOrFailure(attempt, recordStarted, spec.StartedDeadline); err != nil {
 		terminal = true
 		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch: %w", err))
 	}
@@ -235,7 +235,7 @@ func RunTmuxSpawn(args []string, stderr io.Writer) error {
 }
 
 // RunLeaseRunner owns the Flow lease while supervising the original agent.
-func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (retErr error) {
 	spec, agentArgv, err := parsePrivateArgs(args, true)
 	if err != nil {
 		return err
@@ -250,28 +250,45 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 	if err := validateExistingHandoff(attempt); err != nil {
 		return err
 	}
-	for _, kind := range []string{recordDecision, recordStarted} {
+	for _, kind := range []string{recordReady, recordDecision, recordStarted, recordFailure} {
 		if err := requireHandoffRecordAbsent(attempt, kind); err != nil {
 			return err
 		}
 	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	reportFailure := true
+	defer func() {
+		if retErr != nil && reportFailure {
+			retErr = reportLeaseRunnerFailure(spec, attempt, retErr, signals)
+		}
+	}()
 	if !time.Now().Before(spec.DecisionDeadline) {
 		return errors.New("Flow lease runner decision deadline already expired")
 	}
 	lease, err := Acquire(spec.Root, spec.FlowID)
 	if err != nil {
+		if _, readyErr := readHandoffRecord(attempt, recordReady); readyErr == nil {
+			reportFailure = false
+		}
 		return fmt.Errorf("acquire tracked Flow lease: %w", err)
 	}
 	defer lease.Close()
 	if err := publishHandoffRecord(attempt, recordReady, ""); err != nil {
+		if errors.Is(err, errRecordExists) {
+			reportFailure = false
+		}
 		return fmt.Errorf("publish Flow lease readiness: %w", err)
 	}
 	decision, err := waitForRecord(attempt, recordDecision, spec.DecisionDeadline)
 	if err != nil {
+		reportFailure = false
 		_ = cleanupHandoff(attempt)
 		return fmt.Errorf("wait for Flow lease decision: %w", err)
 	}
 	if decision.Outcome != decisionCommit {
+		reportFailure = false
 		_ = cleanupHandoff(attempt)
 		return errors.New("Flow lease runner received abort decision")
 	}
@@ -281,9 +298,6 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 	if !time.Now().Before(spec.StartedDeadline) {
 		return errors.New("Flow lease runner start deadline expired")
 	}
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signals)
 	select {
 	case sig := <-signals:
 		return fmt.Errorf("Flow lease runner canceled before agent start: %s", sig)
@@ -295,20 +309,66 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = os.Environ()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = childProcessGroupAttributes(stdin)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start tracked Flow agent: %w", err)
 	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
 	if err := publishHandoffRecord(attempt, recordStarted, ""); err != nil {
-		_ = terminateProcessGroup(cmd.Process.Pid, waitCh)
-		return fmt.Errorf("publish started tracked Flow agent: %w", err)
+		cause := fmt.Errorf("publish started tracked Flow agent: %w", err)
+		if failureErr := publishHandoffFailure(attempt, cause.Error()); failureErr != nil {
+			_ = terminateProcessGroup(cmd.Process.Pid, waitCh)
+			return errors.Join(cause, fmt.Errorf("publish Flow lease runner failure: %w", failureErr))
+		}
+		reportFailure = false
+		if cleanupErr := terminateProcessGroup(cmd.Process.Pid, waitCh); cleanupErr != nil {
+			cause = errors.Join(cause, fmt.Errorf("terminate unconfirmed tracked Flow agent: %w", cleanupErr))
+		}
+		return awaitLeaseRunnerFailureConsumption(spec, attempt, cause, signals)
 	}
 	// publishHandoffRecord verifies the durable payload before its atomic final
 	// link. Once the parent can observe started, no runner read remains for the
 	// parent's successful cleanup to race.
+	reportFailure = false
 	return superviseProcessGroup(cmd.Process.Pid, waitCh, signals)
+}
+
+func childProcessGroupAttributes(stdin io.Reader) *syscall.SysProcAttr {
+	attrs := &syscall.SysProcAttr{Setpgid: true}
+	if tty, ok := stdin.(*os.File); ok {
+		attrs.Foreground = true
+		attrs.Ctty = int(tty.Fd())
+	}
+	return attrs
+}
+
+func reportLeaseRunnerFailure(spec PrivateSpec, attempt handoffAttempt, cause error, signals <-chan os.Signal) error {
+	if err := publishHandoffFailure(attempt, cause.Error()); err != nil {
+		return errors.Join(cause, fmt.Errorf("publish Flow lease runner failure: %w", err))
+	}
+	return awaitLeaseRunnerFailureConsumption(spec, attempt, cause, signals)
+}
+
+func awaitLeaseRunnerFailureConsumption(spec PrivateSpec, attempt handoffAttempt, cause error, signals <-chan os.Signal) error {
+	poll := time.NewTicker(protocolPollInterval)
+	defer poll.Stop()
+	for {
+		if _, err := os.Lstat(attempt.HandoffDir); os.IsNotExist(err) {
+			return cause
+		}
+		if !time.Now().Before(spec.CleanupDeadline) {
+			if err := cleanupHandoff(attempt); err != nil {
+				return errors.Join(cause, fmt.Errorf("clean expired Flow lease runner failure: %w", err))
+			}
+			return cause
+		}
+		select {
+		case <-signals:
+			return cause
+		case <-poll.C:
+		}
+	}
 }
 
 func requireHandoffRecordAbsent(attempt handoffAttempt, kind string) error {
@@ -401,6 +461,29 @@ func childExitError(err error) error {
 
 func waitForRecord(attempt handoffAttempt, kind string, deadline time.Time) (handoffRecord, error) {
 	for {
+		record, err := readHandoffRecord(attempt, kind)
+		if err == nil {
+			return record, nil
+		}
+		if !isMissingRecord(err) {
+			return handoffRecord{}, err
+		}
+		if !time.Now().Before(deadline) {
+			return handoffRecord{}, fmt.Errorf("timed out waiting for %s", kind)
+		}
+		time.Sleep(protocolPollInterval)
+	}
+}
+
+func waitForRecordOrFailure(attempt handoffAttempt, kind string, deadline time.Time) (handoffRecord, error) {
+	for {
+		failure, failureErr := readHandoffRecord(attempt, recordFailure)
+		if failureErr == nil {
+			return handoffRecord{}, errors.New("Flow lease runner failed: " + failure.Detail)
+		}
+		if !isMissingRecord(failureErr) {
+			return handoffRecord{}, failureErr
+		}
 		record, err := readHandoffRecord(attempt, kind)
 		if err == nil {
 			return record, nil
