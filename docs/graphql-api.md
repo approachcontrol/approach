@@ -524,7 +524,8 @@ A browser should not hold the token. The recommended shape is a **server-side
 route or proxy** in the consuming app that holds the token and reaches Approach
 over a tunnel. That works today with no CORS configuration, and the conditional
 `Host` rule above deliberately keeps it working — a tunnel sends
-`Host: <name>.trycloudflare.com`, which the allowlist would otherwise reject.
+`Host: <name>.trycloudflare.com` or `Host: <machine>.<tailnet>.ts.net`, which
+the allowlist would otherwise reject.
 
 `web/` is that consumer: a Next.js app, deployed on Vercel, whose GraphQL calls
 all run in React Server Components so the endpoint and token stay server-side.
@@ -532,3 +533,25 @@ It reaches this API over a tunnel and renders repositories, Flows, and phases.
 Setup, tunnel, and deploy steps are `web/README.md`.
 
 Direct browser access (CORS plus a remote bind) is a follow-up.
+
+### Tunnels and the token
+
+Any tunnel — Cloudflare, Tailscale Funnel, an nginx/Caddy reverse proxy —
+leaves the bind on `127.0.0.1` and reaches the network on the server's behalf.
+So the bind classification never demands a token, and it is easy to conclude
+none is needed. **Configure one anyway**: without it the handler enforces the
+`Host` allowlist, and the tunnel's `Host` is not `localhost` or a loopback IP
+literal, so every request 403s. The token is what turns that check off, and it
+is also the only access control on a URL that is now publicly reachable.
+
+Tailscale Funnel is the recommended shape for `web/`, and it differs from the
+others in one way that matters to this server's threat model. Funnel relays TLS
+with SNI passthrough to a certificate issued for the node, so TLS terminates on
+the machine running `approach serve`. A Cloudflare tunnel or a hosted proxy
+terminates TLS on someone else's hardware, which — given this server speaks
+plaintext with no TLS of its own — puts the bearer token and every Flow record
+in the clear there.
+
+Funnel is still *public* ingress: tailnet ACLs do not apply to it, unlike
+`tailscale serve`. Anyone with the `ts.net` hostname reaches `/graphql` gated
+only by the token, and `/healthz` gated by nothing.
