@@ -3525,6 +3525,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.expandedPRBabysitterFlowID = ""
 	m.selectedPRBabysitterPhaseID = ""
 	m.prBabysitterFlows = m.prBabysitterFlows.SetItemHeight(flowItemHeight(""))
+	m = m.setFlowDegradation(ui.ModePRBabysitter, "", nil)
 	return m
 }
 

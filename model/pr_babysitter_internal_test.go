@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -380,6 +382,91 @@ func TestRepoChangeClearsHiddenPRBabysitterCache(t *testing.T) {
 	m = next.(Model)
 	if len(m.prBabysitterRecords) != 0 || len(m.prBabysitterStatuses) != 0 || m.prBabysitterFlows.Len() != 0 {
 		t.Fatalf("repo change retained babysitter cache: rows=%v statuses=%v pane=%d", m.prBabysitterRecords, m.prBabysitterStatuses, m.prBabysitterFlows.Len())
+	}
+}
+
+func TestRepoChangeClearsHiddenPRBabysitterDegradation(t *testing.T) {
+	m := NewWithOptions([]scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/beta", DisplayName: "beta"},
+	}, Options{})
+	m = m.setFlowDegradation(ui.ModePRBabysitter, "", testPartialList("broken"))
+	if m.flowDegradationWarning(ui.ModePRBabysitter) == "" {
+		t.Fatal("setup: expected babysitter degradation warning")
+	}
+
+	next, _ := m.moveRepoSelection(1)
+	m = next.(Model)
+	if got := m.flowDegradationWarning(ui.ModePRBabysitter); got != "" {
+		t.Fatalf("repo change retained babysitter degradation %q", got)
+	}
+}
+
+func TestPRBabysitterQuitCancelsInFlightLookups(t *testing.T) {
+	exits := []struct {
+		name  string
+		apply func(Model) Model
+	}{
+		{"direct quit", func(m Model) Model {
+			next, cmd := m.handleEmbeddedTerminalQuitPrefix()
+			if cmd == nil {
+				t.Fatal("direct quit returned nil command")
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatal("direct quit did not return tea.Quit")
+			}
+			return next
+		}},
+		{"confirmed terminal quit", func(m Model) Model {
+			next, cmd := m.handleQuitEmbeddedTerminals()
+			if cmd == nil {
+				t.Fatal("confirmed quit returned nil command")
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatal("confirmed quit did not return tea.Quit")
+			}
+			return next
+		}},
+	}
+	for _, tc := range exits {
+		t.Run(tc.name, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			lookup := func(ctx context.Context, _ int, _ string) (actions.PullRequestStatus, error) {
+				started <- struct{}{}
+				select {
+				case <-ctx.Done():
+					return actions.PullRequestStatus{}, ctx.Err()
+				case <-release:
+					return actions.PullRequestStatus{Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing}, nil
+				}
+			}
+			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)}, nil
+				},
+				LookupPRStatus: lookup,
+			})
+			m = m.setTakeover(takeoverPRBabysitter)
+			m, cmd := m.startPRBabysitterRefresh()
+			done := make(chan struct{})
+			go func() { _ = cmd(); close(done) }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("lookup did not start")
+			}
+			m = tc.apply(m)
+			if m.prBabysitterCancel != nil {
+				t.Fatal("quit left prBabysitterCancel set")
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				close(release)
+				t.Fatal("quit did not cancel in-flight lookups")
+			}
+		})
 	}
 }
 

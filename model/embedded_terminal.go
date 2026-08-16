@@ -858,9 +858,14 @@ func (m Model) hasActiveEmbeddedTerminal() bool {
 	return ok
 }
 
+func (m Model) quitProgram() (Model, tea.Cmd) {
+	m = m.cancelPRBabysitterRefresh()
+	return m, tea.Quit
+}
+
 func (m Model) handleEmbeddedTerminalQuitPrefix() (Model, tea.Cmd) {
 	if !m.hasRunningEmbeddedTerminal() {
-		return m, tea.Quit
+		return m.quitProgram()
 	}
 	m.modal = modal.OpenConfirm("Terminate embedded terminals and quit?", func() tea.Cmd {
 		return func() tea.Msg { return quitEmbeddedTerminalsMsg{} }
@@ -886,7 +891,7 @@ func (m Model) handleQuitEmbeddedTerminals() (Model, tea.Cmd) {
 			return m.setStatus(statusOther, err.Error()), nil
 		}
 	}
-	return m, tea.Quit
+	return m.quitProgram()
 }
 
 func (m Model) handleEmbeddedTerminalClosePrefix() Model {
