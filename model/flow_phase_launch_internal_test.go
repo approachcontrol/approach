@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -402,5 +403,119 @@ func TestApplyLaunchPinStampsTheLaunchingBuild(t *testing.T) {
 	unpinned := applyLaunchPin(actions.AgentLaunchContext{Command: "codex"}, controlplane.Pin{})
 	if unpinned.Executable != "" || unpinned.BuildVersion != "" || unpinned.DBSchemaVersion != 0 {
 		t.Fatalf("zero pin stamped a context: %+v", unpinned)
+	}
+}
+
+// stubRetainLaunchPin records claims instead of writing them, and returns the
+// recorder.
+func stubRetainLaunchPin(t *testing.T) *[][3]string {
+	t.Helper()
+	original := retainLaunchPin
+	t.Cleanup(func() { retainLaunchPin = original })
+	var claims [][3]string
+	retainLaunchPin = func(root, launchID, digest string) error {
+		claims = append(claims, [3]string{root, launchID, digest})
+		return nil
+	}
+	return &claims
+}
+
+func TestApplyLaunchPinClaimsTheCachedBinary(t *testing.T) {
+	claims := stubRetainLaunchPin(t)
+	pin := controlplane.Pin{ExecutablePath: "/state/bin/approach-abc123", Digest: "abc123def456"}
+
+	applyLaunchPin(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		SessionStateRoot: "/state",
+	}, pin)
+
+	if len(*claims) != 1 {
+		t.Fatalf("claims = %v, want exactly one", *claims)
+	}
+	if got, want := (*claims)[0], [3]string{"/state", "launch-1", "abc123def456"}; got != want {
+		t.Fatalf("claim = %v, want %v", got, want)
+	}
+}
+
+// nonLaunchingContextFiles construct an actions.AgentLaunchContext that never
+// starts an agent, so they have nothing to pin and nothing to claim.
+var nonLaunchingContextFiles = map[string]string{
+	"flow_launch_lifecycle.go": "bookkeeping context for persisting a launch FAILURE; no agent is started",
+	"flow_session_release.go":  "finalization context for a session that has already ended",
+	"tmux_mode.go":             "a Command-only probe passed to tmuxRouteEligible, never launched",
+}
+
+// Every launch kind bakes the pinned path into its provider session-hook argv,
+// so every launch kind has to stamp the pin and claim its cached copy. Both
+// happen in applyLaunchPin, and this is the fence that keeps a NEW launch kind
+// from quietly skipping it: exercising the eight existing paths would say
+// nothing about the ninth, which is the one that will be wrong.
+//
+// It is a file-granularity fence, and deliberately so rather than by oversight.
+// It cannot see a second unpinned literal in a file that already pins one, and
+// it matches the composite literal rather than `var ctx actions.AgentLaunchContext`.
+// What it does catch is the realistic mistake — a launch kind added in a new
+// file — and it costs no fixtures to do it.
+func TestEveryLaunchingContextGoesThroughApplyLaunchPin(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	seenExempt := map[string]bool{}
+	launchers := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		text := string(source)
+		if !strings.Contains(text, "actions.AgentLaunchContext{") {
+			continue
+		}
+		if _, exempt := nonLaunchingContextFiles[name]; exempt {
+			seenExempt[name] = true
+			if strings.Contains(text, "applyLaunchPin(") {
+				t.Fatalf("%s is listed as non-launching but stamps a pin; remove it from nonLaunchingContextFiles", name)
+			}
+			continue
+		}
+		if !strings.Contains(text, "applyLaunchPin(") {
+			t.Fatalf("%s builds an agent launch context but never calls applyLaunchPin, so its agent runs whatever "+
+				"`approach` PATH resolves and its cached binary is unclaimed. Stamp the pin, or document the file in "+
+				"nonLaunchingContextFiles with the reason it launches nothing.", name)
+		}
+		launchers++
+	}
+	if launchers == 0 {
+		t.Fatal("found no launching files; the scan matched nothing and would pass vacuously")
+	}
+	for name, reason := range nonLaunchingContextFiles {
+		if !seenExempt[name] {
+			t.Fatalf("nonLaunchingContextFiles lists %s (%q) but nothing there builds a launch context anymore", name, reason)
+		}
+	}
+}
+
+func TestApplyLaunchPinDoesNotClaimWhenThereIsNothingToProtect(t *testing.T) {
+	claims := stubRetainLaunchPin(t)
+	cached := controlplane.Pin{ExecutablePath: "/state/bin/approach-abc123", Digest: "abc123def456"}
+	degraded := controlplane.Pin{ExecutablePath: "/usr/local/bin/approach", Digest: "abc123def456", Degraded: true}
+
+	// A degraded pin runs the source binary; there is no cached copy retention
+	// could evict, so a claim would only leak a file.
+	applyLaunchPin(actions.AgentLaunchContext{LaunchID: "launch-1", SessionStateRoot: "/state"}, degraded)
+	// RetainPin rejects an empty launch id, and an unrooted context has nowhere
+	// to write. Both are untracked launches, not failures.
+	applyLaunchPin(actions.AgentLaunchContext{SessionStateRoot: "/state"}, cached)
+	applyLaunchPin(actions.AgentLaunchContext{LaunchID: "launch-2"}, cached)
+	applyLaunchPin(actions.AgentLaunchContext{LaunchID: "launch-3", SessionStateRoot: "/state"}, controlplane.Pin{})
+
+	if len(*claims) != 0 {
+		t.Fatalf("claims = %v, want none", *claims)
 	}
 }

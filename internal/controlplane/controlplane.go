@@ -50,6 +50,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/version"
@@ -74,6 +75,28 @@ const (
 
 	cachedBinaryPerm os.FileMode = 0o500
 )
+
+// pinClaimMaxAge bounds how long a claim can exempt a cached binary from
+// retention, measured from the last time anything reported the launch alive.
+//
+// It is the only *automatic* retirement path for a detached launch — an
+// operator releasing the phase session still runs FinalizeAgentSession, which
+// releases. Otherwise the TUI deliberately skips finalization for detached
+// launches, and the provider session hook restamps rather than releases because
+// no provider hook here is a reliable death certificate (Codex's Stop is
+// per-turn; Claude's SessionEnd also fires on /clear). So a detached launch
+// holds its digest until this long after its last hook — a real, bounded disk
+// cost of roughly one cached binary per distinct build launched inside the
+// window, accepted against evicting a binary a live agent still has to exec.
+//
+// A month rather than a week because the failure it guards is silent: expire a
+// claim early and a long-lived session loses the hook that captures it. Nothing
+// re-derives that.
+const pinClaimMaxAge = 30 * 24 * time.Hour
+
+// timeNow is time.Now, replaced in tests so claim expiry can be exercised
+// without sleeping.
+var timeNow = time.Now
 
 // resolveExecutable is os.Executable, replaced in tests so they can stand in a
 // disposable "running binary" and delete or replace it.
@@ -222,6 +245,34 @@ func RetainPin(root, launchID, digest string) error {
 	return artifacts.WriteFileAtomic(filepath.Join(dir, launchID), []byte(digest+"\n"))
 }
 
+// RefreshPin restamps launchID's claim so expiry measures time since the
+// launch was last known alive rather than time since it started. A missing claim
+// is success: there is nothing to keep alive, and a provider whose hook fires
+// for an untracked launch must not be turned into an error.
+//
+// This exists because not every provider hook means "the agent is done". Codex
+// wires Stop, which fires once per TURN, so treating that hook as end-of-life
+// would drop the claim while the agent is still live and still bound to the
+// pinned path baked into its argv — and retention could then evict the binary
+// out from under it, which is the whole failure this package prevents.
+func RefreshPin(root, launchID string) error {
+	if !artifacts.IsSafeID(launchID) {
+		return fmt.Errorf("invalid launch id %q", launchID)
+	}
+	path := filepath.Join(root, cacheDirName, pinsDirName, launchID)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect launch pin: %w", err)
+	}
+	now := timeNow()
+	if err := os.Chtimes(path, now, now); err != nil {
+		return fmt.Errorf("refresh launch pin: %w", err)
+	}
+	return nil
+}
+
 // ReleasePin drops launchID's claim on its digest. A missing claim is success:
 // releasing twice, or releasing a launch that never pinned, is not an error.
 func ReleasePin(root, launchID string) error {
@@ -257,12 +308,9 @@ func materialize(root, source, digest string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cacheDir := filepath.Join(canonicalRoot, cacheDirName)
-	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
-		return "", fmt.Errorf("create launch binary cache: %w", err)
-	}
-	if err := os.Chmod(cacheDir, artifacts.DirPerm); err != nil {
-		return "", fmt.Errorf("secure launch binary cache: %w", err)
+	cacheDir, err := secureCacheDir(canonicalRoot)
+	if err != nil {
+		return "", err
 	}
 	target := filepath.Join(cacheDir, cachedBinaryName(digest))
 	if reusable(target, digest) {
@@ -274,6 +322,41 @@ func materialize(root, source, digest string) (string, error) {
 	}
 	sweepCache(cacheDir, target)
 	return target, nil
+}
+
+// secureCacheDir creates <root>/bin and returns it only when it is a real
+// owner-only directory. The Lstat is the point: MkdirAll succeeds on an existing
+// symlink to a directory and Chmod follows it, so without this the package doc's
+// "the cache directory is 0700" would be a claim about a directory somewhere
+// else entirely — one an attacker chose, holding files this process then
+// executes. root is already canonical, so only the final component is at issue.
+func secureCacheDir(root string) (string, error) {
+	cacheDir := filepath.Join(root, cacheDirName)
+	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+		return "", fmt.Errorf("create launch binary cache: %w", err)
+	}
+	info, err := os.Lstat(cacheDir)
+	if err != nil {
+		return "", fmt.Errorf("inspect launch binary cache: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("launch binary cache %q must be a real directory", cacheDir)
+	}
+	if err := os.Chmod(cacheDir, artifacts.DirPerm); err != nil {
+		return "", fmt.Errorf("secure launch binary cache: %w", err)
+	}
+	// Re-stat rather than trust the chmod, the way SecureCanonicalRoot does. The
+	// package doc states 0700 as a property of this directory; on a filesystem
+	// that silently ignores mode bits that would otherwise be an assertion the
+	// code never checks.
+	info, err = os.Lstat(cacheDir)
+	if err != nil {
+		return "", fmt.Errorf("re-inspect launch binary cache: %w", err)
+	}
+	if info.Mode().Perm() != artifacts.DirPerm {
+		return "", fmt.Errorf("launch binary cache %q permissions are not 0700", cacheDir)
+	}
+	return cacheDir, nil
 }
 
 // reusable reports whether an existing cached copy can be used as-is. The digest
@@ -371,18 +454,31 @@ func sweepCache(cacheDir, keep string) {
 	}
 }
 
-// pinnedDigests returns the digest name prefixes live launches still point at.
+// pinnedDigests returns the digest name prefixes live launches still point at,
+// and removes claims that have aged out. A claim older than pinClaimMaxAge
+// belongs to a launch whose release never ran — a killed TUI, an agent whose
+// provider hook never fired — and honouring it forever would let the pins
+// directory and the binary cache both grow without bound.
 func pinnedDigests(pinsDir string) map[string]bool {
 	pinned := map[string]bool{}
 	entries, err := os.ReadDir(pinsDir)
 	if err != nil {
 		return pinned
 	}
+	cutoff := timeNow().Add(-pinClaimMaxAge)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(pinsDir, entry.Name()))
+		path := filepath.Join(pinsDir, entry.Name())
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			// Best effort: a claim that cannot be removed is simply honoured for
+			// another sweep, which costs one retained copy and never a launch.
+			if os.Remove(path) == nil {
+				continue
+			}
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}

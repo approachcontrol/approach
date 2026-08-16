@@ -443,8 +443,9 @@ func requireContainsAll(t *testing.T, label, haystack string, needles []string) 
 }
 
 // canonicalizeApproachInvocations rewrites the pinned spelling a skill uses —
-// `"$APPROACH_BIN" flow read` — back to `approach flow read` so every matcher in
-// this file keeps expressing one grammar.
+// `"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow read`, or the bare
+// `$APPROACH_BIN flow read` that prose still uses — back to `approach flow read`
+// so every matcher in this file keeps expressing one grammar.
 //
 // This normalization is load-bearing, not cosmetic. The literals below, the
 // state-root scan, and runnableApproachSubcommands all key on the token
@@ -455,7 +456,12 @@ func canonicalizeApproachInvocations(text string) string {
 	return approachBinInvocation.ReplaceAllString(text, "approach ")
 }
 
-var approachBinInvocation = regexp.MustCompile(`"\$APPROACH_BIN"\s+|\$APPROACH_BIN\s+`)
+// The self-healing form is matched first; `|` in Go regexp is leftmost-first at
+// a given start position, so listing the bare form ahead of it would strip
+// `$APPROACH_BIN` out of the middle of the longer expansion and leave the rest
+// of the braces behind as garbage.
+var approachBinInvocation = regexp.MustCompile(
+	`"\$\{APPROACH_BIN:=\$\{APPROACH_EXECUTABLE:-approach\}\}"\s+|"\$APPROACH_BIN"\s+|\$APPROACH_BIN\s+`)
 
 func hasRunnableCommandExample(markdown, command string) bool {
 	for _, block := range fencedBashBlocks(markdown) {

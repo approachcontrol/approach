@@ -50,18 +50,45 @@ func TestGeneratedPhasePromptsNeverNameABareApproachBinary(t *testing.T) {
 		for _, status := range []string{flowstore.PhaseReady, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked} {
 			phase := phase
 			phase.Status = status
-			t.Run(phase.PhaseID+"/"+status, func(t *testing.T) {
-				for name, binary := range map[string]string{"pinned": pinned, "unpinned": ""} {
-					prompt := flowPhasePrompt(record, phase, record.PlanPath, "", FlowPromptTemplates{}, binary)
-					if match := bareApproachCommand.FindString(prompt); match != "" {
-						t.Fatalf("%s prompt names a bare approach command %q:\n%s", name, strings.TrimSpace(match), prompt)
-					}
-					if name == "pinned" && strings.Contains(prompt, "approach flow") && !strings.Contains(prompt, pinned) {
-						t.Fatalf("pinned prompt does not interpolate the pinned path:\n%s", prompt)
-					}
+			// planPath is a dimension, not a constant. Several prompts branch on
+			// it — flowImplementationWithoutPlanPrompt is reachable ONLY when it
+			// is empty — so a table that always passed a plan path would leave
+			// those branches unrendered and the guard would not cover them.
+			for _, planPath := range []string{record.PlanPath, ""} {
+				name := phase.PhaseID + "/" + status
+				if planPath == "" {
+					name += "/no-plan"
 				}
-			})
+				t.Run(name, func(t *testing.T) {
+					requirePromptNamesOnlyItsResolvedBinary(t, record, phase, planPath, pinned)
+				})
+			}
 		}
+	}
+}
+
+func requirePromptNamesOnlyItsResolvedBinary(t *testing.T, record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, pinned string) {
+	t.Helper()
+	unpinnedPrompt := flowPhasePrompt(record, phase, planPath, "", FlowPromptTemplates{}, "")
+	pinnedPrompt := flowPhasePrompt(record, phase, planPath, "", FlowPromptTemplates{}, pinned)
+	for name, prompt := range map[string]string{"pinned": pinnedPrompt, "unpinned": unpinnedPrompt} {
+		if match := bareApproachCommand.FindString(prompt); match != "" {
+			t.Fatalf("%s prompt names a bare approach command %q:\n%s", name, strings.TrimSpace(match), prompt)
+		}
+	}
+	// The bare-command matcher alone cannot catch the regression that
+	// matters: `$APPROACH_BIN flow phase set` is not a bare
+	// `approach`, but APPROACH_BIN is a shell variable the skills set,
+	// NOT an exported one, so in a pinned prompt it expands to nothing
+	// and the command word silently shifts. A pinned launch must name
+	// the pinned path everywhere the unpinned one named the fallback.
+	if strings.Contains(pinnedPrompt, flowPromptBinaryFallback) {
+		t.Fatalf("pinned prompt emits the unpinned fallback %s:\n%s", flowPromptBinaryFallback, pinnedPrompt)
+	}
+	wantPinned := strings.Count(unpinnedPrompt, flowPromptBinaryFallback)
+	if got := strings.Count(pinnedPrompt, pinned); got != wantPinned {
+		t.Fatalf("pinned prompt names the pinned path %d time(s), want %d (one per fallback in the unpinned rendering):\n%s",
+			got, wantPinned, pinnedPrompt)
 	}
 }
 

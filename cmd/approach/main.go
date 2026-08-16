@@ -330,6 +330,27 @@ func runSessionHook(args []string, deps runDeps) error {
 			"APPROACH_SESSION_STATE_ROOT": deps.getenv("APPROACH_SESSION_STATE_ROOT"),
 		},
 	})
+	// Keep-alive, never release. This hook is the only signal a detached agent
+	// emits — the TUI releases claims in FinalizeAgentSession but deliberately
+	// skips that for detached launches — but "a hook fired" does not mean "the
+	// agent is done", and releasing on a hook that is not end-of-life would
+	// unpin a live agent still bound to the path baked into its argv. Codex
+	// wires Stop, which fires once per TURN. Claude wires SessionEnd, which also
+	// fires on /clear while the process keeps running. Neither is a reliable
+	// death certificate, and a provider added later would be one more guess.
+	//
+	// So what the hook actually attests is "this launch was alive just now",
+	// which is exactly what a claim's freshness should track: it restamps the
+	// claim, and retirement is left to FinalizeAgentSession or to expiry. The
+	// cost is that a detached launch holds its digest until pinClaimMaxAge after
+	// its last sign of life; that is bounded disk, against the unbounded
+	// alternative of evicting a binary a running agent still has to exec.
+	//
+	// Best effort and after ingest: the session record is what this command
+	// exists to write, and retention hygiene may never cost one.
+	if launchID := deps.getenv("APPROACH_LAUNCH_ID"); launchID != "" && root != "" {
+		_ = controlplane.RefreshPin(root, launchID)
+	}
 	return err
 }
 

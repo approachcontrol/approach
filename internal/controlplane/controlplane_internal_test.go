@@ -259,6 +259,73 @@ func TestRetentionKeepsRecentAndNeverEvictsPinnedDigest(t *testing.T) {
 	}
 }
 
+// A claim whose launch never released — a killed TUI, an agent whose provider
+// hook never fired — must not exempt its copy from retention forever, or
+// retainedBinaries bounds nothing.
+func TestRetentionExpiresAbandonedClaims(t *testing.T) {
+	root := t.TempDir()
+	stubExecutable(t, "binary-contents-stranded")
+	stranded, err := Resolve(root, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := RetainPin(root, "launch-abandoned", stranded.Digest); err != nil {
+		t.Fatalf("RetainPin: %v", err)
+	}
+	claimPath := filepath.Join(root, cacheDirName, pinsDirName, "launch-abandoned")
+	abandoned := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(claimPath, abandoned, abandoned); err != nil {
+		t.Fatalf("chtimes claim: %v", err)
+	}
+	original := timeNow
+	t.Cleanup(func() { timeNow = original })
+	timeNow = func() time.Time { return abandoned.Add(pinClaimMaxAge + time.Hour) }
+
+	// Fill the cache past the retention budget with newer copies.
+	for i := range retainedBinaries + 1 {
+		stubExecutable(t, "binary-contents-"+string(rune('a'+i)))
+		if _, err := Resolve(root, testSchemaVersion); err != nil {
+			t.Fatalf("Resolve %d: %v", i, err)
+		}
+	}
+
+	for _, name := range cachedBinaries(t, root) {
+		if name == cachedBinaryName(stranded.Digest) {
+			t.Fatal("an abandoned claim kept its binary past retention")
+		}
+	}
+	if _, err := os.Stat(claimPath); !os.IsNotExist(err) {
+		t.Fatalf("stat expired claim = %v, want it removed", err)
+	}
+}
+
+func TestResolveRefusesACacheDirectorySymlink(t *testing.T) {
+	root := t.TempDir()
+	stubExecutable(t, "binary-contents")
+	// MkdirAll succeeds on an existing symlink to a directory and Chmod follows
+	// it, so without an Lstat the cache — and the binaries this process later
+	// executes out of it — would be wherever the link points.
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(root, cacheDirName)); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	pin, err := Resolve(root, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve must degrade rather than fail: %v", err)
+	}
+	if !pin.Degraded {
+		t.Fatalf("Resolve used a symlinked cache directory: %+v", pin)
+	}
+	entries, err := os.ReadDir(elsewhere)
+	if err != nil {
+		t.Fatalf("read symlink target: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("Resolve wrote %d entries through the symlink", len(entries))
+	}
+}
+
 func TestResolveDegradesWhenCacheCannotBeCreated(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")

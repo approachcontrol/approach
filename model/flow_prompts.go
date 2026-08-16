@@ -113,12 +113,25 @@ func lastNonEmptyPromptLine(text string) string {
 	return ""
 }
 
-// flowPromptBinaryFallback is what a generated prompt names when the launch
-// carries no pinned executable. The bundled skills export APPROACH_BIN from
-// APPROACH_EXECUTABLE and fall back to PATH themselves, so an unpinned prompt
-// still runs, while a bare `approach` — which resolves to whatever build is on
-// PATH, not the one that launched the agent — never appears in either case.
-const flowPromptBinaryFallback = "$APPROACH_BIN"
+// flowPromptBinaryFallback is what a generated prompt names when, and only
+// when, the launch carries no pinned executable. The bundled skills export
+// APPROACH_BIN from APPROACH_EXECUTABLE and fall back to PATH themselves, so an
+// unpinned prompt still runs, while a bare `approach` — which resolves to
+// whatever build is on PATH, not the one that launched the agent — never
+// appears in either case.
+//
+// It is the self-healing `:=` form, matching the skills, and not a bare
+// `$APPROACH_BIN`: APPROACH_BIN is a shell variable the skills set, NOT an
+// exported environment variable, so a bare reference expands to nothing in any
+// shell that has not run the skill's resolution block and the command word
+// silently shifts. `:=` re-resolves from the exported APPROACH_EXECUTABLE, or
+// PATH, on first use.
+//
+// Nothing may interpolate this constant directly either. Every prompt goes
+// through the `bin` that flowPhasePrompt derives, so a pinned launch names its
+// pinned path everywhere or nowhere.
+// TestGeneratedPhasePromptsNeverNameABareApproachBinary pins that.
+const flowPromptBinaryFallback = "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}"
 
 // flowPromptBinary renders executable as a shell command word. A prompt is
 // copied into a shell by the agent, so a path containing spaces or shell
@@ -195,7 +208,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 	writeFlowPromptPhaseSummaryByKind(&b, record, "Plan Review context", flowstore.KindPlanReview)
 	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
 	b.WriteString("\nUse the commit skill before completing this phase.")
-	b.WriteString("\nAdvance this phase with `" + flowPromptBinaryFallback + " flow phase set` only after the implementation is complete, blocked, or needs attention.")
+	b.WriteString("\nAdvance this phase with `" + bin + " flow phase set` only after the implementation is complete, blocked, or needs attention.")
 	return b.String()
 }
 
@@ -239,7 +252,7 @@ func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 			fmt.Fprintf(&b, "\n- Status: %s", record.PR.Status)
 		}
 	} else {
-		b.WriteString("\nPR target: missing. Do not run Autoreview until `" + flowPromptBinaryFallback + " flow pr set` records provider, number, URL, head, and base.\n")
+		b.WriteString("\nPR target: missing. Do not run Autoreview until `" + bin + " flow pr set` records provider, number, URL, head, and base.\n")
 	}
 	return b.String()
 }
@@ -262,7 +275,7 @@ func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 			fmt.Fprintf(&b, "- Status: %s\n", record.PR.Status)
 		}
 	} else {
-		b.WriteString("\n\nPR target: missing. Do not merge until `" + flowPromptBinaryFallback + " flow pr set` records provider, number, URL, head, and base.\n")
+		b.WriteString("\n\nPR target: missing. Do not merge until `" + bin + " flow pr set` records provider, number, URL, head, and base.\n")
 	}
 	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
 	fmt.Fprintf(&b, "\nmerged:\n%s flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", bin, record.FlowID, phase.PhaseID)
@@ -313,7 +326,7 @@ func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPha
 	writeFlowPromptHeader(&b, record, planPath)
 	writeFlowPromptPlanContext(&b, record, planBody)
 	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
-	b.WriteString("\nAdvance this phase with `" + flowPromptBinaryFallback + " flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
+	b.WriteString("\nAdvance this phase with `" + bin + " flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
 	return b.String()
 }
 

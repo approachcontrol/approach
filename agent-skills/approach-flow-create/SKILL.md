@@ -23,13 +23,28 @@ Build reusable state-root arguments before running commands. `$APPROACH_BIN flow
 the same explicit root keeps created flows and imported plans together.
 
 ```bash
-# Resolve the approach binary once. APPROACH_EXECUTABLE pins the build that
-# launched this agent; without it the launcher and this agent can be different
-# builds, and a phase result may then be unpersistable. The -x retest matters:
-# `:-` only substitutes when the variable is *unset*, so a pinned path that was
-# evicted or never materialized would hard-fail instead of degrading to PATH.
+# Resolve the approach binary. APPROACH_EXECUTABLE pins the build that launched
+# this agent; without it the launcher and this agent can be different builds, and
+# a phase result may then be unpersistable.
+#
+# APPROACH_BIN is a shell variable, NOT an exported one, so it does not survive
+# into a separate command invocation. That is why every approach call below
+# spells `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}` rather than
+# `$APPROACH_BIN`: the `:=` re-resolves and assigns on first use, so the COMMAND
+# WORD is always a real binary even in a fresh shell.
+#
+# That covers the command word only. The blocks below still share FLOW_ID,
+# FLOW_STATE_ARGS, PLAN_STATE_ARGS and friends, so run them in one shell, or
+# re-establish those first. And the executability test lives here, not in the
+# expansion: a later block in a fresh shell whose APPROACH_EXECUTABLE names an
+# evicted pin fails loudly on a missing binary rather than degrading to PATH.
+# Report that error like any other; do not retry with a bare `approach`, which
+# is how a wrong-build result gets persisted.
+if [ -n "${APPROACH_EXECUTABLE:-}" ] && [ ! -x "$APPROACH_EXECUTABLE" ]; then
+  echo "APPROACH_EXECUTABLE ($APPROACH_EXECUTABLE) is not runnable; falling back to approach on PATH, which may be a different build than the launcher. Report this." >&2
+  unset APPROACH_EXECUTABLE
+fi
 APPROACH_BIN="${APPROACH_EXECUTABLE:-approach}"
-[ -x "$APPROACH_BIN" ] || APPROACH_BIN=approach
 
 APPROACH_ARTIFACT_ROOT="${APPROACH_FLOW_STATE_ROOT:-${APPROACH_PLAN_STATE_ROOT:-${APPROACH_SESSION_STATE_ROOT:-}}}"
 FLOW_STATE_ARGS=()
@@ -227,7 +242,7 @@ if [ -n "${FLOW_PRESET:-}" ]; then
 fi
 
 if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
-  if ! FLOW_JSON=$("$APPROACH_BIN" flow create \
+  if ! FLOW_JSON=$("${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow create \
     --title "${FLOW_TITLE:-}" \
     --instructions-file "${FLOW_INSTRUCTIONS_FILE:-}" \
     --repo-path "${APPROACH_REPO_PATH:-}" \
@@ -242,7 +257,7 @@ if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
     exit 1
   fi
 else
-  if ! FLOW_JSON=$("$APPROACH_BIN" flow create \
+  if ! FLOW_JSON=$("${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow create \
     --title "${FLOW_TITLE:-}" \
     --instructions "${FLOW_INSTRUCTIONS:-}" \
     --repo-path "${APPROACH_REPO_PATH:-}" \
@@ -261,7 +276,7 @@ if ! FLOW_ID=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, sys; print(js
   echo "approach flow create returned JSON that could not be parsed for flow_id; report the command error to the user." >&2
   exit 1
 fi
-if ! "$APPROACH_BIN" flow read --flow-id "$FLOW_ID" "${FLOW_STATE_ARGS[@]}" >/dev/null; then
+if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow read --flow-id "$FLOW_ID" "${FLOW_STATE_ARGS[@]}" >/dev/null; then
   echo "approach flow read failed for $FLOW_ID; report the command error to the user." >&2
   exit 1
 fi
@@ -277,7 +292,7 @@ repair. Skip this check only for an explicit metadata-only Flow.
 
 ```bash
 if [ -z "${APPROACH_FLOW_METADATA_ONLY:-}" ]; then
-  if ! "$APPROACH_BIN" flow read --flow-id "${FLOW_ID:-}" "${FLOW_STATE_ARGS[@]}" \
+  if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow read --flow-id "${FLOW_ID:-}" "${FLOW_STATE_ARGS[@]}" \
     | python3 -c 'import json, sys
 record = json.load(sys.stdin)
 missing = [field for field in ("worktree_path", "branch", "base_ref", "commit") if not record.get(field)]
@@ -297,7 +312,7 @@ the new Flow. Do not invent a plan body just to satisfy this path.
 
 ```bash
 if [ -z "${FLOW_ID:-}" ]; then
-  echo "Plan import requires FLOW_ID from a verified "$APPROACH_BIN" flow create result." >&2
+  echo "Plan import requires FLOW_ID from a verified 'approach flow create' result." >&2
   exit 1
 fi
 if [ -z "${PLAN_MARKDOWN:-}" ]; then
@@ -327,7 +342,7 @@ record_plan_import_failure() {
     echo "Plan import failed, and Flow $FLOW_ID has no plan-kind phase to mark blocked; report both facts to the user." >&2
     return 0
   fi
-  if ! "$APPROACH_BIN" flow phase block \
+  if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase block \
     --flow-id "$FLOW_ID" \
     --phase-id "$FLOW_PLAN_PHASE_ID" \
     --notes "$notes" \
@@ -336,7 +351,7 @@ record_plan_import_failure() {
   fi
 }
 
-if ! PLAN_ID=$(printf '%s' "${PLAN_MARKDOWN:-}" | "$APPROACH_BIN" plan save \
+if ! PLAN_ID=$(printf '%s' "${PLAN_MARKDOWN:-}" | "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan save \
   --title "${FLOW_TITLE:-}" \
   --status approved \
   --repo-path "${APPROACH_REPO_PATH:-}" \
@@ -348,7 +363,7 @@ if ! PLAN_ID=$(printf '%s' "${PLAN_MARKDOWN:-}" | "$APPROACH_BIN" plan save \
   exit 1
 fi
 
-if ! "$APPROACH_BIN" flow plan set \
+if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow plan set \
   --flow-id "$FLOW_ID" \
   --plan-id "$PLAN_ID" \
   "${FLOW_STATE_ARGS[@]}"; then
@@ -356,13 +371,13 @@ if ! "$APPROACH_BIN" flow plan set \
   exit 1
 fi
 
-if ! "$APPROACH_BIN" plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
+if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
   record_plan_import_failure "approach plan read failed for $PLAN_ID; report the command error to the user."
   exit 1
 fi
 
 if [ -n "${FLOW_PLAN_PHASE_ID:-}" ]; then
-  if ! "$APPROACH_BIN" flow phase complete \
+  if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase complete \
     --flow-id "$FLOW_ID" \
     --phase-id "$FLOW_PLAN_PHASE_ID" \
     --summary "Imported plan $PLAN_ID." \
@@ -394,7 +409,7 @@ failed import on the new Flow Plan phase and report whether that persistence
 also succeeded. The import snippet above uses this recovery command:
 
 ```bash
-"$APPROACH_BIN" flow phase block \
+"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase block \
   --flow-id "$FLOW_ID" \
   --phase-id "$FLOW_PLAN_PHASE_ID" \
   --notes "Plan import failed; report the approach command error to the user." \

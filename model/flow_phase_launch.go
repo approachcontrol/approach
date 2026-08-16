@@ -131,11 +131,6 @@ type flowLaunchPreparation struct {
 	// VerifyPin is Pin.Verify, injectable so a test can fail the check without
 	// having to corrupt a real cached binary.
 	VerifyPin func(controlplane.Pin) error
-	// RetainLaunchPin claims this launch's cached binary against retention. The
-	// session-hook command is baked into the agent's argv, so a detached agent
-	// that outlived a few rebuilds would otherwise silently lose its session
-	// capture when the cache rolled over. Nil uses controlplane.RetainPin.
-	RetainLaunchPin func(root, launchID, digest string) error
 }
 
 func (m Model) flowLaunchPreparation() flowLaunchPreparation {
@@ -158,24 +153,6 @@ func (m Model) flowLaunchPreparation() flowLaunchPreparation {
 		InspectWorktreeDirectory: m.launchSeams.inspectWorktreeDirectory,
 		Pin:                      m.launchPin,
 	}
-}
-
-// retainLaunchPin is best-effort by design. Retention is hygiene: failing a
-// launch because a claim file could not be written would trade a bounded disk
-// cost for an outage, which is the trade this whole package refuses.
-func (l flowLaunchPreparation) retainLaunchPin(launchID string) {
-	if l.Pin.Degraded || strings.TrimSpace(l.Pin.ExecutablePath) == "" {
-		return
-	}
-	root := strings.TrimSpace(l.SessionStateRoot)
-	if root == "" || strings.TrimSpace(launchID) == "" {
-		return
-	}
-	retain := l.RetainLaunchPin
-	if retain == nil {
-		retain = controlplane.RetainPin
-	}
-	_ = retain(root, launchID, l.Pin.Digest)
 }
 
 // verifyPin re-checks the pinned binary. An unpinned launch verifies nothing:
@@ -369,7 +346,6 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 		}
 		return flowPhaseLaunchResult{}, fmt.Errorf("failed to mark flow phase running: %w", err)
 	}
-	l.retainLaunchPin(req.LaunchID)
 	launchPhase := req.Phase
 	if persistedPhase, ok := flowPhaseByID(updated, req.Phase.PhaseID); ok {
 		launchPhase = persistedPhase

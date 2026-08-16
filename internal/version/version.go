@@ -24,6 +24,15 @@ var (
 // real release (`.Tag`, e.g. v0.10.3). Snapshot builds, `make build` (which
 // stamps the literal `dev`), and module pseudo-versions all fail it on purpose:
 // anything that is not a published release tag is a development build.
+//
+// Admitting a prerelease suffix was considered, so that a tagged `v0.11.0-rc1`
+// would keep the release artifact root rather than being exiled to
+// `approach-dev`. It is rejected because Go module pseudo-versions have the same
+// shape — `v0.0.0-20260101120000-abcdef123456` — so a suffix-tolerant pattern
+// would classify every `go install` build as a release, which is the direction
+// that loses data rather than the direction that inconveniences an RC user.
+// Anything shipping RCs should stamp them explicitly instead. TestIsDevelopment
+// pins both cases.
 var releaseVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 // Version returns the resolved build version, e.g. "v0.10.3" or "dev".

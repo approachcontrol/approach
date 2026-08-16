@@ -33,7 +33,7 @@ exist:
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | Flow phase graph preset | `approach flow create --preset` | `[flow].preset` | `default` |
-| TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1` |
+| TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1`; a development build substitutes `approach-dev` (see [`[sessions]`](#sessions)) |
 | Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
 | Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/approach.db`) |
@@ -363,8 +363,12 @@ stored under a hashed session directory, with the raw provider session ID kept i
 | `root` | string | Optional absolute state root for session files. Supports `~` expansion. |
 | `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `false`. |
 
-When `root` is omitted, Approach uses `$XDG_STATE_HOME/approach/sessions/v1`, or
-`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset.
+When `root` is omitted, a released build uses `$XDG_STATE_HOME/approach/sessions/v1`,
+or `~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. A build
+whose version is not a published release tag (`make build`, `go run`, a snapshot)
+substitutes `approach-dev` for `approach` in that path, so development state
+never shares a database with the release you have installed. Setting `root`
+explicitly opts out of that split — both builds then use exactly what you named.
 Relative roots other than `~`/`~/...` fail config parsing.
 
 `[sessions].root` doubles as the **agent-artifact root**: sessions, saved plans,

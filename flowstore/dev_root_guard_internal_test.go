@@ -1,6 +1,7 @@
 package flowstore
 
 import (
+	"bytes"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -107,10 +108,11 @@ func TestDevBuildMigratesItsOwnDefaultRoot(t *testing.T) {
 	}
 }
 
-// The guard's condition is exact path equality and nothing broader. A rule
-// phrased as "any root that is not the dev default" would fire in every
-// t.TempDir() — and because IsDevelopment is true under `go test`, it would
-// break every existing migration test in this package.
+// The guard's condition is exact path equality and nothing broader: what it
+// protects is the state a *released* build owns by default, which is one path.
+// This is the residual gap, asserted deliberately rather than discovered later —
+// an explicit shared root gets no protection, and isolating the development
+// default is what keeps that exposure to configurations an operator chose.
 func TestDevBuildMigratesAnArbitraryRoot(t *testing.T) {
 	stubDevelopmentBuild(t, true)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -128,6 +130,156 @@ func TestDevBuildMigratesAnArbitraryRoot(t *testing.T) {
 	if got := storedSchemaVersion(t, root); got != int64(databaseSchemaVersion) {
 		t.Fatalf("user_version = %d, want %d", got, databaseSchemaVersion)
 	}
+}
+
+// The cutover-resume path publishes its stage as approach.db in the same root,
+// so the guard applies there too. It must REFUSE, not fall through to either
+// branch that handles a genuinely damaged stage: the stage is intact, and the
+// operator was just told how to satisfy the check.
+//
+// Both fixtures matter, and only the second exercises the sentinel. With no
+// tombstone the fall-through discards the stage and rebuilds, and
+// refuseDevLiveCreation stops that a few lines later — so the stage survives
+// even with the sentinel case deleted. With a tombstone the fall-through instead
+// instructs the operator to REMOVE the stage, and refuseDevLiveCreation is never
+// reached, so the sentinel is the only thing standing between a policy refusal
+// and a destroyed corpus.
+func TestDevBuildRefusesAnInterruptedCutoverAtTheReleaseDefaultRootWithoutDiscardingIt(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tombstone bool
+	}{
+		{name: "legacy source absent"},
+		{name: "flows.legacy tombstone is the only other copy", tombstone: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stateHome := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", stateHome)
+			root := filepath.Join(stateHome, "approach", "sessions", "v1")
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatalf("create release root: %v", err)
+			}
+			if tc.tombstone {
+				if err := os.MkdirAll(filepath.Join(root, "flows.legacy"), 0o700); err != nil {
+					t.Fatalf("create tombstone: %v", err)
+				}
+			}
+			stagePath := filepath.Join(root, stageFilename)
+			db := createParentReleaseV4DatabaseAt(t, stagePath)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(stagePath)
+			if err != nil {
+				t.Fatalf("read stage: %v", err)
+			}
+
+			stubDevelopmentBuild(t, true)
+			_, err = NewStore(StoreOptions{Root: root})
+			if err == nil {
+				t.Fatal("a development build promoted an interrupted cutover at the release-owned root")
+			}
+			if !strings.Contains(err.Error(), "--allow-dev-live-migration") {
+				t.Fatalf("refusal %q does not name the acknowledgement", err)
+			}
+			// A policy refusal must never hand the operator a recipe that
+			// destroys the very stage it just declined to promote.
+			if strings.Contains(err.Error(), "remove") {
+				t.Fatalf("refusal tells the operator to remove the intact stage: %v", err)
+			}
+
+			after, err := os.ReadFile(stagePath)
+			if err != nil {
+				t.Fatalf("the refused stage was discarded: %v", err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("the refused stage was rewritten")
+			}
+			if _, err := os.Lstat(filepath.Join(root, databaseFilename)); !os.IsNotExist(err) {
+				t.Fatalf("stat approach.db = %v, want no database published", err)
+			}
+
+			// With the acknowledgement the same root promotes normally, so the
+			// refusal is a gate the operator can pass and not a dead end.
+			store, err := NewStore(StoreOptions{Root: root, AllowDevLiveMigration: true})
+			if err != nil {
+				t.Fatalf("acknowledged cutover resume was refused: %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			if got := storedSchemaVersion(t, root); got != int64(databaseSchemaVersion) {
+				t.Fatalf("user_version = %d, want %d", got, databaseSchemaVersion)
+			}
+		})
+	}
+}
+
+// Creating reaches the same end state as migrating — a database a released build
+// cannot open — so the fresh-bootstrap and legacy-import path is guarded too.
+// refuseDevLiveMigration cannot cover it: there is no stored version to compare.
+func TestDevBuildRefusesToCreateADatabaseAtTheReleaseDefaultRoot(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	root := filepath.Join(stateHome, "approach", "sessions", "v1")
+	if err := os.MkdirAll(filepath.Join(root, "flows"), 0o700); err != nil {
+		t.Fatalf("create release root: %v", err)
+	}
+
+	stubDevelopmentBuild(t, true)
+	if _, err := NewStore(StoreOptions{Root: root}); err == nil {
+		t.Fatal("a development build created a database at the release-owned root")
+	} else if !strings.Contains(err.Error(), "--allow-dev-live-migration") {
+		t.Fatalf("refusal %q does not name the acknowledgement", err)
+	}
+	// A refusal must not consume the legacy source or leave a partial database.
+	if _, err := os.Stat(filepath.Join(root, databaseFilename)); !os.IsNotExist(err) {
+		t.Fatalf("stat approach.db after a refusal = %v, want none", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "flows")); err != nil {
+		t.Fatalf("the legacy source was disturbed by a refusal: %v", err)
+	}
+
+	store, err := NewStore(StoreOptions{Root: root, AllowDevLiveMigration: true})
+	if err != nil {
+		t.Fatalf("acknowledged creation was refused: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+}
+
+// A release build is what the release root is for, and a development build on
+// its own root is nobody else's business. Neither may be refused, or the guard
+// has stopped being about drift and started being about mere inconvenience.
+func TestFreshCreationIsAllowedWhereverItIsNotReleaseOwned(t *testing.T) {
+	t.Run("release build at the release root", func(t *testing.T) {
+		stateHome := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateHome)
+		root := filepath.Join(stateHome, "approach", "sessions", "v1")
+		stubDevelopmentBuild(t, false)
+		store, err := NewStore(StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("release build was refused its own root: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+	})
+	t.Run("development build at the development root", func(t *testing.T) {
+		stateHome := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateHome)
+		root := filepath.Join(stateHome, "approach-dev", "sessions", "v1")
+		stubDevelopmentBuild(t, true)
+		store, err := NewStore(StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("development build was refused its own root: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+	})
+	t.Run("development build at an arbitrary root", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		stubDevelopmentBuild(t, true)
+		store, err := NewStore(StoreOptions{Root: t.TempDir()})
+		if err != nil {
+			t.Fatalf("development build was refused an arbitrary root: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+	})
 }
 
 func TestReleaseBuildMigratesTheReleaseDefaultRoot(t *testing.T) {

@@ -109,7 +109,9 @@ provider-native `raw.jsonl` alongside normalized transcript events.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/approach/sessions/v1`, or
-`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. Sessions,
+`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. A build
+whose version is not a published release tag substitutes `approach-dev` for
+`approach` in that path (see `docs/config.md`). Sessions,
 plans, and Flows share this artifact root; the full precedence chain
 (`--state-root`, `APPROACH_*_STATE_ROOT` variables, `[sessions].root`) is in
 `docs/config.md`.
