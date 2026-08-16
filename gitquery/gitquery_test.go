@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/testgit"
 )
 
 // realPath resolves symlinks (macOS /var → /private/var).
@@ -23,11 +24,7 @@ func realPath(t *testing.T, path string) string {
 
 func disableGitMaintenance(t *testing.T, dir string) {
 	t.Helper()
-	run(t, dir, "git", "config", "user.email", "test@test.com")
-	run(t, dir, "git", "config", "user.name", "Test")
-	run(t, dir, "git", "config", "gc.auto", "0")
-	run(t, dir, "git", "config", "gc.autoDetach", "false")
-	run(t, dir, "git", "config", "maintenance.auto", "false")
+	testgit.ConfigureRepo(t, dir)
 }
 
 // initRepo creates a git repo in dir with one commit on "main".
@@ -64,45 +61,14 @@ func initBranchRepo(t *testing.T) string {
 	return dir
 }
 
-// hermeticGitEnv drops ambient git selectors and ignores user/system config so
-// test repos cannot inherit a runner's gc/maintenance settings or GIT_DIR.
-func hermeticGitEnv() []string {
-	env := make([]string, 0, len(os.Environ())+3)
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "GIT_CONFIG_") ||
-			strings.HasPrefix(entry, "GIT_TEMPLATE_DIR=") ||
-			strings.HasPrefix(entry, "GIT_DIR=") ||
-			strings.HasPrefix(entry, "GIT_WORK_TREE=") ||
-			strings.HasPrefix(entry, "GIT_INDEX_FILE=") ||
-			strings.HasPrefix(entry, "GIT_OBJECT_DIRECTORY=") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	return append(env,
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_OPTIONAL_LOCKS=0",
-	)
-}
-
 func run(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
+	var cmd *exec.Cmd
 	if name == "git" {
-		// Disable auto-gc and background maintenance. Rapid sequential commits
-		// under parallel package tests have failed CI with
-		// "fatal: unable to read tree" when git rewrites objects mid-commit.
-		args = append([]string{
-			"-c", "gc.auto=0",
-			"-c", "gc.autoDetach=false",
-			"-c", "maintenance.auto=false",
-			"-c", "commit.gpgsign=false",
-		}, args...)
-	}
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	if name == "git" {
-		cmd.Env = hermeticGitEnv()
+		cmd = testgit.Command(dir, args...)
+	} else {
+		cmd = exec.Command(name, args...)
+		cmd.Dir = dir
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
