@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Approach — Isometric System Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #0c1219;
+    --ink-2: #141c27;
+    --ink-3: #1c2736;
+    --fog: #8b9bb0;
+    --paper: #e8eef5;
+    --paper-dim: #b7c3d4;
+    --teal: #3ecfb2;
+    --teal-dim: #1f8f7c;
+    --amber: #e8a54b;
+    --amber-dim: #a86f22;
+    --coral: #e06b5c;
+    --steel: #6d7f96;
+    --moss: #6fa87a;
+    --glass: #7eb8d4;
+    --panel: rgba(12, 18, 25, 0.88);
+    --panel-border: rgba(232, 238, 245, 0.12);
+    --shadow: rgba(0, 0, 0, 0.45);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: "DM Sans", system-ui, sans-serif;
+  }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 700px at 18% 12%, rgba(62, 207, 178, 0.08), transparent 55%),
+      radial-gradient(900px 600px at 82% 18%, rgba(232, 165, 75, 0.07), transparent 50%),
+      radial-gradient(800px 500px at 60% 90%, rgba(126, 184, 212, 0.06), transparent 45%),
+      linear-gradient(165deg, #0a1017 0%, #121a24 48%, #0e151d 100%);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    min-height: 100vh;
+  }
+
+  header.top {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1.25rem 1.75rem 1rem;
+    border-bottom: 1px solid var(--panel-border);
+    background: linear-gradient(180deg, rgba(20, 28, 39, 0.95), rgba(12, 18, 25, 0.55));
+    backdrop-filter: blur(10px);
+  }
+
+  .brand-block h1 {
+    font-family: Syne, sans-serif;
+    font-weight: 800;
+    font-size: clamp(1.6rem, 2.4vw, 2.15rem);
+    letter-spacing: -0.03em;
+    margin: 0 0 0.2rem;
+    line-height: 1.05;
+  }
+
+  .brand-block h1 span {
+    color: var(--teal);
+  }
+
+  .brand-block p {
+    margin: 0;
+    color: var(--paper-dim);
+    font-size: 0.92rem;
+    max-width: 52ch;
+    line-height: 1.45;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    padding: 0.35rem 0.55rem;
+    border-radius: 4px;
+    border: 1px solid var(--panel-border);
+    background: rgba(28, 39, 54, 0.7);
+    color: var(--paper-dim);
+  }
+
+  .chip strong { color: var(--paper); font-weight: 500; }
+
+  .stage-wrap {
+    position: relative;
+    overflow: hidden;
+    min-height: 640px;
+  }
+
+  .stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    cursor: grab;
+  }
+
+  .stage.dragging { cursor: grabbing; }
+
+  .stage-canvas {
+    position: absolute;
+    left: 50%;
+    top: 46%;
+    transform-origin: center center;
+    will-change: transform;
+  }
+
+  svg.map {
+    display: block;
+    overflow: visible;
+    filter: drop-shadow(0 18px 40px var(--shadow));
+  }
+
+  .grid-cell {
+    fill: rgba(109, 127, 150, 0.08);
+    stroke: rgba(139, 155, 176, 0.18);
+    stroke-width: 1;
+  }
+
+  .district-label {
+    font-family: Syne, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    fill: rgba(183, 195, 212, 0.55);
+    text-transform: uppercase;
+  }
+
+  .bldg {
+    cursor: pointer;
+    transition: filter 160ms ease, opacity 160ms ease;
+  }
+
+  .bldg:focus { outline: none; }
+  .bldg:focus .roof,
+  .bldg:hover .roof { filter: brightness(1.12); }
+  .bldg.active .left,
+  .bldg.active .right,
+  .bldg.active .roof {
+    stroke: var(--teal);
+    stroke-width: 1.6;
+  }
+
+  .bldg.dim { opacity: 0.28; }
+  .bldg.related { opacity: 1; filter: drop-shadow(0 0 10px rgba(62, 207, 178, 0.25)); }
+
+  .bldg-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    fill: var(--paper);
+    pointer-events: none;
+  }
+
+  .bldg-sub {
+    font-family: "DM Sans", sans-serif;
+    font-size: 9px;
+    fill: var(--fog);
+    pointer-events: none;
+  }
+
+  .path-layer path.route {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.35;
+    transition: opacity 180ms ease, stroke-width 180ms ease;
+  }
+
+  .path-layer path.route.visible {
+    opacity: 0.95;
+  }
+
+  .path-layer path.route.control {
+    stroke: var(--teal);
+    stroke-width: 2.2;
+    stroke-dasharray: 7 6;
+  }
+
+  .path-layer path.route.data {
+    stroke: var(--amber);
+    stroke-width: 2.4;
+  }
+
+  .path-layer path.route.mutation {
+    stroke: var(--coral);
+    stroke-width: 2.4;
+    stroke-dasharray: 2 5;
+  }
+
+  .packet {
+    pointer-events: none;
+  }
+
+  .hud {
+    position: absolute;
+    left: 1rem;
+    bottom: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    max-width: min(720px, calc(100% - 2rem));
+    z-index: 2;
+  }
+
+  .path-btn {
+    appearance: none;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    color: var(--paper);
+    font: 500 0.78rem/1 "DM Sans", sans-serif;
+    padding: 0.55rem 0.7rem;
+    border-radius: 6px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+  }
+
+  .path-btn:hover { border-color: rgba(62, 207, 178, 0.45); transform: translateY(-1px); }
+  .path-btn.active.control { border-color: var(--teal); box-shadow: inset 0 0 0 1px rgba(62, 207, 178, 0.35); }
+  .path-btn.active.data { border-color: var(--amber); box-shadow: inset 0 0 0 1px rgba(232, 165, 75, 0.35); }
+  .path-btn.active.mutation { border-color: var(--coral); box-shadow: inset 0 0 0 1px rgba(224, 107, 92, 0.35); }
+
+  .zoom-controls {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    display: flex;
+    gap: 0.35rem;
+    z-index: 2;
+  }
+
+  .zoom-controls button {
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    color: var(--paper);
+    font-size: 1.1rem;
+    cursor: pointer;
+  }
+
+  aside.panel {
+    border-left: 1px solid var(--panel-border);
+    background: linear-gradient(180deg, rgba(20, 28, 39, 0.98), rgba(12, 18, 25, 0.96));
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: calc(100vh - 88px);
+  }
+
+  .panel-scroll {
+    overflow: auto;
+    padding: 1.1rem 1.15rem 1.5rem;
+    flex: 1;
+  }
+
+  .panel h2 {
+    font-family: Syne, sans-serif;
+    font-size: 1.05rem;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.02em;
+  }
+
+  .panel .lede {
+    margin: 0 0 1rem;
+    color: var(--paper-dim);
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+
+  .legend {
+    display: grid;
+    gap: 0.55rem;
+    margin-bottom: 1.25rem;
+    padding: 0.85rem;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: rgba(28, 39, 54, 0.45);
+  }
+
+  .legend h3, .explainer h3, .cites h3 {
+    margin: 0 0 0.45rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fog);
+    font-weight: 600;
+  }
+
+  .leg-row {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 0.55rem;
+    align-items: start;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    color: var(--paper-dim);
+  }
+
+  .swatch {
+    width: 28px;
+    height: 18px;
+    border-radius: 3px;
+    margin-top: 2px;
+  }
+
+  .swatch.control { background: repeating-linear-gradient(90deg, var(--teal) 0 7px, transparent 7px 13px); }
+  .swatch.data { background: var(--amber); }
+  .swatch.mutation { background: repeating-linear-gradient(90deg, var(--coral) 0 3px, transparent 3px 8px); }
+  .swatch.entry { background: linear-gradient(135deg, #4a6d8c, #2c455c); }
+  .swatch.core { background: linear-gradient(135deg, #3ecfb2, #1f6f62); }
+  .swatch.query { background: linear-gradient(135deg, #7eb8d4, #3d6f88); }
+  .swatch.action { background: linear-gradient(135deg, #e8a54b, #8a5a22); }
+  .swatch.store { background: linear-gradient(135deg, #6fa87a, #3d6246); }
+  .swatch.api { background: linear-gradient(135deg, #e06b5c, #8a3d35); }
+  .swatch.ext { background: linear-gradient(135deg, #6d7f96, #3a4554); }
+
+  .explainer {
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 0.95rem;
+    background: rgba(12, 18, 25, 0.55);
+    margin-bottom: 1rem;
+    min-height: 220px;
+  }
+
+  .explainer .kind {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.68rem;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    margin-bottom: 0.55rem;
+    background: rgba(62, 207, 178, 0.12);
+    color: var(--teal);
+    border: 1px solid rgba(62, 207, 178, 0.25);
+  }
+
+  .explainer .kind.path-control { color: var(--teal); background: rgba(62, 207, 178, 0.12); border-color: rgba(62, 207, 178, 0.25); }
+  .explainer .kind.path-data { color: var(--amber); background: rgba(232, 165, 75, 0.12); border-color: rgba(232, 165, 75, 0.25); }
+  .explainer .kind.path-mutation { color: var(--coral); background: rgba(224, 107, 92, 0.12); border-color: rgba(224, 107, 92, 0.25); }
+
+  .explainer h4 {
+    margin: 0 0 0.45rem;
+    font-family: Syne, sans-serif;
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+  }
+
+  .explainer p {
+    margin: 0 0 0.7rem;
+    color: var(--paper-dim);
+    font-size: 0.86rem;
+    line-height: 1.5;
+  }
+
+  .payload {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--paper);
+    background: rgba(28, 39, 54, 0.8);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.55rem 0.65rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+
+  .cites ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .cites li {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--teal);
+    background: rgba(28, 39, 54, 0.55);
+    border: 1px solid var(--panel-border);
+    border-radius: 5px;
+    padding: 0.4rem 0.5rem;
+    line-height: 1.35;
+  }
+
+  .hint {
+    margin-top: 1rem;
+    font-size: 0.78rem;
+    color: var(--fog);
+    line-height: 1.4;
+  }
+
+  @media (max-width: 980px) {
+    .shell {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(520px, 62vh) auto;
+    }
+    aside.panel {
+      border-left: none;
+      border-top: 1px solid var(--panel-border);
+      max-height: none;
+    }
+    header.top { flex-direction: column; align-items: flex-start; }
+    .meta { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div class="brand-block">
+        <h1>Approach <span>System Map</span></h1>
+        <p>Isometric package city from latest <code style="font-family:IBM Plex Mono,monospace;font-size:0.85em;color:var(--teal)">main</code>. Buildings are real packages; cables are control, data, and mutation paths with cited owners.</p>
+      </div>
+      <div class="meta">
+        <span class="chip"><strong>source</strong> docs/architecture.md</span>
+        <span class="chip"><strong>commit</strong> <span id="commit-chip">…</span></span>
+        <span class="chip"><strong>drag</strong> pan · scroll zoom · click inspect</span>
+      </div>
+    </header>
+
+    <div class="stage-wrap">
+      <div class="zoom-controls">
+        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+        <button type="button" id="zoom-reset" aria-label="Reset view">⟲</button>
+      </div>
+      <div class="stage" id="stage" aria-label="Isometric system map">
+        <div class="stage-canvas" id="canvas">
+          <svg class="map" id="map" width="1100" height="780" viewBox="-80 -40 1100 780" role="img" aria-labelledby="map-title">
+            <title id="map-title">Approach isometric package map</title>
+            <defs>
+              <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#16202c" />
+                <stop offset="100%" stop-color="#0d141c" />
+              </linearGradient>
+              <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000" flood-opacity="0.35" />
+              </filter>
+              <marker id="arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#3ecfb2" />
+              </marker>
+              <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#e8a54b" />
+              </marker>
+              <marker id="arrow-coral" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#e06b5c" />
+              </marker>
+            </defs>
+
+            <g id="grid"></g>
+            <g id="districts"></g>
+            <g id="paths" class="path-layer"></g>
+            <g id="buildings" filter="url(#soft)"></g>
+            <g id="packets" class="packet"></g>
+            <g id="labels"></g>
+          </svg>
+        </div>
+      </div>
+      <div class="hud" id="path-hud"></div>
+    </div>
+
+    <aside class="panel">
+      <div class="panel-scroll">
+        <h2>Legend &amp; explainer</h2>
+        <p class="lede">Select a building or a path button. The panel cites owning files and the payload that actually crosses that boundary.</p>
+
+        <div class="legend" id="legend">
+          <h3>Building roles</h3>
+          <div class="leg-row"><div class="swatch entry"></div><div><strong style="color:var(--paper)">Entry / config</strong> — process boot, TOML, scan roots</div></div>
+          <div class="leg-row"><div class="swatch core"></div><div><strong style="color:var(--paper)">Core TUI</strong> — Bubble Tea model + Lip Gloss UI</div></div>
+          <div class="leg-row"><div class="swatch query"></div><div><strong style="color:var(--paper)">Query adapters</strong> — read-only git / Beads</div></div>
+          <div class="leg-row"><div class="swatch action"></div><div><strong style="color:var(--paper)">Actions &amp; runtimes</strong> — mutations, PTY, stream render</div></div>
+          <div class="leg-row"><div class="swatch store"></div><div><strong style="color:var(--paper)">State vault</strong> — SQLite Flows, plans, sessions, pins</div></div>
+          <div class="leg-row"><div class="swatch api"></div><div><strong style="color:var(--paper)">API district</strong> — read-only GraphQL + Next.js viewer</div></div>
+          <div class="leg-row"><div class="swatch ext"></div><div><strong style="color:var(--paper)">External</strong> — git repos, <code>bd</code>, agents, tmux</div></div>
+          <h3 style="margin-top:0.7rem">Cable kinds</h3>
+          <div class="leg-row"><div class="swatch control"></div><div><strong style="color:var(--paper)">Control</strong> — orchestration / admission / lifecycle</div></div>
+          <div class="leg-row"><div class="swatch data"></div><div><strong style="color:var(--paper)">Data</strong> — read payloads, snapshots, transcripts</div></div>
+          <div class="leg-row"><div class="swatch mutation"></div><div><strong style="color:var(--paper)">Mutation</strong> — writes that change durable or external state</div></div>
+        </div>
+
+        <div class="explainer" id="explainer">
+          <h3>Selection</h3>
+          <span class="kind">overview</span>
+          <h4>City overview</h4>
+          <p>Left shore is the outside world. Center is the TUI control plane. Back vault holds durable state under one artifact root. Right broadcast is the separate read-only GraphQL + web viewer product.</p>
+          <div class="payload">Shared artifact root → sessions/ + plans/ + approach.db
+Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</div>
+        </div>
+
+        <div class="cites" id="cites">
+          <h3>Cited files</h3>
+          <ul>
+            <li>docs/architecture.md</li>
+            <li>docs/graphql-api.md</li>
+            <li>docs/agent-sessions.md</li>
+            <li>docs/flow-phases.md</li>
+            <li>cmd/approach/main.go</li>
+          </ul>
+        </div>
+
+        <p class="hint">Paths are traced from package imports and documented seams in <code>docs/architecture.md</code>, not from aspirational diagrams. Hover/click a building to see its district and neighbors.</p>
+      </div>
+    </aside>
+  </div>
+
+<script>
+(() => {
+  const TW = 56;
+  const TH = 28;
+
+  function iso(x, y, z = 0) {
+    return {
+      x: (x - y) * (TW / 2),
+      y: (x + y) * (TH / 2) - z
+    };
+  }
+
+  function diamond(x, y, z = 0) {
+    const c = iso(x, y, z);
+    const n = iso(x, y - 1, z);
+    const e = iso(x + 1, y, z);
+    const s = iso(x, y + 1, z);
+    const w = iso(x - 1, y, z);
+    // tile centered on (x,y)
+    const p = iso(x, y, z);
+    return [
+      { x: p.x, y: p.y - TH / 2 },
+      { x: p.x + TW / 2, y: p.y },
+      { x: p.x, y: p.y + TH / 2 },
+      { x: p.x - TW / 2, y: p.y }
+    ];
+  }
+
+  function tilePoints(gx, gy) {
+    const p = iso(gx, gy);
+    return [
+      [p.x, p.y - TH / 2],
+      [p.x + TW / 2, p.y],
+      [p.x, p.y + TH / 2],
+      [p.x - TW / 2, p.y]
+    ].map(([x, y]) => `${x},${y}`).join(" ");
+  }
+
+  const palette = {
+    entry: { left: "#2a4054", right: "#1d2e3e", roof: "#4a6d8c" },
+    core: { left: "#1f6f62", right: "#154f46", roof: "#3ecfb2" },
+    query: { left: "#3d6f88", right: "#2a4e61", roof: "#7eb8d4" },
+    action: { left: "#8a5a22", right: "#5e3d16", roof: "#e8a54b" },
+    store: { left: "#3d6246", right: "#2a4331", roof: "#6fa87a" },
+    api: { left: "#8a3d35", right: "#5e2924", roof: "#e06b5c" },
+    ext: { left: "#3a4554", right: "#2a323d", roof: "#6d7f96" }
+  };
+
+  const buildings = [
+    // External shore
+    { id: "ext-git", name: "git repos", sub: "worktrees · branches", role: "ext", x: 1, y: 8, h: 42, shape: "warehouse",
+      blurb: "Repositories under the scan root. Queried read-only by gitquery; mutated only through actions (worktree create/remove, fetch, pull).",
+      cites: ["scanner/scanner.go", "gitquery/gitquery.go", "actions/actions.go", "docs/architecture.md"] },
+    { id: "ext-bd", name: "bd (Beads)", sub: "issue tracker CLI", role: "ext", x: 2, y: 10, h: 48, shape: "tower",
+      blurb: "External Beads CLI. beadsquery is strictly read-only; beadsmutate is the sole write adapter (claim).",
+      cites: ["beadsquery/beadsquery.go", "beadsmutate/beadsmutate.go", "docs/beads-view-spec.md"] },
+    { id: "ext-agents", name: "Claude / Codex", sub: "coding agents", role: "ext", x: 0, y: 6, h: 56, shape: "spire",
+      blurb: "Provider CLIs launched with Approach hook metadata and a pinned APPROACH_EXECUTABLE. Session hooks ingest transcripts back into sessions/.",
+      cites: ["actions/actions.go", "docs/agent-sessions.md", "internal/controlplane/controlplane.go"] },
+    { id: "ext-tmux", name: "tmux", sub: "external handoff", role: "ext", x: 3, y: 11, h: 36, shape: "block",
+      blurb: "Alternate launch backend. Flow lifecycle routes phase launch/resume here when [launch].backend=tmux; probes live windows for reset/resume/repair/release.",
+      cites: ["actions/tmux_mode.go", "model/tmux_mode.go", "docs/architecture.md"] },
+
+    // Entry
+    { id: "cmd", name: "cmd/approach", sub: "entrypoint tower", role: "entry", x: 4, y: 6, h: 88, shape: "spire",
+      blurb: "Process entry: TUI boot, session-hook, plan/flow CLIs, and serve. Subcommands resolve the artifact root without starting the TUI; serve scans per request.",
+      cites: ["cmd/approach/main.go", "cmd/approach/flow.go", "cmd/approach/plan.go", "cmd/approach/serve.go"] },
+    { id: "config", name: "config", sub: "TOML registry", role: "entry", x: 5, y: 5, h: 34, shape: "block",
+      blurb: "Optional config.toml. Missing is non-fatal; bad known keys are startup-fatal. Feeds scan root, terminals, launch backend, flow prompts.",
+      cites: ["config/config.go", "docs/config.md"] },
+    { id: "scanner", name: "scanner", sub: "repo radar", role: "entry", x: 5, y: 7, h: 46, shape: "radar",
+      blurb: "Discovers repos under WORKTREE_ROOT / [scan].root / ~/dev (default depth 2), excluding *-worktrees.",
+      cites: ["scanner/scanner.go", "docs/architecture.md"] },
+
+    // Core
+    { id: "model", name: "model", sub: "ops HQ · Bubble Tea", role: "core", x: 7, y: 6, h: 110, shape: "skyscraper",
+      blurb: "Owns pane focus, keys, Flow launch lifecycle (requestFlowLaunch / handleFlowLaunchEvent), AutoMode, repair, and embedded-terminal dock selection. Single Flow launch attempt per Flow ID.",
+      cites: ["model/model.go", "model/flow_launch_lifecycle.go", "model/flow_launch_intent.go", "model/flow_launch_create.go", "docs/architecture.md"] },
+    { id: "ui", name: "ui", sub: "Lip Gloss facade", role: "core", x: 8, y: 5, h: 52, shape: "screen",
+      blurb: "Stateless rendering from RenderParams. Stacked panes, Active Flows takeover, terminal dock between content and status bar.",
+      cites: ["ui/ui.go", "ui/theme.go", "docs/tui-guide.md"] },
+    { id: "agent", name: "agent", sub: "provider policy", role: "core", x: 8, y: 7, h: 40, shape: "block",
+      blurb: "Normalizes provider command names and resolves per-provider model/reasoning preferences for a launch.",
+      cites: ["agent/agent.go", "agent/settings.go"] },
+
+    // Query lane
+    { id: "gitquery", name: "gitquery", sub: "read-only git", role: "query", x: 6, y: 8, h: 44, shape: "library",
+      blurb: "Pure parse + Runner seam. Model fetches worktrees/branches/stashes/history without mutating repos.",
+      cites: ["gitquery/gitquery.go", "gitquery/parse.go", "gitquery/runner.go"] },
+    { id: "beadsquery", name: "beadsquery", sub: "read-only Beads", role: "query", x: 6, y: 9, h: 48, shape: "observatory",
+      blurb: "Ready via bd ready; status lists via bd list; Closed bounded + stats total. ErrNotConfigured only for missing/no-project diagnostics.",
+      cites: ["beadsquery/beadsquery.go", "beadsquery/parse.go", "docs/beads-view-spec.md"] },
+    { id: "beadsmutate", name: "beadsmutate", sub: "claim-only write", role: "query", x: 5, y: 10, h: 32, shape: "booth",
+      blurb: "Sole Beads write path: bd update --claim. Used by epic auto-progression preparation, not ordinary Ready browsing.",
+      cites: ["beadsmutate/beadsmutate.go", "docs/adr/0001-beads-epic-auto-progression.md"] },
+
+    // Action yard
+    { id: "actions", name: "actions", sub: "mutation factory", role: "action", x: 9, y: 6, h: 58, shape: "factory",
+      blurb: "Git mutations, editor/clipboard, agent command construction, tmux transport. Destructive deletes stay gated by model destructive mode.",
+      cites: ["actions/actions.go", "actions/tmux_mode.go", "actions/actions.go"] },
+    { id: "embeddedterm", name: "embeddedterm", sub: "PTY plant", role: "action", x: 10, y: 5, h: 64, shape: "stacks",
+      blurb: "Runtime-only PTY for embedded agents. Not persisted across TUI quit. Optional OutputTransform for stream-json.",
+      cites: ["embeddedterm/terminal.go", "docs/architecture.md"] },
+    { id: "claudestream", name: "claudestream", sub: "JSONL relay", role: "action", x: 10, y: 7, h: 38, shape: "relay",
+      blurb: "Turns claude stream-json events into readable terminal lines for the embedded emulator.",
+      cites: ["claudestream/renderer.go"] },
+
+    // State vault
+    { id: "flowstore", name: "flowstore", sub: "SQLite vault · v6", role: "store", x: 8, y: 9, h: 72, shape: "vault",
+      blurb: "Authoritative Flows + epic_progressions in approach.db. WAL, BEGIN IMMEDIATE writers, receipt/nonce fencing. Phase transition table in transitions.go.",
+      cites: ["flowstore/store.go", "flowstore/transitions.go", "flowstore/sqlite_bootstrap.go", "docs/flow-phases.md"] },
+    { id: "planstore", name: "planstore", sub: "plans warehouse", role: "store", x: 9, y: 10, h: 46, shape: "warehouse",
+      blurb: "File-backed plans at <root>/plans/<id>/ (meta.json + plan.md). Flow completion can sync matching plan phases.",
+      cites: ["planstore/store.go", "docs/architecture.md"] },
+    { id: "sessions", name: "sessions", sub: "transcript stacks", role: "store", x: 7, y: 10, h: 50, shape: "stacks",
+      blurb: "Session metadata + normalized transcripts under the artifact root. Ingests provider hook payloads; never stored inside repositories.",
+      cites: ["sessions/store.go", "sessions/ingest.go", "docs/agent-sessions.md"] },
+    { id: "artifacts", name: "internal/artifacts", sub: "root mechanics", role: "store", x: 7, y: 8, h: 28, shape: "slab",
+      blurb: "Absolute root checks, 0700/0600 atomic writes, safe IDs, phase-ID normalization, default vs release-dev root isolation.",
+      cites: ["internal/artifacts/artifacts.go"] },
+    { id: "controlplane", name: "internal/controlplane", sub: "binary pin foundry", role: "store", x: 9, y: 8, h: 54, shape: "foundry",
+      blurb: "Copies the running binary into <state-root>/bin/approach-<digest>, exports APPROACH_EXECUTABLE, retains pins for live launches. Agents never resolve approach from ambient PATH.",
+      cites: ["internal/controlplane/controlplane.go", "model/flow_launch_pin.go", "docs/architecture.md"] },
+
+    // API district
+    { id: "graphqlapi", name: "graphqlapi", sub: "read-only broadcast", role: "api", x: 12, y: 6, h: 70, shape: "broadcast",
+      blurb: "Per-request snapshot (scan + flow list), schema, depth/cost limits, HTTP hardening. No Mutation/Subscription; no transcripts.",
+      cites: ["graphqlapi/source.go", "graphqlapi/schema.go", "graphqlapi/server.go", "graphqlapi/limits.go", "docs/graphql-api.md"] },
+    { id: "web", name: "web/", sub: "Next.js viewer", role: "api", x: 13, y: 5, h: 48, shape: "glass",
+      blurb: "Separate deployable. Server-side GraphQL only; documents validated against the Go schema in graphqlapi/web_documents_test.go.",
+      cites: ["web/src/lib/approach-api.ts", "web/src/app/page.tsx", "web/README.md", "graphqlapi/web_documents_test.go"] }
+  ];
+
+  const paths = [
+    {
+      id: "boot",
+      label: "TUI boot",
+      kind: "control",
+      nodes: ["cmd", "config", "scanner", "model", "ui"],
+      title: "TUI process boot",
+      blurb: "main loads config, scans repos, opens one flowstore.Store, materializes the controlplane pin, then starts Bubble Tea. UI paints from model RenderParams.",
+      payload: "config.Config\n[]scanner.Repo\nmodel.Options{FlowStore, SessionStore, PlanStore, ScanRepos}\nui.RenderParams",
+      cites: ["cmd/approach/main.go", "config/config.go", "scanner/scanner.go", "model/model.go", "ui/ui.go", "internal/controlplane/controlplane.go"]
+    },
+    {
+      id: "git-read",
+      label: "Git pane read",
+      kind: "data",
+      nodes: ["model", "gitquery", "ext-git", "gitquery", "model", "ui"],
+      title: "Git query round-trip",
+      blurb: "Focused Git subviews ask gitquery for read-only facts. Results refresh the pane; ui renders without calling git itself.",
+      payload: "worktrees · branches · stashes · history · reflog\n(parse.go pure; runner.go process seam)",
+      cites: ["model/git_group.go", "model/mode_fetch.go", "gitquery/gitquery.go", "gitquery/parse.go", "ui/ui.go"]
+    },
+    {
+      id: "beads-read",
+      label: "Beads pane read",
+      kind: "data",
+      nodes: ["model", "beadsquery", "ext-bd", "beadsquery", "model", "ui"],
+      title: "Beads query round-trip",
+      blurb: "Ready/Blocked/Open/In-Progress/Closed are independent async queries. Ordinary browsing never writes Beads.",
+      payload: "bd ready | bd list -s … --readonly\nbd stats --json (Closed total)\nbd show <id> --readonly",
+      cites: ["beadsquery/beadsquery.go", "docs/beads-view-spec.md", "ui/beads_test.go"]
+    },
+    {
+      id: "flow-launch",
+      label: "Flow launch",
+      kind: "control",
+      nodes: ["model", "controlplane", "flowstore", "actions", "embeddedterm", "ext-agents"],
+      title: "Flow launch lifecycle",
+      blurb: "All Flow-associated starts cross requestFlowLaunch. Lifecycle admits, reserves, persists, then hands off to embedded PTY or tmux. Pin is verified before reservation.",
+      payload: "flow_launch_intent → reservation token\nFlowRecord phase write + launch_id\nAgentCommand + APPROACH_* env\nAPPROACH_EXECUTABLE pin",
+      cites: ["model/flow_launch_lifecycle.go", "model/flow_launch_intent.go", "model/flow_launch_pin.go", "flowstore/store.go", "actions/actions.go", "embeddedterm/terminal.go"]
+    },
+    {
+      id: "tmux-route",
+      label: "tmux handoff",
+      kind: "control",
+      nodes: ["model", "actions", "ext-tmux", "ext-agents"],
+      title: "tmux launch route",
+      blurb: "When backend=tmux, preparation sets Embedded=false so InitialPrompt rides argv. Detached handoff; hook-owned completion; live-window probes on reset/resume/repair/release.",
+      payload: "RepoTmuxAgentLaunch\nwindow name embeds launch IDs\nTerminalLaunchSpec.ErrorDetail → needs_attention",
+      cites: ["actions/tmux_mode.go", "model/tmux_mode.go", "docs/architecture.md"]
+    },
+    {
+      id: "session-hook",
+      label: "Session hook ingest",
+      kind: "data",
+      nodes: ["ext-agents", "cmd", "sessions", "flowstore"],
+      title: "Provider hook → session store",
+      blurb: "session-hook ingests Claude/Codex payloads into sessions/, then may attach to Flow phase mirrors. Hook is keep-alive for pin claims; it never releases APPROACH_EXECUTABLE.",
+      payload: "hook JSON (session id, status, transcript path)\nsessions.Store record\nflowstore phase session mirror",
+      cites: ["cmd/approach/main.go", "sessions/ingest.go", "sessions/store.go", "docs/agent-sessions.md", "internal/controlplane/controlplane.go"]
+    },
+    {
+      id: "flow-write",
+      label: "Flow / plan write",
+      kind: "mutation",
+      nodes: ["model", "flowstore", "planstore", "artifacts"],
+      title: "Durable Flow & plan mutations",
+      blurb: "CLI and TUI write Flows through flowstore (SQLite). Linked-plan completion syncs planstore phases. artifacts owns atomic file mechanics for plans/sessions.",
+      payload: "approach.db flows + epic_progressions\nplans/<id>/{meta.json,plan.md}\nphase status transitions (transitions.go)",
+      cites: ["flowstore/store.go", "flowstore/transitions.go", "planstore/store.go", "internal/artifacts/artifacts.go", "cmd/approach/flow.go"]
+    },
+    {
+      id: "beads-claim",
+      label: "Beads claim",
+      kind: "mutation",
+      nodes: ["model", "beadsmutate", "ext-bd"],
+      title: "Epic progression claim",
+      blurb: "Only beadsmutate may write Beads. Epic auto-progression claims a Ready child before preparing its Flow; manual Ready Flow creation does not claim.",
+      payload: "bd update --claim -- <id>\nBEADS_ACTOR retained; ambient DB selectors stripped",
+      cites: ["beadsmutate/beadsmutate.go", "docs/adr/0001-beads-epic-auto-progression.md", "model/flow_start.go"]
+    },
+    {
+      id: "serve",
+      label: "GraphQL serve",
+      kind: "data",
+      nodes: ["cmd", "graphqlapi", "scanner", "flowstore", "web"],
+      title: "Read-only GraphQL + web viewer",
+      blurb: "approach serve builds one snapshot per request. web/ calls the API server-side only. Schema documents in web are checked by Go tests.",
+      payload: "POST /graphql { query, variables }\nsnapshot{repos, flows, epicProgressions}\nno transcripts · no mutations",
+      cites: ["cmd/approach/serve.go", "graphqlapi/source.go", "graphqlapi/server.go", "web/src/lib/approach-api.ts", "graphqlapi/web_documents_test.go", "docs/graphql-api.md"]
+    },
+    {
+      id: "stream",
+      label: "Claude stream",
+      kind: "data",
+      nodes: ["ext-agents", "claudestream", "embeddedterm", "model", "ui"],
+      title: "stream-json → dock",
+      blurb: "Headless/print Claude output is transformed before the PTY emulator so the dock shows readable blocks instead of raw JSONL.",
+      payload: "stream_event deltas → thinking/tool/text lines\naggregated assistant events suppressed when deltas exist",
+      cites: ["claudestream/renderer.go", "embeddedterm/terminal.go", "ui/ui.go"]
+    }
+  ];
+
+  // --- render grid ---
+  const grid = document.getElementById("grid");
+  for (let x = 0; x <= 14; x++) {
+    for (let y = 4; y <= 12; y++) {
+      const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+      poly.setAttribute("points", tilePoints(x, y));
+      poly.setAttribute("class", "grid-cell");
+      grid.appendChild(poly);
+    }
+  }
+
+  // district labels
+  const districts = [
+    { text: "EXTERNAL SHORE", x: 1.2, y: 7.2 },
+    { text: "ENTRY", x: 4.5, y: 5.2 },
+    { text: "CORE OPS", x: 7.5, y: 4.6 },
+    { text: "QUERY LANE", x: 5.8, y: 9.6 },
+    { text: "ACTION YARD", x: 10.2, y: 4.8 },
+    { text: "STATE VAULT", x: 8.2, y: 10.6 },
+    { text: "API DISTRICT", x: 12.5, y: 4.5 }
+  ];
+  const dg = document.getElementById("districts");
+  districts.forEach(d => {
+    const p = iso(d.x, d.y, 8);
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", p.x);
+    t.setAttribute("y", p.y);
+    t.setAttribute("class", "district-label");
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = d.text;
+    dg.appendChild(t);
+  });
+
+  function buildingGeometry(b) {
+    const base = iso(b.x, b.y, 0);
+    const top = iso(b.x, yLift(b), b.h);
+    // footprint diamond at ground
+    const footprint = {
+      top: iso(b.x, b.y, 0),
+    };
+    const cx = base.x;
+    const cy = base.y;
+    const hw = TW * 0.42;
+    const hh = TH * 0.42;
+    // Adjust size by shape
+    let sx = 1, sy = 1;
+    if (b.shape === "skyscraper" || b.shape === "spire" || b.shape === "broadcast") { sx = 0.85; sy = 0.85; }
+    if (b.shape === "screen" || b.shape === "warehouse" || b.shape === "factory") { sx = 1.15; sy = 0.95; }
+    if (b.shape === "slab") { sx = 1.2; sy = 1.1; }
+    if (b.shape === "glass") { sx = 1.05; sy = 1.05; }
+
+    const left = [
+      [cx, cy],
+      [cx - hw * sx, cy + hh * sy],
+      [cx - hw * sx, cy + hh * sy - b.h],
+      [cx, cy - b.h]
+    ];
+    const right = [
+      [cx, cy],
+      [cx + hw * sx, cy + hh * sy],
+      [cx + hw * sx, cy + hh * sy - b.h],
+      [cx, cy - b.h]
+    ];
+    const roof = [
+      [cx, cy - b.h],
+      [cx + hw * sx, cy + hh * sy - b.h],
+      [cx, cy + 2 * hh * sy - b.h],
+      [cx - hw * sx, cy + hh * sy - b.h]
+    ];
+    return { left, right, roof, anchor: { x: cx, y: cy - b.h - 10 }, tip: { x: cx, y: cy - b.h / 2 } };
+  }
+
+  function yLift() { return 0; }
+
+  function pts(arr) { return arr.map(p => `${p[0]},${p[1]}`).join(" "); }
+
+  const bldgById = Object.fromEntries(buildings.map(b => [b.id, b]));
+  const bldgEl = {};
+  const buildingsG = document.getElementById("buildings");
+  const labelsG = document.getElementById("labels");
+
+  // paint back-to-front
+  const sorted = [...buildings].sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x);
+  sorted.forEach(b => {
+    const pal = palette[b.role];
+    const g = buildingGeometry(b);
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "bldg");
+    group.setAttribute("data-id", b.id);
+    group.setAttribute("tabindex", "0");
+    group.setAttribute("role", "button");
+    group.setAttribute("aria-label", b.name);
+
+    const left = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    left.setAttribute("points", pts(g.left));
+    left.setAttribute("class", "left");
+    left.setAttribute("fill", pal.left);
+    left.setAttribute("stroke", "rgba(0,0,0,0.25)");
+    left.setAttribute("stroke-width", "1");
+
+    const right = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    right.setAttribute("points", pts(g.right));
+    right.setAttribute("class", "right");
+    right.setAttribute("fill", pal.right);
+    right.setAttribute("stroke", "rgba(0,0,0,0.25)");
+    right.setAttribute("stroke-width", "1");
+
+    const roof = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    roof.setAttribute("points", pts(g.roof));
+    roof.setAttribute("class", "roof");
+    roof.setAttribute("fill", pal.roof);
+    roof.setAttribute("stroke", "rgba(255,255,255,0.12)");
+    roof.setAttribute("stroke-width", "1");
+
+    group.appendChild(left);
+    group.appendChild(right);
+    group.appendChild(roof);
+
+    // shape ornaments
+    if (b.shape === "spire" || b.shape === "broadcast") {
+      const mast = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      mast.setAttribute("x1", g.anchor.x);
+      mast.setAttribute("y1", g.anchor.y + 8);
+      mast.setAttribute("x2", g.anchor.x);
+      mast.setAttribute("y2", g.anchor.y - 18);
+      mast.setAttribute("stroke", pal.roof);
+      mast.setAttribute("stroke-width", "2");
+      group.appendChild(mast);
+      const tip = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      tip.setAttribute("cx", g.anchor.x);
+      tip.setAttribute("cy", g.anchor.y - 18);
+      tip.setAttribute("r", 3);
+      tip.setAttribute("fill", "#e8eef5");
+      group.appendChild(tip);
+    }
+    if (b.shape === "stacks" || b.shape === "factory") {
+      for (let i = 0; i < 2; i++) {
+        const stack = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        stack.setAttribute("x", g.anchor.x - 10 + i * 12);
+        stack.setAttribute("y", g.anchor.y - 14);
+        stack.setAttribute("width", 5);
+        stack.setAttribute("height", 16);
+        stack.setAttribute("fill", pal.right);
+        group.appendChild(stack);
+      }
+    }
+    if (b.shape === "radar") {
+      const dish = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+      dish.setAttribute("cx", g.anchor.x);
+      dish.setAttribute("cy", g.anchor.y - 4);
+      dish.setAttribute("rx", 14);
+      dish.setAttribute("ry", 6);
+      dish.setAttribute("fill", "none");
+      dish.setAttribute("stroke", pal.roof);
+      dish.setAttribute("stroke-width", "2");
+      group.appendChild(dish);
+    }
+    if (b.shape === "screen") {
+      const screen = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+      const inset = g.right.map((p, i) => {
+        const t = 0.18;
+        const mid = [(g.left[i][0] + g.right[i][0]) / 2, (g.left[i][1] + g.right[i][1]) / 2];
+        return [
+          p[0] * (1 - t) + mid[0] * t,
+          p[1] * (1 - t) + mid[1] * t - (i < 2 ? 0 : 0)
+        ];
+      });
+      // simpler window band on right face
+      const band = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      band.setAttribute("points", `${g.right[0][0]},${g.right[0][1] - b.h * 0.35} ${g.right[1][0]},${g.right[1][1] - b.h * 0.35}`);
+      band.setAttribute("stroke", "rgba(232,238,245,0.35)");
+      band.setAttribute("stroke-width", "3");
+      group.appendChild(band);
+    }
+    if (b.shape === "vault") {
+      const door = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      door.setAttribute("cx", (g.left[0][0] + g.left[1][0]) / 2);
+      door.setAttribute("cy", (g.left[0][1] + g.left[1][1]) / 2 - b.h * 0.25);
+      door.setAttribute("r", 5);
+      door.setAttribute("fill", "rgba(12,18,25,0.55)");
+      door.setAttribute("stroke", pal.roof);
+      group.appendChild(door);
+    }
+
+    buildingsG.appendChild(group);
+    bldgEl[b.id] = group;
+
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", g.anchor.x);
+    label.setAttribute("y", g.anchor.y - (b.shape === "spire" || b.shape === "broadcast" ? 22 : 4));
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("class", "bldg-label");
+    label.textContent = b.name;
+    labelsG.appendChild(label);
+
+    const sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    sub.setAttribute("x", g.anchor.x);
+    sub.setAttribute("y", g.anchor.y - (b.shape === "spire" || b.shape === "broadcast" ? 10 : -8));
+    sub.setAttribute("text-anchor", "middle");
+    sub.setAttribute("class", "bldg-sub");
+    sub.textContent = b.sub;
+    labelsG.appendChild(sub);
+
+    group.addEventListener("click", () => selectBuilding(b.id));
+    group.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectBuilding(b.id); }
+    });
+  });
+
+  function nodePoint(id) {
+    const b = bldgById[id];
+    const g = buildingGeometry(b);
+    return g.tip;
+  }
+
+  function routePath(nodes) {
+    const pts = nodes.map(nodePoint);
+    if (pts.length < 2) return "";
+    // smooth-ish polyline with mid lifts
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2 - 18;
+      d += ` Q ${mx} ${my} ${b.x} ${b.y}`;
+    }
+    return d;
+  }
+
+  const pathsG = document.getElementById("paths");
+  const pathEls = {};
+  paths.forEach(p => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", routePath(p.nodes));
+    path.setAttribute("class", `route ${p.kind}`);
+    path.setAttribute("data-id", p.id);
+    const marker = p.kind === "control" ? "url(#arrow-teal)" : p.kind === "data" ? "url(#arrow-amber)" : "url(#arrow-coral)";
+    path.setAttribute("marker-end", marker);
+    pathsG.appendChild(path);
+    pathEls[p.id] = path;
+  });
+
+  // HUD buttons
+  const hud = document.getElementById("path-hud");
+  paths.forEach(p => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `path-btn ${p.kind}`;
+    btn.dataset.id = p.id;
+    btn.textContent = p.label;
+    btn.addEventListener("click", () => selectPath(p.id));
+    hud.appendChild(btn);
+  });
+
+  const explainer = document.getElementById("explainer");
+  const cites = document.getElementById("cites");
+  let activePath = null;
+  let activeBuilding = null;
+  let animFrame = null;
+  let packetEls = [];
+
+  function setCites(list) {
+    cites.innerHTML = `<h3>Cited files</h3><ul>${list.map(c => `<li>${c}</li>`).join("")}</ul>`;
+  }
+
+  function clearPackets() {
+    const pg = document.getElementById("packets");
+    pg.innerHTML = "";
+    packetEls = [];
+    if (animFrame) cancelAnimationFrame(animFrame);
+    animFrame = null;
+  }
+
+  function highlight(nodes, pathId) {
+    Object.values(bldgEl).forEach(el => {
+      el.classList.remove("active", "dim", "related");
+      el.classList.add("dim");
+    });
+    const set = new Set(nodes);
+    set.forEach(id => {
+      if (bldgEl[id]) {
+        bldgEl[id].classList.remove("dim");
+        bldgEl[id].classList.add("related");
+      }
+    });
+    Object.entries(pathEls).forEach(([id, el]) => {
+      el.classList.toggle("visible", id === pathId);
+    });
+    document.querySelectorAll(".path-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.id === pathId);
+    });
+  }
+
+  function clearHighlight() {
+    Object.values(bldgEl).forEach(el => el.classList.remove("active", "dim", "related"));
+    Object.values(pathEls).forEach(el => el.classList.remove("visible"));
+    document.querySelectorAll(".path-btn").forEach(btn => btn.classList.remove("active"));
+    clearPackets();
+  }
+
+  function animatePackets(pathId) {
+    clearPackets();
+    const p = paths.find(x => x.id === pathId);
+    if (!p) return;
+    const el = pathEls[pathId];
+    const len = el.getTotalLength();
+    const pg = document.getElementById("packets");
+    const colors = { control: "#3ecfb2", data: "#e8a54b", mutation: "#e06b5c" };
+    const count = 3;
+    for (let i = 0; i < count; i++) {
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("r", 4.5);
+      c.setAttribute("fill", colors[p.kind]);
+      c.setAttribute("stroke", "#0c1219");
+      c.setAttribute("stroke-width", "1.5");
+      pg.appendChild(c);
+      packetEls.push({ el: c, offset: i / count });
+    }
+    const start = performance.now();
+    const speed = 0.00012; // fraction per ms
+    function tick(now) {
+      const t = (now - start) * speed;
+      packetEls.forEach(pk => {
+        const u = (t + pk.offset) % 1;
+        const pt = el.getPointAtLength(u * len);
+        pk.el.setAttribute("cx", pt.x);
+        pk.el.setAttribute("cy", pt.y);
+      });
+      animFrame = requestAnimationFrame(tick);
+    }
+    animFrame = requestAnimationFrame(tick);
+  }
+
+  function selectPath(id) {
+    activePath = id;
+    activeBuilding = null;
+    const p = paths.find(x => x.id === id);
+    highlight(p.nodes, id);
+    explainer.innerHTML = `
+      <h3>Selection</h3>
+      <span class="kind path-${p.kind}">${p.kind} path · ${p.label}</span>
+      <h4>${p.title}</h4>
+      <p>${p.blurb}</p>
+      <div class="payload">${p.payload}</div>
+    `;
+    setCites(p.cites);
+    animatePackets(id);
+  }
+
+  function selectBuilding(id) {
+    activeBuilding = id;
+    activePath = null;
+    clearPackets();
+    Object.values(pathEls).forEach(el => el.classList.remove("visible"));
+    document.querySelectorAll(".path-btn").forEach(btn => btn.classList.remove("active"));
+    Object.values(bldgEl).forEach(el => el.classList.remove("active", "dim", "related"));
+    // related via any path
+    const related = new Set([id]);
+    paths.forEach(p => {
+      if (p.nodes.includes(id)) p.nodes.forEach(n => related.add(n));
+    });
+    Object.keys(bldgEl).forEach(bid => {
+      if (!related.has(bid)) bldgEl[bid].classList.add("dim");
+      else bldgEl[bid].classList.add("related");
+    });
+    bldgEl[id].classList.add("active");
+    // show paths that touch this building
+    paths.forEach(p => {
+      if (p.nodes.includes(id)) pathEls[p.id].classList.add("visible");
+    });
+    const b = bldgById[id];
+    const touching = paths.filter(p => p.nodes.includes(id)).map(p => p.label).join(" · ") || "none on current map";
+    explainer.innerHTML = `
+      <h3>Selection</h3>
+      <span class="kind">${b.role} building</span>
+      <h4>${b.name}</h4>
+      <p>${b.blurb}</p>
+      <div class="payload">shape: ${b.shape}
+grid: (${b.x}, ${b.y})
+paths: ${touching}</div>
+    `;
+    setCites(b.cites);
+  }
+
+  // pan / zoom
+  const stage = document.getElementById("stage");
+  const canvas = document.getElementById("canvas");
+  let scale = 0.92;
+  let tx = 0, ty = 20;
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+
+  function applyTransform() {
+    canvas.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(${scale})`;
+  }
+  applyTransform();
+
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".bldg")) return;
+    dragging = true;
+    stage.classList.add("dragging");
+    lastX = e.clientX; lastY = e.clientY;
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    tx += e.clientX - lastX;
+    ty += e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    applyTransform();
+  });
+  stage.addEventListener("pointerup", () => { dragging = false; stage.classList.remove("dragging"); });
+  stage.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.94 : 1.06;
+    scale = Math.min(1.6, Math.max(0.55, scale * delta));
+    applyTransform();
+  }, { passive: false });
+
+  document.getElementById("zoom-in").onclick = () => { scale = Math.min(1.6, scale * 1.1); applyTransform(); };
+  document.getElementById("zoom-out").onclick = () => { scale = Math.max(0.55, scale / 1.1); applyTransform(); };
+  document.getElementById("zoom-reset").onclick = () => { scale = 0.92; tx = 0; ty = 20; applyTransform(); };
+
+  // commit chip — filled at serve time if possible
+  document.getElementById("commit-chip").textContent = "main";
+
+  // default selection: Flow launch — the load-bearing path
+  selectPath("flow-launch");
+
+  // subtle entrance: fade paths then settle
+  requestAnimationFrame(() => {
+    document.querySelectorAll(".bldg").forEach((el, i) => {
+      el.style.opacity = "0";
+      el.style.transform = "translateY(12px)";
+      el.style.transition = `opacity 420ms ease ${i * 18}ms, transform 420ms ease ${i * 18}ms`;
+      requestAnimationFrame(() => {
+        el.style.opacity = "";
+        el.style.transform = "";
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
