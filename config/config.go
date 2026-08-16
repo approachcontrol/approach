@@ -79,6 +79,7 @@ type AgentConfig struct {
 	PlanPrompt            string `toml:"plan_prompt"`
 	CodexModel            string `toml:"codex_model"`
 	ClaudeModel           string `toml:"claude_model"`
+	CursorModel           string `toml:"cursor_model"`
 	CodexReasoningEffort  string `toml:"codex_reasoning_effort"`
 	ClaudeReasoningEffort string `toml:"claude_reasoning_effort"`
 }
@@ -228,6 +229,12 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 	if cfg.Agent.ClaudeModel != "" {
 		cfg.Agent.ClaudeModel = agent.NormalizeModel(cfg.Agent.ClaudeModel)
 		if err := agent.ValidateModel(agent.CommandClaude, cfg.Agent.ClaudeModel); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+	if cfg.Agent.CursorModel != "" {
+		cfg.Agent.CursorModel = agent.NormalizeModel(cfg.Agent.CursorModel)
+		if err := agent.ValidateModel(agent.CommandCursor, cfg.Agent.CursorModel); err != nil {
 			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}
 	}
@@ -418,11 +425,11 @@ func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
 // model is saved as "default".
 func SaveAgentModel(command, model string, options ...Option) error {
 	command = agent.Normalize(command)
-	if command != agent.CommandCodex && command != agent.CommandClaude {
+	if !agent.Supported(command) {
 		if err := agent.Validate(command); err != nil {
 			return err
 		}
-		return fmt.Errorf("model is configurable only for codex or claude")
+		return fmt.Errorf("model is configurable only for supported agents")
 	}
 	model = agent.NormalizeModel(model)
 	if model == "" {
@@ -525,8 +532,11 @@ func saveAgentReasoningEffortTo(path, command, effort string, options ...Option)
 
 func saveAgentModelTo(path, command, model string, options ...Option) error {
 	key := "codex_model"
-	if command == agent.CommandClaude {
+	switch command {
+	case agent.CommandClaude:
 		key = "claude_model"
+	case agent.CommandCursor:
+		key = "cursor_model"
 	}
 	return saveAgentConfigTo(path, options, func(data []byte) []byte {
 		return patchAgentModel(data, key, model)

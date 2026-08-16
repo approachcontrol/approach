@@ -1661,7 +1661,7 @@ func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
 		"Choose interactive helper",
 		agentSelectItems(),
 		selectedAgentIndex(m.agentCommand),
-		modal.Layout{Width: 32, Height: 6, Placement: modal.PlacementCenter},
+		modal.Layout{Width: 36, Height: 7, Placement: modal.PlacementCenter},
 		func(value string) tea.Cmd { return m.setAgent(agent.Normalize(value)) },
 	)
 	return m, nil
@@ -1671,16 +1671,18 @@ func agentSelectItems() []modal.SelectItem {
 	return []modal.SelectItem{
 		{Label: agent.CommandCodex, Value: agent.CommandCodex},
 		{Label: agent.CommandClaude, Value: agent.CommandClaude},
+		{Label: agent.CommandCursor, Value: agent.CommandCursor},
 	}
 }
 
 func selectedAgentIndex(command string) int {
-	switch agent.Normalize(command) {
-	case agent.CommandClaude:
-		return 1
-	default:
-		return 0
+	command = agent.Normalize(command)
+	for i, item := range agentSelectItems() {
+		if item.Value == command {
+			return i
+		}
 	}
+	return 0
 }
 
 const inheritFlowPhaseAgentSetting = "__inherit_global__"
@@ -1762,6 +1764,9 @@ func (m Model) handleSetFlowPhaseReasoningEffort() (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m.setStatus(statusOther, err.Error()), nil
 	}
+	if len(agent.ReasoningEffortChoices(effective.Command)) <= 1 {
+		return m.setStatus(statusOther, effective.Command+" does not support reasoning effort"), nil
+	}
 	items := append([]modal.SelectItem{{Label: "inherit global", Value: inheritFlowPhaseAgentSetting}}, reasoningEffortSelectItems(effective.Command)...)
 	selected := 0
 	if raw := agent.NormalizeReasoningEffort(phase.ReasoningEffort); raw != "" {
@@ -1816,6 +1821,10 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 	}
 	if err := agent.Validate(command); err != nil {
 		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	if len(agent.ReasoningEffortChoices(command)) <= 1 {
+		m = m.setStatus(statusOther, command+" does not support reasoning effort")
 		return m, nil
 	}
 	items := reasoningEffortSelectItems(command)

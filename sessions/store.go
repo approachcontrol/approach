@@ -32,6 +32,7 @@ type Provider string
 const (
 	ProviderClaude Provider = "claude"
 	ProviderCodex  Provider = "codex"
+	ProviderCursor Provider = "cursor-agent"
 )
 
 type Store struct {
@@ -170,7 +171,7 @@ func (s *Store) upsert(record SessionRecord) (SessionRecord, error) {
 	if err := s.writeMetadata(record); err != nil {
 		return SessionRecord{}, err
 	}
-	if hasIncomingTranscript {
+	if hasIncomingTranscript && record.Provider != ProviderCursor {
 		if err := s.writeTranscriptFiles(record, transcript); err != nil {
 			return SessionRecord{}, err
 		}
@@ -470,7 +471,7 @@ func validateRecordKey(provider Provider, sessionID string) error {
 
 func validProvider(provider Provider) bool {
 	switch provider {
-	case ProviderClaude, ProviderCodex:
+	case ProviderClaude, ProviderCodex, ProviderCursor:
 		return true
 	default:
 		return false
@@ -483,6 +484,8 @@ func providerPathPart(provider Provider) string {
 		return string(ProviderClaude)
 	case ProviderCodex:
 		return string(ProviderCodex)
+	case ProviderCursor:
+		return string(ProviderCursor)
 	default:
 		return "_invalid"
 	}

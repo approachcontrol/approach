@@ -69,7 +69,7 @@ const FlowBaseRefInputPlaceholder = "optional base ref"
 const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
-const AgentInputPlaceholder = "codex or claude"
+const AgentInputPlaceholder = "codex, claude, or cursor-agent"
 const FlowCloseReasonInputPlaceholder = "why this flow is closed"
 
 // FlowCloseAction is what pressing C on the selected Flow will do.

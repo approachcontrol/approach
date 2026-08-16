@@ -5,6 +5,7 @@ type Preferences struct {
 	Command      string
 	CodexModel   string
 	ClaudeModel  string
+	CursorModel  string
 	CodexEffort  string
 	ClaudeEffort string
 }
@@ -35,6 +36,12 @@ func Resolve(prefs Preferences) Settings {
 			Command:         command,
 			Model:           prefs.ClaudeModel,
 			ReasoningEffort: prefs.ClaudeEffort,
+		}
+	case CommandCursor:
+		return Settings{
+			Command:         command,
+			Model:           prefs.CursorModel,
+			ReasoningEffort: ReasoningEffortDefault,
 		}
 	default:
 		return Settings{Command: command}

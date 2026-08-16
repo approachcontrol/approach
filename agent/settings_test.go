@@ -10,6 +10,7 @@ func TestResolvePicksProviderSpecificSettings(t *testing.T) {
 	prefs := agent.Preferences{
 		CodexModel:   agent.ModelGPT55,
 		ClaudeModel:  agent.ModelClaudeOpus5,
+		CursorModel:  agent.ModelComposer,
 		CodexEffort:  agent.ReasoningEffortMedium,
 		ClaudeEffort: agent.ReasoningEffortHigh,
 	}
@@ -34,6 +35,15 @@ func TestResolvePicksProviderSpecificSettings(t *testing.T) {
 				Command:         agent.CommandClaude,
 				Model:           agent.ModelClaudeOpus5,
 				ReasoningEffort: agent.ReasoningEffortHigh,
+			},
+		},
+		{
+			name:    "cursor-agent",
+			command: " Cursor-Agent ",
+			want: agent.Settings{
+				Command:         agent.CommandCursor,
+				Model:           agent.ModelComposer,
+				ReasoningEffort: agent.ReasoningEffortDefault,
 			},
 		},
 		{

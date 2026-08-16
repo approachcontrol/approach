@@ -575,7 +575,7 @@ func TestFlowLaunchRejectsRetiredAgentWithoutPersistingAttempt(t *testing.T) {
 				m = h.autoDrain(m, record)
 			} else {
 				m = h.launch(m)
-				if got, want := m.status.Text, `unsupported agent "codex-app"; choose codex or claude`; got != want {
+				if got, want := m.status.Text, `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`; got != want {
 					t.Fatalf("status = %q, want %q", got, want)
 				}
 			}

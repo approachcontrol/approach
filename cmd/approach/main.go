@@ -176,7 +176,7 @@ Commands:
   plan          Save, list, read, and update saved plans.
   flow          Create, inspect, and update Flow records.
   serve         Serve the read-only GraphQL API over HTTP.
-  session-hook  Capture Claude or Codex session hook payloads.
+  session-hook  Capture Claude, Codex, or Cursor session hook payloads.
 
 Flags:
   --version, -v  Print version and exit.
@@ -311,7 +311,7 @@ func runSessionHook(args []string, deps runDeps) error {
 	}
 	provider := sessions.Provider(*providerFlag)
 	switch provider {
-	case sessions.ProviderClaude, sessions.ProviderCodex:
+	case sessions.ProviderClaude, sessions.ProviderCodex, sessions.ProviderCursor:
 	default:
 		return fmt.Errorf("unsupported session provider %q", *providerFlag)
 	}
@@ -334,6 +334,7 @@ func runSessionHook(args []string, deps runDeps) error {
 			"HOME":                        deps.getenv("HOME"),
 			"CODEX_HOME":                  deps.getenv("CODEX_HOME"),
 			"CLAUDE_CONFIG_DIR":           deps.getenv("CLAUDE_CONFIG_DIR"),
+			"CURSOR_TRANSCRIPT_PATH":      deps.getenv("CURSOR_TRANSCRIPT_PATH"),
 			"APPROACH_LAUNCH_ID":          deps.getenv("APPROACH_LAUNCH_ID"),
 			"APPROACH_REPO_PATH":          deps.getenv("APPROACH_REPO_PATH"),
 			"APPROACH_WORKTREE_PATH":      deps.getenv("APPROACH_WORKTREE_PATH"),
@@ -453,6 +454,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		AgentCommand:          cfg.Agent.Command,
 		CodexModel:            cfg.Agent.CodexModel,
 		ClaudeModel:           cfg.Agent.ClaudeModel,
+		CursorModel:           cfg.Agent.CursorModel,
 		CodexReasoningEffort:  cfg.Agent.CodexReasoningEffort,
 		ClaudeReasoningEffort: cfg.Agent.ClaudeReasoningEffort,
 		PlanPromptTemplate:    cfg.Agent.PlanPrompt,

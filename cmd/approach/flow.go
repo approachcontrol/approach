@@ -205,6 +205,7 @@ func configuredAgentSettings(cfg config.Config) agent.Settings {
 		Command:      cfg.Agent.Command,
 		CodexModel:   cfg.Agent.CodexModel,
 		ClaudeModel:  cfg.Agent.ClaudeModel,
+		CursorModel:  cfg.Agent.CursorModel,
 		CodexEffort:  cfg.Agent.CodexReasoningEffort,
 		ClaudeEffort: cfg.Agent.ClaudeReasoningEffort,
 	})

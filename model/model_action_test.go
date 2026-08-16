@@ -3278,7 +3278,7 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
-			for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
+			for _, want := range []string{"Choose interactive helper", "codex", "claude", "cursor-agent"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected agent select view to contain %q", want)
 				}
@@ -3286,7 +3286,7 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 			if strings.Contains(view, "codex-app") {
 				t.Fatalf("agent select view contains retired choice:\n%s", view)
 			}
-			assertRenderedSelectPanel(t, view, "Choose interactive helper", 32, 6, 24, 8)
+			assertRenderedSelectPanel(t, view, "Choose interactive helper", 36, 7, 22, 8)
 			if cmd != nil {
 				t.Fatalf("expected nil cmd opening agent select, got %T", cmd)
 			}
@@ -3304,6 +3304,7 @@ func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
 		{name: "invalid", agent: "unsupported", wantSelected: "codex"},
 		{name: "stored legacy", agent: "codex-app", wantSelected: "codex"},
 		{name: "claude", agent: "claude", wantSelected: "claude"},
+		{name: "cursor-agent", agent: "cursor-agent", wantSelected: "cursor-agent"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestModel(testRepos(), model.Options{AgentCommand: tt.agent})
@@ -3438,7 +3439,7 @@ func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	}
 }
 
-func TestModel_AgentSelectUpWrapSavesAndSetsClaude(t *testing.T) {
+func TestModel_AgentSelectUpWrapSavesAndSetsCursor(t *testing.T) {
 	var saved string
 	m := newTestModel(testRepos(), model.Options{
 		SaveAgentCommand: func(command string) error {
@@ -3453,11 +3454,11 @@ func TestModel_AgentSelectUpWrapSavesAndSetsClaude(t *testing.T) {
 		t.Fatal("expected save-agent command")
 	}
 	m, _ = update(m, cmd())
-	if saved != "claude" {
-		t.Fatalf("expected saved claude, got %q", saved)
+	if saved != "cursor-agent" {
+		t.Fatalf("expected saved cursor-agent, got %q", saved)
 	}
-	if m.AgentCommand() != "claude" {
-		t.Fatalf("expected session agent claude, got %q", m.AgentCommand())
+	if m.AgentCommand() != "cursor-agent" {
+		t.Fatalf("expected session agent cursor-agent, got %q", m.AgentCommand())
 	}
 }
 

@@ -28,7 +28,7 @@ func TestNormalizeStoredMapsRetiredCommands(t *testing.T) {
 }
 
 func TestSupportedAgents(t *testing.T) {
-	for _, command := range []string{agent.CommandCodex, agent.CommandClaude} {
+	for _, command := range []string{agent.CommandCodex, agent.CommandClaude, agent.CommandCursor} {
 		t.Run(command, func(t *testing.T) {
 			if !agent.Supported(command) {
 				t.Fatalf("expected %q to be supported", command)
@@ -48,7 +48,7 @@ func TestValidateRejectsCodexApp(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unsupported agent error")
 	}
-	want := `unsupported agent "codex-app"; choose codex or claude`
+	want := `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`
 	if err.Error() != want {
 		t.Fatalf("Validate() error = %q, want %q", err, want)
 	}
@@ -61,6 +61,7 @@ func TestReasoningEffortChoicesAreProviderSpecific(t *testing.T) {
 	}{
 		{agent.CommandCodex, []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
 		{agent.CommandClaude, []string{"default", "low", "medium", "high", "xhigh", "max"}},
+		{agent.CommandCursor, []string{"default"}},
 	}
 
 	for _, tt := range tests {
@@ -89,6 +90,12 @@ func TestValidateReasoningEffortRejectsUnsupportedProviderValues(t *testing.T) {
 	if err := agent.ValidateReasoningEffort(agent.CommandClaude, " DEFAULT "); err != nil {
 		t.Fatalf("expected default claude effort to be accepted, got %v", err)
 	}
+	if err := agent.ValidateReasoningEffort(agent.CommandCursor, "default"); err != nil {
+		t.Fatalf("expected cursor default effort to be accepted, got %v", err)
+	}
+	if err := agent.ValidateReasoningEffort(agent.CommandCursor, "high"); err == nil {
+		t.Fatal("expected cursor high effort to be rejected")
+	}
 }
 
 func TestModelChoicesAreProviderSpecific(t *testing.T) {
@@ -98,6 +105,7 @@ func TestModelChoicesAreProviderSpecific(t *testing.T) {
 	}{
 		{agent.CommandCodex, []string{"default", "gpt-5.5", "gpt-5.6-sol"}},
 		{agent.CommandClaude, []string{"default", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5"}},
+		{agent.CommandCursor, []string{"default", "composer-2.5", "grok-4.6", "opus-5", "fable-5", "gpt-5.6-sol"}},
 	}
 
 	for _, tt := range tests {
@@ -134,5 +142,26 @@ func TestValidateModelRejectsUnsupportedProviderValues(t *testing.T) {
 	}
 	if err := agent.ValidateModel(agent.CommandClaude, " DEFAULT "); err != nil {
 		t.Fatalf("expected default claude model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "composer-2.5"); err != nil {
+		t.Fatalf("expected cursor composer-2.5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "composer"); err == nil {
+		t.Fatal("expected bare composer slug to be rejected in favor of composer-2.5")
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "grok-4.6"); err != nil {
+		t.Fatalf("expected cursor grok-4.6 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "opus-5"); err != nil {
+		t.Fatalf("expected cursor opus-5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "fable-5"); err != nil {
+		t.Fatalf("expected cursor fable-5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "gpt-5.6-sol"); err != nil {
+		t.Fatalf("expected cursor gpt-5.6-sol model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCursor, "claude-sonnet-5"); err == nil {
+		t.Fatal("expected cursor claude-sonnet-5 model to be rejected")
 	}
 }

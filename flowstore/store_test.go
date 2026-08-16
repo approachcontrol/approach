@@ -7351,7 +7351,7 @@ func TestCreateWithOptionsValidatesPhaseAgentSettings(t *testing.T) {
 		{
 			name:     "retired command",
 			settings: flowstore.PhaseAgentSettings{Agent: "codex-app"},
-			wantErr:  `unsupported agent "codex-app"; choose codex or claude`,
+			wantErr:  `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`,
 		},
 		{
 			name:     "unsupported model for command",
@@ -7423,7 +7423,7 @@ func TestCreateWithOptionsRejectsCodexAppAtBothInputBoundaries(t *testing.T) {
 			tc.record.Instructions = "New input must use a supported command."
 			tc.record.RepoPath = filepath.Join(root, "repo")
 			created, err := store.CreateWithOptions(tc.record, tc.options)
-			want := `unsupported agent "codex-app"; choose codex or claude`
+			want := `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("CreateWithOptions() = %#v, %v, want error containing %q", created, err, want)
 			}
@@ -7823,7 +7823,7 @@ func TestPhaseAgentSettingsNormalizeValidateAndIsZero(t *testing.T) {
 			name:     "retired agent is rejected without normalization",
 			settings: flowstore.PhaseAgentSettings{Agent: "codex-app"},
 			want:     flowstore.PhaseAgentSettings{Agent: "codex-app"},
-			wantErr:  `unsupported agent "codex-app"; choose codex or claude`,
+			wantErr:  `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`,
 		},
 		{
 			name:     "default is stored verbatim",

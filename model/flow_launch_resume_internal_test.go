@@ -1080,7 +1080,7 @@ func TestPhaseResumeSnapshotRefusals(t *testing.T) {
 			snapshot: func(record *flowstore.FlowRecord) {
 				record.Phases[0].Sessions[0].Provider = "gemini"
 			},
-			wantErr: `unsupported agent "gemini"; choose codex or claude`,
+			wantErr: `unsupported agent "gemini"; choose codex, claude, or cursor-agent`,
 		},
 		{
 			name: "snapshot has no worktree to resume from",

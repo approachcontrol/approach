@@ -168,6 +168,8 @@ func flowStartAgentPreferences(req FlowStartRequest) agent.Preferences {
 	case agent.CommandClaude:
 		prefs.ClaudeModel = req.Model
 		prefs.ClaudeEffort = req.ReasoningEffort
+	case agent.CommandCursor:
+		prefs.CursorModel = req.Model
 	}
 	return prefs
 }

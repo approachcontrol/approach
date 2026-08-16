@@ -390,7 +390,7 @@ func TestAutofixAdmissionRefusesUnusableAgentCommands(t *testing.T) {
 		status  string
 	}{
 		{command: "", status: flowLaunchNoAgentCommandStatus},
-		{command: "codex-app", status: `unsupported agent "codex-app"; choose codex or claude`},
+		{command: "codex-app", status: `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`},
 	}
 	for _, tc := range cases {
 		t.Run("agent_"+tc.command, func(t *testing.T) {

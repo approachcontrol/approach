@@ -119,6 +119,11 @@ func providerTranscriptRoot(provider Provider, env map[string]string) (string, e
 			return "", fmt.Errorf("resolve Claude transcript root: HOME is unset")
 		}
 		return filepath.Join(home, ".claude", "projects"), nil
+	case ProviderCursor:
+		if home == "" {
+			return "", fmt.Errorf("resolve Cursor transcript root: HOME is unset")
+		}
+		return filepath.Join(home, ".cursor", "chats"), nil
 	default:
 		return "", fmt.Errorf("unsupported session provider %q", provider)
 	}

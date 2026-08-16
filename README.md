@@ -207,7 +207,7 @@ impossible the launch is refused with the reason.
 
 ## Agents, Plans, and Flows
 
-Approach launches Codex and Claude Code in your worktrees, captures their
+Approach launches Codex, Claude Code, and Cursor CLI in your worktrees, captures their
 sessions, and tracks longer tasks as Flows: persisted phase graphs
 (plan → review → implementation → PR → merge) that can auto-advance and run
 agents in embedded terminals. Each Flow persists its own default-on
@@ -227,8 +227,8 @@ Agents persist plans and Flow progress through the `approach plan` and
 `approach flow` CLIs. The canonical agent instructions are the bundled skills
 at `agent-skills/approach-plan-persist/`, `agent-skills/approach-flow/`, and
 `agent-skills/approach-flow-create/` — install or symlink them into your
-agent's user-level skill directory, such as `~/.codex/skills/` for Codex or
-the equivalent Claude skills directory. The bundled installer does this for you:
+agent's user-level skill directory, such as `~/.codex/skills/` for Codex,
+the equivalent Claude skills directory, or Cursor's skills location. The bundled installer does this for you:
 
 ```bash
 ./agent-skills/install.sh            # symlink into every agent skills dir found
@@ -244,11 +244,12 @@ Phase transitions, gating, and merge rules are documented in
 ## Sessions and Hooks
 
 Agents launched from Approach are wired automatically. To capture sessions
-started outside Approach, configure Claude Code or Codex hooks to call:
+started outside Approach, configure Claude Code, Codex, or Cursor CLI hooks to call:
 
 ```bash
 approach session-hook --provider claude
 approach session-hook --provider codex
+approach session-hook --provider cursor-agent
 ```
 
 Transcripts are stored under the user state directory with restrictive

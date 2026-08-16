@@ -1162,14 +1162,14 @@ func TestFlowRepairAdmissionRefusals(t *testing.T) {
 		{
 			name:       "no agent chosen",
 			agent:      " ",
-			wantStatus: "Press A to choose codex or claude before repairing a Flow",
+			wantStatus: "Press A to choose codex, claude, or cursor-agent before repairing a Flow",
 			wantFooter: true,
 			wantReads:  1,
 		},
 		{
 			name:       "unsupported agent",
 			agent:      "not a provider",
-			wantStatus: `Flow repair does not support agent "not a provider"; press A to choose codex or claude`,
+			wantStatus: `Flow repair does not support agent "not a provider"; press A to choose codex, claude, or cursor-agent`,
 			wantFooter: true,
 			wantReads:  1,
 		},
