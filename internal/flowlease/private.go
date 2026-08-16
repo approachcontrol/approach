@@ -305,10 +305,9 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 		_ = terminateProcessGroup(cmd.Process.Pid, waitCh)
 		return fmt.Errorf("publish started tracked Flow agent: %w", err)
 	}
-	if _, err := readHandoffRecord(attempt, recordStarted); err != nil {
-		_ = terminateProcessGroup(cmd.Process.Pid, waitCh)
-		return fmt.Errorf("verify started tracked Flow agent: %w", err)
-	}
+	// publishHandoffRecord verifies the durable payload before its atomic final
+	// link. Once the parent can observe started, no runner read remains for the
+	// parent's successful cleanup to race.
 	return superviseProcessGroup(cmd.Process.Pid, waitCh, signals)
 }
 

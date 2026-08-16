@@ -8,6 +8,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -193,6 +194,80 @@ func TestSavedSessionResumeRejectsDuplicateAndDestinationContention(t *testing.T
 	m, cmd := m.handleFlowLaunchEvent(first().(flowLaunchEventMsg))
 	if cmd != nil || m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
 		t.Fatalf("destination contention stranded ownership: attempts=%#v sessions=%#v", m.flowLaunchAttempts, m.flowLaunchSessionOwners)
+	}
+}
+
+func TestSavedSessionResumeRejectsTrackedFlowLeaseAfterAuthoritativeTransfer(t *testing.T) {
+	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"}
+	fresh := cached
+	fresh.FlowID = "flow-b"
+	inspected := ""
+	m := savedSessionLifecycleModel(Options{
+		SessionStateRoot: "/state",
+		ReadSession:      func(sessions.Provider, string) (sessions.SessionRecord, error) { return fresh, nil },
+		InspectFlowLease: func(root, flowID string) (flowlease.LeaseState, error) {
+			if root != "/state" {
+				t.Fatalf("lease root = %q", root)
+			}
+			inspected = flowID
+			return flowlease.Held, nil
+		},
+	})
+	m.launchSeams.NewLaunchID = func() string { return "resume-token" }
+
+	m, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || inspected != fresh.FlowID || m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("transfer lease refusal: cmd=%v inspected=%q status=%q", cmd != nil, inspected, m.status.Text)
+	}
+	if m.flowLaunchAttemptOccupied(fresh.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("transfer lease refusal retained lifecycle ownership")
+	}
+}
+
+func TestSavedSessionResumeRechecksTrackedFlowLeaseUnderReservation(t *testing.T) {
+	session := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1",
+		WorktreePath: "/repo/worktree",
+	}
+	flow := flowstore.FlowRecord{FlowID: session.FlowID, Status: flowstore.StatusInProgress}
+	inspections := 0
+	released := false
+	started := false
+	m := savedSessionLifecycleModel(Options{
+		SessionStateRoot: "/state",
+		ReadSession:      func(sessions.Provider, string) (sessions.SessionRecord, error) { return session, nil },
+		ReadFlow:         func(string) (flowstore.FlowRecord, error) { return flow, nil },
+		ListSessions:     func(sessions.SessionFilter) ([]sessions.SessionRecord, error) { return nil, nil },
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flow, func() { released = true }, nil
+		},
+		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
+			inspections++
+			// The transfer performs its own broad destination-occupancy fence
+			// after the explicit actionable lease check. Hold only at the later
+			// check protected by ReserveFlowLaunch.
+			if inspections >= 3 {
+				return flowlease.Held, nil
+			}
+			return flowlease.Free, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.launchSeams.NewLaunchID = func() string { return "resume-token" }
+
+	m, cmd := m.routeSavedSessionResume(session, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || inspections != 3 || started || !released || m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("protected lease refusal: cmd=%v inspections=%d started=%v released=%v status=%q", cmd != nil, inspections, started, released, m.status.Text)
+	}
+	if m.flowLaunchAttemptOccupied(flow.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("protected lease refusal retained lifecycle ownership")
 	}
 }
 

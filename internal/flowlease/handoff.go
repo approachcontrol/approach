@@ -109,6 +109,15 @@ func validateHandoffAttempt(attempt handoffAttempt) (string, error) {
 }
 
 func publishHandoffRecord(attempt handoffAttempt, kind, outcome string) error {
+	return publishHandoffRecordWithHook(attempt, kind, outcome, nil)
+}
+
+// publishHandoffRecordWithHook stages and verifies a complete immutable record
+// before linking it at its protocol name. The final hard link is the atomic
+// publication point: a reader sees either ENOENT or the fully written payload,
+// never the O_EXCL-created file while it is still being written. beforePublish
+// exists only to make that boundary deterministic in package tests.
+func publishHandoffRecordWithHook(attempt handoffAttempt, kind, outcome string, beforePublish func()) error {
 	if err := validateExistingHandoff(attempt); err != nil {
 		return err
 	}
@@ -125,32 +134,53 @@ func publishHandoffRecord(attempt handoffAttempt, kind, outcome string) error {
 		return fmt.Errorf("encode Flow launch handoff %s: %w", kind, err)
 	}
 	data = append(data, '\n')
-	path := filepath.Join(attempt.HandoffDir, kind)
-	fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, uint32(artifacts.FilePerm))
-	if errors.Is(err, syscall.EEXIST) {
-		return errRecordExists
-	}
+	file, err := os.CreateTemp(attempt.HandoffDir, ".handoff-"+kind+"-")
 	if err != nil {
-		return fmt.Errorf("create Flow launch handoff %s: %w", kind, err)
+		return fmt.Errorf("create staged Flow launch handoff %s: %w", kind, err)
 	}
-	file := os.NewFile(uintptr(fd), path)
-	remove := true
+	stagedPath := file.Name()
 	defer func() {
 		_ = file.Close()
-		if remove {
-			_ = os.Remove(path)
-		}
+		_ = os.Remove(stagedPath)
 	}()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect staged Flow launch handoff %s: %w", kind, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("staged Flow launch handoff %s must be regular", kind)
+	}
+	if err := requireOwnedPrivate(info, artifacts.FilePerm, "staged Flow launch handoff "+kind); err != nil {
+		return err
+	}
 	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write Flow launch handoff %s: %w", kind, err)
+		return fmt.Errorf("write staged Flow launch handoff %s: %w", kind, err)
 	}
 	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync Flow launch handoff %s: %w", kind, err)
+		return fmt.Errorf("sync staged Flow launch handoff %s: %w", kind, err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind staged Flow launch handoff %s: %w", kind, err)
+	}
+	verified, err := io.ReadAll(io.LimitReader(file, maxRecordBytes+1))
+	if err != nil {
+		return fmt.Errorf("verify staged Flow launch handoff %s: %w", kind, err)
+	}
+	if !bytes.Equal(verified, data) {
+		return fmt.Errorf("verify staged Flow launch handoff %s: readback mismatch", kind)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close Flow launch handoff %s: %w", kind, err)
+		return fmt.Errorf("close staged Flow launch handoff %s: %w", kind, err)
 	}
-	remove = false
+	if beforePublish != nil {
+		beforePublish()
+	}
+	path := filepath.Join(attempt.HandoffDir, kind)
+	if err := os.Link(stagedPath, path); errors.Is(err, os.ErrExist) || errors.Is(err, syscall.EEXIST) {
+		return errRecordExists
+	} else if err != nil {
+		return fmt.Errorf("publish Flow launch handoff %s: %w", kind, err)
+	}
 	return nil
 }
 
@@ -234,6 +264,12 @@ func cleanupHandoff(attempt handoffAttempt) error {
 	}
 	for _, entry := range entries {
 		kind := entry.Name()
+		if strings.HasPrefix(kind, ".handoff-") {
+			if err := os.Remove(filepath.Join(attempt.HandoffDir, kind)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove staged Flow launch handoff %s: %w", kind, err)
+			}
+			continue
+		}
 		if kind != recordReady && kind != recordDecision && kind != recordStarted {
 			return fmt.Errorf("unexpected Flow launch handoff artifact %q", kind)
 		}

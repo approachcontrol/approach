@@ -134,6 +134,13 @@ func (m Model) handleSavedSessionFlowLaunchSessionRead(attempt flowLaunchAttempt
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 		return m.routeNonFlowSavedSessionResume(msg.Session, attempt.Origin)
 	}
+	if occupied, err := m.trackedFlowLeaseOccupied(authoritativeFlowID); err != nil {
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+			setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil
+	} else if occupied {
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+			setStatus(statusOther, flowLeaseOccupiedStatus), nil
+	}
 	next, ok := m.transferSavedSessionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.SessionKey, authoritativeFlowID)
 	if !ok {
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
@@ -225,6 +232,16 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 		event.Release = release
 		if err != nil {
 			event.Err = err.Error()
+			return event
+		}
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
 			return event
 		}
 		if seams.ReadSession == nil {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -57,6 +58,43 @@ func TestHandoffRecordsAreImmutableAndIdentityBound(t *testing.T) {
 	}
 	if _, err := os.Lstat(attempt.HandoffDir); !os.IsNotExist(err) {
 		t.Fatalf("Lstat(cleaned handoff) error = %v, want not exist", err)
+	}
+}
+
+func TestHandoffRecordIsInvisibleUntilVerifiedPublication(t *testing.T) {
+	root := secureTempRoot(t)
+	attempt := handoffAttempt{
+		Root:       root,
+		FlowID:     "flow-1",
+		PhaseID:    "implementation",
+		LaunchID:   "launch-1",
+		Nonce:      "0123456789abcdef",
+		HandoffDir: filepath.Join(root, handoffCollection, "launch-1-deadbeef"),
+	}
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+
+	staged := make(chan struct{})
+	publish := make(chan struct{})
+	errCh := make(chan error, 1)
+	var once sync.Once
+	go func() {
+		errCh <- publishHandoffRecordWithHook(attempt, recordStarted, "", func() {
+			once.Do(func() { close(staged) })
+			<-publish
+		})
+	}()
+	<-staged
+	if _, err := readHandoffRecord(attempt, recordStarted); !isMissingRecord(err) {
+		t.Fatalf("read staged started error = %v, want not published", err)
+	}
+	close(publish)
+	if err := <-errCh; err != nil {
+		t.Fatalf("publish started error = %v", err)
+	}
+	if _, err := readHandoffRecord(attempt, recordStarted); err != nil {
+		t.Fatalf("read published started error = %v", err)
 	}
 }
 
