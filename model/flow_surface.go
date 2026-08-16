@@ -420,6 +420,9 @@ func (m Model) currentTakeover() takeoverMode {
 }
 
 func (m Model) setTakeover(mode takeoverMode) Model {
+	if m.currentTakeover() == takeoverPRBabysitter && mode != takeoverPRBabysitter {
+		m = m.cancelPRBabysitterRefresh()
+	}
 	m.takeover = mode
 	m.activeFlowSurface = mode == takeoverActiveFlows
 	return m

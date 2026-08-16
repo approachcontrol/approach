@@ -297,6 +297,92 @@ func TestPRBabysitterRefreshCapsConcurrencyAndCancelsOnExit(t *testing.T) {
 	}
 }
 
+func TestPRBabysitterForcedExitCancelsInFlightLookups(t *testing.T) {
+	exits := []struct {
+		name  string
+		apply func(Model) Model
+	}{
+		{"worktree created", func(m Model) Model {
+			next, _ := m.handleWorktreeCreated(WorktreeCreatedMsg{
+				RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat",
+			})
+			return next.(Model)
+		}},
+		{"worktree bootstrap failed", func(m Model) Model {
+			next, _ := m.handleWorktreeBootstrapFailed(WorktreeBootstrapFailedMsg{
+				RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Err: "hook failed",
+			})
+			return next.(Model)
+		}},
+		{"branch created", func(m Model) Model {
+			next, _ := m.handleBranchCreated(BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+			return next.(Model)
+		}},
+	}
+	for _, tc := range exits {
+		t.Run(tc.name, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			lookup := func(ctx context.Context, _ int, _ string) (actions.PullRequestStatus, error) {
+				started <- struct{}{}
+				select {
+				case <-ctx.Done():
+					return actions.PullRequestStatus{}, ctx.Err()
+				case <-release:
+					return actions.PullRequestStatus{Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing}, nil
+				}
+			}
+			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)}, nil
+				},
+				LookupPRStatus: lookup,
+			})
+			m = m.setTakeover(takeoverPRBabysitter)
+			m, cmd := m.startPRBabysitterRefresh()
+			done := make(chan struct{})
+			go func() { _ = cmd(); close(done) }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("lookup did not start")
+			}
+			m = tc.apply(m)
+			if m.prBabysitterCancel != nil {
+				t.Fatal("forced exit left prBabysitterCancel set")
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				close(release)
+				t.Fatal("forced exit did not cancel in-flight lookups")
+			}
+		})
+	}
+}
+
+func TestRepoChangeClearsHiddenPRBabysitterCache(t *testing.T) {
+	m := NewWithOptions([]scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/beta", DisplayName: "beta"},
+	}, Options{})
+	record := babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)
+	m.prBabysitterRecords = []flowstore.FlowRecord{record}
+	m.prBabysitterStatuses = map[string]actions.PullRequestStatus{
+		record.FlowID: {Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing},
+	}
+	m = m.syncPRBabysitterFromCache()
+	if m.prBabysitterFlows.Len() == 0 {
+		t.Fatal("setup: expected cached babysitter rows")
+	}
+
+	next, _ := m.moveRepoSelection(1)
+	m = next.(Model)
+	if len(m.prBabysitterRecords) != 0 || len(m.prBabysitterStatuses) != 0 || m.prBabysitterFlows.Len() != 0 {
+		t.Fatalf("repo change retained babysitter cache: rows=%v statuses=%v pane=%d", m.prBabysitterRecords, m.prBabysitterStatuses, m.prBabysitterFlows.Len())
+	}
+}
+
 func TestPRBabysitterMutationRemovesIneligibleRowImmediately(t *testing.T) {
 	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{})
 	m = m.setTakeover(takeoverPRBabysitter)

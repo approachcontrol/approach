@@ -3519,6 +3519,12 @@ func (m Model) resetRightPaneCursors() Model {
 	m.expandedActiveFlowID = ""
 	m.selectedActiveFlowPhaseID = ""
 	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
+	m.prBabysitterRecords = nil
+	m.prBabysitterStatuses = make(map[string]actions.PullRequestStatus)
+	m.prBabysitterFlows = m.prBabysitterFlows.SetItems(nil).ResetSelection()
+	m.expandedPRBabysitterFlowID = ""
+	m.selectedPRBabysitterPhaseID = ""
+	m.prBabysitterFlows = m.prBabysitterFlows.SetItemHeight(flowItemHeight(""))
 	return m
 }
 
