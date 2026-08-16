@@ -566,6 +566,31 @@ func TestLeaseRunnerAcquireFailureIsPublishedBeforeReady(t *testing.T) {
 	}
 }
 
+func TestDuplicateLeaseRunnerDoesNotPublishSharedFailure(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordRunnerClaim, ""); err != nil {
+		t.Fatalf("publish runner claim error = %v", err)
+	}
+	argv, err := LeaseRunArgv("/absolute/approach", spec, []string{"/usr/bin/true"})
+	if err != nil {
+		t.Fatalf("LeaseRunArgv() error = %v", err)
+	}
+	err = RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "duplicate Flow lease runner claim") {
+		t.Fatalf("RunLeaseRunner() error = %v, want duplicate claim rejection", err)
+	}
+	if _, failureErr := readHandoffRecord(attempt, recordFailure); !isMissingRecord(failureErr) {
+		t.Fatalf("duplicate failure record error = %v, want missing", failureErr)
+	}
+	if err := cleanupHandoff(attempt); err != nil {
+		t.Fatalf("cleanupHandoff() error = %v", err)
+	}
+}
+
 func TestTerminateProcessGroupWaitsForDescendantsAfterLeaderExits(t *testing.T) {
 	childPIDPath := filepath.Join(t.TempDir(), "child-pid")
 	cmd := exec.Command("/bin/sh", "-c", `

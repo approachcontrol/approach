@@ -282,6 +282,15 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (r
 			return err
 		}
 	}
+	if err := publishHandoffRecord(attempt, recordRunnerClaim, ""); err != nil {
+		if errors.Is(err, errRecordExists) {
+			if _, readErr := readHandoffRecord(attempt, recordRunnerClaim); readErr != nil {
+				return errors.Join(errors.New("duplicate Flow lease runner claim"), readErr)
+			}
+			return errors.New("duplicate Flow lease runner claim")
+		}
+		return fmt.Errorf("claim Flow lease runner attempt: %w", err)
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(signals)

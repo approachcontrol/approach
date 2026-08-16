@@ -18,6 +18,7 @@ import (
 const (
 	handoffCollection      = "flow-launch-handoffs"
 	protocolVersion        = 1
+	recordRunnerClaim      = "runner-claim"
 	recordReady            = "ready"
 	recordDecision         = "decision"
 	recordStarted          = "started"
@@ -221,7 +222,7 @@ func readHandoffRecord(attempt handoffAttempt, kind string) (handoffRecord, erro
 		return handoffRecord{}, err
 	}
 	switch kind {
-	case recordReady, recordDecision, recordStarted, recordStartedConfirmed, recordFailure:
+	case recordRunnerClaim, recordReady, recordDecision, recordStarted, recordStartedConfirmed, recordFailure:
 	default:
 		return handoffRecord{}, fmt.Errorf("unexpected Flow launch handoff record %q", kind)
 	}
@@ -271,7 +272,7 @@ func readHandoffRecord(attempt handoffAttempt, kind string) (handoffRecord, erro
 
 func validateRecordPayload(kind, outcome, detail string) error {
 	switch kind {
-	case recordReady, recordStarted, recordStartedConfirmed:
+	case recordRunnerClaim, recordReady, recordStarted, recordStartedConfirmed:
 		if outcome != "" || detail != "" {
 			return fmt.Errorf("Flow launch handoff %s cannot have a payload", kind)
 		}
@@ -308,14 +309,14 @@ func cleanupHandoff(attempt handoffAttempt) error {
 			}
 			continue
 		}
-		if kind != recordReady && kind != recordDecision && kind != recordStarted && kind != recordStartedConfirmed && kind != recordFailure {
+		if kind != recordRunnerClaim && kind != recordReady && kind != recordDecision && kind != recordStarted && kind != recordStartedConfirmed && kind != recordFailure {
 			return fmt.Errorf("unexpected Flow launch handoff artifact %q", kind)
 		}
 		if _, err := readHandoffRecord(attempt, kind); err != nil {
 			return err
 		}
 	}
-	for _, kind := range []string{recordReady, recordDecision, recordStarted, recordStartedConfirmed, recordFailure} {
+	for _, kind := range []string{recordRunnerClaim, recordReady, recordDecision, recordStarted, recordStartedConfirmed, recordFailure} {
 		if err := os.Remove(filepath.Join(attempt.HandoffDir, kind)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove Flow launch handoff %s: %w", kind, err)
 		}

@@ -674,6 +674,41 @@ func TestRepoTmuxAgentLaunchCleanupRemovesScript(t *testing.T) {
 	}
 }
 
+func TestRepoTmuxTrackedLaunchCleanupReportsCancellationFailure(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunch returned error: %v", err)
+	}
+	handoffDir := privateArgValue(t, spec.Launch.Cmd.Args, "--handoff")
+	if err := os.Mkdir(filepath.Dir(handoffDir), 0o700); err != nil {
+		t.Fatalf("Mkdir(handoff collection) error = %v", err)
+	}
+	if err := os.Mkdir(handoffDir, 0o700); err != nil {
+		t.Fatalf("Mkdir(handoff attempt) error = %v", err)
+	}
+	stubDir, _ := tmuxStub(t, "kill-window")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	spec.Launch.Cleanup()
+	if detail := spec.Launch.ErrorDetail(); !strings.Contains(detail, "cancel exact tmux window") {
+		t.Fatalf("ErrorDetail() = %q, want cancellation failure", detail)
+	}
+}
+
+func privateArgValue(t *testing.T, args []string, name string) string {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("private argument %s not found in %#v", name, args)
+	return ""
+}
+
 // launchScriptPathFromArgs pulls the self-deleting launch script's path out of
 // the tmux command the spec runs.
 func launchScriptPathFromArgs(t *testing.T, args []string) string {

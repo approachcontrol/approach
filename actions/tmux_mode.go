@@ -325,20 +325,36 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 		spawnCmd := exec.Command(spawnArgv[0], spawnArgv[1:]...)
 		spawnCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
 		stderr := &boundedBuffer{limit: repoTmuxStderrLimit}
+		cleanupDiagnostic := &boundedBuffer{limit: repoTmuxStderrLimit}
 		spawnCmd.Stderr = stderr
 		spawnCmd.WaitDelay = repoTmuxStderrDrainDelay
 		cleanup := func() {
 			termCommand.cleanup()
 			if _, err := os.Lstat(privateSpec.HandoffDir); err == nil {
-				_ = flowlease.CancelExact(privateSpec)
+				if cancelErr := flowlease.CancelExact(privateSpec); cancelErr != nil {
+					_, _ = fmt.Fprintf(cleanupDiagnostic, "cancel tracked Flow tmux launch: %v", cancelErr)
+				}
+			} else if !os.IsNotExist(err) {
+				_, _ = fmt.Fprintf(cleanupDiagnostic, "inspect tracked Flow tmux handoff before cancellation: %v", err)
 			}
+		}
+		errorDetail := func() string {
+			spawnDetail := stderr.String()
+			cleanupDetail := cleanupDiagnostic.String()
+			if spawnDetail == "" {
+				return cleanupDetail
+			}
+			if cleanupDetail == "" {
+				return spawnDetail
+			}
+			return spawnDetail + "\n" + cleanupDetail
 		}
 		return RepoTmuxAgentSpec{
 			SessionName: sessionName, WindowName: windowName,
 			AttachCommand: RepoTmuxAttachCommand(sessionName),
 			Launch: TerminalLaunchSpec{
 				Cmd: spawnCmd, Detached: true, Cleanup: cleanup,
-				ErrorDetail: stderr.String,
+				ErrorDetail: errorDetail,
 			},
 		}, nil
 	}
@@ -411,9 +427,9 @@ const repoTmuxStderrLimit = 1024
 // pipe after the launch command itself has exited.
 const repoTmuxStderrDrainDelay = 2 * time.Second
 
-// boundedBuffer collects at most limit bytes and discards the rest. It is only
-// written by the child process and only read after Wait returns, so it needs no
-// synchronization of its own.
+// boundedBuffer collects at most limit bytes and discards the rest. Each
+// instance has one writer and is read only after that writer finishes, so it
+// needs no synchronization of its own.
 type boundedBuffer struct {
 	limit int
 	buf   []byte
