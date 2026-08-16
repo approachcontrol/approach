@@ -580,7 +580,9 @@ selected process directory are owned by the query runner.
 In Ready only, `f` and `F` belong to a focused content pane whose query is
 settled and available and whose filtered visible selection has a non-empty Bead
 ID. Lowercase `f` is executable whenever no Ready Flow request is in flight;
-uppercase `F` additionally requires a configured launch agent. The footer and
+uppercase `F` also stops being offered without a configured launch agent. That
+is `F`'s own rule, not a uniform Ready-pane one — `S` below deliberately stays
+offered and refuses on press instead. The footer and
 shortcut pane advertise the actions separately as `f: new flow` and
 `F: new flow + start`. An owned Ready selection consumes `F` even when the agent
 is missing or either Ready action is busy, so it cannot fall through to pull;
@@ -616,6 +618,43 @@ for that persisted Flow while status, refresh, focus, and request clearing stay
 fenced to the current source token. Every post-creation error names the
 persisted Flow ID, and a visible Flow surface refreshes only for the current
 request.
+
+Also in Ready only, uppercase `S` (`S: slice epic`) belongs to the same focused,
+settled, non-empty selection, plus one extra condition: the selected Bead's
+issue type must be `epic` (case-insensitive). `S` has no other binding in any
+pane, so an owned Ready selection consumes it and every other context ignores
+it. The Active Flows and PR Babysitter takeovers, an open modal, an active
+search, a focused embedded-terminal input, the repo pane, the bottom pane, and
+any non-Ready Beads subview all leave it unowned — including when Ready is
+still live in the top pane while the bottom pane holds focus.
+
+Pressing `S` launches exactly one configured agent at the selected repository
+root through the ordinary agent path: the configured command, model, reasoning
+effort, and session state root, routed to a tmux window or the external
+terminal exactly like any other non-Flow launch. It creates no Flow, no
+worktree, and no plan, and it never invokes `bd` — the TUI performs no tracker
+mutation on this path. The whole contract lives in a built-in prompt (there is
+no config key for it) that names the repository and the epic ID and instructs
+the agent to use the `slice-issues` skill, read the epic with
+`bd show -- <id>`, propose tracer-bullet vertical slices, present each slice's
+HITL/AFK classification, blockers, acceptance criteria, and user stories, wait
+for approval, then create only the approved child Beads in dependency order
+without modifying or closing the parent epic.
+
+Unlike `F`, `S` stays advertised when no launch agent is configured and refuses
+on press with `Press A to choose codex or claude before launching an agent`, so
+the refusal names the fix instead of the hint silently disappearing.
+
+`S` shares the one preparation admission with `f`, `F`, and `a`, so while any of
+them is preparing the others are not offered, and vice versa. That produces one
+deliberate asymmetry: the `S` hint disappears whenever any preparation holds the
+admission, but a press in that window speaks only when the slice launch is the
+holder — `A slice epic launch is already in flight`. When an `f`/`F`/`a`
+preparation is the holder, `S` refuses silently, matching what those keys
+already do. The slice fence is held from the press until that launch's own
+result or its launch failure; a repository or selection change does not release
+it, and the launch keeps reporting against the epic it was pressed on rather
+than the current selection.
 
 Every Flow launch surface — Plan Now, Ready `F`, manual `g`, AutoMode, phase
 resume, saved-session resume, repair, worktree agent, and autofix — is admitted

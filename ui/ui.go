@@ -445,6 +445,7 @@ type RenderParams struct {
 	ReadyBeadFlowCreateAvailable   bool
 	ReadyBeadFlowStartAvailable    bool
 	ReadyBeadFlowKeysOwned         bool
+	BeadSliceEpicAvailable         bool
 	EpicAutoOnAvailable            bool
 	EpicAutoOffAvailable           bool
 	EpicAutoKeyOwned               bool
@@ -794,6 +795,7 @@ func renderApplication(p RenderParams) string {
 		ReadyBeadFlowCreateAvailable: p.ReadyBeadFlowCreateAvailable,
 		ReadyBeadFlowStartAvailable:  p.ReadyBeadFlowStartAvailable,
 		ReadyBeadFlowKeysOwned:       p.ReadyBeadFlowKeysOwned,
+		BeadSliceEpicAvailable:       p.BeadSliceEpicAvailable,
 		EpicAutoOnAvailable:          p.EpicAutoOnAvailable,
 		EpicAutoOffAvailable:         p.EpicAutoOffAvailable,
 		EpicAutoKeyOwned:             p.EpicAutoKeyOwned,
@@ -1621,6 +1623,7 @@ type statusBarParams struct {
 	ReadyBeadFlowCreateAvailable bool
 	ReadyBeadFlowStartAvailable  bool
 	ReadyBeadFlowKeysOwned       bool
+	BeadSliceEpicAvailable       bool
 	EpicAutoOnAvailable          bool
 	EpicAutoOffAvailable         bool
 	EpicAutoKeyOwned             bool
@@ -1952,6 +1955,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowStartAvailable {
 		actions = append(actions, shortcutHint{Key: "F", Label: "new flow + start", Ungrouped: true})
+	}
+	if sp.Mode == ModeBeadsReady && sp.BeadSliceEpicAvailable {
+		actions = append(actions, shortcutHint{Key: "S", Label: "slice epic", Ungrouped: true})
 	}
 	if IsBeadsMode(sp.Mode) && sp.EpicAutoOnAvailable {
 		actions = append(actions, shortcutHint{Key: "a", Label: "auto on", Ungrouped: true})
