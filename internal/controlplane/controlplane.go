@@ -350,7 +350,7 @@ func materialize(root, source, digest string) (string, error) {
 	}
 	target := filepath.Join(cacheDir, cachedBinaryName(digest))
 	if !reusable(target, digest) {
-		if err := copyExecutable(source, target); err != nil {
+		if err := copyExecutable(source, target, digest); err != nil {
 			return "", err
 		}
 	}
@@ -442,7 +442,19 @@ func reusable(target, digest string) bool {
 	return err == nil && actual == digest
 }
 
-func copyExecutable(source, target string) error {
+// copyExecutable stages source into the cache and publishes it under its
+// content-addressed name, but only once the bytes it actually read hash to
+// expected.
+//
+// That check is the point, not a formality. The digest was captured before the
+// repository scan and the copy happens after it, precisely because the path is
+// mutable — so the window this split exists to survive is the same window in
+// which `source` can be a *different file* by the time it is read. Without the
+// comparison, a replacement would be copied under the old build's digest name
+// and then executed by the runnability probe, which is the one place this
+// package runs an unverified binary. Pin.Verify would refuse launches later, but
+// later is after the exec.
+func copyExecutable(source, target, expected string) error {
 	in, err := os.Open(source)
 	if err != nil {
 		return fmt.Errorf("open approach executable %s: %w", source, err)
@@ -456,9 +468,16 @@ func copyExecutable(source, target string) error {
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
-	if _, err := io.Copy(temp, in); err != nil {
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(temp, hash), in); err != nil {
 		_ = temp.Close()
 		return fmt.Errorf("copy approach executable: %w", err)
+	}
+	if staged := hex.EncodeToString(hash.Sum(nil)); staged != expected {
+		_ = temp.Close()
+		return fmt.Errorf(
+			"approach executable %s changed while it was being cached (expected %s, read %s); it was probably upgraded mid-startup",
+			source, expected[:digestNameLength], staged[:digestNameLength])
 	}
 	if err := temp.Chmod(cachedBinaryPerm); err != nil {
 		_ = temp.Close()

@@ -482,42 +482,6 @@ func TestRefreshPinRescuesAClaimFromExpiry(t *testing.T) {
 	t.Fatal("retention evicted a binary a refreshed claim still points at")
 }
 
-// The split exists so the hash can happen before a repository scan while the
-// copy waits for the state root. That only holds if a source captured earlier
-// still produces the same pin later — and, more importantly, if the pin follows
-// the CAPTURED bytes rather than whatever occupies the path by the time the
-// cache is written. An upgrade landing in between must not be silently adopted.
-func TestMaterializeUsesTheCapturedSourceNotThePathAtCacheTime(t *testing.T) {
-	source := stubExecutable(t, "binary-contents-original")
-	captured, err := CaptureSource()
-	if err != nil {
-		t.Fatalf("CaptureSource: %v", err)
-	}
-
-	// brew upgrade replaces the file behind the same path. Still a runnable
-	// program, so this exercises the identity question and not the probe.
-	if err := os.WriteFile(source, []byte("#!/bin/sh\n# binary-contents-upgraded\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("replace source: %v", err)
-	}
-
-	root := t.TempDir()
-	pin := Materialize(root, captured, testSchemaVersion)
-	if pin.Degraded {
-		t.Fatalf("Materialize degraded unexpectedly: %s", pin.Notice)
-	}
-	if pin.Digest != captured.Digest {
-		t.Fatalf("Digest = %q, want the captured %q", pin.Digest, captured.Digest)
-	}
-	if !strings.HasSuffix(pin.ExecutablePath, captured.Digest[:digestNameLength]) {
-		t.Fatalf("cached copy %q is not named for the captured digest %q", pin.ExecutablePath, captured.Digest)
-	}
-	// The copy on disk is the upgraded file under the captured digest's name, so
-	// Verify refuses it rather than letting an agent run an unannounced build.
-	if err := pin.Verify(); !errors.Is(err, ErrPinDigestMismatch) {
-		t.Fatalf("Verify after an upgrade mid-capture = %v, want ErrPinDigestMismatch", err)
-	}
-}
-
 // Resolve is the one-step form, and it has to stay equivalent to the two-step
 // one or the split silently becomes two behaviours.
 func TestResolveMatchesCaptureThenMaterialize(t *testing.T) {
@@ -606,5 +570,43 @@ func TestRunnabilityProbeRunsWithNoInheritedEnvironment(t *testing.T) {
 	}
 	if _, err := os.Stat(witness); !os.IsNotExist(err) {
 		t.Fatalf("the probe inherited APPROACH_FLOW_STATE_ROOT (stat witness = %v)", err)
+	}
+}
+
+// The capture/materialize split exists because the executable path is mutable
+// between them, so the copy has to be checked against the captured digest before
+// it is published — and before requireRunnable executes it, which is the only
+// place this package runs a binary. Verify refusing the launch afterwards is too
+// late: the exec has already happened.
+func TestMaterializeRefusesBytesThatChangedAfterCapture(t *testing.T) {
+	source := stubExecutable(t, "binary-contents-original")
+	captured, err := CaptureSource()
+	if err != nil {
+		t.Fatalf("CaptureSource: %v", err)
+	}
+	// The upgrade lands between capture and materialization, and records that it
+	// was executed so the probe running it would be visible.
+	dir := filepath.Dir(source)
+	witness := filepath.Join(dir, "ran-the-replacement")
+	replacement := "#!/bin/sh\necho ran > " + witness + "\nexit 0\n"
+	if err := os.WriteFile(source, []byte(replacement), 0o755); err != nil {
+		t.Fatalf("replace source: %v", err)
+	}
+
+	root := t.TempDir()
+	pin := Materialize(root, captured, testSchemaVersion)
+	if !pin.Degraded {
+		t.Fatalf("Materialize cached a replacement under the captured digest: %s", pin.ExecutablePath)
+	}
+	if !strings.Contains(pin.Notice, "changed while it was being cached") {
+		t.Fatalf("Notice %q does not name the mid-startup replacement", pin.Notice)
+	}
+	if _, err := os.Stat(witness); !os.IsNotExist(err) {
+		t.Fatalf("the replacement was executed before it was checked (stat witness = %v)", err)
+	}
+	for _, name := range cachedBinaries(t, root) {
+		if name == cachedBinaryName(captured.Digest) {
+			t.Fatal("the replacement was published under the captured digest's name")
+		}
 	}
 }
