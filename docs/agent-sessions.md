@@ -21,8 +21,8 @@ phase-untracked: hook ingestion persists the session record but cannot attach it
 to any phase's launch or session history. Its retained embedded terminal is the
 Flow's in-process owner and cannot be detached; it remains occupancy after the
 agent exits until the slot is dismissed. `U` autofix is a separate prompted
-intent that opens an editable launch prompt; its headless/tmux routing remains
-unchanged.
+intent whose prompt comes from `[flow_prompts].autofix`; its headless/tmux
+routing remains unchanged.
 
 All Flow-associated launches enter the Model's one Flow launch lifecycle before
 any reservation, Flow write, or process start. That boundary changes no storage

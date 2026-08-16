@@ -316,7 +316,7 @@ blank template resets that key by removing the config override.
 | `autoreview` | string | Template for Autoreview. |
 | `merge` | string | Template for Merge. |
 | `generic` | string | Template for non-standard Flow phase IDs. |
-| `autofix` | string | Template for the `U` autofix launcher. This is not a phase prompt and does not receive the phase-done instruction suffix. Blank or omitted uses `autofix pr #{pr_number}`. |
+| `autofix` | string | Template for the `U` autofix launcher. This is not a phase prompt and does not receive the phase-done instruction suffix. Blank or omitted uses `autofix pr #{pr_number}`. Headless and tmux launches send the rendered prompt on argv; interactive embedded launches prefill the dock with it. |
 
 Supported Flow placeholders are `{approach_bin}`, `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,

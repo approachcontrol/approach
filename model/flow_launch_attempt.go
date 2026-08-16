@@ -87,9 +87,6 @@ type flowLaunchAttempt struct {
 	MutatedPhase bool
 	Create       flowLaunchCreateRequest
 	StartupRoots []flowstore.FlowPhase
-	// InitialPrompt is the autofix editor's submitted text. Other kinds leave
-	// it empty and compose their prompt during prepare.
-	InitialPrompt string
 }
 
 // flowLaunchAttemptOccupied reports whether a lifecycle attempt currently holds

@@ -14,7 +14,6 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
-	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -93,11 +92,11 @@ func TestAutofixUsesItsOwnLifecycleIntentKind(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 
-	m, cmd := h.startAutofix(h.model())
+	next, cmd := h.model().handleAutofixSelectedFlowPR()
 	if cmd == nil {
-		t.Fatal("confirming the autofix prompt did not submit a lifecycle intent")
+		t.Fatal("U did not submit an autofix lifecycle intent")
 	}
-	attempt, ok := m.flowLaunchAttempt(record.FlowID)
+	attempt, ok := next.(Model).flowLaunchAttempt(record.FlowID)
 	if !ok {
 		t.Fatal("U did not reserve the selected Flow")
 	}
@@ -106,79 +105,51 @@ func TestAutofixUsesItsOwnLifecycleIntentKind(t *testing.T) {
 	}
 }
 
-func TestAutofixOpensEditableLaunchPrompt(t *testing.T) {
-	record := autofixFlowRecord()
-	h := newManualLaunchHarness(t, record)
-
-	next, cmd := h.model().handleAutofixSelectedFlowPR()
-	m := next.(Model)
-	if cmd != nil {
-		t.Fatal("opening the autofix editor must not start a launch")
-	}
-	if m.Overlay() != ui.OverlayWorktreeInput {
-		t.Fatalf("overlay = %v, want launch-instructions editor", m.Overlay())
-	}
-	if got := m.InputMode(); got != modal.InputMultiLine {
-		t.Fatalf("input mode = %v, want multi-line", got)
-	}
-	if !strings.Contains(m.View(), ui.LaunchInstructionsPrompt) {
-		t.Fatalf("expected launch instructions prompt in view:\n%s", m.View())
-	}
-	if got := m.WorktreeInput(); got != "autofix pr #116" {
-		t.Fatalf("prefilled autofix prompt = %q, want the built-in text", got)
-	}
-	if m.flowLaunchAttemptOccupied(record.FlowID) {
-		t.Fatal("the editor must not reserve the Flow before submit")
-	}
-}
-
-func TestAutofixLaunchUsesEditedPrompt(t *testing.T) {
-	record := autofixFlowRecord()
-	h := newManualLaunchHarness(t, record)
-
-	next, cmd := h.model().handleAutofixSelectedFlowPR()
-	m := next.(Model)
-	if cmd != nil {
-		t.Fatal("opening the autofix editor must not start a launch")
-	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" and fix CI")})
-	m = updated.(Model)
-	m, cmd = h.submitAutofixPrompt(m)
-	m = h.drain(m, cmd, 0)
-	if len(h.launchContexts) != 1 {
-		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
-	}
-	if got := h.launchContexts[0].InitialPrompt; got != "autofix pr #116 and fix CI" {
-		t.Fatalf("launched prompt = %q, want the edited text", got)
-	}
-	if m.embeddedTerminals[0].Identity != "autofix pr 116" {
-		t.Fatalf("display identity = %q, want the PR label rather than the edited prompt", m.embeddedTerminals[0].Identity)
-	}
-}
-
-func TestAutofixLaunchPromptPrefillsCustomTemplate(t *testing.T) {
+func TestAutofixLaunchUsesConfiguredPromptTemplate(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	opts := h.options()
 	opts.FlowPromptTemplates = FlowPromptTemplates{Autofix: "Fix CI on {pr_url}"}
 	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
 
-	next, cmd := m.handleAutofixSelectedFlowPR()
-	m = next.(Model)
-	if cmd != nil {
-		t.Fatal("opening the autofix editor must not start a launch")
-	}
-	want := "Fix CI on https://github.com/approachcontrol/approach/pull/116"
-	if got := m.WorktreeInput(); got != want {
-		t.Fatalf("prefilled autofix prompt = %q, want %q", got, want)
-	}
-	m, cmd = h.submitAutofixPrompt(m)
-	h.drain(m, cmd, 0)
+	h.autofix(m)
 	if len(h.launchContexts) != 1 {
 		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
 	}
-	if got := h.launchContexts[0].InitialPrompt; got != want {
-		t.Fatalf("launched prompt = %q, want the rendered template", got)
+	want := "Fix CI on https://github.com/approachcontrol/approach/pull/116"
+	ctx := h.launchContexts[0]
+	if ctx.InitialPrompt != want {
+		t.Fatalf("interactive prompt = %q, want the rendered template", ctx.InitialPrompt)
+	}
+	if ctx.Headless || !ctx.Embedded {
+		t.Fatalf("interactive autofix should prefill the dock, got headless=%v embedded=%v", ctx.Headless, ctx.Embedded)
+	}
+	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		t.Fatal("interactive autofix must prefill the configured prompt")
+	}
+}
+
+func TestAutofixHeadlessLaunchUsesConfiguredPromptTemplate(t *testing.T) {
+	record := autofixFlowRecord()
+	record.Headless = true
+	h := newManualLaunchHarness(t, record)
+	opts := h.options()
+	opts.FlowPromptTemplates = FlowPromptTemplates{Autofix: "Fix CI on PR #{pr_number}"}
+	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+
+	h.autofix(m)
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
+	}
+	ctx := h.launchContexts[0]
+	if !ctx.Headless {
+		t.Fatal("a headless Flow must launch its autofix agent headless")
+	}
+	if got := ctx.InitialPrompt; got != "Fix CI on PR #116" {
+		t.Fatalf("headless prompt = %q, want the rendered template", got)
+	}
+	if actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		t.Fatal("headless autofix must send the configured prompt on argv, not prefill")
 	}
 }
 
@@ -554,44 +525,12 @@ func TestAutofixAdmissionReservesAnUntrackedAttempt(t *testing.T) {
 	}
 }
 
-// submitAutofixPrompt confirms the launch-instructions editor the way the
-// runtime does: Enter submits, then the request message is applied.
-func (h *manualLaunchHarness) submitAutofixPrompt(m Model) (Model, tea.Cmd) {
-	h.t.Helper()
-	if !m.modal.IsOpen() {
-		h.t.Fatal("expected the autofix launch-instructions editor")
-	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
-	if cmd == nil {
-		h.t.Fatal("submitting the autofix prompt returned no command")
-	}
-	msg, ok := runCommandWithoutWaiting(cmd)
-	if !ok {
-		h.t.Fatal("autofix launch request did not settle")
-	}
-	next, cmd = m.Update(msg)
-	return next.(Model), cmd
-}
-
-// startAutofix presses U and, when the editor opens, confirms the prefilled
-// prompt. Occupied or ineligible presses return their admission command.
-func (h *manualLaunchHarness) startAutofix(m Model) (Model, tea.Cmd) {
-	h.t.Helper()
-	next, cmd := m.handleAutofixSelectedFlowPR()
-	m = next.(Model)
-	if cmd != nil || !m.modal.IsOpen() {
-		return m, cmd
-	}
-	return h.submitAutofixPrompt(m)
-}
-
-// autofix presses U, confirms the prompt editor, and drains the resulting
-// command chain the way the bubbletea runtime would.
+// autofix presses U and drains the resulting command chain the way the
+// bubbletea runtime would.
 func (h *manualLaunchHarness) autofix(m Model) Model {
 	h.t.Helper()
-	next, cmd := h.startAutofix(m)
-	return h.drain(next, cmd, 0)
+	next, cmd := m.handleAutofixSelectedFlowPR()
+	return h.drain(next.(Model), cmd, 0)
 }
 
 // autofixModel pins the admission token so a test can name the launch ID the
@@ -879,7 +818,8 @@ func TestAutofixReadStageIgnoresSessionsOutsideEveryPhase(t *testing.T) {
 // reservation exists to close.
 func (h *manualLaunchHarness) stageAutofixLaunch(m Model) (Model, tea.Cmd) {
 	h.t.Helper()
-	m, readCmd := h.startAutofix(m)
+	next, readCmd := m.handleAutofixSelectedFlowPR()
+	m = next.(Model)
 	if readCmd == nil {
 		h.t.Fatal("an admitted press must return the read command")
 	}
@@ -887,8 +827,8 @@ func (h *manualLaunchHarness) stageAutofixLaunch(m Model) (Model, tea.Cmd) {
 	if !ok {
 		h.t.Fatal("the read stage did not settle")
 	}
-	updated, prepareCmd := m.Update(readMsg)
-	m = updated.(Model)
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
 	if prepareCmd == nil {
 		h.t.Fatal("a successful read must return the prepare command")
 	}
@@ -964,51 +904,6 @@ func TestAutofixPrepareUsesReservedPRNumber(t *testing.T) {
 	wantLabel := "1 codex autofix pr 204 running"
 	if view := ansi.Strip(m.View()); !strings.Contains(view, wantLabel) {
 		t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
-	}
-}
-
-func TestAutofixPrepareKeepsEditedPromptWhenPRChanges(t *testing.T) {
-	record := autofixFlowRecord()
-	h := newManualLaunchHarness(t, record)
-
-	opened, cmd := h.model().handleAutofixSelectedFlowPR()
-	m := opened.(Model)
-	if cmd != nil {
-		t.Fatal("opening the autofix editor must not start a launch")
-	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" and fix CI")})
-	m = updated.(Model)
-	m, readCmd := h.submitAutofixPrompt(m)
-	if readCmd == nil {
-		t.Fatal("an admitted confirm must return the read command")
-	}
-	readMsg, ok := runCommandWithoutWaiting(readCmd)
-	if !ok {
-		t.Fatal("the read stage did not settle")
-	}
-	next, prepareCmd := m.Update(readMsg)
-	m = next.(Model)
-	if prepareCmd == nil {
-		t.Fatal("a successful read must return the prepare command")
-	}
-
-	h.record.PR.Number = 204
-	h.record.PR.URL = "https://github.com/approachcontrol/approach/pull/204"
-	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
-	if !ok {
-		t.Fatal("prepare did not settle")
-	}
-	h.drainMsg(m, preparedMsg, 0)
-
-	if len(h.launchContexts) != 1 {
-		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
-	}
-	ctx := h.launchContexts[0]
-	if ctx.FlowAutofixPRNumber != 204 {
-		t.Fatalf("reserved PR number = %d, want 204", ctx.FlowAutofixPRNumber)
-	}
-	if ctx.InitialPrompt != "autofix pr #116 and fix CI" {
-		t.Fatalf("edited prompt = %q, want it to survive the reserved PR change", ctx.InitialPrompt)
 	}
 }
 
@@ -1140,12 +1035,7 @@ func TestAutofixKeyIsBoundOnBothFlowSurfacesAndInertElsewhere(t *testing.T) {
 		m := h.model()
 		m.activePane = ui.PaneBottom
 		next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
-		m = next.(Model)
-		if cmd != nil {
-			t.Fatal("U should open the prompt editor, not launch immediately")
-		}
-		m, cmd = h.submitAutofixPrompt(m)
-		m = h.drain(m, cmd, 0)
+		m = h.drain(next.(Model), cmd, 0)
 		if len(h.launchContexts) != 1 {
 			t.Fatalf("embedded launches = %#v, want exactly one from the Flows surface", h.launchContexts)
 		}
@@ -1160,12 +1050,7 @@ func TestAutofixKeyIsBoundOnBothFlowSurfacesAndInertElsewhere(t *testing.T) {
 		m.activeFlowSurface = true
 		m.activeFlows = m.activeFlows.SetItems([]flowstore.FlowRecord{record})
 		next, cmd := m.handleActiveFlowSurfaceKey("U")
-		m = next.(Model)
-		if cmd != nil {
-			t.Fatal("U should open the prompt editor, not launch immediately")
-		}
-		m, cmd = h.submitAutofixPrompt(m)
-		m = h.drain(m, cmd, 0)
+		m = h.drain(next.(Model), cmd, 0)
 		if len(h.launchContexts) != 1 {
 			t.Fatalf("embedded launches = %#v, want exactly one from the Active Flows surface", h.launchContexts)
 		}

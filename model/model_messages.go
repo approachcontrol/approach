@@ -520,12 +520,6 @@ type agentLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 }
 
-type autofixLaunchRequestedMsg struct {
-	FlowID   string
-	RepoPath string
-	Prompt   string
-}
-
 type FlowCreatedMsg struct {
 	RepoPath string
 	FlowID   string

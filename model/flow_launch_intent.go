@@ -114,10 +114,6 @@ type flowLaunchIntent struct {
 	SessionKey       flowLaunchSavedSessionKey
 	Create           flowLaunchCreateRequest
 	Settings         flowLaunchAgentSettingsSnapshot
-	// InitialPrompt is the caller-edited autofix launch text. Prepare uses it
-	// when non-empty and otherwise renders the current `[flow_prompts].autofix`
-	// template (or the built-in default) from the reserved record.
-	InitialPrompt string
 }
 
 // resumeSessionIdentity names the session a resume is reattaching to the way

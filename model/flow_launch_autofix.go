@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,9 +8,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
-	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
-	"github.com/approachcontrol/approach/ui"
 )
 
 // The autofix refusals. Each is new against
@@ -56,22 +53,6 @@ func autofixPrompt(record flowstore.FlowRecord, templates FlowPromptTemplates, b
 		template = defaultAutofixPromptTemplate
 	}
 	return renderFlowPromptTemplate(template, record, flowstore.FlowPhase{}, record.PlanPath, "", flowPromptBinary(binary))
-}
-
-// autofixLaunchPrompt prefers an operator-edited submission. An empty
-// submission — the occupied-press path, or a test that calls requestFlowLaunch
-// directly — renders from the reserved record. A submission that still matches
-// the read-stage rendering is treated as an unedited confirm, so a PR that
-// changed under the reservation still updates the default prompt.
-func autofixLaunchPrompt(launchRecord, readRecord flowstore.FlowRecord, settings flowLaunchAgentSettingsSnapshot, submitted string) string {
-	rendered := autofixPrompt(launchRecord, settings.PromptTemplates, settings.Pin.ExecutablePath)
-	if strings.TrimSpace(submitted) == "" {
-		return rendered
-	}
-	if submitted == autofixPrompt(readRecord, settings.PromptTemplates, settings.Pin.ExecutablePath) {
-		return rendered
-	}
-	return submitted
 }
 
 // selectedFlowAutofixTarget is the U shortcut's eligibility gate. It reuses the
@@ -123,10 +104,7 @@ func (m Model) selectedFlowAutofixReady() bool {
 // It is gated on the footer's own predicate so an already-owned Flow neither
 // forks tmux nor answers with the live-window refusal when admission has a more
 // specific one to give. What survives that gate is the press that could really
-// launch, which is the only one the probe exists to stop. That press opens the
-// launch-instructions editor rather than reserving immediately, so occupancy
-// is not held while the prompt is edited. Occupied presses still go through
-// requestFlowLaunch so admission can name the obstacle.
+// launch, which is the only one the probe exists to stop.
 func (m Model) handleAutofixSelectedFlowPR() (tea.Model, tea.Cmd) {
 	record, repoPath, ok := m.selectedFlowAutofixTarget()
 	if !ok {
@@ -135,65 +113,13 @@ func (m Model) handleAutofixSelectedFlowPR() (tea.Model, tea.Cmd) {
 	if m.selectedFlowAutofixReady() && m.tmuxFlowAgentStillRunning(record, repoPath) {
 		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
 	}
-	if !m.selectedFlowAutofixReady() {
-		return m.submitAutofixFlowLaunch(record, repoPath, "")
-	}
-	return m.openAutofixLaunchPrompt(record, repoPath), nil
-}
-
-func (m Model) openAutofixLaunchPrompt(record flowstore.FlowRecord, repoPath string) Model {
-	m.modal = modal.OpenMultiLineInput(
-		ui.LaunchInstructionsPrompt,
-		"autofix prompt",
-		autofixPrompt(record, m.flowPromptTemplates, m.launchPin.ExecutablePath),
-		validateAutofixLaunchInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg {
-				return autofixLaunchRequestedMsg{
-					FlowID:   record.FlowID,
-					RepoPath: repoPath,
-					Prompt:   input,
-				}
-			}
-		},
-	)
-	return m
-}
-
-func validateAutofixLaunchInput(input string) error {
-	if input == "" {
-		return fmt.Errorf("enter launch instructions")
-	}
-	return nil
-}
-
-func (m Model) submitAutofixFlowLaunch(record flowstore.FlowRecord, repoPath, prompt string) (tea.Model, tea.Cmd) {
 	next, cmd, _ := m.requestFlowLaunch(flowLaunchIntent{
 		Kind:             flowLaunchKindAutofix,
 		FlowID:           record.FlowID,
 		Origin:           m.flowLaunchOrigin(),
 		FallbackRepoPath: repoPath,
-		InitialPrompt:    prompt,
 	})
 	return next, cmd
-}
-
-func (m Model) handleAutofixLaunchRequested(msg autofixLaunchRequestedMsg) (tea.Model, tea.Cmd) {
-	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
-		return m.setStatus(statusOther, refusal), nil
-	}
-	record, ok := m.cachedFlowRecord(msg.FlowID)
-	if !ok || !autofixFlowEligible(record) {
-		return m.setStatus(statusOther, flowAutofixDriftStatus), nil
-	}
-	repoPath := strings.TrimSpace(record.RepoPath)
-	if repoPath == "" {
-		repoPath = msg.RepoPath
-	}
-	if m.tmuxFlowAgentStillRunning(record, repoPath) {
-		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
-	}
-	return m.submitAutofixFlowLaunch(record, repoPath, msg.Prompt)
 }
 
 // admitAutofixFlowLaunch is this kind's half of the lifecycle's admission.
@@ -251,12 +177,11 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 	// so nothing on this path writes phase state or attaches a session to phase
 	// history.
 	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
-		Token:         token,
-		Kind:          intent.Kind,
-		FlowID:        record.FlowID,
-		Origin:        intent.Origin,
-		Settings:      settings,
-		InitialPrompt: intent.InitialPrompt,
+		Token:    token,
+		Kind:     intent.Kind,
+		FlowID:   record.FlowID,
+		Origin:   intent.Origin,
+		Settings: settings,
 	}, flowLaunchStateReserved)
 	if !reserved {
 		return m, nil, false
@@ -364,9 +289,10 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 // reservation would launch in the previous mode, and on the wrong route with it,
 // since a headless launch is never tmux-eligible.
 //
-// The prompt prefers the editor's submitted text and otherwise renders from
-// the reserved record, so prepare still cannot compose a prompt no stage
-// authorized.
+// The prompt is rendered here from the reserved record and the snapshotted
+// `[flow_prompts].autofix` template, so prepare still cannot compose a prompt
+// no stage authorized. Headless and tmux send that text on argv; interactive
+// embedded launches prefill the dock with it.
 func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveTrackedFlowLaunch
 	// Snapshotted at admission, as flowLaunchPreparation snapshots them, so the route
@@ -374,10 +300,6 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 	// decision moves into the closure, where Headless is finally resolved.
 	backend := m.launchBackend
 	tmuxAvailable := m.tmuxLaunchAvailable
-	submittedPrompt := ""
-	if attempt, ok := m.flowLaunchAttempt(msg.FlowID); ok {
-		submittedPrompt = attempt.InitialPrompt
-	}
 	return func() tea.Msg {
 		event := msg
 		event.Stage = flowLaunchStagePrepared
@@ -398,7 +320,6 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		// advisory launch/close lock; losing it would block every later launch,
 		// close, repair, or resume on this Flow until it timed out.
 		event.Release = release
-		readRecord := msg.Record
 		record := msg.Record
 		headless := msg.Headless
 		repoPath := msg.RepoPath
@@ -449,7 +370,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			FlowAutofixPRNumber: record.PR.Number,
 			Embedded:            true,
 			Headless:            headless,
-			InitialPrompt:       autofixLaunchPrompt(record, readRecord, settings, submittedPrompt),
+			InitialPrompt:       autofixPrompt(record, settings.PromptTemplates, settings.Pin.ExecutablePath),
 		}, settings.Pin)
 		event.Context = ctx
 		event.Route = flowLaunchRouteEmbedded
