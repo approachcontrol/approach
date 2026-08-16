@@ -9,10 +9,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
 )
@@ -25,8 +25,6 @@ const (
 	tmuxCommandTimeout   = 2 * time.Second
 	gracefulStopTimeout  = 2 * time.Second
 )
-
-var generatedTmuxName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 var errTmuxCommandTimeout = errors.New("tmux command timed out with uncertain server state")
 
@@ -148,7 +146,15 @@ func validatePrivateSpec(spec PrivateSpec, requireScript bool) error {
 }
 
 func validTmuxComponent(value string) bool {
-	return generatedTmuxName.MatchString(value) && !strings.ContainsAny(value, ":.;=$\x00\r\n")
+	if value == "" || strings.ContainsAny(value, ":.;=$\x00\r\n") {
+		return false
+	}
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // ExactWindowTarget builds tmux's exact-component target and rejects every
@@ -228,6 +234,10 @@ func RunTmuxSpawn(args []string, stderr io.Writer) error {
 		terminal = true
 		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch: %w", err))
 	}
+	if _, err := waitForRecordOrFailure(attempt, recordStartedConfirmed, spec.StartedDeadline); err != nil {
+		terminal = true
+		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch confirmation: %w", err))
+	}
 	if !time.Now().Before(spec.StartedDeadline) {
 		terminal = true
 		return abortAndCancel(spec, committed, errors.New("uncertain committed Flow launch: started confirmation arrived after its deadline"))
@@ -252,7 +262,7 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (r
 	if err := validateExistingHandoff(attempt); err != nil {
 		return err
 	}
-	for _, kind := range []string{recordReady, recordDecision, recordStarted, recordFailure} {
+	for _, kind := range []string{recordReady, recordDecision, recordStarted, recordStartedConfirmed, recordFailure} {
 		if err := requireHandoffRecordAbsent(attempt, kind); err != nil {
 			return err
 		}
@@ -346,7 +356,7 @@ func publishAndReadStarted(attempt handoffAttempt, afterPublish func()) error {
 	if _, err := readHandoffRecord(attempt, recordStarted); err != nil {
 		return fmt.Errorf("read back started tracked Flow agent: %w", err)
 	}
-	return nil
+	return publishHandoffRecord(attempt, recordStartedConfirmed, "")
 }
 
 func childProcessGroupAttributes(stdin io.Reader) *syscall.SysProcAttr {

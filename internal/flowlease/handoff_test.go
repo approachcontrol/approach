@@ -140,6 +140,40 @@ func TestStartedRecordIsReadBackBeforeLaunchConfirmation(t *testing.T) {
 	}
 }
 
+func TestStartedConfirmationIsPublishedOnlyAfterRunnerReadback(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	startedPublished := make(chan struct{})
+	allowReadback := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- publishAndReadStarted(attempt, func() {
+			close(startedPublished)
+			<-allowReadback
+		})
+	}()
+	<-startedPublished
+	if _, err := readHandoffRecord(attempt, recordStarted); err != nil {
+		t.Fatalf("read started error = %v", err)
+	}
+	if _, err := readHandoffRecord(attempt, recordStartedConfirmed); !isMissingRecord(err) {
+		t.Fatalf("confirmation before readback error = %v, want missing", err)
+	}
+	close(allowReadback)
+	if err := <-errCh; err != nil {
+		t.Fatalf("publishAndReadStarted() error = %v", err)
+	}
+	if _, err := readHandoffRecord(attempt, recordStartedConfirmed); err != nil {
+		t.Fatalf("read started confirmation error = %v", err)
+	}
+	if err := cleanupHandoff(attempt); err != nil {
+		t.Fatalf("cleanupHandoff() error = %v", err)
+	}
+}
+
 func TestTmuxCreateTimeoutDoesNotRetrySameWindowName(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

@@ -51,19 +51,14 @@ func TmuxAvailable() bool {
 // window for a repo. It is keyed on the repo, not the worktree, so all of a
 // repo's Flows share one session.
 //
-// Dots, colons, and non-ASCII runes are replaced because tmux reads the first
-// two as target separators and the private tracked-launch transport deliberately
-// accepts only its restricted generated-name alphabet. WorktreeSessionName may
-// preserve Unicode for other transports, so this repo-scoped tmux boundary is
-// where those runes are normalized. The path hash keeps the substitution
-// collision-free.
+// Dots and colons are replaced because tmux reads them as target separators:
 // `-t "=approach-foo.github.io-1a2b3c4d"` parses as session `approach-foo`,
 // pane `github` and fails with "can't find pane", which would silently break
 // has-session, attach, and the attach command shown to the user. The trailing
 // path hash WorktreeSessionName appends keeps the substitution collision-free.
 func RepoAgentSessionName(repoPath string) string {
 	name := strings.Map(func(r rune) rune {
-		if r == '.' || r == ':' || r > 0x7f {
+		if r == '.' || r == ':' {
 			return '-'
 		}
 		return r

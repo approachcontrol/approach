@@ -55,13 +55,13 @@ func TestRepoAgentSessionNameIsRepoScopedAndPrefixed(t *testing.T) {
 	}
 }
 
-func TestRepoAgentSessionNameNormalizesUnicodeForPrivateTransport(t *testing.T) {
+func TestRepoAgentSessionNamePreservesUnicodeForPrivateTransport(t *testing.T) {
 	name := RepoAgentSessionName("/repos/café-东京")
 	if _, err := flowlease.ExactWindowTarget(name, "implementation-deadbeef-12345678"); err != nil {
 		t.Fatalf("RepoAgentSessionName() = %q is incompatible with the private tmux transport: %v", name, err)
 	}
-	if strings.Contains(name, "é") || strings.Contains(name, "东") || strings.Contains(name, "京") {
-		t.Fatalf("RepoAgentSessionName() = %q, want generated ASCII alphabet", name)
+	if !strings.Contains(name, "café-东京") {
+		t.Fatalf("RepoAgentSessionName() = %q, want established Unicode identity preserved", name)
 	}
 }
 
