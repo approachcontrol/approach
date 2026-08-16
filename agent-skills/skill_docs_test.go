@@ -443,7 +443,7 @@ func requireContainsAll(t *testing.T, label, haystack string, needles []string) 
 }
 
 // canonicalizeApproachInvocations rewrites the pinned spelling a skill uses —
-// `"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow read`, or the bare
+// `"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read`, or the bare
 // `$APPROACH_BIN flow read` that prose still uses — back to `approach flow read`
 // so every matcher in this file keeps expressing one grammar.
 //
@@ -461,7 +461,7 @@ func canonicalizeApproachInvocations(text string) string {
 // `$APPROACH_BIN` out of the middle of the longer expansion and leave the rest
 // of the braces behind as garbage.
 var approachBinInvocation = regexp.MustCompile(
-	`"\$\{APPROACH_BIN:=\$\{APPROACH_EXECUTABLE:-approach\}\}"\s+|"\$APPROACH_BIN"\s+|\$APPROACH_BIN\s+`)
+	`"\$\{APPROACH_EXECUTABLE:-\$\{APPROACH_BIN:-approach\}\}"\s+|"\$APPROACH_BIN"\s+|\$APPROACH_BIN\s+`)
 
 func hasRunnableCommandExample(markdown, command string) bool {
 	for _, block := range fencedBashBlocks(markdown) {

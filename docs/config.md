@@ -330,7 +330,7 @@ to run. It expands to the shell-quoted path of the binary that launched the
 agent, which is what the built-in prompts use; a literal `approach` resolves
 from the agent's ambient `PATH` instead and can be a different build from the
 one that owns the Flow database. On a launch that carries no pin it expands to
-the same self-resolving `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}`
+the same self-resolving `${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}`
 form the bundled skills use, so a template written this way works either way.
 
 ### `[flow]`

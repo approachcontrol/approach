@@ -26,9 +26,15 @@ stop and report it — do not fall back to `approach` on `PATH`.
 #
 # APPROACH_BIN is a shell variable, NOT an exported one, so it does not survive
 # into a separate command invocation. That is why every approach call below
-# spells `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}` rather than
-# `$APPROACH_BIN`: the `:=` re-resolves and assigns on first use, so the COMMAND
-# WORD is always a real binary even in a fresh shell.
+# spells `${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}` rather than
+# `$APPROACH_BIN`: the expansion re-resolves in a fresh shell, so the COMMAND
+# WORD is always a real binary.
+#
+# APPROACH_EXECUTABLE comes FIRST, and the order is the point. The launcher
+# exports the pin; APPROACH_BIN is an ordinary name a user's shell profile may
+# already export, and every launch inherits it. Resolving APPROACH_BIN first
+# would let a stale ambient value silently outrank the pin — the mixed-build
+# failure this whole block exists to stop.
 #
 # That covers the command word only. The blocks below still share PLAN_ID and
 # PLAN_MARKDOWN, so run them in one shell, or re-establish those first. And the executability test lives here, not in the
@@ -68,14 +74,14 @@ Pipe the full Markdown plan on stdin (or pass `--file`). `$APPROACH_BIN plan sav
 only the generated (or reused) `plan_id` on success:
 
 ```bash
-PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan save --title "Persist plans in approach")
+PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan save --title "Persist plans in approach")
 ```
 
 Reuse the `plan_id` for every later edit so you update the same record instead of
 creating duplicates:
 
 ```bash
-printf '%s' "$UPDATED_MARKDOWN" | "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan save --plan-id "$PLAN_ID" --status in_progress
+printf '%s' "$UPDATED_MARKDOWN" | "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan save --plan-id "$PLAN_ID" --status in_progress
 ```
 
 `save` always replaces the Markdown and title from the command (both are
@@ -95,8 +101,8 @@ Record each phase explicitly as its status changes (v1 does not parse phases out
 of the Markdown):
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store tracer bullet" --status completed --order 1
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan phase set --plan-id "$PLAN_ID" --phase-id cli   --title "CLI subcommands"      --status in_progress --order 2
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store tracer bullet" --status completed --order 1
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan phase set --plan-id "$PLAN_ID" --phase-id cli   --title "CLI subcommands"      --status in_progress --order 2
 ```
 
 Phase statuses: `pending`, `in_progress`, `completed`, `blocked`, `skipped`.
@@ -105,8 +111,8 @@ Re-running `phase set` with the same `--phase-id` updates that phase in place.
 ## Reading plans back
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan list --repo-path "$APPROACH_REPO_PATH" --json   # machine-readable list (requires --json)
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan read --plan-id "$PLAN_ID"                    # prints the plan Markdown only
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan list --repo-path "$APPROACH_REPO_PATH" --json   # machine-readable list (requires --json)
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan read --plan-id "$PLAN_ID"                    # prints the plan Markdown only
 ```
 
 ## If persistence fails

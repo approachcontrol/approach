@@ -19,8 +19,8 @@ func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
 		"Build the thing",
 		"",
 		"Produce a plan only; do not start coding in this phase.",
-		"Create and persist the plan with ${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} plan save, link it back with ${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} flow plan set, then report Flow persistence failures explicitly before ending.",
-		"If the task references a GitHub issue, link it with ${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.",
+		"Create and persist the plan with ${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} plan save, link it back with ${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} flow plan set, then report Flow persistence failures explicitly before ending.",
+		"If the task references a GitHub issue, link it with ${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.",
 		"",
 		model.FlowPhaseDoneInstructionForTest(),
 	}, "\n")
@@ -284,7 +284,7 @@ func TestFlowGenericPhasePromptPreservesContextAndAppendsPhaseDoneInstruction(t 
 		"Saved plan body:",
 		"Confirm the release notes.",
 		"",
-		"Advance this phase with `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} flow phase set` only after the corresponding work is complete, blocked, or needs attention.",
+		"Advance this phase with `${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} flow phase set` only after the corresponding work is complete, blocked, or needs attention.",
 	}, "\n"))
 	if got := model.FlowPhasePromptForTest(record, phase, record.PlanPath, planBody, model.FlowPromptTemplates{}); got != want {
 		t.Fatalf("generic phase prompt = %q, want %q", got, want)

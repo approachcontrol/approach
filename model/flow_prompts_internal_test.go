@@ -1,6 +1,9 @@
 package model
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -191,5 +194,44 @@ func TestConfiguredPlanTemplateResolvesThePinnedBinary(t *testing.T) {
 	prompt := flowPlanPrompt(promptRecord(), phase, templates, pinned)
 	if !strings.Contains(prompt, pinned+" plan save") {
 		t.Fatalf("configured plan template did not resolve the pinned binary:\n%s", prompt)
+	}
+}
+
+// The unpinned fallback is pasted into a shell by an agent, and that agent
+// inherits the ambient environment of the TUI that launched it. APPROACH_BIN is
+// an ordinary name a user's shell profile may already export, so if the
+// expansion consulted it before APPROACH_EXECUTABLE, a stale value would
+// silently outrank the pin — the mixed-build failure the pin exists to stop.
+// Run through a real /bin/sh rather than asserting on the string: the ordering
+// this protects is shell semantics, not text.
+func TestUnpinnedPromptsPreferTheExportedPinOverInheritedShellState(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho "+name+"\n"), 0o755); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+	pinned, inherited := write("pinned"), write("inherited")
+
+	run := func(env ...string) string {
+		t.Helper()
+		cmd := exec.Command("/bin/sh", "-c", flowPromptBinaryFallback)
+		cmd.Env = append([]string{"PATH=/usr/bin:/bin"}, env...)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("run %q with %v: %v", flowPromptBinaryFallback, env, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	if got := run("APPROACH_EXECUTABLE="+pinned, "APPROACH_BIN="+inherited); got != "pinned" {
+		t.Fatalf("an inherited APPROACH_BIN outranked the exported pin: ran %q", got)
+	}
+	// With no pin the agent has nothing better than the ambient value, so an
+	// inherited APPROACH_BIN is honoured rather than ignored.
+	if got := run("APPROACH_BIN=" + inherited); got != "inherited" {
+		t.Fatalf("unpinned launch ignored the inherited APPROACH_BIN: ran %q", got)
 	}
 }

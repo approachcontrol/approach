@@ -5203,7 +5203,7 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 			if ctx.PlanID != record.PlanID || ctx.PlanPath != record.PlanPath || ctx.WorktreePath != record.WorktreePath || ctx.Branch != record.Branch || ctx.Commit != record.Commit || ctx.SessionStateRoot != "/state/approach/sessions/v1" {
 				t.Fatalf("repair launch metadata = %#v", ctx)
 			}
-			for _, want := range []string{record.FlowID, "blocked", "persisted metadata is inconsistent", "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} flow read", "phase reset", "phase restart", "Do not launch the next phase"} {
+			for _, want := range []string{record.FlowID, "blocked", "persisted metadata is inconsistent", "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} flow read", "phase reset", "phase restart", "Do not launch the next phase"} {
 				if !strings.Contains(ctx.InitialPrompt, want) {
 					t.Fatalf("repair prompt missing %q:\n%s", want, ctx.InitialPrompt)
 				}
@@ -11244,7 +11244,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 	}
 	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the ship skill to create a PR for the changes.",
-		"After the PR exists, run `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
+		"After the PR exists, run `${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
@@ -11313,7 +11313,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testi
 
 	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the ship skill to create a PR for the changes.",
-		"After the PR exists, run `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}} flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
+		"After the PR exists, run `${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}} flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
@@ -11638,10 +11638,10 @@ func TestModel_GLaunchesFlowPhaseMergeWithStructuredReportingPrompt(t *testing.T
 		"merge the pr deliberately",
 		"github #116",
 		"https://github.com/approachcontrol/approach/pull/116",
-		"${approach_bin:=${approach_executable:-approach}} flow merge set --flow-id flow-1 --status merged",
+		"${approach_executable:-${approach_bin:-approach}} flow merge set --flow-id flow-1 --status merged",
 		"--commit <merge-commit>",
 		"--merged-at <rfc3339>",
-		"${approach_bin:=${approach_executable:-approach}} flow phase set --flow-id flow-1 --phase-id merge --status completed",
+		"${approach_executable:-${approach_bin:-approach}} flow phase set --flow-id flow-1 --phase-id merge --status completed",
 		"blocked",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -11947,7 +11947,7 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		t.Fatalf("embedded terminal size = %dx%d", startWidth, startHeight)
 	}
 	prompt := strings.ToLower(started.InitialPrompt)
-	for _, want := range []string{"approach-flow", "write\nthe plan", "${approach_bin:=${approach_executable:-approach}} plan save", "${approach_bin:=${approach_executable:-approach}} flow plan set"} {
+	for _, want := range []string{"approach-flow", "write\nthe plan", "${approach_executable:-${approach_bin:-approach}} plan save", "${approach_executable:-${approach_bin:-approach}} flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("Plan Now prompt missing %q: %q", want, started.InitialPrompt)
 		}

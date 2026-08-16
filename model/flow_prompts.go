@@ -128,18 +128,25 @@ func lastNonEmptyPromptLine(text string) string {
 // whatever build is on PATH, not the one that launched the agent — never
 // appears in either case.
 //
-// It is the self-healing `:=` form, matching the skills, and not a bare
+// It is the self-resolving form, matching the skills, and not a bare
 // `$APPROACH_BIN`: APPROACH_BIN is a shell variable the skills set, NOT an
 // exported environment variable, so a bare reference expands to nothing in any
 // shell that has not run the skill's resolution block and the command word
-// silently shifts. `:=` re-resolves from the exported APPROACH_EXECUTABLE, or
-// PATH, on first use.
+// silently shifts. This expansion re-resolves from the exported
+// APPROACH_EXECUTABLE, or PATH, in any shell.
+//
+// APPROACH_EXECUTABLE is tried FIRST, ahead of APPROACH_BIN, and the order is
+// load-bearing. APPROACH_BIN is an ordinary name a user's shell profile may
+// already export, and every launched agent inherits the ambient environment, so
+// the other order would let a stale exported APPROACH_BIN outrank the pin the
+// launcher just exported — the mixed-build failure this constant exists to
+// avoid. TestUnpinnedPromptsPreferTheExportedPinOverInheritedShellState.
 //
 // Nothing may interpolate this constant directly either. Every prompt goes
 // through the `bin` that flowPhasePrompt derives, so a pinned launch names its
 // pinned path everywhere or nowhere.
 // TestGeneratedPhasePromptsNeverNameABareApproachBinary pins that.
-const flowPromptBinaryFallback = "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}"
+const flowPromptBinaryFallback = "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"
 
 // flowPromptBinary renders executable as a shell command word. A prompt is
 // copied into a shell by the agent, so a path containing spaces or shell

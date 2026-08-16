@@ -23,9 +23,15 @@ artifact root.
 #
 # APPROACH_BIN is a shell variable, NOT an exported one, so it does not survive
 # into a separate command invocation. That is why every approach call below
-# spells `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}` rather than
-# `$APPROACH_BIN`: the `:=` re-resolves and assigns on first use, so the COMMAND
-# WORD is always a real binary even in a fresh shell.
+# spells `${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}` rather than
+# `$APPROACH_BIN`: the expansion re-resolves in a fresh shell, so the COMMAND
+# WORD is always a real binary.
+#
+# APPROACH_EXECUTABLE comes FIRST, and the order is the point. The launcher
+# exports the pin; APPROACH_BIN is an ordinary name a user's shell profile may
+# already export, and every launch inherits it. Resolving APPROACH_BIN first
+# would let a stale ambient value silently outrank the pin — the mixed-build
+# failure this whole block exists to stop.
 #
 # That covers the command word only. The blocks below still share FLOW_ID,
 # FLOW_STATE_ARGS, PLAN_STATE_ARGS and friends, so run them in one shell, or
@@ -54,7 +60,7 @@ if [ -n "$APPROACH_ARTIFACT_ROOT" ]; then
   PLAN_STATE_ARGS=(--state-root "$APPROACH_ARTIFACT_ROOT")
 fi
 
-if ! FLOW_JSON=$("${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow read --flow-id "$APPROACH_FLOW_ID" "${FLOW_STATE_ARGS[@]}"); then
+if ! FLOW_JSON=$("${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read --flow-id "$APPROACH_FLOW_ID" "${FLOW_STATE_ARGS[@]}"); then
   echo "approach flow read failed; report the command error to the user." >&2
   exit 1
 fi
@@ -99,7 +105,7 @@ same validation as `phase set`, persist the update, and print JSON with the
 updated phase plus the next actionable phase state:
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase complete \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase complete \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_FLOW_PHASE_ID" \
   --summary "What changed in this phase." \
@@ -152,7 +158,7 @@ established, do not persist a guessed issue URL; mention the ambiguity in the
 Plan phase summary or notes instead.
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow issue set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow issue set \
   --flow-id "$APPROACH_FLOW_ID" \
   --provider github \
   --number 123 \
@@ -163,14 +169,14 @@ Plan phase summary or notes instead.
    `$APPROACH_BIN flow phase block`.
 
 ```bash
-if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan save \
+if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan save \
     --title "$FLOW_TITLE" \
     --status approved \
     --repo-path "$APPROACH_REPO_PATH" \
     --worktree-path "$APPROACH_WORKTREE_PATH" \
     --branch "$APPROACH_BRANCH" \
     "${PLAN_STATE_ARGS[@]}"); then
-  "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+  "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
     --flow-id "$APPROACH_FLOW_ID" \
     --phase-id "$APPROACH_CURRENT_PHASE_ID" \
     --status blocked \
@@ -180,11 +186,11 @@ if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | "${APPROACH_BIN:=${APPROACH_EXECUT
   exit 1
 fi
 
-if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow plan set \
+if ! "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow plan set \
     --flow-id "$APPROACH_FLOW_ID" \
     --plan-id "$PLAN_ID" \
     "${FLOW_STATE_ARGS[@]}"; then
-  "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+  "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
     --flow-id "$APPROACH_FLOW_ID" \
     --phase-id "$APPROACH_CURRENT_PHASE_ID" \
     --status blocked \
@@ -204,7 +210,7 @@ def semantic_kind(phase):
 phase = next((phase for phase in record.get("phases", []) if semantic_kind(phase) == "implementation"), {})
 print("APPROACH_PLAN_NEXT_PHASE_ID=" + shlex.quote((phase.get("phase_id") or "").strip()))
 print("APPROACH_PLAN_NEXT_PHASE_TITLE=" + shlex.quote((phase.get("title") or phase.get("phase_id") or "").strip()))'); then
-  "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+  "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
     --flow-id "$APPROACH_FLOW_ID" \
     --phase-id "$APPROACH_CURRENT_PHASE_ID" \
     --status blocked \
@@ -216,14 +222,14 @@ fi
 eval "$APPROACH_PLAN_PHASE_EXPORTS"
 
 if [ -n "${APPROACH_PLAN_NEXT_PHASE_ID:-}" ]; then
-  if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan phase set \
+  if ! "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan phase set \
       --plan-id "$PLAN_ID" \
       --phase-id "$APPROACH_PLAN_NEXT_PHASE_ID" \
       --title "${APPROACH_PLAN_NEXT_PHASE_TITLE:-$APPROACH_PLAN_NEXT_PHASE_ID}" \
       --status pending \
       --order 1 \
       "${PLAN_STATE_ARGS[@]}"; then
-    "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+    "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
       --flow-id "$APPROACH_FLOW_ID" \
       --phase-id "$APPROACH_CURRENT_PHASE_ID" \
       --status blocked \
@@ -234,8 +240,8 @@ if [ -n "${APPROACH_PLAN_NEXT_PHASE_ID:-}" ]; then
   fi
 fi
 
-if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
-  "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+if ! "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
+  "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
     --flow-id "$APPROACH_FLOW_ID" \
     --phase-id "$APPROACH_CURRENT_PHASE_ID" \
     --status blocked \
@@ -245,7 +251,7 @@ if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan read --plan-id "$P
   exit 1
 fi
 
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase complete \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase complete \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --outcome "plan_saved" \
@@ -269,14 +275,14 @@ recover a plan ID, mark Plan Review `needs_attention` or `blocked` instead of
 running `$APPROACH_BIN plan read --plan-id ""`.
 
 ```bash
-if ! FLOW_JSON=$("${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow read --flow-id "$APPROACH_FLOW_ID" "${FLOW_STATE_ARGS[@]}"); then
+if ! FLOW_JSON=$("${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read --flow-id "$APPROACH_FLOW_ID" "${FLOW_STATE_ARGS[@]}"); then
   echo "approach flow read failed; report the command error to the user." >&2
   exit 1
 fi
 
 if [ -z "$APPROACH_PLAN_ID" ]; then
   if ! APPROACH_PLAN_ID=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("plan_id", ""))'); then
-    "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+    "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
       --flow-id "$APPROACH_FLOW_ID" \
       --phase-id "$APPROACH_CURRENT_PHASE_ID" \
       --status blocked \
@@ -288,7 +294,7 @@ if [ -z "$APPROACH_PLAN_ID" ]; then
 fi
 
 if [ -z "$APPROACH_PLAN_ID" ]; then
-  "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+  "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
     --flow-id "$APPROACH_FLOW_ID" \
     --phase-id "$APPROACH_CURRENT_PHASE_ID" \
     --status blocked \
@@ -298,8 +304,8 @@ if [ -z "$APPROACH_PLAN_ID" ]; then
   exit 1
 fi
 
-if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan read --plan-id "$APPROACH_PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
-  "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+if ! "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan read --plan-id "$APPROACH_PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
+  "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
     --flow-id "$APPROACH_FLOW_ID" \
     --phase-id "$APPROACH_CURRENT_PHASE_ID" \
     --status blocked \
@@ -309,7 +315,7 @@ if ! "${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" plan read --plan-id "$A
   exit 1
 fi
 
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase complete \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase complete \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --summary "Plan is ready for implementation." \
@@ -337,7 +343,7 @@ child phases under an implementation-kind parent, create stable ordered children
 before advancing downstream phases:
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase add-child \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase add-child \
   --flow-id "$APPROACH_FLOW_ID" \
   --parent-phase-id "$APPROACH_FLOW_PHASE_ID" \
   --phase-id implementation-api \
@@ -351,7 +357,7 @@ instead of duplicating it. Complete or skip (with notes) each child phase when
 its work is done.
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --status completed \
@@ -375,7 +381,7 @@ fixed, `needs_attention` when non-blocking concerns remain for the user, and
 `blocked` when the branch cannot be reviewed or fixed.
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --status completed \
@@ -395,7 +401,7 @@ bookkeeping. The command currently supports `--provider github`; the PR head
 branch must match the Flow branch.
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow pr set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow pr set \
   --flow-id "$APPROACH_FLOW_ID" \
   --provider github \
   --number 123 \
@@ -405,7 +411,7 @@ branch must match the Flow branch.
   --status open \
   "${FLOW_STATE_ARGS[@]}"
 
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --status completed \
@@ -434,14 +440,14 @@ If Autoreview is already `needs_attention` or `blocked`, do not mark it
 complete it after the rerun succeeds:
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase restart \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase restart \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase complete \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase complete \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --summary "Autoreview passed; no blocking findings remain." \
@@ -459,7 +465,7 @@ merge status, commit, and RFC3339 timestamp through `$APPROACH_BIN flow merge se
 commands must succeed before reporting the Flow as merged.
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --status completed \
@@ -467,7 +473,7 @@ commands must succeed before reporting the Flow as merged.
   --summary "Merged PR github#123 at commit $MERGE_COMMIT." \
   "${FLOW_STATE_ARGS[@]}"
 
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow merge set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow merge set \
   --flow-id "$APPROACH_FLOW_ID" \
   --status merged \
   --commit "$MERGE_COMMIT" \
@@ -479,7 +485,7 @@ If merge is unsafe, rejected, or waiting on CI, use `blocked` with notes, then
 record the structured blocked merge status:
 
 ```bash
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow phase set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase set \
   --flow-id "$APPROACH_FLOW_ID" \
   --phase-id "$APPROACH_CURRENT_PHASE_ID" \
   --status blocked \
@@ -487,7 +493,7 @@ record the structured blocked merge status:
   --notes "Explain why merge is blocked." \
   "${FLOW_STATE_ARGS[@]}"
 
-"${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}" flow merge set \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow merge set \
   --flow-id "$APPROACH_FLOW_ID" \
   --status blocked \
   "${FLOW_STATE_ARGS[@]}"

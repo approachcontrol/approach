@@ -364,6 +364,26 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
+	// Pin the launching build here, at the first point the state root is known,
+	// rather than just before the program starts. Resolve hashes the file its
+	// resolved path names, and that path is mutable: Homebrew ships approach as a
+	// cask binary symlinked into /opt/homebrew/bin, so a `brew upgrade` landing
+	// between this process's exec and this call would have it cache, and pin, a
+	// build that is not the one running. Nothing here can make that check atomic
+	// — Go offers no portable handle on the running image — so the answer is to
+	// give the window as little to happen in as possible. Moving ahead of the
+	// plan and Flow stores takes database bootstrap, and a schema migration that
+	// can run for seconds, out of it. The scan in run() is still upstream and
+	// still counts; what remains is stated rather than hidden.
+	//
+	// Resolve never fails on a cache problem — it degrades to the running binary
+	// and says so — so an error here means the running binary itself is
+	// unreadable, which is worth reporting rather than launching agents that
+	// cannot report results.
+	pin, err := controlplane.Resolve(sessionStore.Root(), flowstore.DatabaseSchemaVersion())
+	if err != nil {
+		return err
+	}
 	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
 	if err != nil {
 		return err
@@ -390,14 +410,6 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// window means draining in-flight mutations before returning, not closing.
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
-	// Pin the launching build before any agent starts. Resolve never fails on a
-	// cache problem — it degrades to the running binary and says so — so a
-	// resolve error here means the running binary itself is unreadable, which is
-	// worth reporting rather than launching agents that cannot report results.
-	pin, err := controlplane.Resolve(sessionStore.Root(), flowstore.DatabaseSchemaVersion())
-	if err != nil {
-		return err
-	}
 	modelOpts.LaunchPin = pin
 	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
 	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
