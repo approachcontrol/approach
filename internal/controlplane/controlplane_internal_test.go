@@ -423,3 +423,54 @@ func TestPathMismatchNoticeOnlyFiresOnARealMismatch(t *testing.T) {
 		t.Fatalf("degraded pin notice = %q, want the degradation to win", got)
 	}
 }
+
+// RefreshPin is the only thing standing between a long-lived detached agent and
+// the eviction of the binary its argv still names: no provider hook is a death
+// certificate, so a hook firing means "alive just now" and restamps the claim.
+// TestRetentionExpiresAbandonedClaims is the counterpart — same fixture, same
+// clock, no refresh — and it asserts the binary IS evicted, so the pair is what
+// makes this one non-vacuous.
+func TestRefreshPinRescuesAClaimFromExpiry(t *testing.T) {
+	root := t.TempDir()
+	stubExecutable(t, "binary-contents-detached")
+	live, err := Resolve(root, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := RetainPin(root, "launch-live", live.Digest); err != nil {
+		t.Fatalf("RetainPin: %v", err)
+	}
+	claimPath := filepath.Join(root, cacheDirName, pinsDirName, "launch-live")
+	stale := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(claimPath, stale, stale); err != nil {
+		t.Fatalf("chtimes claim: %v", err)
+	}
+	original := timeNow
+	t.Cleanup(func() { timeNow = original })
+	timeNow = func() time.Time { return stale.Add(pinClaimMaxAge + time.Hour) }
+
+	// The agent is still running and its provider hook fires. Remove this call
+	// and the assertions below fail, which is what keeps the test honest.
+	if err := RefreshPin(root, "launch-live"); err != nil {
+		t.Fatalf("RefreshPin: %v", err)
+	}
+
+	// Fill the cache past the retention budget so the claimed copy is the first
+	// thing a sweep would take.
+	for i := range retainedBinaries + 1 {
+		stubExecutable(t, "binary-contents-sweep-"+string(rune('a'+i)))
+		if _, err := Resolve(root, testSchemaVersion); err != nil {
+			t.Fatalf("Resolve %d: %v", i, err)
+		}
+	}
+
+	if _, err := os.Stat(claimPath); err != nil {
+		t.Fatalf("a refreshed claim was expired anyway: %v", err)
+	}
+	for _, name := range cachedBinaries(t, root) {
+		if name == cachedBinaryName(live.Digest) {
+			return
+		}
+	}
+	t.Fatal("retention evicted a binary a refreshed claim still points at")
+}

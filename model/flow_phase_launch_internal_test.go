@@ -565,23 +565,21 @@ func TestRefuseUnverifiedLaunchPinIgnoresAnUnpinnedLaunch(t *testing.T) {
 	}
 }
 
-// Files exempt from the verification fence, with the reason each one launches
-// nothing that can mutate tracked Flow state through a wrong build.
-var unverifiedLaunchPinFiles = map[string]string{
-	// Plan implementation, saved-session resume, and the plain repo agent. None
-	// is a Flow launch: they mutate no phase, and the key handlers that build
-	// them return a context rather than an error channel a refusal could use.
-	// Tracked by a follow-up; verification there needs a launch seam that can
-	// refuse, which is a wider change than pinning.
-	"model_keys.go": "non-Flow launches with no refusal channel at context construction",
-}
+// Files exempt from the verification fence, with the reason each one cannot
+// reach a wrong build. Empty on purpose: every file that stamps a pin refuses an
+// unverified one, including the non-Flow routes in model_keys.go. A new entry
+// here is a claim that needs a reason as specific as the ones in
+// nonLaunchingContextFiles.
+var unverifiedLaunchPinFiles = map[string]string{}
 
 // preflight is not the only path that marks a phase running and bakes the
-// pinned path into a detached agent's argv: create, resume, repair, autofix, and
-// the generic worktree agent all reserve and write without going through it. A
-// check that lived only in preflight would leave every one of them launching an
-// unverified binary, so this is the fence that keeps the NEXT launch kind from
-// skipping it too — the same file-granularity trade as
+// pinned path into a detached agent's argv: create, resume, saved-session
+// resume, repair, autofix, and the generic worktree agent all reserve and write
+// without going through it, and the plan, session-resume, and plain repository
+// agents launch outside Flow entirely while still running `approach` commands
+// against the same store. A check that lived only in preflight would leave every
+// one of them launching an unverified binary, so this is the fence that keeps
+// the NEXT launch kind from skipping it too — the same file-granularity trade as
 // TestEveryLaunchingContextGoesThroughApplyLaunchPin, for the same reason.
 func TestEveryFlowLaunchRouteRefusesAnUnverifiedPin(t *testing.T) {
 	entries, err := os.ReadDir(".")

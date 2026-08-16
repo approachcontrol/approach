@@ -446,8 +446,22 @@ func sweepCache(cacheDir, keep string) {
 		return candidates[i].name < candidates[j].name
 	})
 	// keep counts against the budget, so only retainedBinaries-1 others survive.
+	pinsDir := filepath.Join(cacheDir, pinsDirName)
 	for i, candidate := range candidates {
 		if i < retainedBinaries-1 {
+			continue
+		}
+		// Re-read the claims immediately before the unlink rather than trusting
+		// the snapshot taken above. Sweeps are not serialized against launches
+		// in other processes, and everything between that snapshot and here —
+		// reading the whole directory, stat-ing each entry, sorting — is time a
+		// peer can use to claim this very digest for a launch whose argv already
+		// names it. Re-reading cannot make the check atomic, but it shrinks the
+		// window from "the length of a sweep" to "two syscalls", which is the
+		// difference between a race a busy machine loses regularly and one it
+		// effectively never does. Full cross-process serialization of claim,
+		// refresh, release, and sweep is a lock this package does not have yet.
+		if pinnedDigests(pinsDir)[strings.TrimPrefix(candidate.name, cachedBinaryPrefix)] {
 			continue
 		}
 		_ = os.Remove(filepath.Join(cacheDir, candidate.name))
@@ -472,10 +486,17 @@ func pinnedDigests(pinsDir string) map[string]bool {
 		}
 		path := filepath.Join(pinsDir, entry.Name())
 		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
-			// Best effort: a claim that cannot be removed is simply honoured for
-			// another sweep, which costs one retained copy and never a launch.
-			if os.Remove(path) == nil {
-				continue
+			// Re-stat before removing. ReadDir's entry.Info is a snapshot, and a
+			// RefreshPin in another process between that snapshot and here means
+			// the claim is alive — deleting it would then let the same sweep
+			// evict a binary a running agent still has to exec, which is the one
+			// outcome this whole mechanism exists to prevent. Best effort
+			// otherwise: a claim that cannot be removed is honoured for another
+			// sweep, which costs one retained copy and never a launch.
+			if fresh, statErr := os.Stat(path); statErr == nil && fresh.ModTime().Before(cutoff) {
+				if os.Remove(path) == nil {
+					continue
+				}
 			}
 		}
 		data, err := os.ReadFile(path)

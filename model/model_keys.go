@@ -2698,6 +2698,12 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		m = m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed")
 		return actions.AgentLaunchContext{}, nil, false, m
 	}
+	// A resumed session's provider hook argv carries the pinned path just as a
+	// fresh launch's does, and its agent runs `approach plan` commands against
+	// the same store. Refused here, where the route still has a status channel.
+	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
+		return actions.AgentLaunchContext{}, nil, false, m.setStatus(statusOther, refusal)
+	}
 	command := string(record.Provider)
 	workingDir := record.CWD
 	if workingDir == "" {
@@ -2763,6 +2769,12 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 	if m.agentCommand == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
 		return actions.AgentLaunchContext{}, false, m
+	}
+	// Refused before the launch-instructions modal opens rather than after the
+	// user has typed into it: this agent persists plan phases through the pinned
+	// binary, so an unusable pin is worth reporting at the keypress.
+	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
+		return actions.AgentLaunchContext{}, false, m.setStatus(statusOther, refusal)
 	}
 	planPath, err := m.planMarkdownPath(plan.PlanID)
 	if err != nil {
@@ -2904,12 +2916,22 @@ func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowP
 	return flowstore.FlowPhase{}, false
 }
 
+// launchAgentAtPath and its branch-carrying sibling are the two entry points for
+// the plain repository agent. agentLaunchContext returns a context and nothing
+// else, so the refusal lives here, where there is still a status channel — and
+// in both, because either one alone would leave the other on an unverified pin.
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
+	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
+		return m.setStatus(statusOther, refusal), nil
+	}
 	ctx := m.agentLaunchContext(path)
 	return m.launchAgentForBackend(ctx, nil)
 }
 
 func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, tea.Cmd) {
+	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
+		return m.setStatus(statusOther, refusal), nil
+	}
 	ctx := m.agentLaunchContext(path)
 	if branch != nil {
 		ctx.Branch = *branch
