@@ -567,6 +567,10 @@ nothing else.
   does not select `epicProgression` are unaffected. This is deliberately weaker
   than the Flow-list failure, which fails the request: progression is an
   optional projection and must not be a single point of failure for the API.
+  Because that error repeats per Flow and per aliased selection, the
+  response-size limit charges each of those entries — including the response
+  keys its `path` names — so an unreadable row cannot amplify past the cap. A
+  snapshot with nothing unreadable in it is charged nothing.
 
 ```graphql
 {

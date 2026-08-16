@@ -523,6 +523,77 @@ func TestInspectCostMeasuresProgressionWidthsWithNoRows(t *testing.T) {
 	}
 }
 
+// TestInspectCostChargesProgressionErrorEntries closes the amplification path
+// that is not in `data` at all. An unreadable progression row is scoped to the
+// field, so it writes one `errors` entry per Flow naming that epic and per
+// aliased selection of it — and encoding/json buffers errors and data together.
+// Measuring only the data tree let one bad row build a body several times over
+// the cap while every scalar in it measured small.
+func TestInspectCostChargesProgressionErrorEntries(t *testing.T) {
+	const flowCount = 2000
+	records := make([]flowstore.FlowRecord, 0, flowCount)
+	for i := range flowCount {
+		records = append(records, beadFlow(
+			fmt.Sprintf("flow-%d", i), "/repos/alpha",
+			fmt.Sprintf("approach-y7g.%d", i), "approach-y7g",
+		))
+	}
+	unreadable := &countingProgressions{failKeys: map[flowstore.EpicProgressionKey]error{
+		epicKey("/repos/alpha", "approach-y7g"): errors.New("malformed epic progression row"),
+	}}
+	snap := buildSnapshot(staticRepos(), staticFlows(records...), unreadable.source(), nil)
+	bounds := snap.bounds()
+	bounds.flows = flowCount
+	if bounds.progressionErrorBytes == 0 {
+		t.Fatal("an unreadable row is charged nothing; every error entry it writes is off the budget")
+	}
+
+	// The response key of a failing field is written twice: once in `data`, and
+	// once in that Flow's `errors[].path`. Charging only the first left the
+	// alias free for all 2000 entries.
+	alias := strings.Repeat("k", 32<<10)
+	query := fmt.Sprintf(`{ %s: flows { epicProgression { enabled } } }`, alias)
+	if err := costOf(t, query, bounds); !errors.Is(err, errResponseTooLarge) {
+		t.Errorf("inspectCost(wide alias over unreadable rows) error = %v, want errResponseTooLarge", err)
+	}
+
+	// The charge is conditional on this snapshot, not on the schema: a store
+	// with nothing unreadable in it emits no entries and must pay for none.
+	healthy := buildSnapshot(staticRepos(), staticFlows(records...), (&countingProgressions{}).source(), nil).bounds()
+	healthy.flows = flowCount
+	if healthy.progressionErrorBytes != 0 {
+		t.Errorf("progressionErrorBytes = %d with every row readable, want 0", healthy.progressionErrorBytes)
+	}
+	if err := costOf(t, query, healthy); err != nil {
+		t.Errorf("inspectCost(wide alias over readable rows) error = %v, want nil", err)
+	}
+}
+
+// TestDocumentKeyBytesBoundsAnyErrorPath pins what makes the charge above an
+// upper bound: an error path names nested fields, and each one is a distinct
+// node in the document text.
+func TestDocumentKeyBytesBoundsAnyErrorPath(t *testing.T) {
+	document := parseQuery(`{ alpha: repos { beta: flows { gamma: epicProgression { enabled } } } }`)
+	if document == nil {
+		t.Fatal("parseQuery() did not parse")
+	}
+	// The deepest path is alpha/beta/gamma/enabled; the total also covers the
+	// keys off that path, which is what makes it a bound rather than a guess.
+	if got, want := documentKeyBytes(document), int64(len("alpha")+len("beta")+len("gamma")+len("enabled")); got != want {
+		t.Errorf("documentKeyBytes() = %d, want %d", got, want)
+	}
+
+	// Fragments are counted from their definitions, so a spread path is charged
+	// even though the walk never expands it here.
+	spread := parseQuery(`{ ...Outer } fragment Outer on Query { wide: flows { epicProgression { done } } }`)
+	if spread == nil {
+		t.Fatal("parseQuery(fragment) did not parse")
+	}
+	if got, want := documentKeyBytes(spread), int64(len("wide")+len("epicProgression")+len("done")); got != want {
+		t.Errorf("documentKeyBytes(fragment) = %d, want %d", got, want)
+	}
+}
+
 // TestResultBoundsCoverEveryField is the drift guard for resultBounds. A new
 // list field with no cardinality bound, or a new scalar field with no measured
 // width, silently falls back to a guess — exactly what this design removed.

@@ -124,9 +124,44 @@ function authHeaders(): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {}
 }
 
+interface GraphQLError {
+  message?: string
+  path?: (string | number)[]
+}
+
 interface GraphQLResponse<T> {
   data?: T | null
-  errors?: { message?: string }[]
+  errors?: GraphQLError[]
+}
+
+/**
+ * The only fields whose failure this client serves around. The API resolves
+ * each of them from its own source — `Flow.epicProgression` reads one
+ * progression row per epic — and scopes a failed read to that field, so the
+ * rest of the response is still the answer the reader asked for.
+ *
+ * Everything else stays fatal. This is a whitelist rather than "any response
+ * carrying data" because GraphQL nulls a failed field up to its nearest
+ * nullable parent: a failed snapshot nulls the whole `flow` root and still
+ * sends `{"data":{"flow":null}}`, which is byte-identical to an unknown id.
+ * Accepting that would render "flow not found" for an unreachable store.
+ */
+const PARTIAL_FIELDS = new Set(['epicProgression'])
+
+/**
+ * Reports whether one error entry names a field this client can serve without.
+ * Matched on the path's last element — the response key of the field that
+ * actually failed — so an error that propagated up to a parent, and therefore
+ * nulled more than the field itself, is not matched and stays fatal. An entry
+ * with no path (a request-level failure) is never partial.
+ */
+function isPartialFieldError(error: GraphQLError): boolean {
+  const path = error.path
+  if (!Array.isArray(path) || path.length === 0) {
+    return false
+  }
+  const failed = path[path.length - 1]
+  return typeof failed === 'string' && PARTIAL_FIELDS.has(failed)
 }
 
 async function query<T>(document: string, variables?: Record<string, unknown>): Promise<T> {
@@ -188,25 +223,30 @@ async function query<T>(document: string, variables?: Record<string, unknown>): 
       `status ${response.status}: ${JSON.stringify(body.errors ?? null)}`,
     )
   }
-  // A GraphQL response can carry both. The API resolves some optional fields
-  // from their own sources — `Flow.epicProgression` reads a progression row per
-  // epic — and one unreadable row nulls that field and adds an error entry while
-  // every other field, and every other Flow, resolves normally. Discarding a
-  // populated `data` here would turn that into a blank error page for the whole
-  // Flow, which is worse than the missing field it is reporting.
+  // A GraphQL response can carry both, and one field failing is not the same
+  // event as the query failing. `Flow.epicProgression` reads a progression row
+  // per epic, and one unreadable row nulls that field and adds an error entry
+  // while every other field, and every other Flow, resolves normally. Failing
+  // the whole load there would turn a missing Tracking row into a blank error
+  // page for the entire Flow.
   //
-  // Nothing is lost silently: the errors are logged server-side, and a field the
-  // schema declares non-null cannot survive as a hole — GraphQL propagates its
-  // error up until it reaches a nullable parent, so a broken required field
-  // still arrives here as a null `data` or a null entity the caller rejects.
+  // Only the fields named above buy that tolerance. Any other error is still
+  // fatal, whatever `data` holds, because a failed field nulls its way up to
+  // the nearest nullable parent — a failed snapshot arrives as
+  // `{"data":{"flow":null},"errors":[...]}`, which without this check reads as
+  // an unknown id and renders a 404 instead of the error panel.
+  const errors = body.errors ?? []
+  const fatal = errors.filter((error) => !isPartialFieldError(error))
+  if (fatal.length > 0) {
+    fail('graphql', JSON.stringify(fatal))
+  }
   if (body.data == null) {
-    if (body.errors?.length) {
-      fail('graphql', JSON.stringify(body.errors))
-    }
+    // Every error was partial, so the data envelope cannot be null: a nullable
+    // field's error stops at that field. Reaching here means a malformed body.
     fail('http', 'response carried neither data nor errors')
   }
-  if (body.errors?.length) {
-    console.error('approach-api partial response:', JSON.stringify(body.errors))
+  if (errors.length > 0) {
+    console.error('approach-api partial response:', JSON.stringify(errors))
   }
   return body.data
 }

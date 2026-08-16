@@ -279,6 +279,17 @@ func (s *snapshot) bounds() resultBounds {
 	// fieldValueBytes keeps a per-field maximum and the multiplier comes from
 	// list cardinality, so the widest row bounds every Flow that shares it.
 	for _, projection := range s.progressions {
+		if projection.err != nil {
+			// An unreadable row is charged as bytes, not as a value: it puts an
+			// `errors` entry on the wire for every Flow naming that epic and
+			// every aliased selection of the field, and encoding/json buffers
+			// the whole body — errors included — before any of it is written.
+			// Left uncharged, one bad row is an amplifier that turns a response
+			// the data budget measures as small into one several times over the
+			// cap.
+			limits.progressionErrorBytes = errorEntryOverheadBytes
+			continue
+		}
 		if !projection.found {
 			continue
 		}
