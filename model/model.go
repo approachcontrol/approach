@@ -258,6 +258,7 @@ type Model struct {
 	flowAutofixTmuxLaunches map[string][]string
 	flowLaunchAttempts      map[string]flowLaunchAttempt
 	flowLaunchSessionOwners map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
+	quitAfterFlowLaunch     bool
 	launchSeams             flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
@@ -1890,11 +1891,17 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
+		if modelNext.quitAfterFlowLaunch && len(modelNext.flowLaunchAttempts) == 0 {
+			cmd = batchNonNil(cmd, tea.Quit)
+		}
 		next = modelNext
 	}()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case flowLaunchQuitRequestedMsg:
+		m.quitAfterFlowLaunch = true
+		return m.setStatus(statusOther, flowLaunchQuitPendingStatus), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height

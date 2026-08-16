@@ -2888,6 +2888,41 @@ func TestTmuxFlowLaunchPendingHandshakeBlocksQuit(t *testing.T) {
 	}
 }
 
+func TestSignalQuitWaitsForPendingTmuxHandshake(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	for _, signalMsg := range []tea.Msg{tea.Quit(), tea.Interrupt()} {
+		m := h.model()
+		attempt := flowLaunchAttempt{
+			Token: "launch-pending", Kind: flowLaunchKindManualPhase,
+			FlowID: h.record.FlowID, PhaseID: h.record.Phases[0].PhaseID,
+		}
+		var ok bool
+		m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStateHandoffPending)
+		if !ok {
+			t.Fatal("reserveFlowLaunchAttempt() failed")
+		}
+
+		filtered := DeferQuitDuringFlowLaunch(m, signalMsg)
+		if _, ok := filtered.(flowLaunchQuitRequestedMsg); !ok {
+			t.Fatalf("filtered signal type = %T, want deferred Flow quit", filtered)
+		}
+		nextModel, cmd := m.Update(filtered)
+		next := nextModel.(Model)
+		if !next.quitAfterFlowLaunch {
+			t.Fatalf("pending signal result: cmd=%v deferred=%t, want deferred quit", cmd != nil, next.quitAfterFlowLaunch)
+		}
+
+		next = next.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		_, cmd = next.Update(struct{}{})
+		if cmd == nil {
+			t.Fatal("completed handshake did not resume deferred signal quit")
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Fatalf("completed handshake command = %T, want tea.QuitMsg", cmd())
+		}
+	}
+}
+
 func TestManualFlowLaunchFallsBackToEmbeddedWithoutTmux(t *testing.T) {
 	h := newTmuxLaunchHarness(t, false)
 	m := h.launch(h.model())

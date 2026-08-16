@@ -403,9 +403,10 @@ Lifecycle and ownership:
   after that.
 - Quitting Approach does not prompt about, terminate, or otherwise touch an
   established session — persisting past the TUI is the point. While a tracked
-  Flow's private tmux start handshake is still pending, quit is temporarily
-  blocked so the TUI cannot drop its launch reservation before the runner owns
-  the Flow lease. Reattach established sessions with `T` or `tmux attach`.
+  Flow's private tmux start handshake is still pending, keyboard quit is
+  temporarily blocked and SIGINT/SIGTERM shutdown is deferred so the TUI cannot
+  drop its launch reservation before the runner owns the Flow lease. Reattach
+  established sessions with `T` or `tmux attach`.
 - A window closes when its agent exits. The session ends with its last window
   and the next launch recreates it.
 - A tracked Flow phase window owns a Flow-scoped kernel lease for as long as

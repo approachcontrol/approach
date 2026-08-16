@@ -350,7 +350,14 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// window means draining in-flight mutations before returning, not closing.
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
-	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
+	// Bubble Tea normally exits immediately on SIGINT/SIGTERM without waiting
+	// for command goroutines. Let the model defer those messages while its
+	// private tmux helper still carries an authoritative Flow reservation.
+	p := tea.NewProgram(
+		model.NewWithOptions(repos, modelOpts),
+		tea.WithAltScreen(),
+		tea.WithFilter(model.DeferQuitDuringFlowLaunch),
+	)
 	_, err = p.Run()
 	return err
 }
