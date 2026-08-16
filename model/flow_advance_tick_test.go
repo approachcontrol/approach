@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,9 +30,14 @@ import (
 // registration path runs against an already-constructed model, so clearing at
 // construction cannot drop a record a live test still needs. Sharing one map
 // does forbid t.Parallel() in the tests that use it.
-var autoAdvanceTestFlows = map[string]flowstore.FlowRecord{}
+var (
+	autoAdvanceTestFlowsMu sync.RWMutex
+	autoAdvanceTestFlows   = map[string]flowstore.FlowRecord{}
+)
 
 func recordAutoAdvanceTestFlows(records []flowstore.FlowRecord) {
+	autoAdvanceTestFlowsMu.Lock()
+	defer autoAdvanceTestFlowsMu.Unlock()
 	for _, record := range records {
 		if record.FlowID != "" {
 			autoAdvanceTestFlows[record.FlowID] = cloneFlowRecord(record)
@@ -40,6 +46,8 @@ func recordAutoAdvanceTestFlows(records []flowstore.FlowRecord) {
 }
 
 func autoAdvanceTestReadFlow(flowID string) (flowstore.FlowRecord, error) {
+	autoAdvanceTestFlowsMu.RLock()
+	defer autoAdvanceTestFlowsMu.RUnlock()
 	if record, ok := autoAdvanceTestFlows[strings.TrimSpace(flowID)]; ok {
 		return record, nil
 	}
@@ -47,7 +55,9 @@ func autoAdvanceTestReadFlow(flowID string) (flowstore.FlowRecord, error) {
 }
 
 func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
+	autoAdvanceTestFlowsMu.Lock()
 	clear(autoAdvanceTestFlows)
+	autoAdvanceTestFlowsMu.Unlock()
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = autoAdvanceTestReadFlow
 	}

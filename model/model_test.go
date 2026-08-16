@@ -3,6 +3,7 @@ package model_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,11 +38,16 @@ func testStashes() []gitquery.Stash {
 
 // The test record registries mirror Flow and session records fed into panes so
 // authoritative read seams can answer with the same records the surfaces show.
-// Package tests never run in parallel, so process-wide registries are enough.
-var testFlowRecords = map[string]flowstore.FlowRecord{}
-var testSessionRecords = map[string]sessions.SessionRecord{}
+// They are mutex-guarded so a later t.Parallel() cannot race shared IDs.
+var (
+	testRecordsMu      sync.RWMutex
+	testFlowRecords    = map[string]flowstore.FlowRecord{}
+	testSessionRecords = map[string]sessions.SessionRecord{}
+)
 
 func recordTestFlowRecords(records []flowstore.FlowRecord) {
+	testRecordsMu.Lock()
+	defer testRecordsMu.Unlock()
 	for _, record := range records {
 		if record.FlowID != "" {
 			testFlowRecords[record.FlowID] = record
@@ -49,16 +55,32 @@ func recordTestFlowRecords(records []flowstore.FlowRecord) {
 	}
 }
 
+func lookupTestFlowRecord(flowID string) (flowstore.FlowRecord, bool) {
+	testRecordsMu.RLock()
+	defer testRecordsMu.RUnlock()
+	record, ok := testFlowRecords[flowID]
+	return record, ok
+}
+
 func testSessionRecordKey(provider sessions.Provider, sessionID string) string {
 	return string(provider) + "\x00" + sessionID
 }
 
 func recordTestSessionRecords(records []sessions.SessionRecord) {
+	testRecordsMu.Lock()
+	defer testRecordsMu.Unlock()
 	for _, record := range records {
 		if record.SessionID != "" {
 			testSessionRecords[testSessionRecordKey(record.Provider, record.SessionID)] = record
 		}
 	}
+}
+
+func lookupTestSessionRecord(provider sessions.Provider, sessionID string) (sessions.SessionRecord, bool) {
+	testRecordsMu.RLock()
+	defer testRecordsMu.RUnlock()
+	record, ok := testSessionRecords[testSessionRecordKey(provider, sessionID)]
+	return record, ok
 }
 
 // newTestModel builds a Model and, unless the test supplies its own, points the
@@ -71,7 +93,7 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 	}
 	if opts.ReadSession == nil {
 		opts.ReadSession = func(provider sessions.Provider, sessionID string) (sessions.SessionRecord, error) {
-			if record, ok := testSessionRecords[testSessionRecordKey(provider, sessionID)]; ok {
+			if record, ok := lookupTestSessionRecord(provider, sessionID); ok {
 				return record, nil
 			}
 			return sessions.SessionRecord{}, fmt.Errorf("session %s/%s not found", provider, sessionID)
@@ -79,7 +101,7 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 	}
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
-			if record, ok := testFlowRecords[flowID]; ok {
+			if record, ok := lookupTestFlowRecord(flowID); ok {
 				return record, nil
 			}
 			// Wrapped like the store's own miss so callers that treat a missing
@@ -101,7 +123,7 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 					}
 				}
 			}
-			if record, ok := testFlowRecords[flowID]; ok {
+			if record, ok := lookupTestFlowRecord(flowID); ok {
 				return record, func() {}, nil
 			}
 			return flowstore.FlowRecord{}, nil, fmt.Errorf("flow %s not found", flowID)

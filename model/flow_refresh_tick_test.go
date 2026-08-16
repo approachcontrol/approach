@@ -12,6 +12,10 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
+// testCommandSettleTimeout is long enough for real SQLite writes on a loaded
+// CI runner. The previous 20ms window dropped those results and flaked.
+const testCommandSettleTimeout = 2 * time.Second
+
 func flowRefreshTestRepos() []scanner.Repo {
 	return []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}
 }
@@ -54,7 +58,7 @@ func immediateFlowRefreshMessages(cmd tea.Cmd) []tea.Msg {
 			return messages
 		}
 		return []tea.Msg{msg}
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(testCommandSettleTimeout):
 		return nil
 	}
 }
