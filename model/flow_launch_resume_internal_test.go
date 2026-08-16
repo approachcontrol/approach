@@ -10,6 +10,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -887,6 +888,26 @@ func TestStoredCodexAppPreferenceRespectsRetainedTerminalOccupancy(t *testing.T)
 	}
 	if got := next.(Model).status.Text; got != flowPhaseResumeTerminalStatus {
 		t.Fatalf("status = %q, want %q", got, flowPhaseResumeTerminalStatus)
+	}
+}
+
+func TestPhaseResumeFooterWithdrawsForTrackedLease(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state flowlease.LeaseState
+		err   error
+	}{
+		{name: "held", state: flowlease.Held},
+		{name: "inspection error", err: errors.New("unsafe lease directory")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
+			h.leaseState = tc.state
+			h.leaseErr = tc.err
+			if h.resumeModel().selectedFlowPhaseResumable() {
+				t.Fatal("footer advertised phase resume while tracked lease occupancy was held or unknown")
+			}
+		})
 	}
 }
 

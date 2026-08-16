@@ -338,33 +338,47 @@ func superviseProcessGroup(pid int, waitCh <-chan error, signals <-chan os.Signa
 			if !ok {
 				continue
 			}
-			_ = syscall.Kill(-pid, sysSig)
-			select {
-			case err := <-waitCh:
-				return childExitError(err)
-			case <-time.After(gracefulStopTimeout):
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
-				err := <-waitCh
-				return childExitError(err)
-			}
+			return stopProcessGroup(pid, waitCh, sysSig)
 		}
 	}
 }
 
 func terminateProcessGroup(pid int, waitCh <-chan error) error {
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
-	select {
-	case err := <-waitCh:
-		return childExitError(err)
-	case <-time.After(gracefulStopTimeout):
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	return stopProcessGroup(pid, waitCh, syscall.SIGTERM)
+}
+
+// stopProcessGroup retains the caller's lease until every member of the
+// agent's process group is gone. Reaping the group leader is not sufficient:
+// a descendant may ignore the graceful signal and keep using the worktree.
+// After the grace period, keep the supervisor alive and the lease fail-closed
+// while SIGKILL takes effect rather than returning on the leader's status.
+func stopProcessGroup(pid int, waitCh <-chan error, gracefulSignal syscall.Signal) error {
+	_ = syscall.Kill(-pid, gracefulSignal)
+	grace := time.NewTimer(gracefulStopTimeout)
+	defer grace.Stop()
+	poll := time.NewTicker(protocolPollInterval)
+	defer poll.Stop()
+
+	var leaderErr error
+	leaderExited := false
+	for {
+		if leaderExited && !processGroupExists(pid) {
+			return childExitError(leaderErr)
+		}
 		select {
 		case err := <-waitCh:
-			return childExitError(err)
-		case <-time.After(gracefulStopTimeout):
-			return errors.New("tracked Flow agent process group did not exit")
+			leaderErr = err
+			leaderExited = true
+		case <-grace.C:
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		case <-poll.C:
 		}
 	}
+}
+
+func processGroupExists(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func childExitError(err error) error {

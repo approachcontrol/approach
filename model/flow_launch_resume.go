@@ -167,16 +167,19 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
-// previewPhaseResume is the footer's half of D1, and it is deliberately
-// narrower than flowLaunchAdmissionOccupied: a competing lifecycle attempt and
-// an open repair terminal both refuse a resume silently by design, and
-// withdrawing the key for them would be a behavior change this bead does not
-// make. It gates on the retained-slot conjunction only, which is the case
-// resume newly refuses out loud.
+// previewPhaseResume is the footer's half of D1. A tracked lease is included
+// fail-closed so the footer never advertises a resume that admission will
+// immediately defer. The remaining predicate is deliberately narrower than
+// flowLaunchAdmissionOccupied: a competing lifecycle attempt and an open repair
+// terminal both refuse a resume silently by design, and withdrawing the key for
+// them would be a behavior change this bead does not make.
 func (m Model) previewPhaseResume(flowID string) bool {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {
 		return true
+	}
+	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil || occupied {
+		return false
 	}
 	return !m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
 }

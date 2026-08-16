@@ -293,6 +293,16 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		// advisory launch/close lock; losing it would block every later launch,
 		// close, repair, or resume on this Flow until it timed out.
 		event.Release = release
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		}
 		record := msg.Record
 		headless := msg.Headless
 		repoPath := msg.RepoPath
