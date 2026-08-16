@@ -159,6 +159,31 @@ function isPartialFieldError(error: GraphQLError): boolean {
   return PARTIAL_FIELDS.has(failedField(error) ?? '')
 }
 
+/**
+ * Reads the errors envelope as the list of objects everything below assumes it
+ * is. `body` is a TypeScript cast, not a parsed shape — a stale tunnel or a
+ * misconfigured endpoint can answer 200 with any JSON at all — and a TypeError
+ * raised while filtering it would escape `fail()`, and therefore `load()`'s
+ * ApproachApiError handling, into the generic Next.js boundary. That is the
+ * one outcome this module exists to prevent, which is why a non-object body is
+ * already checked above.
+ *
+ * A malformed entry inside a well-formed array is kept rather than dropped: it
+ * names no field, so the whitelist below treats it as fatal, which is the
+ * conservative reading of an error nobody can attribute.
+ */
+function errorEntries(value: unknown): GraphQLError[] {
+  if (value === undefined || value === null) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    fail('http', `response carried ${describe(value)} where an errors list was expected`)
+  }
+  return value.map((entry) =>
+    typeof entry === 'object' && entry !== null ? (entry as GraphQLError) : {},
+  )
+}
+
 /** The response key of the field an error entry names, if it names one. */
 function failedField(error: GraphQLError): string | undefined {
   const path = error.path
@@ -249,7 +274,7 @@ async function query<T>(
   // the nearest nullable parent — a failed snapshot arrives as
   // `{"data":{"flow":null},"errors":[...]}`, which without this check reads as
   // an unknown id and renders a 404 instead of the error panel.
-  const errors = body.errors ?? []
+  const errors = errorEntries(body.errors)
   const fatal = errors.filter((error) => !isPartialFieldError(error))
   if (fatal.length > 0) {
     fail('graphql', JSON.stringify(fatal))

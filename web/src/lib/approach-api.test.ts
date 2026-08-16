@@ -218,6 +218,19 @@ describe('approach api client', () => {
       await expect(getFlow('f1')).rejects.toMatchObject({ kind: 'graphql' })
     })
 
+    // The response body is a cast, not a parsed shape. A TypeError raised while
+    // reading it would escape the ApproachApiError path into the generic error
+    // boundary — the outcome the non-object-body check exists to prevent.
+    it.each([
+      ['a non-list errors field', { data: { flow: null }, errors: {} }],
+      ['a null entry in the errors list', { data: { flow: null }, errors: [null] }],
+      ['a scalar entry in the errors list', { data: { flow: null }, errors: ['boom'] }],
+    ])('rejects %s without throwing past fail()', async (_name, body) => {
+      fetchMock.mockResolvedValue(jsonResponse(body))
+
+      await expect(getFlow('f1')).rejects.toBeInstanceOf(ApproachApiError)
+    })
+
     it('rejects an error with no path, which is a request-level failure', async () => {
       fetchMock.mockResolvedValue(
         jsonResponse({
