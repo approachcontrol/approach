@@ -1034,7 +1034,31 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
   let packetEls = [];
 
   function setCites(list) {
-    cites.innerHTML = `<h3>Cited files</h3><ul>${list.map(c => `<li>${c}</li>`).join("")}</ul>`;
+    const heading = document.createElement("h3");
+    heading.textContent = "Cited files";
+    const ul = document.createElement("ul");
+    list.forEach((cite) => {
+      const li = document.createElement("li");
+      li.textContent = cite;
+      ul.appendChild(li);
+    });
+    cites.replaceChildren(heading, ul);
+  }
+
+  function setExplainer({ kindClass, kindLabel, title, blurb, payload }) {
+    const heading = document.createElement("h3");
+    heading.textContent = "Selection";
+    const kind = document.createElement("span");
+    kind.className = kindClass;
+    kind.textContent = kindLabel;
+    const titleEl = document.createElement("h4");
+    titleEl.textContent = title;
+    const blurbEl = document.createElement("p");
+    blurbEl.textContent = blurb;
+    const payloadEl = document.createElement("div");
+    payloadEl.className = "payload";
+    payloadEl.textContent = payload;
+    explainer.replaceChildren(heading, kind, titleEl, blurbEl, payloadEl);
   }
 
   function clearPackets() {
@@ -1110,13 +1134,13 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
     activeBuilding = null;
     const p = paths.find(x => x.id === id);
     highlight(p.nodes, id);
-    explainer.innerHTML = `
-      <h3>Selection</h3>
-      <span class="kind path-${p.kind}">${p.kind} path · ${p.label}</span>
-      <h4>${p.title}</h4>
-      <p>${p.blurb}</p>
-      <div class="payload">${p.payload}</div>
-    `;
+    setExplainer({
+      kindClass: `kind path-${p.kind}`,
+      kindLabel: `${p.kind} path · ${p.label}`,
+      title: p.title,
+      blurb: p.blurb,
+      payload: p.payload,
+    });
     setCites(p.cites);
     animatePackets(id);
   }
@@ -1144,15 +1168,13 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
     });
     const b = bldgById[id];
     const touching = paths.filter(p => p.nodes.includes(id)).map(p => p.label).join(" · ") || "none on current map";
-    explainer.innerHTML = `
-      <h3>Selection</h3>
-      <span class="kind">${b.role} building</span>
-      <h4>${b.name}</h4>
-      <p>${b.blurb}</p>
-      <div class="payload">shape: ${b.shape}
-grid: (${b.x}, ${b.y})
-paths: ${touching}</div>
-    `;
+    setExplainer({
+      kindClass: "kind",
+      kindLabel: `${b.role} building`,
+      title: b.name,
+      blurb: b.blurb,
+      payload: `shape: ${b.shape}\ngrid: (${b.x}, ${b.y})\npaths: ${touching}`,
+    });
     setCites(b.cites);
   }
 
