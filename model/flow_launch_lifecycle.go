@@ -393,8 +393,15 @@ func flowLeaseSetupErrorStatus(err error) string {
 
 func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
 	flowID = strings.TrimSpace(flowID)
-	if flowID == "" || strings.TrimSpace(m.sessionStateRoot) == "" {
+	if flowID == "" {
 		return false, nil
+	}
+	// An injected inspector owns its own root contract; tests and embedders may
+	// deliberately provide a root-independent implementation. The production
+	// inspector never receives a blank root, so tracked admission fails before
+	// mutation when shared launch state is unavailable.
+	if strings.TrimSpace(m.sessionStateRoot) == "" && !m.leaseInspectInjected {
+		return false, fmt.Errorf("Flow lease artifact root is unavailable")
 	}
 	if m.inspectFlowLease == nil {
 		return false, fmt.Errorf("Flow lease inspector is unavailable")

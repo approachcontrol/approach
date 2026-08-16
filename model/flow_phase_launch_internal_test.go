@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 )
 
@@ -30,7 +31,9 @@ func TestFlowPhaseLaunchCoordinatorSelectsFirstLaunchablePhase(t *testing.T) {
 			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseReady, Order: 3},
 		},
 	}
-	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
+	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
+		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) { return flowlease.Free, nil },
+	})
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 
 	gotRecord, gotPhase, ok := m.previewFlowLaunch(flowLaunchIntent{
@@ -105,7 +108,9 @@ func TestPreviewFlowLaunchSkipsDuplicateReadyRow(t *testing.T) {
 			{PhaseID: "step-2", Title: "Step 2", DependsOn: []string{"step-1"}, Status: flowstore.PhaseReady, Order: 3},
 		},
 	}
-	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
+	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
+		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) { return flowlease.Free, nil },
+	})
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 
 	_, phase, ok := m.previewFlowLaunch(flowLaunchIntent{

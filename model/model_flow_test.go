@@ -7856,7 +7856,7 @@ func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *
 func TestModel_SkippedFlowPhaseWithEndedSessionAdvertisesResume(t *testing.T) {
 	flow := flowWithEndedRunningImplementation()
 	flow.Phases[2].Status = flowstore.PhaseSkipped
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{}), []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	view := ansi.Strip(m.View())

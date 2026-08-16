@@ -221,6 +221,7 @@ type Model struct {
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
 	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected      bool
 	tmuxAttachHint            bool
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
@@ -828,6 +829,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	leaseInspectInjected := opts.InspectFlowLease != nil
 	inspectFlowLease := opts.InspectFlowLease
 	if inspectFlowLease == nil {
 		inspectFlowLease = flowlease.Inspect
@@ -1014,6 +1016,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
 		inspectFlowLease:          inspectFlowLease,
+		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
 		startEmbeddedTerminal:     startEmbeddedTerminal,
 		finalizeAgentSession:      finalizeAgentSession,

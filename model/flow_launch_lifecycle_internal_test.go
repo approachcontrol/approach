@@ -2727,6 +2727,25 @@ func TestFlowLeaseInspectionErrorFailsManualAdmissionClosed(t *testing.T) {
 	}
 }
 
+func TestFlowLeaseMissingStateRootFailsManualAdmissionClosed(t *testing.T) {
+	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+	m := h.model()
+	m.sessionStateRoot = ""
+	m.leaseInspectInjected = false
+
+	next, cmd := h.press(m)
+	if cmd != nil {
+		t.Fatal("missing state root must refuse before launch work")
+	}
+	if !strings.Contains(next.status.Text, "occupancy could not be inspected") ||
+		!strings.Contains(next.status.Text, "artifact root") {
+		t.Fatalf("status = %q, want actionable missing-root setup error", next.status.Text)
+	}
+	if len(h.launchUpdates) != 0 || h.launchReservations != 0 {
+		t.Fatalf("missing root mutated launch state: updates=%d reservations=%d", len(h.launchUpdates), h.launchReservations)
+	}
+}
+
 func TestFlowLeaseIsRecheckedUnderLaunchReservationBeforeMutation(t *testing.T) {
 	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
 	h.leaseInspect = func(call int, _, _ string) (flowlease.LeaseState, error) {

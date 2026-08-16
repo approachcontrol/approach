@@ -14,6 +14,11 @@ import (
 )
 
 func savedSessionLifecycleModel(opts Options) Model {
+	if opts.InspectFlowLease == nil {
+		opts.InspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
+		}
+	}
 	return NewWithOptions([]scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, opts)
 }
 

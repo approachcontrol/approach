@@ -117,6 +117,64 @@ func TestHandoffRecordIsInvisibleUntilVerifiedPublication(t *testing.T) {
 	}
 }
 
+func TestStartedRecordIsReadBackBeforeLaunchConfirmation(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	startedPath := filepath.Join(attempt.HandoffDir, recordStarted)
+	err := publishAndReadStarted(attempt, func() {
+		if chmodErr := os.Chmod(startedPath, 0o400); chmodErr != nil {
+			t.Fatalf("Chmod(started) error = %v", chmodErr)
+		}
+	})
+	if err == nil || !strings.Contains(err.Error(), "permissions") {
+		t.Fatalf("publishAndReadStarted() error = %v, want secure readback failure", err)
+	}
+	if err := os.Chmod(startedPath, 0o600); err != nil {
+		t.Fatalf("restore started permissions error = %v", err)
+	}
+	if err := cleanupHandoff(attempt); err != nil {
+		t.Fatalf("cleanupHandoff() error = %v", err)
+	}
+}
+
+func TestTmuxCreateTimeoutDoesNotRetrySameWindowName(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		results  []error
+		wantRuns int
+	}{
+		{
+			name:     "existing session window timeout",
+			results:  []error{nil, errTmuxCommandTimeout},
+			wantRuns: 2,
+		},
+		{
+			name:     "new session timeout",
+			results:  []error{errors.New("session absent"), errTmuxCommandTimeout},
+			wantRuns: 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := testPrivateSpec(t)
+			runs := 0
+			err := runTmuxWindowCreate(spec, func(...string) error {
+				result := tc.results[runs]
+				runs++
+				return result
+			})
+			if !errors.Is(err, errTmuxCommandTimeout) {
+				t.Fatalf("runTmuxWindowCreate() error = %v, want timeout", err)
+			}
+			if runs != tc.wantRuns {
+				t.Fatalf("tmux command runs = %d, want %d without a duplicate mutation", runs, tc.wantRuns)
+			}
+		})
+	}
+}
+
 func TestRunnerHoldsLeaseUntilAgentExits(t *testing.T) {
 	spec := testPrivateSpec(t)
 	attempt := spec.attempt()

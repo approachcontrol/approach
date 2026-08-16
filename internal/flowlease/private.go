@@ -28,6 +28,8 @@ const (
 
 var generatedTmuxName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+var errTmuxCommandTimeout = errors.New("tmux command timed out with uncertain server state")
+
 // PrivateSpec contains the identity and bounded protocol inputs shared by the
 // parent-side tmux spawner and the lease-owning runner.
 type PrivateSpec struct {
@@ -315,8 +317,8 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (r
 	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
-	if err := publishHandoffRecord(attempt, recordStarted, ""); err != nil {
-		cause := fmt.Errorf("publish started tracked Flow agent: %w", err)
+	if err := publishAndReadStarted(attempt, nil); err != nil {
+		cause := fmt.Errorf("confirm started tracked Flow agent: %w", err)
 		if failureErr := publishHandoffFailure(attempt, cause.Error()); failureErr != nil {
 			_ = terminateProcessGroup(cmd.Process.Pid, waitCh)
 			return errors.Join(cause, fmt.Errorf("publish Flow lease runner failure: %w", failureErr))
@@ -332,6 +334,19 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (r
 	// parent's successful cleanup to race.
 	reportFailure = false
 	return superviseProcessGroup(cmd.Process.Pid, waitCh, signals)
+}
+
+func publishAndReadStarted(attempt handoffAttempt, afterPublish func()) error {
+	if err := publishHandoffRecord(attempt, recordStarted, ""); err != nil {
+		return err
+	}
+	if afterPublish != nil {
+		afterPublish()
+	}
+	if _, err := readHandoffRecord(attempt, recordStarted); err != nil {
+		return fmt.Errorf("read back started tracked Flow agent: %w", err)
+	}
+	return nil
 }
 
 func childProcessGroupAttributes(stdin io.Reader) *syscall.SysProcAttr {
@@ -580,22 +595,38 @@ func startTmuxWindow(spec PrivateSpec, stderr io.Writer) error {
 	if err := inspectLaunchScript(spec.ScriptPath); err != nil {
 		return err
 	}
-	command := "exec sh " + shellQuote(spec.ScriptPath)
 	run := func(args ...string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "tmux", args...)
 		cmd.Env = envWithoutMultiplexers(os.Environ())
 		cmd.Stderr = stderr
-		return cmd.Run()
-	}
-	if run("has-session", "-t", "="+spec.SessionName) == nil {
-		if run("new-window", "-d", "-t", "="+spec.SessionName+":", "-n", spec.WindowName, "-c", spec.CWD, command) == nil {
-			return nil
+		err := cmd.Run()
+		if ctx.Err() != nil {
+			return fmt.Errorf("%w: tmux %s", errTmuxCommandTimeout, args[0])
 		}
+		return err
 	}
-	if run("new-session", "-d", "-s", spec.SessionName, "-n", spec.WindowName, "-c", spec.CWD, command) == nil {
+	return runTmuxWindowCreate(spec, run)
+}
+
+func runTmuxWindowCreate(spec PrivateSpec, run func(...string) error) error {
+	hasSessionErr := run("has-session", "-t", "="+spec.SessionName)
+	if hasSessionErr == nil {
+		if err := run("new-window", "-d", "-t", "="+spec.SessionName+":", "-n", spec.WindowName, "-c", spec.CWD,
+			"exec sh "+shellQuote(spec.ScriptPath)); err == nil {
+			return nil
+		} else if errors.Is(err, errTmuxCommandTimeout) {
+			return err
+		}
+	} else if errors.Is(hasSessionErr, errTmuxCommandTimeout) {
+		return hasSessionErr
+	}
+	command := "exec sh " + shellQuote(spec.ScriptPath)
+	if err := run("new-session", "-d", "-s", spec.SessionName, "-n", spec.WindowName, "-c", spec.CWD, command); err == nil {
 		return nil
+	} else if errors.Is(err, errTmuxCommandTimeout) {
+		return err
 	}
 	return run("new-window", "-d", "-t", "="+spec.SessionName+":", "-n", spec.WindowName, "-c", spec.CWD, command)
 }
