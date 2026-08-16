@@ -333,7 +333,7 @@ func (m Model) handleCreateFlowAllocated(msg flowLaunchEventMsg) (Model, tea.Cmd
 		return m.clearFlowLaunchCreatePresentation(msg.Create).
 			setStatus(statusOther, fmt.Sprintf("Flow ID allocation returned invalid ID %q", msg.FlowID)), nil
 	}
-	if m.flowLaunchAdmissionOccupied(msg.FlowID) {
+	if m.flowLaunchRuntimeOccupied(msg.FlowID) {
 		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
 	attempt := flowLaunchAttempt{

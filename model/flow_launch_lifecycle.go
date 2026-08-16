@@ -368,7 +368,19 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 		return false
 	}
 	leaseOccupied, leaseErr := m.trackedFlowLeaseOccupied(flowID)
-	return leaseErr != nil || leaseOccupied || m.flowLaunchAttemptOccupied(flowID) ||
+	return leaseErr != nil || leaseOccupied || m.flowLaunchRuntimeOccupied(flowID)
+}
+
+// flowLaunchRuntimeOccupied is the in-process ownership half of admission.
+// Creation-time Plan Now allocates a brand-new Flow and remains embedded and
+// unleased, so it uses this narrower check while all existing-Flow routes use
+// flowLaunchAdmissionOccupied and therefore respect a tracked tmux lease.
+func (m Model) flowLaunchRuntimeOccupied(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
+	return m.flowLaunchAttemptOccupied(flowID) ||
 		m.hasFlowEmbeddedTerminalForFlow(flowID) ||
 		m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
 }
@@ -385,7 +397,7 @@ func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
 		return false, nil
 	}
 	if m.inspectFlowLease == nil {
-		return false, errors.New("Flow lease inspector is unavailable")
+		return false, fmt.Errorf("Flow lease inspector is unavailable")
 	}
 	state, err := m.inspectFlowLease(m.sessionStateRoot, flowID)
 	if err != nil {
