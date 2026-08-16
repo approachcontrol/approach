@@ -432,7 +432,7 @@ func superviseProcessGroup(pid int, waitCh <-chan error, signals <-chan os.Signa
 	for {
 		select {
 		case err := <-waitCh:
-			return childExitError(err)
+			return stopProcessGroupAfterLeaderExit(pid, err)
 		case sig := <-signals:
 			sysSig, ok := sig.(syscall.Signal)
 			if !ok {
@@ -453,14 +453,26 @@ func terminateProcessGroup(pid int, waitCh <-chan error) error {
 // After the grace period, keep the supervisor alive and the lease fail-closed
 // while SIGKILL takes effect rather than returning on the leader's status.
 func stopProcessGroup(pid int, waitCh <-chan error, gracefulSignal syscall.Signal) error {
+	return stopProcessGroupWithLeader(pid, waitCh, gracefulSignal, false, nil)
+}
+
+func stopProcessGroupAfterLeaderExit(pid int, leaderErr error) error {
+	return stopProcessGroupWithLeader(pid, nil, syscall.SIGTERM, true, leaderErr)
+}
+
+func stopProcessGroupWithLeader(
+	pid int,
+	waitCh <-chan error,
+	gracefulSignal syscall.Signal,
+	leaderExited bool,
+	leaderErr error,
+) error {
 	_ = syscall.Kill(-pid, gracefulSignal)
 	grace := time.NewTimer(gracefulStopTimeout)
 	defer grace.Stop()
 	poll := time.NewTicker(protocolPollInterval)
 	defer poll.Stop()
 
-	var leaderErr error
-	leaderExited := false
 	for {
 		if leaderExited && !processGroupExists(pid) {
 			return childExitError(leaderErr)

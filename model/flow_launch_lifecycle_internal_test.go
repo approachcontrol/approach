@@ -2854,6 +2854,40 @@ func TestTmuxFlowLaunchSurvivesQuitWithoutConfirmation(t *testing.T) {
 	}
 }
 
+func TestTmuxFlowLaunchPendingHandshakeBlocksQuit(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	m := h.model()
+	attempt := flowLaunchAttempt{
+		Token: "launch-pending", Kind: flowLaunchKindManualPhase,
+		FlowID: h.record.FlowID, PhaseID: h.record.Phases[0].PhaseID,
+	}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStateHandoffPending)
+	if !ok {
+		t.Fatal("reserveFlowLaunchAttempt() failed")
+	}
+
+	next, cmd := m.handleEmbeddedTerminalQuitPrefix()
+	if cmd != nil {
+		if _, quitting := cmd().(tea.QuitMsg); quitting {
+			t.Fatal("quit proceeded while the tmux handshake was pending")
+		}
+	}
+	if !strings.Contains(next.status.Text, "Flow launch is still starting") {
+		t.Fatalf("status = %q, want pending launch explanation", next.status.Text)
+	}
+
+	next, cmd = m.handleQuitEmbeddedTerminals()
+	if cmd != nil {
+		if _, quitting := cmd().(tea.QuitMsg); quitting {
+			t.Fatal("confirmed quit proceeded while the tmux handshake was pending")
+		}
+	}
+	if !strings.Contains(next.status.Text, "Flow launch is still starting") {
+		t.Fatalf("confirmed quit status = %q, want pending launch explanation", next.status.Text)
+	}
+}
+
 func TestManualFlowLaunchFallsBackToEmbeddedWithoutTmux(t *testing.T) {
 	h := newTmuxLaunchHarness(t, false)
 	m := h.launch(h.model())

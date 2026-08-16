@@ -605,6 +605,39 @@ while :; do sleep 1; done
 	t.Fatalf("descendant PID %d still exists after process-group cleanup returned", childPID)
 }
 
+func TestSuperviseProcessGroupWaitsForDescendantsAfterLeaderExits(t *testing.T) {
+	childPIDPath := filepath.Join(t.TempDir(), "child-pid")
+	cmd := exec.Command("/bin/sh", "-c", `
+(trap '' HUP; while :; do sleep 1; done) &
+printf '%d\n' "$!" > "$1"
+exit 0
+`, "flowlease-supervise-test", childPIDPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	pid := cmd.Process.Pid
+	defer func() { _ = syscall.Kill(-pid, syscall.SIGKILL) }()
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	waitForPath(t, childPIDPath)
+	data, err := os.ReadFile(childPIDPath)
+	if err != nil {
+		t.Fatalf("ReadFile(child PID) error = %v", err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse child PID %q: %v", data, err)
+	}
+
+	if err := superviseProcessGroup(pid, waitCh, make(chan os.Signal)); err != nil {
+		t.Fatalf("superviseProcessGroup() error = %v", err)
+	}
+	if err := syscall.Kill(childPID, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("descendant PID %d still exists after supervision returned", childPID)
+	}
+}
+
 func TestRunnerAbortNeverStartsAgent(t *testing.T) {
 	spec := testPrivateSpec(t)
 	attempt := spec.attempt()

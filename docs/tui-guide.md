@@ -401,9 +401,11 @@ Lifecycle and ownership:
 - Sessions are named `approach-<repo-dir>-<hash>` and are visible to your own
   `tmux ls`. Approach creates one on the first launch for a repo and reuses it
   after that.
-- Quitting Approach does not prompt about, terminate, or otherwise touch these
-  sessions — persisting past the TUI is the point. Reattach with `T` or
-  `tmux attach`.
+- Quitting Approach does not prompt about, terminate, or otherwise touch an
+  established session — persisting past the TUI is the point. While a tracked
+  Flow's private tmux start handshake is still pending, quit is temporarily
+  blocked so the TUI cannot drop its launch reservation before the runner owns
+  the Flow lease. Reattach established sessions with `T` or `tmux attach`.
 - A window closes when its agent exits. The session ends with its last window
   and the next launch recreates it.
 - A tracked Flow phase window owns a Flow-scoped kernel lease for as long as
