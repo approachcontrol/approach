@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,6 +264,113 @@ func TestRetentionKeepsRecentAndNeverEvictsPinnedDigest(t *testing.T) {
 	}
 	if present[cachedBinaryName(digests[0])] {
 		t.Fatalf("a released digest survived retention: %v", present)
+	}
+}
+
+// An Approach process that has not launched an agent yet still owns its
+// cached copy. Without a launcher-lifetime claim, starting retainedBinaries
+// newer builds against the same root evicts that copy and the idle TUI
+// refuses every later launch with ErrPinMissing.
+func TestRetentionKeepsALiveLauncherPin(t *testing.T) {
+	root := t.TempDir()
+	original := processClaimID
+	t.Cleanup(func() { processClaimID = original })
+
+	processClaimID = func() string { return "launcher-idle" }
+	stubExecutable(t, "idle-launcher")
+	idle, err := Resolve(root, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve idle launcher: %v", err)
+	}
+	if err := os.Chtimes(idle.ExecutablePath, time.Time{}, time.Unix(1_700_000_000, 0)); err != nil {
+		t.Fatalf("chtimes idle: %v", err)
+	}
+
+	for i := range retainedBinaries {
+		processClaimID = func() string { return "launcher-newer-" + string(rune('a'+i)) }
+		stubExecutable(t, "newer-launcher-"+string(rune('a'+i)))
+		newer, err := Resolve(root, testSchemaVersion)
+		if err != nil {
+			t.Fatalf("Resolve newer %d: %v", i, err)
+		}
+		if err := os.Chtimes(newer.ExecutablePath, time.Time{}, time.Unix(int64(1_700_000_001+i), 0)); err != nil {
+			t.Fatalf("chtimes newer %d: %v", i, err)
+		}
+	}
+
+	present := map[string]bool{}
+	for _, name := range cachedBinaries(t, root) {
+		present[name] = true
+	}
+	if !present[cachedBinaryName(idle.Digest)] {
+		t.Fatalf("idle launcher pin was evicted: %v", present)
+	}
+
+	for i := range retainedBinaries {
+		processClaimID = func() string { return "launcher-newer-" + string(rune('a'+i)) }
+		if err := ReleaseProcessPin(root); err != nil {
+			t.Fatalf("ReleaseProcessPin newer %d: %v", i, err)
+		}
+	}
+	processClaimID = func() string { return "launcher-idle" }
+	if err := ReleaseProcessPin(root); err != nil {
+		t.Fatalf("ReleaseProcessPin: %v", err)
+	}
+	processClaimID = func() string { return "launcher-after-exit" }
+	stubExecutable(t, "after-idle-exit")
+	if _, err := Resolve(root, testSchemaVersion); err != nil {
+		t.Fatalf("Resolve after idle exit: %v", err)
+	}
+	present = map[string]bool{}
+	for _, name := range cachedBinaries(t, root) {
+		present[name] = true
+	}
+	if present[cachedBinaryName(idle.Digest)] {
+		t.Fatalf("released launcher pin survived retention: %v", present)
+	}
+}
+
+// A TUI that stays open past pinClaimMaxAge is still the owner of its pin.
+// Ageing the launcher claim the way abandoned agent claims are retired must
+// not evict a copy the live process still has to Verify.
+func TestRetentionKeepsAStaleButLiveLauncherClaim(t *testing.T) {
+	root := t.TempDir()
+	original := processClaimID
+	t.Cleanup(func() { processClaimID = original })
+	processClaimID = func() string { return fmt.Sprintf("launcher-%d", os.Getpid()) }
+
+	stubExecutable(t, "long-lived-tui")
+	live, err := Resolve(root, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	claimPath := filepath.Join(root, cacheDirName, pinsDirName, processClaimID())
+	stale := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(claimPath, stale, stale); err != nil {
+		t.Fatalf("chtimes claim: %v", err)
+	}
+	if err := os.Chtimes(live.ExecutablePath, time.Time{}, stale); err != nil {
+		t.Fatalf("chtimes binary: %v", err)
+	}
+
+	originalNow := timeNow
+	t.Cleanup(func() { timeNow = originalNow })
+	timeNow = func() time.Time { return stale.Add(pinClaimMaxAge + time.Hour) }
+
+	processClaimID = func() string { return "launcher-filler" }
+	for i := range retainedBinaries + 1 {
+		stubExecutable(t, "filler-"+string(rune('a'+i)))
+		if _, err := Resolve(root, testSchemaVersion); err != nil {
+			t.Fatalf("Resolve filler %d: %v", i, err)
+		}
+	}
+
+	present := map[string]bool{}
+	for _, name := range cachedBinaries(t, root) {
+		present[name] = true
+	}
+	if !present[cachedBinaryName(live.Digest)] {
+		t.Fatalf("stale live launcher pin was evicted: %v", present)
 	}
 }
 
@@ -595,11 +703,20 @@ func TestMaterializeRefusesBytesThatChangedAfterCapture(t *testing.T) {
 
 	root := t.TempDir()
 	pin := Materialize(root, captured, testSchemaVersion)
-	if !pin.Degraded {
-		t.Fatalf("Materialize cached a replacement under the captured digest: %s", pin.ExecutablePath)
+	if !pin.Degraded || !pin.SourceChanged {
+		t.Fatalf("Materialize cached a replacement under the captured digest: %+v", pin)
 	}
 	if !strings.Contains(pin.Notice, "changed while it was being cached") {
 		t.Fatalf("Notice %q does not name the mid-startup replacement", pin.Notice)
+	}
+	if !strings.Contains(strings.ToLower(pin.Notice), "restart") {
+		t.Fatalf("Notice %q does not tell the operator to restart", pin.Notice)
+	}
+	if strings.Contains(pin.Notice, "launching") && strings.Contains(pin.Notice, "directly") {
+		t.Fatalf("Notice %q claims the source will launch, but Verify cannot accept it", pin.Notice)
+	}
+	if err := pin.Verify(); !errors.Is(err, ErrPinDigestMismatch) {
+		t.Fatalf("Verify on a mid-startup replacement = %v, want ErrPinDigestMismatch", err)
 	}
 	if _, err := os.Stat(witness); !os.IsNotExist(err) {
 		t.Fatalf("the replacement was executed before it was checked (stat witness = %v)", err)
@@ -608,5 +725,31 @@ func TestMaterializeRefusesBytesThatChangedAfterCapture(t *testing.T) {
 		if name == cachedBinaryName(captured.Digest) {
 			t.Fatal("the replacement was published under the captured digest's name")
 		}
+	}
+}
+
+// Homebrew's upgrade deletes the versioned Caskroom path. That is an
+// ENOENT, not a digest mismatch, but the degraded fallback is the same
+// missing file and every later Verify refuses. Treat it as SourceChanged
+// so startup fails instead of opening a TUI that cannot launch.
+func TestMaterializeTreatsAVanishedSourceAsChanged(t *testing.T) {
+	source := stubExecutable(t, "binary-contents-original")
+	captured, err := CaptureSource()
+	if err != nil {
+		t.Fatalf("CaptureSource: %v", err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatalf("remove source: %v", err)
+	}
+
+	pin := Materialize(t.TempDir(), captured, testSchemaVersion)
+	if !pin.Degraded || !pin.SourceChanged {
+		t.Fatalf("vanished source degraded as a launchable fallback: %+v", pin)
+	}
+	if strings.Contains(pin.Notice, "launching") && strings.Contains(pin.Notice, "directly") {
+		t.Fatalf("Notice %q claims the missing source will launch", pin.Notice)
+	}
+	if err := pin.Verify(); !errors.Is(err, ErrPinMissing) {
+		t.Fatalf("Verify on a vanished source = %v, want ErrPinMissing", err)
 	}
 }

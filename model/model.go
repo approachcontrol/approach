@@ -2216,6 +2216,12 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case agentLaunchRequestedMsg:
+		// Saved-plan launches verify before the instructions modal opens, then
+		// emit this message later. Re-check at spawn so a pin that vanished or
+		// was replaced while the modal was open cannot start an agent.
+		if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
+			return m.setStatus(statusOther, refusal), nil
+		}
 		return m.launchAgentForBackend(msg.LaunchContext, nil)
 	case FlowCreatedMsg:
 		return m.handleFlowCreated(msg)

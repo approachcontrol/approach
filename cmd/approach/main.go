@@ -421,8 +421,10 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// running image — so the capture happens as early as possible and the copy as
 	// late as it is safe to.
 	//
-	// Materialize cannot fail: a cache problem degrades to the running binary and
-	// says so through the notice below.
+	// A cache problem degrades to the running binary and says so through the
+	// notice below. A mid-startup replacement is not a cache problem: the
+	// captured digest no longer describes the file at the source path, so a
+	// degraded pin would fail every Verify. Restart is the only consistent pin.
 	launchSource := opts.LaunchSource
 	if strings.TrimSpace(launchSource.Path) == "" {
 		if launchSource, err = controlplane.CaptureSource(); err != nil {
@@ -430,6 +432,9 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 		}
 	}
 	pin := controlplane.Materialize(sessionStore.Root(), launchSource, flowstore.DatabaseSchemaVersion())
+	if pin.SourceChanged {
+		return fmt.Errorf("%s", pin.Notice)
+	}
 
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
@@ -437,6 +442,7 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
 	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
 	_, err = p.Run()
+	_ = controlplane.ReleaseProcessPin(sessionStore.Root())
 	return err
 }
 

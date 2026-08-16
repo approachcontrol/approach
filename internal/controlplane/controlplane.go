@@ -50,7 +50,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
@@ -60,8 +62,9 @@ import (
 const (
 	// cacheDirName is the runtime binary cache, relative to the state root.
 	cacheDirName = "bin"
-	// pinsDirName holds one file per live launch naming the digest that launch's
-	// argv still points at. Retention refuses to evict a pinned digest.
+	// pinsDirName holds one file per live launch or live launcher naming the
+	// digest that process still points at. Retention refuses to evict a pinned
+	// digest.
 	pinsDirName = "pins"
 	// cachedBinaryPrefix names a cached copy. The remainder is the digest
 	// prefix, so the file name is the content.
@@ -103,6 +106,25 @@ var timeNow = time.Now
 // disposable "running binary" and delete or replace it.
 var resolveExecutable = os.Executable
 
+// processClaimID names the live launcher's retention claim. It is a var so
+// tests can stand in a second Approach process against the same root: every
+// Resolve in one test binary shares a PID, which would otherwise overwrite
+// the idle launcher's claim with the newest build's.
+var processClaimID = func() string {
+	return fmt.Sprintf("launcher-%d", os.Getpid())
+}
+
+// processAlive reports whether pid still names a running process. Launcher
+// claims use this instead of pinClaimMaxAge: a TUI open for a month is still
+// the owner of its pin, and a crashed TUI should not hold a copy forever.
+var processAlive = func(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
 // Pin identifies the approach binary a launch must invoke.
 type Pin struct {
 	// ExecutablePath is what a launch runs: the cached copy, or the resolved
@@ -120,6 +142,11 @@ type Pin struct {
 	// Degraded reports that the cache could not be created and ExecutablePath
 	// is the source path, which an upgrade can replace underneath the process.
 	Degraded bool
+	// SourceChanged reports that the file at SourcePath was a different build
+	// by the time Materialize copied it. Digest still names the running
+	// process; ExecutablePath names the replacement. Verify will refuse, and
+	// callers must restart rather than treat this as a degradable cache miss.
+	SourceChanged bool
 	// Notice names the degradation for the caller's status channel. It is empty
 	// unless Degraded.
 	Notice string
@@ -132,6 +159,7 @@ var (
 	ErrPinMissing        = errors.New("pinned approach executable is missing")
 	ErrPinNotExecutable  = errors.New("pinned approach executable is not executable")
 	ErrPinDigestMismatch = errors.New("pinned approach executable does not match its recorded digest")
+	ErrSourceChanged     = errors.New("approach executable changed while it was being cached")
 )
 
 // SourceIdentity is the running binary's resolved path and content digest.
@@ -168,9 +196,11 @@ func CaptureSource() (SourceIdentity, error) {
 }
 
 // Materialize returns the Pin for an already-captured source, copying it into
-// the cache under root when it can. It cannot fail: every cache problem degrades
-// to the source path with a Notice, because a caching failure must never block
-// work.
+// the cache under root when it can. Cache problems degrade to the source path
+// with a Notice, because a caching failure must never block work. A source
+// that changed after CaptureSource is different: the pin is marked
+// SourceChanged so callers can refuse to start rather than launch an
+// unverifiable fallback.
 //
 // schemaVersion is passed in rather than read from flowstore so this package
 // stays free of the store's dependency graph; callers pass
@@ -187,6 +217,16 @@ func Materialize(root string, source SourceIdentity, schemaVersion int) Pin {
 	cached, err := materialize(root, source.Path, source.Digest)
 	if err != nil {
 		pin.Degraded = true
+		// A degradable cache miss still has to Verify: brew upgrade may delete
+		// the source (ENOENT) rather than replace its bytes, and launching a
+		// missing path is the same outage as a digest mismatch.
+		if errors.Is(err, ErrSourceChanged) || pin.Verify() != nil {
+			pin.SourceChanged = true
+			pin.Notice = fmt.Sprintf(
+				"Approach executable %s changed mid-startup (%v); restart approach to re-pin it.",
+				source.Path, err)
+			return pin
+		}
 		pin.Notice = fmt.Sprintf(
 			"Launch binary cache unavailable (%v); launching %s directly, which an upgrade can replace mid-session.",
 			err, source.Path)
@@ -194,6 +234,21 @@ func Materialize(root string, source SourceIdentity, schemaVersion int) Pin {
 	}
 	pin.ExecutablePath = cached
 	return pin
+}
+
+// ReleaseProcessPin drops this process's launcher-lifetime claim. A missing
+// claim is success: exiting a process that never materialized a cache, or
+// exiting twice, is not an error.
+func ReleaseProcessPin(root string) error {
+	return ReleasePin(root, processClaimID())
+}
+
+func claimProcessPin(root, digest string) {
+	id := strings.TrimSpace(processClaimID())
+	if id == "" || !artifacts.IsSafeID(id) || strings.TrimSpace(digest) == "" {
+		return
+	}
+	_ = RetainPin(root, id, digest)
 }
 
 // Resolve captures and materializes in one step, for callers that have the root
@@ -357,6 +412,10 @@ func materialize(root, source, digest string) (string, error) {
 	if err := requireRunnable(target); err != nil {
 		return "", err
 	}
+	// Claim before sweep so this process's copy is already non-evictable
+	// when retention runs. Claiming afterwards would protect the previous
+	// Resolve instead, and an idle launcher would still lose its pin.
+	claimProcessPin(root, digest)
 	sweepCache(cacheDir, target)
 	return target, nil
 }
@@ -476,8 +535,8 @@ func copyExecutable(source, target, expected string) error {
 	if staged := hex.EncodeToString(hash.Sum(nil)); staged != expected {
 		_ = temp.Close()
 		return fmt.Errorf(
-			"approach executable %s changed while it was being cached (expected %s, read %s); it was probably upgraded mid-startup",
-			source, expected[:digestNameLength], staged[:digestNameLength])
+			"%w: approach executable %s changed while it was being cached (expected %s, read %s); it was probably upgraded mid-startup",
+			ErrSourceChanged, source, expected[:digestNameLength], staged[:digestNameLength])
 	}
 	if err := temp.Chmod(cachedBinaryPerm); err != nil {
 		_ = temp.Close()
@@ -500,9 +559,10 @@ func copyExecutable(source, target, expected string) error {
 }
 
 // sweepCache bounds the cache by count, newest first, never evicting the copy
-// this launch just resolved and never evicting a digest a live launch still
-// points at. A sweep failure is not reported: retention is hygiene, and failing
-// a launch over it would trade a bounded disk cost for an outage.
+// this launch just resolved and never evicting a digest a live launch or a
+// still-running launcher still points at. A sweep failure is not reported:
+// retention is hygiene, and failing a launch over it would trade a bounded
+// disk cost for an outage.
 func sweepCache(cacheDir, keep string) {
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
@@ -560,10 +620,12 @@ func sweepCache(cacheDir, keep string) {
 }
 
 // pinnedDigests returns the digest name prefixes live launches still point at,
-// and removes claims that have aged out. A claim older than pinClaimMaxAge
-// belongs to a launch whose release never ran — a killed TUI, an agent whose
-// provider hook never fired — and honouring it forever would let the pins
-// directory and the binary cache both grow without bound.
+// and removes claims that have aged out. Agent claims older than pinClaimMaxAge
+// belong to a launch whose release never ran — a killed TUI, an agent whose
+// provider hook never fired — and honouring them forever would let the pins
+// directory and the binary cache both grow without bound. Launcher claims
+// named launcher-<pid> are different: they last as long as that process is
+// alive, even past pinClaimMaxAge, and are dropped as soon as it is not.
 func pinnedDigests(pinsDir string) map[string]bool {
 	pinned := map[string]bool{}
 	entries, err := os.ReadDir(pinsDir)
@@ -576,6 +638,14 @@ func pinnedDigests(pinsDir string) map[string]bool {
 			continue
 		}
 		path := filepath.Join(pinsDir, entry.Name())
+		if pid, ok := launcherClaimPID(entry.Name()); ok {
+			if processAlive(pid) {
+				honorClaim(pinned, path)
+				continue
+			}
+			_ = os.Remove(path)
+			continue
+		}
 		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
 			// Re-stat before removing. ReadDir's entry.Info is a snapshot, and a
 			// RefreshPin in another process between that snapshot and here means
@@ -590,16 +660,32 @@ func pinnedDigests(pinsDir string) map[string]bool {
 				}
 			}
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		digest := strings.TrimSpace(string(data))
-		if len(digest) >= digestNameLength {
-			pinned[digest[:digestNameLength]] = true
-		}
+		honorClaim(pinned, path)
 	}
 	return pinned
+}
+
+func honorClaim(pinned map[string]bool, path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	digest := strings.TrimSpace(string(data))
+	if len(digest) >= digestNameLength {
+		pinned[digest[:digestNameLength]] = true
+	}
+}
+
+func launcherClaimPID(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, "launcher-")
+	if !ok {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(rest)
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
 }
 
 func cachedBinaryName(digest string) string {
