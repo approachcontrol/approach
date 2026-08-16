@@ -58,15 +58,20 @@ func autofixPrompt(record flowstore.FlowRecord, templates FlowPromptTemplates, b
 	return renderFlowPromptTemplate(template, record, flowstore.FlowPhase{}, record.PlanPath, "", flowPromptBinary(binary))
 }
 
-// autofixLaunchPrompt prefers the editor's submitted text. An empty submission
-// — the occupied-press path, or a test that calls requestFlowLaunch directly —
-// renders from the snapshotted template and the reserved record so prepare
-// still cannot compose a prompt no stage authorized.
-func autofixLaunchPrompt(record flowstore.FlowRecord, settings flowLaunchAgentSettingsSnapshot, submitted string) string {
-	if strings.TrimSpace(submitted) != "" {
-		return submitted
+// autofixLaunchPrompt prefers an operator-edited submission. An empty
+// submission — the occupied-press path, or a test that calls requestFlowLaunch
+// directly — renders from the reserved record. A submission that still matches
+// the read-stage rendering is treated as an unedited confirm, so a PR that
+// changed under the reservation still updates the default prompt.
+func autofixLaunchPrompt(launchRecord, readRecord flowstore.FlowRecord, settings flowLaunchAgentSettingsSnapshot, submitted string) string {
+	rendered := autofixPrompt(launchRecord, settings.PromptTemplates, settings.Pin.ExecutablePath)
+	if strings.TrimSpace(submitted) == "" {
+		return rendered
 	}
-	return autofixPrompt(record, settings.PromptTemplates, settings.Pin.ExecutablePath)
+	if submitted == autofixPrompt(readRecord, settings.PromptTemplates, settings.Pin.ExecutablePath) {
+		return rendered
+	}
+	return submitted
 }
 
 // selectedFlowAutofixTarget is the U shortcut's eligibility gate. It reuses the
@@ -393,6 +398,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		// advisory launch/close lock; losing it would block every later launch,
 		// close, repair, or resume on this Flow until it timed out.
 		event.Release = release
+		readRecord := msg.Record
 		record := msg.Record
 		headless := msg.Headless
 		repoPath := msg.RepoPath
@@ -443,7 +449,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			FlowAutofixPRNumber: record.PR.Number,
 			Embedded:            true,
 			Headless:            headless,
-			InitialPrompt:       autofixLaunchPrompt(record, settings, submittedPrompt),
+			InitialPrompt:       autofixLaunchPrompt(record, readRecord, settings, submittedPrompt),
 		}, settings.Pin)
 		event.Context = ctx
 		event.Route = flowLaunchRouteEmbedded
