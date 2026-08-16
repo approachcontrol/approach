@@ -1,7 +1,6 @@
 package model
 
 import (
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,11 +29,30 @@ const (
 	flowAutofixCanceledStatus    = "Flow agent launch canceled because a repair terminal is already open for this Flow"
 )
 
-// autofixPromptForPR composes the bead's literal prompt. Nothing on this path
-// may ever emit `autofix pr #0`: the eligibility gate requires a PR target, and
-// the authoritative read re-checks the number before this is called.
+// defaultAutofixPromptTemplate is the built-in U prompt. The `{pr_number}`
+// placeholder is what keeps the bead's literal `autofix pr #<num>` text when
+// no `[flow_prompts].autofix` override is set. Nothing on this path may ever
+// emit `autofix pr #0`: the eligibility gate requires a PR target, and the
+// authoritative read re-checks the number before this is called.
+const defaultAutofixPromptTemplate = "autofix pr #{pr_number}"
+
+// autofixPromptForPR composes the built-in prompt for a known PR number.
 func autofixPromptForPR(number int) string {
-	return "autofix pr #" + strconv.Itoa(number)
+	return autofixPrompt(flowstore.FlowRecord{
+		PR: flowstore.PullRequest{Number: number},
+	}, FlowPromptTemplates{}, "")
+}
+
+// autofixPrompt renders the U launch prompt. A blank or whitespace-only
+// `[flow_prompts].autofix` override falls back to the built-in template.
+// Unlike phase prompts, this path never appends the phase-done instruction:
+// the launch is phase-untracked.
+func autofixPrompt(record flowstore.FlowRecord, templates FlowPromptTemplates, binary string) string {
+	template := templates.Autofix
+	if strings.TrimSpace(template) == "" {
+		template = defaultAutofixPromptTemplate
+	}
+	return renderFlowPromptTemplate(template, record, flowstore.FlowPhase{}, record.PlanPath, "", flowPromptBinary(binary))
 }
 
 // selectedFlowAutofixTarget is the U shortcut's eligibility gate. It reuses the
@@ -271,8 +289,10 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 // reservation would launch in the previous mode, and on the wrong route with it,
 // since a headless launch is never tmux-eligible.
 //
-// The prompt is composed here from the record prepare validated, so prepare
-// still cannot compose a prompt no stage authorized.
+// The prompt is rendered here from the reserved record and the snapshotted
+// `[flow_prompts].autofix` template, so prepare still cannot compose a prompt
+// no stage authorized. Headless and tmux send that text on argv; interactive
+// embedded launches prefill the dock with it.
 func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveTrackedFlowLaunch
 	// Snapshotted at admission, as flowLaunchPreparation snapshots them, so the route
@@ -350,7 +370,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			FlowAutofixPRNumber: record.PR.Number,
 			Embedded:            true,
 			Headless:            headless,
-			InitialPrompt:       autofixPromptForPR(record.PR.Number),
+			InitialPrompt:       autofixPrompt(record, settings.PromptTemplates, settings.Pin.ExecutablePath),
 		}, settings.Pin)
 		event.Context = ctx
 		event.Route = flowLaunchRouteEmbedded

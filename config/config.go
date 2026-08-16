@@ -83,7 +83,8 @@ type AgentConfig struct {
 	ClaudeReasoningEffort string `toml:"claude_reasoning_effort"`
 }
 
-// FlowPromptConfig stores optional launch prompt templates for Flow phases.
+// FlowPromptConfig stores optional launch prompt templates for Flow phases
+// and the U autofix launcher.
 type FlowPromptConfig struct {
 	Plan           string `toml:"plan"`
 	PlanReview     string `toml:"plan_review"`
@@ -93,6 +94,7 @@ type FlowPromptConfig struct {
 	Autoreview     string `toml:"autoreview"`
 	Merge          string `toml:"merge"`
 	Generic        string `toml:"generic"`
+	Autofix        string `toml:"autofix"`
 }
 
 // FlowConfig stores Flow creation defaults and custom phase graph presets.
@@ -441,8 +443,8 @@ func SaveAgentModel(command, model string, options ...Option) error {
 }
 
 // SavePromptTemplate persists a configurable prompt template to approach's default
-// config file. plan_prompt is stored under [agent]; Flow phase prompt keys are
-// stored under [flow_prompts].
+// config file. plan_prompt is stored under [agent]; Flow phase and autofix
+// prompt keys are stored under [flow_prompts].
 func SavePromptTemplate(section, key, value string, options ...Option) error {
 	section, key, err := normalizePromptTemplateTarget(section, key)
 	if err != nil {
@@ -482,7 +484,7 @@ func normalizePromptTemplateTarget(section, key string) (string, string, error) 
 			return "", "", fmt.Errorf("prompt template %s belongs to [agent]", key)
 		}
 		return "agent", key, nil
-	case "plan", "plan_review", "implementation", "review_loop", "pr_creation", "autoreview", "merge", "generic":
+	case "plan", "plan_review", "implementation", "review_loop", "pr_creation", "autoreview", "merge", "generic", "autofix":
 		if section != "" && section != "flow_prompts" {
 			return "", "", fmt.Errorf("prompt template %s belongs to [flow_prompts]", key)
 		}

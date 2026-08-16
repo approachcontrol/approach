@@ -30,6 +30,7 @@ var promptTemplateTargets = []promptTemplateTarget{
 	{Section: "flow_prompts", Key: "autoreview", Title: "Autoreview"},
 	{Section: "flow_prompts", Key: "merge", Title: "Merge"},
 	{Section: "flow_prompts", Key: "generic", Title: "Generic"},
+	{Section: "flow_prompts", Key: "autofix", Title: "Autofix"},
 }
 
 func (m Model) handlePromptTemplates() (tea.Model, tea.Cmd) {
@@ -228,6 +229,8 @@ func (m Model) promptTemplateValue(target promptTemplateTarget) string {
 		return m.flowPromptTemplates.Merge
 	case "generic":
 		return m.flowPromptTemplates.Generic
+	case "autofix":
+		return m.flowPromptTemplates.Autofix
 	default:
 		return ""
 	}
@@ -258,6 +261,8 @@ func (m Model) withPromptTemplateValue(target promptTemplateTarget, value string
 		m.flowPromptTemplates.Merge = value
 	case "generic":
 		m.flowPromptTemplates.Generic = value
+	case "autofix":
+		m.flowPromptTemplates.Autofix = value
 	}
 	return m
 }
@@ -294,6 +299,9 @@ func (m Model) builtInPromptTemplatePreview(target promptTemplateTarget) string 
 			BaseBranch: "{pr_base}",
 			Status:     "{pr_status}",
 		},
+	}
+	if target.Key == "autofix" {
+		return defaultAutofixPromptTemplate
 	}
 	if target.Key == "plan" {
 		return flowPlanPrompt(record, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, FlowPromptTemplates{}, "")
