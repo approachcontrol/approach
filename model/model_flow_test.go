@@ -3380,7 +3380,10 @@ func TestModel_TrackedResumeAndAutoAdvanceStartEachTerminalOnce(t *testing.T) {
 
 	manualResult := manualCmd()
 	scheduled, manualFollowUp := update(scheduled, manualResult)
-	scheduled = settleModelCommands(t, scheduled, manualFollowUp, 4)
+	// Real-store AddPhaseLaunchID can exceed settleModelCommands' 20ms skip
+	// window on a loaded CI runner; wait for the write the way other
+	// store-backed lifecycle tests do.
+	scheduled = settleModelCommandsWithin(t, scheduled, manualFollowUp, 4, 2*time.Second)
 	if len(terminalStarts) != 1 || terminalStarts[0].FlowPhaseID != "plan-review" {
 		t.Fatalf("terminal starts after the resume = %#v, want one plan-review resume", terminalStarts)
 	}
@@ -3395,7 +3398,7 @@ func TestModel_TrackedResumeAndAutoAdvanceStartEachTerminalOnce(t *testing.T) {
 		t.Fatalf("prepared auto launches = %#v, want exactly one", prepared)
 	}
 	scheduled, autoFollowUp := update(scheduled, prepared[0].Prepared)
-	scheduled = settleModelCommands(t, scheduled, autoFollowUp, 4)
+	scheduled = settleModelCommandsWithin(t, scheduled, autoFollowUp, 4, 2*time.Second)
 
 	if len(terminalStarts) != 2 {
 		t.Fatalf("terminal starts = %#v, want exactly 2", terminalStarts)
