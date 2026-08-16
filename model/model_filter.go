@@ -77,6 +77,25 @@ func newFlowPane() pane.Pane[flowstore.FlowRecord] {
 	return pane.New(flowSearchText, flowItemHeight(""))
 }
 
+func newPRBabysitterFlowPane(searchTextByFlowID map[string]string) pane.Pane[flowstore.FlowRecord] {
+	return pane.New(func(record flowstore.FlowRecord) string {
+		if searchText := searchTextByFlowID[record.FlowID]; searchText != "" {
+			return searchText
+		}
+		return flowSearchText(record)
+	}, flowItemHeight(""))
+}
+
+func prBabysitterSearchText(row ui.PRBabysitterRow) string {
+	return strings.Join([]string{
+		flowSearchText(row.Flow),
+		row.Repo,
+		row.BeadID,
+		row.Mergeability,
+		row.Checks,
+	}, " ")
+}
+
 func newBeadPane() pane.Pane[beadsquery.Bead] {
 	return pane.New(func(bead beadsquery.Bead) string {
 		return strings.Join([]string{bead.ID, bead.Title, bead.Assignee}, " ")

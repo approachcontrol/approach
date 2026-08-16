@@ -3585,7 +3585,7 @@ func renderPRBabysitterPane(rows []PRBabysitterRow, selected, scroll, width, hei
 	if height <= 0 {
 		return nil
 	}
-	header := truncateToWidth(statusStyle.Render(formatPRBabysitterColumns("   ", "Repo", "Flow", "Bead", "Mergeability", "Checks")), width)
+	header := truncateToWidth(statusStyle.Render(formatPRBabysitterColumns("   ", "Mergeability", "Checks", "Repo", "Flow", "Bead")), width)
 	rowHeight := height - TableHeaderRows
 	if rowHeight <= 0 {
 		return []string{header}
@@ -3602,20 +3602,20 @@ func renderPRBabysitterPane(rows []PRBabysitterRow, selected, scroll, width, hei
 		prefix := flowRowPrefix(false, active.hasFlow(record.FlowID))
 		line := formatPRBabysitterColumns(
 			prefix,
+			prBabysitterStatusStyle(mergeability).Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
+			prBabysitterStatusStyle(checks).Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
 			statusStyle.Render(fitSessionColumn(repo, prBabysitterRepoWidth)),
 			stashMsgStyle.Render(fitSessionColumn(title, prBabysitterFlowWidth)),
 			statusStyle.Render(fitSessionColumn(beadID, prBabysitterBeadWidth)),
-			prBabysitterStatusStyle(mergeability).Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
-			prBabysitterStatusStyle(checks).Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
 		)
 		if index == selected && selectedPhaseID == "" {
 			line = renderSelectedRow(formatPRBabysitterColumns(
 				selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
+				selectedStyle.Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
+				selectedStyle.Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
 				selectedStyle.Render(fitSessionColumn(repo, prBabysitterRepoWidth)),
 				selectedStyle.Render(fitSessionColumn(title, prBabysitterFlowWidth)),
 				selectedStyle.Render(fitSessionColumn(beadID, prBabysitterBeadWidth)),
-				selectedStyle.Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
-				selectedStyle.Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
 			), width)
 		}
 		visualRows = append(visualRows, truncateToWidth(line, width))
@@ -3626,14 +3626,14 @@ func renderPRBabysitterPane(rows []PRBabysitterRow, selected, scroll, width, hei
 	return append([]string{header}, scrollAndPad(visualRows, scroll, rowHeight)...)
 }
 
-func formatPRBabysitterColumns(prefix, repo, flow, bead, mergeability, checks string) string {
+func formatPRBabysitterColumns(prefix, mergeability, checks, repo, flow, bead string) string {
 	return fmt.Sprintf("%s%s  %s  %s  %s  %s",
 		prefix,
+		fitSessionColumn(mergeability, prBabysitterMergeabilityWidth),
+		fitSessionColumn(checks, prBabysitterChecksWidth),
 		fitSessionColumn(repo, prBabysitterRepoWidth),
 		fitSessionColumn(flow, prBabysitterFlowWidth),
 		fitSessionColumn(bead, prBabysitterBeadWidth),
-		fitSessionColumn(mergeability, prBabysitterMergeabilityWidth),
-		fitSessionColumn(checks, prBabysitterChecksWidth),
 	)
 }
 

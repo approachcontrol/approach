@@ -45,6 +45,24 @@ func TestRenderPRBabysitterPaneShowsDashboardColumnsAndStatuses(t *testing.T) {
 	}
 }
 
+func TestRenderPRBabysitterPaneKeepsLiveStatusVisibleAtOrdinaryWidth(t *testing.T) {
+	rows := []PRBabysitterRow{{
+		Flow:         flowstore.FlowRecord{FlowID: "flow-1"},
+		Repo:         "approachcontrol/approach",
+		Title:        "PR babysitter dashboard",
+		BeadID:       "approach-dpn",
+		Mergeability: "conflicting",
+		Checks:       "failing",
+	}}
+
+	plain := ansi.Strip(strings.Join(renderPRBabysitterPane(rows, 0, 0, 60, 3, "", "", nil), "\n"))
+	for _, want := range []string{"Mergeability", "Checks", "conflicting", "failing"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("ordinary-width dashboard missing live status %q:\n%s", want, plain)
+		}
+	}
+}
+
 func TestRenderPRBabysitterPaneExpandsPhasesAndTruncatesNarrowRows(t *testing.T) {
 	flow := flowstore.FlowRecord{
 		FlowID: "flow-1",

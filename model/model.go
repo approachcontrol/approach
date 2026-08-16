@@ -925,7 +925,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
 		activeFlows:           newFlowPane(),
-		prBabysitterFlows:     newFlowPane(),
+		prBabysitterFlows:     newPRBabysitterFlowPane(nil),
 		prBabysitterStatuses:  make(map[string]actions.PullRequestStatus),
 		beads:                 newBeadSubviews(),
 		terminalDockVisible:   true,

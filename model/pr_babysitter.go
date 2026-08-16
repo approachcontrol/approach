@@ -236,7 +236,15 @@ func (m Model) syncPRBabysitterFromCache() Model {
 	}
 	expandedFlowID := m.expandedPRBabysitterFlowID
 	selectedPhaseID := m.selectedPRBabysitterPhaseID
-	m.prBabysitterFlows = m.prBabysitterFlows.SetItems(m.visiblePRBabysitterRecords())
+	query := m.prBabysitterFlows.Query()
+	records := m.visiblePRBabysitterRecords()
+	searchTextByFlowID := make(map[string]string, len(records))
+	for _, row := range m.prBabysitterRows(records) {
+		searchTextByFlowID[row.Flow.FlowID] = prBabysitterSearchText(row)
+	}
+	m.prBabysitterFlows = newPRBabysitterFlowPane(searchTextByFlowID).
+		SetItems(records).
+		SetQueryPreserveIndex(query)
 	if selectedFlowID != "" {
 		m.prBabysitterFlows = m.prBabysitterFlows.SelectFunc(func(record flowstore.FlowRecord) bool {
 			return record.FlowID == selectedFlowID

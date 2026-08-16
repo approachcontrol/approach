@@ -3,6 +3,8 @@ package model
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -201,6 +203,45 @@ func TestPRBabysitterPreservesSelectionByFlowIDAcrossAcceptedRefresh(t *testing.
 	selected, ok := m.prBabysitterFlows.Selected()
 	if !ok || selected.FlowID != second.FlowID {
 		t.Fatalf("selected Flow = %#v, want %s", selected, second.FlowID)
+	}
+}
+
+func TestPRBabysitterFilterMatchesDisplayedDashboardFields(t *testing.T) {
+	first := babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)
+	first.Bead.ID = "bead-v8w7z6"
+	second := babysitterFlow("flow-2", "/dev/beta", flowstore.PhaseReady, flowstore.MergePending)
+	second.Bead.ID = "approach-other"
+	m := NewWithOptions([]scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "repo-z9x8q7"},
+		{Path: "/dev/beta", DisplayName: "Other Repo"},
+	}, Options{})
+	m = m.setTakeover(takeoverPRBabysitter)
+	m.activePane = ui.PaneBottom
+	m.prBabysitterRecords = []flowstore.FlowRecord{first, second}
+	m.prBabysitterStatuses = map[string]actions.PullRequestStatus{
+		first.FlowID:  {Mergeability: actions.PRConflicting, Checks: actions.PRChecksFailing},
+		second.FlowID: {Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing},
+	}
+	m = m.syncPRBabysitterFromCache()
+
+	for _, want := range []string{"repo-z9x8q7", "bead-v8w7z6", "conflicting", "failing"} {
+		if searchText := prBabysitterSearchText(m.prBabysitterRows([]flowstore.FlowRecord{first})[0]); !strings.Contains(searchText, want) {
+			t.Fatalf("dashboard search text %q missing displayed field %q", searchText, want)
+		}
+	}
+	for _, query := range []string{"repo-z9x8q7", "bead-v8w7z6"} {
+		filtered := m.setActiveSearchQuery(query)
+		selected, ok := filtered.prBabysitterFlows.Selected()
+		if !ok || filtered.prBabysitterFlows.Len() != 1 || selected.FlowID != first.FlowID {
+			t.Fatalf("query %q selected %#v (ok=%v) from %d rows, want only %s", query, selected, ok, filtered.prBabysitterFlows.Len(), first.FlowID)
+		}
+	}
+	for _, query := range []string{"conflicting", "failing"} {
+		filtered := m.setActiveSearchQuery(query)
+		items, _, _ := filtered.prBabysitterFlows.View()
+		if !slices.ContainsFunc(items, func(record flowstore.FlowRecord) bool { return record.FlowID == first.FlowID }) {
+			t.Fatalf("query %q omitted Flow %s with that displayed status: %#v", query, first.FlowID, items)
+		}
 	}
 }
 
