@@ -127,7 +127,10 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	} else if occupied {
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
 	}
-	if m.flowLaunchAdmissionOccupied(flowID) {
+	// The typed lease check above owns the occupied/setup diagnostic. Repeating
+	// it through flowLaunchAdmissionOccupied could turn a peer race into a silent
+	// refusal before the reservation-protected recheck reports the real cause.
+	if m.flowLaunchRuntimeOccupied(flowID) {
 		// The two predicates overlap rather than nest: the broad one requires a
 		// non-nil Terminal and ignores FlowRepair, the repair one requires
 		// FlowRepair and ignores Terminal. A repair terminal satisfies both

@@ -2749,7 +2749,7 @@ func TestFlowLeaseMissingStateRootFailsManualAdmissionClosed(t *testing.T) {
 func TestFlowLeaseIsRecheckedUnderLaunchReservationBeforeMutation(t *testing.T) {
 	h := newManualLaunchHarness(t, manualLaunchFlowRecord())
 	h.leaseInspect = func(call int, _, _ string) (flowlease.LeaseState, error) {
-		if call >= 3 {
+		if call >= 2 {
 			return flowlease.Held, nil
 		}
 		return flowlease.Free, nil

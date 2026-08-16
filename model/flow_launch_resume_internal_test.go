@@ -911,6 +911,26 @@ func TestPhaseResumeFooterWithdrawsForTrackedLease(t *testing.T) {
 	}
 }
 
+func TestPhaseResumeLeaseRaceRetainsOccupiedDiagnostic(t *testing.T) {
+	h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
+	h.leaseInspect = func(call int, _, _ string) (flowlease.LeaseState, error) {
+		if call >= 2 {
+			return flowlease.Held, nil
+		}
+		return flowlease.Free, nil
+	}
+	m := h.resume(h.resumeModel())
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations=%d releases=%d, want protected recheck", h.launchReservations, h.launchReleases)
+	}
+	if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatalf("late lease started work: updates=%d embedded=%d tmux=%d", len(h.launchUpdates), len(h.launchContexts), len(h.tmuxContexts))
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
+	}
+}
+
 // Exact Flow and phase identity: nothing prefix-like may match.
 func TestPhaseResumeMatchesExactIdentity(t *testing.T) {
 	record := resumeLaunchFlowRecord()

@@ -648,8 +648,12 @@ func killExactWindow(sessionName, windowName string) error {
 }
 
 func tmuxTargetAbsent(err error) bool {
+	var startErr *exec.Error
+	if errors.As(err, &startErr) {
+		return false
+	}
 	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "can't find") || strings.Contains(text, "no server running") || strings.Contains(text, "not found")
+	return strings.Contains(text, "can't find") || strings.Contains(text, "no server running")
 }
 
 func startTmuxWindow(spec PrivateSpec, stderr io.Writer) error {

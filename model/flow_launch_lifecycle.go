@@ -261,8 +261,12 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	} else if occupied {
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
 	}
-	record, phase, ok := m.previewFlowLaunch(intent)
-	if !ok {
+	// The typed lease check above owns the actionable cross-process result.
+	// Repeating it through previewFlowLaunch would collapse a peer race into the
+	// generic no-phase status; only in-process occupancy belongs in this second
+	// synchronous check. The launch reservation performs the next lease check.
+	record, phase, ok := m.cachedFlowLaunchTarget(intent)
+	if !ok || m.flowLaunchRuntimeOccupied(record.FlowID) {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())

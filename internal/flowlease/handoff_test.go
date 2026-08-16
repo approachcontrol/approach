@@ -232,6 +232,19 @@ func TestCancelExactWaitsForLeaseReleaseAfterTmuxError(t *testing.T) {
 	}
 }
 
+func TestCancelExactDoesNotTreatMissingTmuxAsAbsentTarget(t *testing.T) {
+	spec := testPrivateSpec(t)
+	err := cancelExactAttemptWith(spec,
+		func(string, string) error {
+			return &exec.Error{Name: "tmux", Err: exec.ErrNotFound}
+		},
+		func(string, string) (LeaseState, error) { return Free, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "executable file not found") {
+		t.Fatalf("cancelExactAttemptWith() error = %v, want missing executable failure", err)
+	}
+}
+
 func TestRunTmuxSpawnRoutesConfirmedCleanupFailureThroughCancellation(t *testing.T) {
 	spec := testPrivateSpec(t)
 	cleanupErr := errors.New("cleanup denied")
