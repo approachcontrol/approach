@@ -52,6 +52,11 @@ type startProgramOptions struct {
 	// the schema of the database a released build owns. It is off by default and
 	// has no effect on a release build or on any root but the release default.
 	AllowDevLiveMigration bool
+	// LaunchSource is the running binary, hashed before the repository scan so
+	// an upgrade during that scan cannot make the pin name a different build. A
+	// zero value means "capture it now", which is what a test constructing this
+	// struct directly gets.
+	LaunchSource controlplane.SourceIdentity
 }
 
 func run(args []string, deps runDeps) error {
@@ -105,6 +110,18 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error resolving scan root: %w", err)
 	}
 
+	// Before the scan, deliberately. Resolve used to hash the running binary
+	// once the state root was known, which put a full repository walk inside the
+	// window where a `brew upgrade` could replace the file the pin then named —
+	// and the pin would still carry THIS process's version and schema, so the
+	// mismatch would be silent. Hashing needs no root, so it does not have to
+	// wait for one. The cached copy is still materialized later, under the root,
+	// after the dev-root guard has had its say.
+	launchSource, err := controlplane.CaptureSource()
+	if err != nil {
+		return err
+	}
+
 	repos, err := deps.scan(scanner.ScanOptions{
 		Root:     root,
 		MaxDepth: cfg.Scan.MaxDepth,
@@ -120,6 +137,7 @@ func run(args []string, deps runDeps) error {
 	if err := deps.startProgramWithOptions(repos, startProgramOptions{
 		Config:                cfg,
 		RepoCreateRoot:        repoCreateRoot,
+		LaunchSource:          launchSource,
 		AllowDevLiveMigration: *allowDevLiveMigration || truthyEnv(deps.getenv("APPROACH_ALLOW_DEV_LIVE_MIGRATION")),
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return deps.scan(scanOptions)
@@ -380,10 +398,13 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// and says so — so an error here means the running binary itself is
 	// unreadable, which is worth reporting rather than launching agents that
 	// cannot report results.
-	pin, err := controlplane.Resolve(sessionStore.Root(), flowstore.DatabaseSchemaVersion())
-	if err != nil {
-		return err
+	launchSource := opts.LaunchSource
+	if strings.TrimSpace(launchSource.Path) == "" {
+		if launchSource, err = controlplane.CaptureSource(); err != nil {
+			return err
+		}
 	}
+	pin := controlplane.Materialize(sessionStore.Root(), launchSource, flowstore.DatabaseSchemaVersion())
 	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
 	if err != nil {
 		return err

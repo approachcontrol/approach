@@ -133,42 +133,77 @@ var (
 	ErrPinDigestMismatch = errors.New("pinned approach executable does not match its recorded digest")
 )
 
-// Resolve returns the Pin for the running binary, materializing a cached copy
-// under root when it can.
+// SourceIdentity is the running binary's resolved path and content digest.
+//
+// It is a separate value, and CaptureSource a separate call, because the two
+// halves of pinning have very different timing needs. Hashing answers "which
+// build is running", and that answer decays: os.Executable returns a *pathname*,
+// Homebrew ships approach as a cask binary symlinked into /opt/homebrew/bin, and
+// an upgrade landing before the hash would have this process pin a build that is
+// not the one running. Materializing needs the state root, which is not known
+// until config is loaded and repositories are scanned. Splitting them lets the
+// hash run at the earliest moment the process can manage while the copy waits
+// for the root.
+type SourceIdentity struct {
+	Path   string
+	Digest string
+}
+
+// CaptureSource resolves and hashes the running binary. It takes no root, so it
+// can be called before anything slow — a repository scan, a config load, a
+// database migration — has had a chance to overlap an upgrade. Nothing here can
+// make the answer atomic with process start; Go exposes no portable handle on
+// the running image. Calling it early is the whole mitigation.
+func CaptureSource() (SourceIdentity, error) {
+	path, err := resolveSourcePath()
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+	digest, err := fileDigest(path)
+	if err != nil {
+		return SourceIdentity{}, fmt.Errorf("hash approach executable %s: %w", path, err)
+	}
+	return SourceIdentity{Path: path, Digest: digest}, nil
+}
+
+// Materialize returns the Pin for an already-captured source, copying it into
+// the cache under root when it can. It cannot fail: every cache problem degrades
+// to the source path with a Notice, because a caching failure must never block
+// work.
 //
 // schemaVersion is passed in rather than read from flowstore so this package
 // stays free of the store's dependency graph; callers pass
 // flowstore.DatabaseSchemaVersion().
-//
-// Resolve only fails when the running binary itself cannot be resolved or
-// hashed. Every cache failure degrades instead.
-func Resolve(root string, schemaVersion int) (Pin, error) {
-	source, err := resolveSourcePath()
-	if err != nil {
-		return Pin{}, err
-	}
-	digest, err := fileDigest(source)
-	if err != nil {
-		return Pin{}, fmt.Errorf("hash approach executable %s: %w", source, err)
-	}
+func Materialize(root string, source SourceIdentity, schemaVersion int) Pin {
 	pin := Pin{
-		ExecutablePath: source,
-		SourcePath:     source,
+		ExecutablePath: source.Path,
+		SourcePath:     source.Path,
 		Version:        version.Version(),
 		Commit:         version.Commit(),
 		SchemaVersion:  schemaVersion,
-		Digest:         digest,
+		Digest:         source.Digest,
 	}
-	cached, err := materialize(root, source, digest)
+	cached, err := materialize(root, source.Path, source.Digest)
 	if err != nil {
 		pin.Degraded = true
 		pin.Notice = fmt.Sprintf(
 			"Launch binary cache unavailable (%v); launching %s directly, which an upgrade can replace mid-session.",
-			err, source)
-		return pin, nil
+			err, source.Path)
+		return pin
 	}
 	pin.ExecutablePath = cached
-	return pin, nil
+	return pin
+}
+
+// Resolve captures and materializes in one step, for callers that have the root
+// as early as they have anything. It only fails when the running binary itself
+// cannot be resolved or hashed.
+func Resolve(root string, schemaVersion int) (Pin, error) {
+	source, err := CaptureSource()
+	if err != nil {
+		return Pin{}, err
+	}
+	return Materialize(root, source, schemaVersion), nil
 }
 
 // Verify re-checks the pinned binary immediately before a launch. A degraded
