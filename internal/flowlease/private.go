@@ -560,21 +560,36 @@ func abortAndCancel(spec PrivateSpec, committed bool, cause error) error {
 }
 
 func cancelExactAttempt(spec PrivateSpec) error {
-	err := killExactWindow(spec.SessionName, spec.WindowName)
-	state, inspectErr := Inspect(spec.Root, spec.FlowID)
-	if err != nil && !(tmuxTargetAbsent(err) && inspectErr == nil && state == Free) {
-		return fmt.Errorf("cancel exact tmux window: %w", err)
-	}
+	return cancelExactAttemptWith(spec, killExactWindow, Inspect)
+}
+
+func cancelExactAttemptWith(
+	spec PrivateSpec,
+	kill func(sessionName, windowName string) error,
+	inspect func(root, flowID string) (LeaseState, error),
+) error {
+	killErr := kill(spec.SessionName, spec.WindowName)
 	for {
-		state, inspectErr = Inspect(spec.Root, spec.FlowID)
+		state, inspectErr := inspect(spec.Root, spec.FlowID)
 		if inspectErr != nil {
-			return fmt.Errorf("verify Flow lease release after cancellation: %w", inspectErr)
+			verifyErr := fmt.Errorf("verify Flow lease release after cancellation: %w", inspectErr)
+			if killErr != nil {
+				return errors.Join(fmt.Errorf("cancel exact tmux window: %w", killErr), verifyErr)
+			}
+			return verifyErr
 		}
 		if state == Free {
+			if killErr != nil && !tmuxTargetAbsent(killErr) {
+				return fmt.Errorf("cancel exact tmux window (Flow lease release verified): %w", killErr)
+			}
 			return nil
 		}
 		if !time.Now().Before(spec.CleanupDeadline) {
-			return errors.New("Flow lease remains held after exact tmux cancellation")
+			releaseErr := errors.New("Flow lease remains held after exact tmux cancellation")
+			if killErr != nil {
+				return errors.Join(fmt.Errorf("cancel exact tmux window: %w", killErr), releaseErr)
+			}
+			return releaseErr
 		}
 		time.Sleep(protocolPollInterval)
 	}

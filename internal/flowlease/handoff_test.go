@@ -209,6 +209,28 @@ func TestTmuxCreateTimeoutDoesNotRetrySameWindowName(t *testing.T) {
 	}
 }
 
+func TestCancelExactWaitsForLeaseReleaseAfterTmuxError(t *testing.T) {
+	spec := testPrivateSpec(t)
+	spec.CleanupDeadline = time.Now().Add(time.Second)
+	inspectCalls := 0
+	err := cancelExactAttemptWith(spec,
+		func(string, string) error { return errors.New("tmux client failed") },
+		func(string, string) (LeaseState, error) {
+			inspectCalls++
+			if inspectCalls < 3 {
+				return Held, nil
+			}
+			return Free, nil
+		},
+	)
+	if inspectCalls != 3 {
+		t.Fatalf("lease inspections = %d, want polling through release", inspectCalls)
+	}
+	if err == nil || !strings.Contains(err.Error(), "cancel exact tmux window") {
+		t.Fatalf("CancelExact() error = %v, want preserved tmux failure", err)
+	}
+}
+
 func TestRunnerHoldsLeaseUntilAgentExits(t *testing.T) {
 	spec := testPrivateSpec(t)
 	attempt := spec.attempt()
