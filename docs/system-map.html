@@ -443,7 +443,7 @@
       </div>
       <div class="meta">
         <span class="chip"><strong>source</strong> docs/architecture.md</span>
-        <span class="chip"><strong>commit</strong> <span id="commit-chip">9321557</span></span>
+        <span class="chip"><strong>commit</strong> <span id="commit-chip">dd64488</span></span>
         <span class="chip"><strong>drag</strong> pan · scroll zoom · click inspect</span>
       </div>
     </header>
@@ -973,6 +973,7 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
     sub.textContent = b.sub;
     labelsG.appendChild(sub);
 
+    group.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
     group.addEventListener("click", () => selectBuilding(b.id));
     group.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectBuilding(b.id); }
@@ -1215,7 +1216,7 @@ paths: ${touching}</div>
   document.getElementById("zoom-out").onclick = () => { scale = Math.max(0.55, scale / 1.1); applyTransform(); };
   document.getElementById("zoom-reset").onclick = () => { scale = 0.92; tx = 0; ty = 20; applyTransform(); };
 
-  document.getElementById("commit-chip").textContent = "9321557";
+  document.getElementById("commit-chip").textContent = "dd64488";
 
   // default selection: Flow launch — the load-bearing path
   selectPath("flow-launch");
