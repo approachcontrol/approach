@@ -73,7 +73,19 @@ func createHandoff(attempt handoffAttempt) error {
 }
 
 func validateExistingHandoff(attempt handoffAttempt) error {
-	if _, err := validateHandoffAttempt(attempt); err != nil {
+	canonical, err := validateHandoffAttempt(attempt)
+	if err != nil {
+		return err
+	}
+	collection := filepath.Join(canonical, handoffCollection)
+	collectionInfo, err := os.Lstat(collection)
+	if err != nil {
+		return fmt.Errorf("inspect Flow launch handoff collection: %w", err)
+	}
+	if collectionInfo.Mode()&os.ModeSymlink != 0 || !collectionInfo.IsDir() {
+		return errors.New("Flow launch handoff collection must be a directory, not a symlink or other node")
+	}
+	if err := requireOwnedPrivate(collectionInfo, artifacts.DirPerm, "Flow launch handoff collection"); err != nil {
 		return err
 	}
 	info, err := os.Lstat(attempt.HandoffDir)

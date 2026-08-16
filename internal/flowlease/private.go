@@ -196,6 +196,18 @@ func RunTmuxSpawn(args []string, stderr io.Writer) error {
 	if err := validatePrivateSpec(spec, true); err != nil {
 		return err
 	}
+	return runTmuxSpawn(spec, stderr, tmuxSpawnOps{
+		start: startTmuxWindow, cleanup: cleanupHandoff, cancel: cancelExactAttempt,
+	})
+}
+
+type tmuxSpawnOps struct {
+	start   func(PrivateSpec, io.Writer) error
+	cleanup func(handoffAttempt) error
+	cancel  func(PrivateSpec) error
+}
+
+func runTmuxSpawn(spec PrivateSpec, stderr io.Writer, ops tmuxSpawnOps) error {
 	attempt := spec.attempt()
 	if err := createHandoff(attempt); err != nil {
 		return err
@@ -204,46 +216,49 @@ func RunTmuxSpawn(args []string, stderr io.Writer) error {
 	terminal := false
 	defer func() {
 		if terminal {
-			_ = cleanupHandoff(attempt)
+			_ = ops.cleanup(attempt)
 		}
 	}()
 
-	if err := startTmuxWindow(spec, stderr); err != nil {
+	if err := ops.start(spec, stderr); err != nil {
 		terminal = true
-		return abortAndCancel(spec, false, fmt.Errorf("start tmux window: %w", err))
+		return abortAndCancel(spec, false, fmt.Errorf("start tmux window: %w", err), ops.cancel)
 	}
 	if _, err := waitForRecordOrFailure(attempt, recordReady, spec.DecisionDeadline); err != nil {
 		terminal = true
-		return abortAndCancel(spec, false, fmt.Errorf("wait for Flow lease readiness: %w", err))
+		return abortAndCancel(spec, false, fmt.Errorf("wait for Flow lease readiness: %w", err), ops.cancel)
 	}
 	if !time.Now().Before(spec.DecisionDeadline) {
 		terminal = true
-		return abortAndCancel(spec, false, errors.New("Flow lease readiness arrived after the decision deadline"))
+		return abortAndCancel(spec, false, errors.New("Flow lease readiness arrived after the decision deadline"), ops.cancel)
 	}
 	outcome, err := publishOrReadDecision(attempt, decisionCommit)
 	if err != nil {
 		terminal = true
-		return abortAndCancel(spec, false, fmt.Errorf("commit Flow lease handoff: %w", err))
+		return abortAndCancel(spec, false, fmt.Errorf("commit Flow lease handoff: %w", err), ops.cancel)
 	}
 	if outcome != decisionCommit {
 		terminal = true
-		return abortAndCancel(spec, false, errors.New("Flow lease handoff was aborted before commit"))
+		return abortAndCancel(spec, false, errors.New("Flow lease handoff was aborted before commit"), ops.cancel)
 	}
 	committed = true
 	if _, err := waitForRecordOrFailure(attempt, recordStarted, spec.StartedDeadline); err != nil {
 		terminal = true
-		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch: %w", err))
+		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch: %w", err), ops.cancel)
 	}
 	if _, err := waitForRecordOrFailure(attempt, recordStartedConfirmed, spec.StartedDeadline); err != nil {
 		terminal = true
-		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch confirmation: %w", err))
+		return abortAndCancel(spec, committed, fmt.Errorf("uncertain committed Flow launch confirmation: %w", err), ops.cancel)
 	}
 	if !time.Now().Before(spec.StartedDeadline) {
 		terminal = true
-		return abortAndCancel(spec, committed, errors.New("uncertain committed Flow launch: started confirmation arrived after its deadline"))
+		return abortAndCancel(spec, committed, errors.New("uncertain committed Flow launch: started confirmation arrived after its deadline"), ops.cancel)
 	}
 	terminal = true
-	return cleanupHandoff(attempt)
+	if err := ops.cleanup(attempt); err != nil {
+		return abortAndCancel(spec, committed, fmt.Errorf("clean confirmed Flow launch handoff: %w", err), ops.cancel)
+	}
+	return nil
 }
 
 // RunLeaseRunner owns the Flow lease while supervising the original agent.
@@ -540,7 +555,7 @@ func publishOrReadDecision(attempt handoffAttempt, outcome string) (string, erro
 	return record.Outcome, nil
 }
 
-func abortAndCancel(spec PrivateSpec, committed bool, cause error) error {
+func abortAndCancel(spec PrivateSpec, committed bool, cause error, cancel func(PrivateSpec) error) error {
 	attempt := spec.attempt()
 	outcome, decisionErr := publishOrReadDecision(attempt, decisionAbort)
 	if decisionErr != nil && !committed {
@@ -549,7 +564,7 @@ func abortAndCancel(spec PrivateSpec, committed bool, cause error) error {
 	if outcome == decisionCommit {
 		committed = true
 	}
-	cancelErr := cancelExactAttempt(spec)
+	cancelErr := cancel(spec)
 	if cancelErr != nil {
 		cause = errors.Join(cause, cancelErr)
 	}

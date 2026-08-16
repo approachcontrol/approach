@@ -2,6 +2,7 @@ package flowlease
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -229,6 +230,176 @@ func TestCancelExactWaitsForLeaseReleaseAfterTmuxError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cancel exact tmux window") {
 		t.Fatalf("CancelExact() error = %v, want preserved tmux failure", err)
 	}
+}
+
+func TestRunTmuxSpawnRoutesConfirmedCleanupFailureThroughCancellation(t *testing.T) {
+	spec := testPrivateSpec(t)
+	cleanupErr := errors.New("cleanup denied")
+	cancelCalled := false
+	runnerErr := make(chan error, 1)
+	ops := tmuxSpawnOps{
+		start: func(spec PrivateSpec, _ io.Writer) error {
+			go func() {
+				attempt := spec.attempt()
+				if err := publishHandoffRecord(attempt, recordReady, ""); err != nil {
+					runnerErr <- err
+					return
+				}
+				decision, err := waitForRecord(attempt, recordDecision, spec.DecisionDeadline)
+				if err != nil {
+					runnerErr <- err
+					return
+				}
+				if decision.Outcome != decisionCommit {
+					runnerErr <- fmt.Errorf("decision = %q, want commit", decision.Outcome)
+					return
+				}
+				if err := publishAndReadStarted(attempt, nil); err != nil {
+					runnerErr <- err
+					return
+				}
+				runnerErr <- nil
+			}()
+			return nil
+		},
+		cleanup: func(handoffAttempt) error { return cleanupErr },
+		cancel: func(PrivateSpec) error {
+			cancelCalled = true
+			return nil
+		},
+	}
+	err := runTmuxSpawn(spec, io.Discard, ops)
+	if runnerResult := <-runnerErr; runnerResult != nil {
+		t.Fatalf("runner protocol error = %v", runnerResult)
+	}
+	if !cancelCalled {
+		t.Fatal("confirmed cleanup failure did not cancel the exact attempt")
+	}
+	if err == nil || !strings.Contains(err.Error(), "uncertain committed Flow launch cleanup") || !errors.Is(err, cleanupErr) {
+		t.Fatalf("runTmuxSpawn() error = %v, want uncertain committed cleanup failure", err)
+	}
+	if cleanupErr := cleanupHandoff(spec.attempt()); cleanupErr != nil {
+		t.Fatalf("cleanupHandoff(test teardown) error = %v", cleanupErr)
+	}
+}
+
+func TestRunTmuxSpawnCompletesConfirmedRunnerHandshake(t *testing.T) {
+	spec := testPrivateSpec(t)
+	prepareRunnerLaunchScript(t, &spec, []string{"/usr/bin/true"})
+	installFakeTmux(t, true)
+	if err := RunTmuxSpawn(privateFlags(spec), io.Discard); err != nil {
+		t.Fatalf("RunTmuxSpawn() error = %v", err)
+	}
+	if _, err := os.Lstat(spec.HandoffDir); !os.IsNotExist(err) {
+		t.Fatalf("Lstat(completed handoff) error = %v, want not exist", err)
+	}
+	assertFlowLeaseFree(t, spec)
+}
+
+func TestRunTmuxSpawnAbortsWhenRunnerNeverBecomesReady(t *testing.T) {
+	spec := testPrivateSpec(t)
+	now := time.Now()
+	spec.DecisionDeadline = now.Add(100 * time.Millisecond)
+	spec.StartedDeadline = now.Add(time.Second)
+	spec.CleanupDeadline = now.Add(2 * time.Second)
+	prepareRunnerLaunchScript(t, &spec, []string{"/usr/bin/true"})
+	installFakeTmux(t, false)
+	err := RunTmuxSpawn(privateFlags(spec), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "wait for Flow lease readiness") {
+		t.Fatalf("RunTmuxSpawn() error = %v, want bounded readiness failure", err)
+	}
+	if _, statErr := os.Lstat(spec.HandoffDir); !os.IsNotExist(statErr) {
+		t.Fatalf("Lstat(aborted handoff) error = %v, want not exist", statErr)
+	}
+	assertFlowLeaseFree(t, spec)
+}
+
+func TestRunTmuxSpawnReportsCommittedRunnerStartFailure(t *testing.T) {
+	spec := testPrivateSpec(t)
+	prepareRunnerLaunchScript(t, &spec, []string{"/definitely/missing-flow-agent"})
+	installFakeTmux(t, true)
+	err := RunTmuxSpawn(privateFlags(spec), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "uncertain committed Flow launch") ||
+		!strings.Contains(err.Error(), "start tracked Flow agent") {
+		t.Fatalf("RunTmuxSpawn() error = %v, want committed runner start failure", err)
+	}
+	if _, statErr := os.Lstat(spec.HandoffDir); !os.IsNotExist(statErr) {
+		t.Fatalf("Lstat(failed handoff) error = %v, want not exist", statErr)
+	}
+	assertFlowLeaseFree(t, spec)
+}
+
+func TestRunTmuxSpawnRejectsUnconfirmedRunnerStart(t *testing.T) {
+	spec := testPrivateSpec(t)
+	now := time.Now()
+	spec.DecisionDeadline = now.Add(time.Second)
+	spec.StartedDeadline = now.Add(1300 * time.Millisecond)
+	spec.CleanupDeadline = now.Add(2 * time.Second)
+	prepareRunnerLaunchScript(t, &spec, []string{"/usr/bin/true"})
+	t.Setenv("APPROACH_FLOWLEASE_SPAWN_BEHAVIOR", "unconfirmed")
+	installFakeTmux(t, true)
+	err := RunTmuxSpawn(privateFlags(spec), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "uncertain committed Flow launch confirmation") {
+		t.Fatalf("RunTmuxSpawn() error = %v, want missing confirmation failure", err)
+	}
+	if _, statErr := os.Lstat(spec.HandoffDir); !os.IsNotExist(statErr) {
+		t.Fatalf("Lstat(unconfirmed handoff) error = %v, want not exist", statErr)
+	}
+	assertFlowLeaseFree(t, spec)
+}
+
+func TestRunTmuxSpawnRunnerHelper(t *testing.T) {
+	if os.Getenv("APPROACH_FLOWLEASE_SPAWN_HELPER") != "1" {
+		return
+	}
+	separator := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			separator = i
+			break
+		}
+	}
+	if separator < 0 {
+		os.Exit(2)
+	}
+	args := os.Args[separator+1:]
+	if os.Getenv("APPROACH_FLOWLEASE_SPAWN_BEHAVIOR") == "unconfirmed" {
+		if err := runUnconfirmedSpawnHelper(args); err != nil {
+			os.Exit(4)
+		}
+		os.Exit(0)
+	}
+	if err := RunLeaseRunner(args, nil, io.Discard, io.Discard); err != nil {
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
+
+func runUnconfirmedSpawnHelper(args []string) error {
+	spec, _, err := parsePrivateArgs(args, true)
+	if err != nil {
+		return err
+	}
+	if err := validatePrivateSpec(spec, false); err != nil {
+		return err
+	}
+	lease, err := Acquire(spec.Root, spec.FlowID)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
+	attempt := spec.attempt()
+	if err := publishHandoffRecord(attempt, recordReady, ""); err != nil {
+		return err
+	}
+	decision, err := waitForRecord(attempt, recordDecision, spec.DecisionDeadline)
+	if err != nil {
+		return err
+	}
+	if decision.Outcome != decisionCommit {
+		return fmt.Errorf("decision = %q, want commit", decision.Outcome)
+	}
+	return publishHandoffRecord(attempt, recordStarted, "")
 }
 
 func TestRunnerHoldsLeaseUntilAgentExits(t *testing.T) {
@@ -506,6 +677,34 @@ func TestHandoffRejectsReusedOrUnsafeAttemptDirectory(t *testing.T) {
 	}
 }
 
+func TestExistingHandoffRejectsReplacedCollectionSymlink(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	collection := filepath.Join(spec.Root, handoffCollection)
+	relocated := filepath.Join(spec.Root, "relocated-handoffs")
+	if err := os.Rename(collection, relocated); err != nil {
+		t.Fatalf("Rename(handoff collection) error = %v", err)
+	}
+	if err := os.Symlink(relocated, collection); err != nil {
+		t.Fatalf("Symlink(handoff collection) error = %v", err)
+	}
+	if err := validateExistingHandoff(attempt); err == nil {
+		t.Fatal("validateExistingHandoff() error = nil, want collection symlink rejection")
+	}
+	if err := os.Remove(collection); err != nil {
+		t.Fatalf("Remove(collection symlink) error = %v", err)
+	}
+	if err := os.Rename(relocated, collection); err != nil {
+		t.Fatalf("restore handoff collection error = %v", err)
+	}
+	if err := cleanupHandoff(attempt); err != nil {
+		t.Fatalf("cleanupHandoff() error = %v", err)
+	}
+}
+
 func secureTempRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -537,6 +736,64 @@ func testPrivateSpec(t *testing.T) PrivateSpec {
 		DecisionDeadline: now.Add(2 * time.Second),
 		StartedDeadline:  now.Add(4 * time.Second),
 		CleanupDeadline:  now.Add(6 * time.Second),
+	}
+}
+
+func prepareRunnerLaunchScript(t *testing.T, spec *PrivateSpec, agentArgv []string) {
+	t.Helper()
+	spec.ScriptPath = filepath.Join(t.TempDir(), "flow-launch.sh")
+	binary, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatalf("Abs(test binary) error = %v", err)
+	}
+	args := []string{binary, "-test.run=^TestRunTmuxSpawnRunnerHelper$", "--"}
+	args = append(args, privateFlags(*spec)...)
+	args = append(args, "--")
+	args = append(args, agentArgv...)
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = shellQuote(arg)
+	}
+	body := "#!/bin/sh\nAPPROACH_FLOWLEASE_SPAWN_HELPER=1 exec " + strings.Join(quoted, " ") + "\n"
+	if err := os.WriteFile(spec.ScriptPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile(runner launch script) error = %v", err)
+	}
+}
+
+func installFakeTmux(t *testing.T, launch bool) {
+	t.Helper()
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	body := `#!/bin/sh
+case "$1" in
+  has-session) exit 1 ;;
+  new-session|new-window)
+    if [ "${APPROACH_FLOWLEASE_FAKE_TMUX_LAUNCH:-}" = "1" ]; then
+      for last do :; done
+      nohup /bin/sh -c "$last" </dev/null >/dev/null 2>&1 &
+    fi
+    exit 0
+    ;;
+  kill-window) exit 0 ;;
+esac
+exit 2
+`
+	if err := os.WriteFile(tmuxPath, []byte(body), 0o700); err != nil {
+		t.Fatalf("WriteFile(fake tmux) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if launch {
+		t.Setenv("APPROACH_FLOWLEASE_FAKE_TMUX_LAUNCH", "1")
+	} else {
+		t.Setenv("APPROACH_FLOWLEASE_FAKE_TMUX_LAUNCH", "")
+	}
+}
+
+func assertFlowLeaseFree(t *testing.T, spec PrivateSpec) {
+	t.Helper()
+	state, err := Inspect(spec.Root, spec.FlowID)
+	if err != nil || state != Free {
+		t.Fatalf("Inspect(%s) = %v, %v, want Free", spec.FlowID, state, err)
 	}
 }
 
