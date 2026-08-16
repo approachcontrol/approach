@@ -156,15 +156,29 @@ const PARTIAL_FIELDS = new Set(['epicProgression'])
  * with no path (a request-level failure) is never partial.
  */
 function isPartialFieldError(error: GraphQLError): boolean {
-  const path = error.path
-  if (!Array.isArray(path) || path.length === 0) {
-    return false
-  }
-  const failed = path[path.length - 1]
-  return typeof failed === 'string' && PARTIAL_FIELDS.has(failed)
+  return PARTIAL_FIELDS.has(failedField(error) ?? '')
 }
 
-async function query<T>(document: string, variables?: Record<string, unknown>): Promise<T> {
+/** The response key of the field an error entry names, if it names one. */
+function failedField(error: GraphQLError): string | undefined {
+  const path = error.path
+  if (!Array.isArray(path) || path.length === 0) {
+    return undefined
+  }
+  const failed = path[path.length - 1]
+  return typeof failed === 'string' ? failed : undefined
+}
+
+/** A successful read: the selected data, plus whichever fields failed anyway. */
+interface QueryResult<T> {
+  data: T
+  partial: GraphQLError[]
+}
+
+async function query<T>(
+  document: string,
+  variables?: Record<string, unknown>,
+): Promise<QueryResult<T>> {
   const url = endpoint()
 
   let response: Response
@@ -248,7 +262,10 @@ async function query<T>(document: string, variables?: Record<string, unknown>): 
   if (errors.length > 0) {
     console.error('approach-api partial response:', JSON.stringify(errors))
   }
-  return body.data
+  // The tolerated errors come back with the data: a field this client serves
+  // without still has to be *reported* as missing rather than rendered as an
+  // ordinary null, and only the response knows which fields those were.
+  return { data: body.data, partial: errors }
 }
 
 export interface FlowRef {
@@ -359,6 +376,17 @@ export interface FlowDetail {
   // Null both when the Flow links no epic and when that epic has no persisted
   // progression row; the two are distinguished by `bead.epicId`.
   epicProgression: EpicProgression | null
+  /**
+   * Client-derived, not a schema field: the API could not read this Flow's
+   * progression row and said so in `errors`.
+   *
+   * It nulls `epicProgression` when that happens, which is the same null a
+   * Flow whose epic has no row at all gets. The API keeps the two apart on
+   * purpose, so the viewer has to as well — otherwise an unreadable row reads
+   * back as "nobody has configured progression for this epic", which is a
+   * claim nothing checked.
+   */
+  epicProgressionUnavailable: boolean
   issue: Issue | null
   pullRequest: PullRequest | null
   merge: Merge | null
@@ -471,16 +499,26 @@ function describe(value: unknown): string {
 }
 
 export async function getRepos(): Promise<RepoSummary[]> {
-  const data = await query<{ repos: RepoSummary[] }>(REPOS_QUERY)
+  const { data } = await query<{ repos: RepoSummary[] }>(REPOS_QUERY)
   return requireList<RepoSummary>(data.repos, 'repos')
 }
 
 export async function getRepo(id: string): Promise<RepoDetail | null> {
-  const data = await query<{ repo: RepoDetail | null }>(REPO_QUERY, { id })
+  const { data } = await query<{ repo: RepoDetail | null }>(REPO_QUERY, { id })
   return requireNodeOrNull<RepoDetail>(data.repo, 'repo')
 }
 
 export async function getFlow(id: string): Promise<FlowDetail | null> {
-  const data = await query<{ flow: FlowDetail | null }>(FLOW_QUERY, { id })
-  return requireNodeOrNull<FlowDetail>(data.flow, 'flow')
+  const { data, partial } = await query<{ flow: FlowDetail | null }>(FLOW_QUERY, { id })
+  const flow = requireNodeOrNull<FlowDetail>(data.flow, 'flow')
+  if (flow === null) {
+    return null
+  }
+  // Set from the response rather than read off the Flow: the API reports an
+  // unreadable progression row out of band, and the field it nulls is the same
+  // null a missing row produces.
+  return {
+    ...flow,
+    epicProgressionUnavailable: partial.some((error) => failedField(error) === 'epicProgression'),
+  }
 }

@@ -358,6 +358,16 @@ type resultBounds struct {
 	// progressionErrorBytes is errorEntryOverheadBytes when this snapshot holds
 	// an unreadable progression row, and zero otherwise — a healthy snapshot
 	// emits no per-field errors, so it is charged for none.
+	//
+	// One flag for the whole snapshot, not a count of the Flows that name the
+	// failed key: an unreadable row then charges every Flow.epicProgression
+	// occurrence, including Flows whose own row read fine. That is deliberate
+	// over-counting, of a piece with the pessimistic fallbacks above.
+	// Distinguishing them means a second cardinality threaded through the cost
+	// walk beside flows/flowsPerRepo, and the walk multiplies by list bounds,
+	// not by per-field counts — a bound that is subtly wrong reopens the hole,
+	// where one that is merely generous costs a 400 on an unusually wide
+	// document against a store that already has a row needing repair.
 	progressionErrorBytes int64
 }
 

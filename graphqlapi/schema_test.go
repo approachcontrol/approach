@@ -481,6 +481,19 @@ func TestSchemaSanitizesEpicProgressionSourceFailure(t *testing.T) {
 		t.Errorf("flows[0].epicProgression = %#v, want null", flow["epicProgression"])
 	}
 
+	// The path is load-bearing, not incidental. The web client tells a field it
+	// can serve without from a failure that nulled a whole entity by reading the
+	// last element of this path; without one it has to treat every partial as
+	// fatal, and `{"data":{"flow":null}}` from a failed snapshot is otherwise
+	// indistinguishable from an unknown id.
+	path := result.Errors[0].Path
+	if len(path) == 0 {
+		t.Fatalf("error path = empty, want it to name the field that failed")
+	}
+	if got := path[len(path)-1]; got != "epicProgression" {
+		t.Errorf("error path = %#v, want it to terminate at epicProgression", path)
+	}
+
 	if unrelated := executeQuery(t, snap, `{ repos { id } flows { id } }`); len(unrelated.Errors) != 0 {
 		t.Errorf("errors = %v, want none: an unreadable progression row must not fail a query that never selects it", unrelated.Errors)
 	}

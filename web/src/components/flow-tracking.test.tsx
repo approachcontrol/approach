@@ -30,6 +30,7 @@ function flowDetail(overrides: Partial<FlowDetail>): FlowDetail {
     autoMode: false,
     bead: null,
     epicProgression: null,
+    epicProgressionUnavailable: false,
     issue: null,
     pullRequest: null,
     merge: null,
@@ -85,6 +86,21 @@ describe('FlowTracking', () => {
     // A missing row is "nobody turned this on", which is not the same as off.
     expect(markup).toContain('not configured')
     expect(markup).not.toContain('disabled')
+  })
+
+  // The API nulls epicProgression for an unreadable row and reports the failure
+  // out of band, so this state arrives as the same null a missing row does.
+  // Rendering it as "not configured" would claim nobody enabled progression for
+  // an epic nothing managed to look at.
+  it('separates a row that could not be read from an epic with no row', () => {
+    const bead = { id: 'approach-y7g.7', epicId: 'approach-y7g' }
+    const markup = render({ bead, epicProgression: null, epicProgressionUnavailable: true })
+
+    expect(markup).toContain('<code>approach-y7g</code>')
+    expect(markup).toContain('unavailable')
+    expect(markup).not.toContain('not configured')
+    expect(markup).not.toContain('disabled')
+    expect(markup).not.toContain('enabled')
   })
 
   it('distinguishes enabled, disabled, done, and halted', () => {

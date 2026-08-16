@@ -43,7 +43,10 @@ export function FlowTracking({ flow }: { flow: FlowDetail }) {
               <>
                 <dt>Progression</dt>
                 <dd>
-                  <Progression progression={flow.epicProgression} />
+                  <Progression
+                    progression={flow.epicProgression}
+                    unavailable={flow.epicProgressionUnavailable}
+                  />
                 </dd>
               </>
             ) : null}
@@ -107,8 +110,21 @@ export function FlowTracking({ flow }: { flow: FlowDetail }) {
  * - `not configured` when the epic has no row at all. That is not `disabled`:
  *   nobody has turned progression on for that epic, which is a different claim
  *   from having turned it off.
+ * - `unavailable` when the API could not read the row. It nulls the field in
+ *   that case, so this is the one state that cannot be read off `progression`
+ *   at all — and reporting it as `not configured` would be the one invented
+ *   answer in a projection built to avoid inventing any.
  */
-function Progression({ progression }: { progression: EpicProgression | null }) {
+function Progression({
+  progression,
+  unavailable,
+}: {
+  progression: EpicProgression | null
+  unavailable: boolean
+}) {
+  if (unavailable) {
+    return <Badge tone="warn">unavailable</Badge>
+  }
   if (!progression) {
     return <Badge>not configured</Badge>
   }

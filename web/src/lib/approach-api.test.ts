@@ -186,9 +186,20 @@ describe('approach api client', () => {
 
       expect(flow?.id).toBe('f1')
       expect(flow?.epicProgression).toBeNull()
+      // The null is the same one a missing row produces, so the failure has to
+      // survive as its own flag or the viewer reports "not configured".
+      expect(flow?.epicProgressionUnavailable).toBe(true)
       // Not silent: the reader sees the Flow, the operator sees the cause.
       expect(logged).toHaveBeenCalledWith('approach-api partial response:', JSON.stringify(errors))
       logged.mockRestore()
+    })
+
+    it('leaves the progression flag clear when nothing failed', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({ data: { flow: { id: 'f1', bead: null, epicProgression: null } } }),
+      )
+
+      expect((await getFlow('f1'))?.epicProgressionUnavailable).toBe(false)
     })
 
     // The regression the whitelist exists for. A failed snapshot errors the
