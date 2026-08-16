@@ -40,6 +40,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -348,15 +349,51 @@ func materialize(root, source, digest string) (string, error) {
 		return "", err
 	}
 	target := filepath.Join(cacheDir, cachedBinaryName(digest))
-	if reusable(target, digest) {
-		sweepCache(cacheDir, target)
-		return target, nil
+	if !reusable(target, digest) {
+		if err := copyExecutable(source, target); err != nil {
+			return "", err
+		}
 	}
-	if err := copyExecutable(source, target); err != nil {
+	if err := requireRunnable(target); err != nil {
 		return "", err
 	}
 	sweepCache(cacheDir, target)
 	return target, nil
+}
+
+// probeTimeout bounds the runnability probe. It is generous for `--version` on a
+// local binary and still short enough that a pathological filesystem cannot hang
+// startup.
+const probeTimeout = 10 * time.Second
+
+// requireRunnable checks that this process can actually execute the cached copy,
+// by executing it.
+//
+// A mode bit is not that check. The state root is an ordinary directory the user
+// chose, and a `noexec` mount happily holds a 0500 file that execve refuses — so
+// every permission test in this package would pass while the only thing the
+// cache exists for, running the binary, fails. Nothing notices until an agent is
+// already working: the provider hook and the agent's own `approach` commands are
+// what use this path, so the phase is running by the time persistence dies.
+//
+// Failure is not fatal, because the caller treats a materialization error as a
+// reason to degrade: the pin falls back to the source path, which this process
+// is executing and therefore demonstrably can, and the Notice says why. That is
+// the same trade the rest of the cache makes — never block work over a cache.
+//
+// `--version` is the probe because it is the one subcommand guaranteed to touch
+// no state: it prints and exits before any root, database, or config is opened.
+func requireRunnable(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	// Inherit nothing. The probe must not pick up an APPROACH_* variable that
+	// would send it at a real state root, and it has no reason to read stdin.
+	cmd.Env = []string{}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cached approach executable %s is not runnable: %w", path, err)
+	}
+	return nil
 }
 
 // secureCacheDir creates <root>/bin and returns it only when it is a real

@@ -14,6 +14,12 @@ const testSchemaVersion = 6
 // stubExecutable writes a fake "running binary" and points the package's
 // executable resolver at it, so tests can replace or delete the source the way
 // `brew upgrade` does without touching the real test binary.
+//
+// It has to be genuinely runnable, not just distinctly-named bytes:
+// materialization probes the cached copy by executing it, so a stub that is not
+// a valid program degrades every pin and quietly turns most of this file into a
+// test of the fallback path. contents rides along in a comment so each stub
+// still hashes differently.
 func stubExecutable(t *testing.T, contents string) string {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -21,7 +27,8 @@ func stubExecutable(t *testing.T, contents string) string {
 		t.Fatalf("resolve temp dir: %v", err)
 	}
 	path := filepath.Join(dir, "approach")
-	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+	script := "#!/bin/sh\n# " + contents + "\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write stub executable: %v", err)
 	}
 	original := resolveExecutable
@@ -63,7 +70,7 @@ func TestResolveMaterializesCachedCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read cached copy: %v", err)
 	}
-	if string(data) != "binary-contents" {
+	if !strings.Contains(string(data), "binary-contents") {
 		t.Fatalf("cached copy contents = %q", data)
 	}
 	info, err := os.Stat(pin.ExecutablePath)
@@ -487,8 +494,9 @@ func TestMaterializeUsesTheCapturedSourceNotThePathAtCacheTime(t *testing.T) {
 		t.Fatalf("CaptureSource: %v", err)
 	}
 
-	// brew upgrade replaces the file behind the same path.
-	if err := os.WriteFile(source, []byte("binary-contents-upgraded"), 0o755); err != nil {
+	// brew upgrade replaces the file behind the same path. Still a runnable
+	// program, so this exercises the identity question and not the probe.
+	if err := os.WriteFile(source, []byte("#!/bin/sh\n# binary-contents-upgraded\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("replace source: %v", err)
 	}
 
@@ -528,5 +536,75 @@ func TestResolveMatchesCaptureThenMaterialize(t *testing.T) {
 	}
 	if filepath.Base(oneStep.ExecutablePath) != filepath.Base(stepwise.ExecutablePath) {
 		t.Fatalf("Resolve cached %q, want the same name as %q", oneStep.ExecutablePath, stepwise.ExecutablePath)
+	}
+}
+
+// A mode bit is not proof that a file can be executed. The state root is an
+// ordinary directory the user chose, and a noexec mount holds a 0500 file that
+// execve refuses — so the whole cache would pass every permission check while
+// the only thing it exists for silently fails, and nothing would notice until an
+// agent was already working. A non-program stands in for noexec here because a
+// test cannot mount a filesystem; both reach the same execve failure.
+func TestMaterializeDegradesWhenTheCachedCopyCannotBeExecuted(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	source := filepath.Join(dir, "approach")
+	if err := os.WriteFile(source, []byte("not a program"), 0o755); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	original := resolveExecutable
+	t.Cleanup(func() { resolveExecutable = original })
+	resolveExecutable = func() (string, error) { return source, nil }
+
+	root := t.TempDir()
+	pin, err := Resolve(root, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !pin.Degraded {
+		t.Fatalf("Resolve accepted an unrunnable cached copy at %s", pin.ExecutablePath)
+	}
+	if pin.ExecutablePath != source {
+		t.Fatalf("ExecutablePath = %q, want the source %q", pin.ExecutablePath, source)
+	}
+	if !strings.Contains(pin.Notice, "not runnable") {
+		t.Fatalf("Notice %q does not say the cached copy could not be run", pin.Notice)
+	}
+	// Degrading is the point: a cache problem must never block a launch.
+	if err := pin.Verify(); err != nil {
+		t.Fatalf("the degraded pin does not verify: %v", err)
+	}
+}
+
+// The probe must not inherit APPROACH_* from the TUI. A cached binary run with
+// the launcher's environment would resolve a real state root, and `--version` is
+// only safe to run because it touches none.
+func TestRunnabilityProbeRunsWithNoInheritedEnvironment(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	witness := filepath.Join(dir, "leaked-env")
+	source := filepath.Join(dir, "approach")
+	script := "#!/bin/sh\nif [ -n \"${APPROACH_FLOW_STATE_ROOT:-}\" ]; then echo leak > " + witness + "; fi\nexit 0\n"
+	if err := os.WriteFile(source, []byte(script), 0o755); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	original := resolveExecutable
+	t.Cleanup(func() { resolveExecutable = original })
+	resolveExecutable = func() (string, error) { return source, nil }
+	t.Setenv("APPROACH_FLOW_STATE_ROOT", "/should/not/be/inherited")
+
+	pin, err := Resolve(t.TempDir(), testSchemaVersion)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if pin.Degraded {
+		t.Fatalf("Resolve degraded unexpectedly: %s", pin.Notice)
+	}
+	if _, err := os.Stat(witness); !os.IsNotExist(err) {
+		t.Fatalf("the probe inherited APPROACH_FLOW_STATE_ROOT (stat witness = %v)", err)
 	}
 }
