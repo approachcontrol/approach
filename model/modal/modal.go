@@ -64,6 +64,43 @@ const (
 	InputMultiLine
 )
 
+// NoteKind classifies the severity of a modal feedback note. It is the
+// canonical enum; the ui package declares a parallel type because it imports
+// no modal.
+type NoteKind int
+
+const (
+	NoteNeutral NoteKind = iota
+	NoteSuccess
+	NoteWarning
+	NoteError
+)
+
+// EditorSpec opts an Input modal into the richer prompt-editor behavior. Every
+// field is inert for callers that never call AsEditor.
+type EditorSpec struct {
+	Title    string
+	Identity string
+	// Original is the persisted value the draft is compared against. It is
+	// deliberately independent of the modal's initial value so an editor
+	// reconstructed after a failed save opens already dirty.
+	Original string
+	Cursor   int
+	Note     string
+	NoteKind NoteKind
+}
+
+// EditorView is the read-only projection of prompt-editor state.
+type EditorView struct {
+	Enabled      bool
+	Title        string
+	Identity     string
+	Note         string
+	NoteKind     NoteKind
+	Dirty        bool
+	EmptyWarning bool
+}
+
 type FormFieldKind int
 
 const (
@@ -110,56 +147,68 @@ type FormView struct {
 // Modal is the single in-process state machine for transient modal UI. Its
 // zero value is closed.
 type Modal struct {
-	kind         Kind
-	prompt       string
-	placeholder  string
-	force        bool
-	action       func() tea.Cmd
-	input        string
-	inputMode    InputMode
-	inputRaw     bool
-	inputHeight  int
-	inputCursor  int
-	inputColumn  int
-	inputErr     string
-	validate     func(string) error
-	submit       func(string) tea.Cmd
-	selectItems  []SelectItem
-	selectIndex  int
-	selectLayout Layout
-	formPurpose  string
-	formTitle    string
-	formFields   []FormField
-	formFocus    int
-	formErr      string
-	formValidate func(FormValues) error
-	formSubmit   func(FormValues) tea.Cmd
-	diffKind     DiffKind
-	diff         string
-	text         string
-	scroll       int
-	request      uint64
+	kind           Kind
+	prompt         string
+	placeholder    string
+	force          bool
+	action         func() tea.Cmd
+	input          string
+	inputMode      InputMode
+	inputRaw       bool
+	inputHeight    int
+	inputCursor    int
+	inputColumn    int
+	inputErr       string
+	inputOriginal  string
+	editor         bool
+	editorTitle    string
+	editorIdentity string
+	editorNote     string
+	editorNoteKind NoteKind
+	validate       func(string) error
+	submit         func(string) tea.Cmd
+	cancel         func(View) tea.Cmd
+	selectItems    []SelectItem
+	selectIndex    int
+	selectLayout   Layout
+	selectNote     string
+	selectNoteKind NoteKind
+	formPurpose    string
+	formTitle      string
+	formFields     []FormField
+	formFocus      int
+	formErr        string
+	formValidate   func(FormValues) error
+	formSubmit     func(FormValues) tea.Cmd
+	diffKind       DiffKind
+	diff           string
+	text           string
+	scroll         int
+	request        uint64
 }
 
 type View struct {
-	Kind         Kind
-	Prompt       string
-	Placeholder  string
-	Force        bool
-	Input        string
-	InputMode    InputMode
-	InputHeight  int
-	InputCursor  int
-	InputErr     string
-	SelectItems  []SelectItem
-	SelectIndex  int
-	SelectLayout Layout
-	Form         FormView
-	DiffKind     DiffKind
-	Diff         string
-	Text         string
-	Scroll       int
-	Request      uint64
+	Kind           Kind
+	Prompt         string
+	Placeholder    string
+	Force          bool
+	Input          string
+	InputMode      InputMode
+	InputHeight    int
+	InputCursor    int
+	InputErr       string
+	Editor         EditorView
+	SelectItems    []SelectItem
+	SelectIndex    int
+	SelectLayout   Layout
+	SelectNote     string
+	SelectNoteKind NoteKind
+	Form           FormView
+	DiffKind       DiffKind
+	Diff           string
+	Text           string
+	Scroll         int
+	Request        uint64
 }
 
 func OpenConfirm(prompt string, action func() tea.Cmd) Modal {
@@ -205,6 +254,43 @@ func OpenMultiLineInput(prompt, placeholder, initial string, validate func(strin
 func OpenRawMultiLineInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
 	m := OpenMultiLineInput(prompt, placeholder, initial, validate, submit)
 	m.inputRaw = true
+	return m
+}
+
+// AsEditor opts an Input modal into prompt-editor behavior: enter inserts a
+// newline, ctrl+s submits, home/end are line-aware, and the view exposes
+// title, identity, dirty state, and a feedback note.
+func (m Modal) AsEditor(spec EditorSpec) Modal {
+	if m.kind != Input {
+		return m
+	}
+	m.editor = true
+	m.editorTitle = spec.Title
+	m.editorIdentity = spec.Identity
+	m.editorNote = spec.Note
+	m.editorNoteKind = spec.NoteKind
+	m.inputOriginal = spec.Original
+	m.inputCursor = clampInputCursor(m.input, spec.Cursor)
+	m.inputColumn = -1
+	return m
+}
+
+// WithCancel registers a hook invoked when the modal is cancelled. It receives
+// the view captured immediately before the modal is zeroed, so it can observe
+// runtime state such as editor dirtiness.
+func (m Modal) WithCancel(cancel func(View) tea.Cmd) Modal {
+	m.cancel = cancel
+	return m
+}
+
+// SetSelectNote sets (or, with an empty note, clears) the reserved feedback
+// row on a select modal without disturbing its selection or layout.
+func (m Modal) SetSelectNote(note string, kind NoteKind) Modal {
+	if m.kind != Select {
+		return m
+	}
+	m.selectNote = note
+	m.selectNoteKind = kind
 	return m
 }
 
@@ -305,18 +391,21 @@ func (m Modal) IsOpen() bool {
 
 func (m Modal) View() View {
 	return View{
-		Kind:         m.kind,
-		Prompt:       m.prompt,
-		Placeholder:  m.placeholder,
-		Force:        m.force,
-		Input:        m.input,
-		InputMode:    m.inputMode,
-		InputHeight:  m.inputHeight,
-		InputCursor:  clampInputCursor(m.input, m.inputCursor),
-		InputErr:     m.inputErr,
-		SelectItems:  append([]SelectItem(nil), m.selectItems...),
-		SelectIndex:  m.selectIndex,
-		SelectLayout: m.selectLayout,
+		Kind:           m.kind,
+		Prompt:         m.prompt,
+		Placeholder:    m.placeholder,
+		Force:          m.force,
+		Input:          m.input,
+		InputMode:      m.inputMode,
+		InputHeight:    m.inputHeight,
+		InputCursor:    clampInputCursor(m.input, m.inputCursor),
+		InputErr:       m.inputErr,
+		Editor:         m.editorView(),
+		SelectItems:    append([]SelectItem(nil), m.selectItems...),
+		SelectIndex:    m.selectIndex,
+		SelectLayout:   m.selectLayout,
+		SelectNote:     m.selectNote,
+		SelectNoteKind: m.selectNoteKind,
 		Form: FormView{
 			Purpose:    m.formPurpose,
 			Title:      m.formTitle,
@@ -329,6 +418,24 @@ func (m Modal) View() View {
 		Text:     m.text,
 		Scroll:   m.scroll,
 		Request:  m.request,
+	}
+}
+
+// editorView derives the editor projection. Dirty and EmptyWarning are
+// computed only for editors so a plain Input never reports state it does not
+// track.
+func (m Modal) editorView() EditorView {
+	if !m.editor {
+		return EditorView{}
+	}
+	return EditorView{
+		Enabled:      true,
+		Title:        m.editorTitle,
+		Identity:     m.editorIdentity,
+		Note:         m.editorNote,
+		NoteKind:     m.editorNoteKind,
+		Dirty:        m.input != m.inputOriginal,
+		EmptyWarning: strings.TrimSpace(m.input) == "" && m.inputOriginal != "",
 	}
 }
 
@@ -402,7 +509,7 @@ func (m Modal) updateConfirm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		}
 		return Modal{}, Accepted, cmd
 	case "n", "q", "esc":
-		return Modal{}, Cancelled, nil
+		return Modal{}, Cancelled, deferCancel(m.cancel, m.View())
 	default:
 		return m, Consumed, nil
 	}
@@ -415,36 +522,33 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		if m.inputMode == InputMultiLine {
 			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{'\n'})
 			m.inputColumn = -1
-			m.inputErr = ""
+			m.clearInputFeedback()
 		}
 		return m, Consumed, nil
 	case "enter":
-		input := m.input
-		if !m.inputRaw {
-			input = strings.TrimSpace(input)
+		if m.editor {
+			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{'\n'})
+			m.inputColumn = -1
+			m.clearInputFeedback()
+			return m, Consumed, nil
 		}
-		if m.validate != nil {
-			if err := m.validate(input); err != nil {
-				m.inputErr = err.Error()
-				return m, Consumed, nil
-			}
+		return m.submitInput()
+	case "ctrl+s":
+		if !m.editor {
+			return m, Consumed, nil
 		}
-		cmd := deferSubmit(m.submit, input)
-		if cmd == nil {
-			return Modal{}, Accepted, nil
-		}
-		return Modal{}, Accepted, cmd
+		return m.submitInput()
 	case "esc", "ctrl+c":
-		return Modal{}, Cancelled, nil
+		return Modal{}, Cancelled, deferCancel(m.cancel, m.View())
 	case "backspace", "ctrl+h":
 		m.input, m.inputCursor = deleteRuneBefore(m.input, m.inputCursor)
 		m.inputColumn = -1
-		m.inputErr = ""
+		m.clearInputFeedback()
 		return m, Consumed, nil
 	case "delete":
 		m.input, m.inputCursor = deleteRuneAt(m.input, m.inputCursor)
 		m.inputColumn = -1
-		m.inputErr = ""
+		m.clearInputFeedback()
 		return m, Consumed, nil
 	case "left":
 		if m.inputCursor > 0 {
@@ -469,34 +573,88 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		}
 		return m, Consumed, nil
 	case "home", "ctrl+a":
-		m.inputCursor = 0
+		if m.editor {
+			m.inputCursor = editorLineStart(m.input, m.inputCursor)
+		} else {
+			m.inputCursor = 0
+		}
 		m.inputColumn = -1
 		return m, Consumed, nil
 	case "end", "ctrl+e":
-		m.inputCursor = inputLength(m.input)
+		if m.editor {
+			m.inputCursor = editorLineEnd(m.input, m.inputCursor)
+		} else {
+			m.inputCursor = inputLength(m.input)
+		}
 		m.inputColumn = -1
 		return m, Consumed, nil
 	case "ctrl+u":
 		m.input = ""
 		m.inputCursor = 0
 		m.inputColumn = -1
-		m.inputErr = ""
+		m.clearInputFeedback()
 		return m, Consumed, nil
 	default:
 		if msg.Type == tea.KeySpace {
 			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{' '})
 			m.inputColumn = -1
-			m.inputErr = ""
+			m.clearInputFeedback()
 			return m, Consumed, nil
 		}
 		if msg.Type == tea.KeyRunes {
 			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, msg.Runes)
 			m.inputColumn = -1
-			m.inputErr = ""
+			m.clearInputFeedback()
 			return m, Consumed, nil
 		}
 		return m, Consumed, nil
 	}
+}
+
+// submitInput runs the shared validate-then-submit sequence for both the
+// generic enter binding and the editor's ctrl+s binding.
+func (m Modal) submitInput() (Modal, Outcome, tea.Cmd) {
+	input := m.input
+	if !m.inputRaw {
+		input = strings.TrimSpace(input)
+	}
+	if m.validate != nil {
+		if err := m.validate(input); err != nil {
+			m.inputErr = err.Error()
+			return m, Consumed, nil
+		}
+	}
+	cmd := deferSubmit(m.submit, input)
+	if cmd == nil {
+		return Modal{}, Accepted, nil
+	}
+	return Modal{}, Accepted, cmd
+}
+
+// clearInputFeedback drops the validation error and any stored editor note on
+// every buffer mutation, so a stale persistence error never sits under a
+// retry the user is already typing. The empty-buffer warning is derived rather
+// than stored precisely so it survives here.
+func (m *Modal) clearInputFeedback() {
+	m.inputErr = ""
+	m.editorNote = ""
+	m.editorNoteKind = NoteNeutral
+}
+
+func editorLineStart(input string, cursor int) int {
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	starts := lineStarts(runes)
+	line, _ := lineColumn(runes, starts, cursor)
+	return starts[line]
+}
+
+func editorLineEnd(input string, cursor int) int {
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	starts := lineStarts(runes)
+	line, _ := lineColumn(runes, starts, cursor)
+	return starts[line] + lineLength(runes, starts, line)
 }
 
 func inputLength(input string) int {
@@ -637,16 +795,26 @@ func (m Modal) updateSelect(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		}
 		return Modal{}, Accepted, cmd
 	case "esc", "ctrl+c":
-		return Modal{}, Cancelled, nil
+		return Modal{}, Cancelled, deferCancel(m.cancel, m.View())
 	case "down", "j":
 		m.selectIndex = nextSelectIndex(m.selectIndex, len(m.selectItems))
+		m.clearSelectNote()
 		return m, Consumed, nil
 	case "up", "k":
 		m.selectIndex = previousSelectIndex(m.selectIndex, len(m.selectItems))
+		m.clearSelectNote()
 		return m, Consumed, nil
 	default:
+		m.clearSelectNote()
 		return m, Consumed, nil
 	}
+}
+
+// clearSelectNote makes picker feedback transient: the first key the select
+// consumes after a save, cancel, or reset clears it.
+func (m *Modal) clearSelectNote() {
+	m.selectNote = ""
+	m.selectNoteKind = NoteNeutral
 }
 
 func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
@@ -835,6 +1003,21 @@ func deferAction(action func() tea.Cmd) tea.Cmd {
 	}
 }
 
+// deferCancel returns nil when no hook is registered, so every modal that does
+// not opt in keeps returning a nil command on cancel.
+func deferCancel(cancel func(View) tea.Cmd, view View) tea.Cmd {
+	if cancel == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		cmd := cancel(view)
+		if cmd == nil {
+			return nil
+		}
+		return cmd()
+	}
+}
+
 func deferSubmit(submit func(string) tea.Cmd, input string) tea.Cmd {
 	if submit == nil {
 		return nil
@@ -883,7 +1066,7 @@ func (m Modal) updateDiff(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 func (m Modal) updateText(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
-		return Modal{}, Cancelled, nil
+		return Modal{}, Cancelled, deferCancel(m.cancel, m.View())
 	case "up", "k":
 		if m.scroll > 0 {
 			m.scroll--

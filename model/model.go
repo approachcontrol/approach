@@ -1444,6 +1444,7 @@ func (m Model) View() string {
 		InputMode:                      uiInputMode(modalView.InputMode),
 		InputHeight:                    modalView.InputHeight,
 		InputCursor:                    modalView.InputCursor,
+		Editor:                         uiEditorParams(modalView.Editor),
 		WorktreeInputPrompt:            modalView.Prompt,
 		WorktreeInputPlaceholder:       modalView.Placeholder,
 		WorktreeInput:                  modalView.Input,
@@ -1453,6 +1454,8 @@ func (m Model) View() string {
 		SelectSelected:                 modalView.SelectIndex,
 		SelectWidth:                    modalView.SelectLayout.Width,
 		SelectHeight:                   modalView.SelectLayout.Height,
+		SelectNote:                     modalView.SelectNote,
+		SelectNoteKind:                 uiNoteKind(modalView.SelectNoteKind),
 		SelectPlacement:                uiSelectPlacement(modalView.SelectLayout.Placement),
 		Form:                           uiFormView(modalView.Form),
 		BranchScroll:                   branchScroll,
@@ -1797,6 +1800,33 @@ func uiInputMode(mode modal.InputMode) ui.InputMode {
 		return ui.InputMultiLine
 	}
 	return ui.InputSingleLine
+}
+
+// uiEditorParams and uiNoteKind are the single conversion point between the
+// canonical modal enums and ui's parallel declarations.
+func uiEditorParams(editor modal.EditorView) ui.EditorParams {
+	return ui.EditorParams{
+		Enabled:      editor.Enabled,
+		Title:        editor.Title,
+		Identity:     editor.Identity,
+		Note:         editor.Note,
+		NoteKind:     uiNoteKind(editor.NoteKind),
+		Dirty:        editor.Dirty,
+		EmptyWarning: editor.EmptyWarning,
+	}
+}
+
+func uiNoteKind(kind modal.NoteKind) ui.NoteKind {
+	switch kind {
+	case modal.NoteSuccess:
+		return ui.NoteSuccess
+	case modal.NoteWarning:
+		return ui.NoteWarning
+	case modal.NoteError:
+		return ui.NoteError
+	default:
+		return ui.NoteNeutral
+	}
 }
 
 func uiSelectPlacement(placement modal.Placement) ui.SelectPlacement {
@@ -2207,6 +2237,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowPhaseAgentSettingsSetFailed(msg), nil
 	case promptTemplateEditRequestedMsg:
 		return m.handlePromptTemplateEditRequested(msg), nil
+	case promptTemplatePickerReturnMsg:
+		return m.handlePromptTemplatePickerReturn(msg), nil
 	case PromptTemplateSavedMsg:
 		return m.handlePromptTemplateSaved(msg), nil
 	case PromptTemplateSaveFailedMsg:

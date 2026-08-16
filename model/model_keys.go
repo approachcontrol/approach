@@ -42,6 +42,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
+		} else if outcome == modal.Accepted && cmd != nil && isPromptTemplateEditor(view) {
+			cmd = tagPromptTemplateCursor(cmd, view.InputCursor)
 		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
 			if m.activeFlowCreate != 0 {
 				return m.setStatus(statusOther, flowCreateInProgressStatus), nil
@@ -203,6 +205,24 @@ func isWorktreeCreateInput(view modal.View) bool {
 		return false
 	}
 	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
+}
+
+func isPromptTemplateEditor(view modal.View) bool {
+	return view.Kind == modal.Input && view.Editor.Enabled
+}
+
+// tagPromptTemplateCursor stamps the pre-submit cursor onto a failed save. The
+// submit closure cannot supply it: it receives only the string, and by the
+// time it runs the modal has already been zeroed.
+func tagPromptTemplateCursor(cmd tea.Cmd, cursor int) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		if failed, ok := msg.(PromptTemplateSaveFailedMsg); ok {
+			failed.Cursor = cursor
+			return failed
+		}
+		return msg
+	}
 }
 
 func isRepoCreateForm(view modal.View) bool {
