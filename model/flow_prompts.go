@@ -122,7 +122,12 @@ func lastNonEmptyPromptLine(text string) string {
 }
 
 // flowPromptBinaryFallback is what a generated prompt names when, and only
-// when, the launch carries no pinned executable. The bundled skills export
+// when, the launch carries no pinned executable. It is double-quoted for the
+// same reason flowPromptBinary quotes a pinned path: this is a shell command
+// word, and the inherited APPROACH_BIN it may resolve to is an arbitrary
+// user-supplied string. An unquoted expansion of a valid path containing a space
+// or a glob character word-splits, and every generated persistence command in
+// the prompt fails on an argument the agent never wrote. The bundled skills export
 // APPROACH_BIN from APPROACH_EXECUTABLE and fall back to PATH themselves, so an
 // unpinned prompt still runs, while a bare `approach` — which resolves to
 // whatever build is on PATH, not the one that launched the agent — never
@@ -146,7 +151,7 @@ func lastNonEmptyPromptLine(text string) string {
 // through the `bin` that flowPhasePrompt derives, so a pinned launch names its
 // pinned path everywhere or nowhere.
 // TestGeneratedPhasePromptsNeverNameABareApproachBinary pins that.
-const flowPromptBinaryFallback = "${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"
+const flowPromptBinaryFallback = `"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"`
 
 // flowPromptBinary renders executable as a shell command word. A prompt is
 // copied into a shell by the agent, so a path containing spaces or shell

@@ -234,4 +234,20 @@ func TestUnpinnedPromptsPreferTheExportedPinOverInheritedShellState(t *testing.T
 	if got := run("APPROACH_BIN=" + inherited); got != "inherited" {
 		t.Fatalf("unpinned launch ignored the inherited APPROACH_BIN: ran %q", got)
 	}
+
+	// The fallback is a command word, and the values it resolves are arbitrary
+	// user-supplied paths. Unquoted, a perfectly valid path with a space
+	// word-splits and every generated persistence command dies on an argument
+	// the agent never wrote.
+	spaced := filepath.Join(dir, "a directory")
+	if err := os.MkdirAll(spaced, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	spacedBinary := filepath.Join(spaced, "spaced")
+	if err := os.WriteFile(spacedBinary, []byte("#!/bin/sh\necho spaced\n"), 0o755); err != nil {
+		t.Fatalf("write spaced binary: %v", err)
+	}
+	if got := run("APPROACH_EXECUTABLE=" + spacedBinary); got != "spaced" {
+		t.Fatalf("a pinned path containing a space did not survive expansion: ran %q", got)
+	}
 }

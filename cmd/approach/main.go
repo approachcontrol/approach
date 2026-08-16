@@ -115,8 +115,8 @@ func run(args []string, deps runDeps) error {
 	// window where a `brew upgrade` could replace the file the pin then named —
 	// and the pin would still carry THIS process's version and schema, so the
 	// mismatch would be silent. Hashing needs no root, so it does not have to
-	// wait for one. The cached copy is still materialized later, under the root,
-	// after the dev-root guard has had its say.
+	// wait for one. The copy is materialized later, in startProgram, after the
+	// Flow store's dev-root guard has had its say about that root.
 	launchSource, err := controlplane.CaptureSource()
 	if err != nil {
 		return err
@@ -382,29 +382,6 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
-	// Pin the launching build here, at the first point the state root is known,
-	// rather than just before the program starts. Resolve hashes the file its
-	// resolved path names, and that path is mutable: Homebrew ships approach as a
-	// cask binary symlinked into /opt/homebrew/bin, so a `brew upgrade` landing
-	// between this process's exec and this call would have it cache, and pin, a
-	// build that is not the one running. Nothing here can make that check atomic
-	// — Go offers no portable handle on the running image — so the answer is to
-	// give the window as little to happen in as possible. Moving ahead of the
-	// plan and Flow stores takes database bootstrap, and a schema migration that
-	// can run for seconds, out of it. The scan in run() is still upstream and
-	// still counts; what remains is stated rather than hidden.
-	//
-	// Resolve never fails on a cache problem — it degrades to the running binary
-	// and says so — so an error here means the running binary itself is
-	// unreadable, which is worth reporting rather than launching agents that
-	// cannot report results.
-	launchSource := opts.LaunchSource
-	if strings.TrimSpace(launchSource.Path) == "" {
-		if launchSource, err = controlplane.CaptureSource(); err != nil {
-			return err
-		}
-	}
-	pin := controlplane.Materialize(sessionStore.Root(), launchSource, flowstore.DatabaseSchemaVersion())
 	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
 	if err != nil {
 		return err
@@ -429,6 +406,31 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// exit-time WAL checkpoint on a process that is exiting anyway, and the WAL is
 	// durable and recovered on the next open. Genuinely fixing the last-write
 	// window means draining in-flight mutations before returning, not closing.
+	// Materialize the pin only now, after the Flow store opened. The binary cache
+	// lives in this root and writing it is a mutation of it, so an unacknowledged
+	// development build pointed at the release default has to fail on the store's
+	// dev-root guard BEFORE it copies a dev binary in and runs cache retention
+	// there — a command that reports it refused to touch the release database
+	// must not have left a dev executable behind on the way to saying so.
+	//
+	// The binary's identity was captured back in run(), before the repository
+	// scan, precisely so this ordering costs nothing: os.Executable returns a
+	// mutable pathname, and hashing late would put every step above inside the
+	// window where an upgrade could swap the file the pin names. Nothing can make
+	// that check atomic with process start — Go offers no portable handle on the
+	// running image — so the capture happens as early as possible and the copy as
+	// late as it is safe to.
+	//
+	// Materialize cannot fail: a cache problem degrades to the running binary and
+	// says so through the notice below.
+	launchSource := opts.LaunchSource
+	if strings.TrimSpace(launchSource.Path) == "" {
+		if launchSource, err = controlplane.CaptureSource(); err != nil {
+			return err
+		}
+	}
+	pin := controlplane.Materialize(sessionStore.Root(), launchSource, flowstore.DatabaseSchemaVersion())
+
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
 	modelOpts.LaunchPin = pin
