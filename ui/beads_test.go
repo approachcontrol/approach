@@ -78,7 +78,7 @@ func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
 		Assignee: "a-very-long-assignee", IssueType: "epic",
 	}
 	for _, selected := range []bool{false, true} {
-		line := renderBeadRow(epic, selected, width)
+		line := renderBeadRow(epic, selected, width, beadRowMarkers{})
 		plain := ansi.Strip(line)
 		if !strings.Contains(plain, "[epic]") {
 			t.Fatalf("selected=%t narrow row lost epic marker: %q", selected, plain)
@@ -94,7 +94,7 @@ func TestRenderBeadRowPreservesEpicAndAutoMarkersAtMinimumWidth(t *testing.T) {
 
 	const width = 19 // selection prefix plus "  [epic]  [auto]"
 	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "A very long epic title", IssueType: "epic"}
-	line := renderBeadRow(epic, true, width, true)
+	line := renderBeadRow(epic, true, width, beadRowMarkers{Auto: true})
 	plain := ansi.Strip(line)
 	if !strings.Contains(plain, "[epic]  [auto]") {
 		t.Fatalf("minimum-width row lost persistent markers: %q", plain)
@@ -217,11 +217,20 @@ func TestRenderBeadsPaneExpansionStatesAreBoundedAndSanitized(t *testing.T) {
 		{name: "empty", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true}, want: "no direct children"},
 		{name: "error", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionError, Detail: "bad\n\x1b[31mtracker"}, want: "Could not load children: bad tracker"},
 		{name: "readiness unavailable", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, Children: []beadsquery.Bead{{ID: "bd-child", Title: "Child\nrow"}}, Detail: "bd\x1b]52;c;eA==\a failed"}, want: "Readiness unavailable: bd failed"},
+		{name: "halted", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true, ProgressionKnown: true, ProgressionHaltDetail: "e.1 is blocked"}, want: "Auto-progression halted: e.1 is blocked"},
+		{
+			// A read error clears the halt detail in the model, so this pairing
+			// exists to pin the height contract, not a producible state.
+			name:      "halted and unavailable",
+			expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true, ProgressionHaltDetail: "e.1 is\nclosed", ProgressionDetail: "database failed"},
+			want:      "Auto-progression halted: e.1 is closed",
+		},
+		{name: "not halted", expansion: BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true, ProgressionKnown: true, ProgressionEnabled: true, ProgressionHaltDetail: "   "}, want: "bd-epic"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			const width = 48
-			lines := renderBeadsPane([]beadsquery.Bead{epic}, 0, 0, width, 4, tt.expansion)
+			lines := renderBeadsPane([]beadsquery.Bead{epic}, 0, 0, width, 5, tt.expansion)
 			plain := ansi.Strip(strings.Join(lines, "\n"))
 			if !strings.Contains(plain, tt.want) {
 				t.Fatalf("render missing %q:\n%s", tt.want, plain)
@@ -231,10 +240,52 @@ func TestRenderBeadsPaneExpansionStatesAreBoundedAndSanitized(t *testing.T) {
 					t.Fatalf("line width = %d, want <= %d: %q", got, width, ansi.Strip(line))
 				}
 			}
-			if got := BeadVisualHeight(epic, tt.expansion); got != len(expansionVisualLines(epic, true, width, tt.expansion)) {
-				t.Fatalf("height = %d, rendered expansion lines = %d", got, len(expansionVisualLines(epic, true, width, tt.expansion)))
+			for _, selected := range []bool{false, true} {
+				rendered := len(expansionVisualLines(epic, selected, width, tt.expansion))
+				if got := BeadVisualHeight(epic, tt.expansion); got != rendered {
+					t.Fatalf("selected=%t height = %d, rendered expansion lines = %d", selected, got, rendered)
+				}
 			}
 		})
+	}
+}
+
+func TestRenderBeadsPaneHaltedEpicReplacesAutoMarkerAndNamesTheCause(t *testing.T) {
+	t.Parallel()
+
+	const width = 60
+	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
+	expansion := BeadExpansion{
+		EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true,
+		ProgressionKnown: true, ProgressionHaltDetail: "bd-epic.1 is blocked",
+	}
+	lines := expansionVisualLines(epic, true, width, expansion)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "[epic]  [halted]") {
+		t.Fatalf("halted epic row missing marker:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Auto-progression halted: bd-epic.1 is blocked") {
+		t.Fatalf("halted expansion missing cause:\n%s", plain)
+	}
+	if strings.Contains(plain, "Auto-progression unavailable") {
+		t.Fatalf("halt reported as a read failure:\n%s", plain)
+	}
+
+	// Halted outranks auto: it is the state that wants the user's attention.
+	expansion.ProgressionEnabled = true
+	both := ansi.Strip(strings.Join(expansionVisualLines(epic, true, width, expansion), "\n"))
+	if strings.Contains(both, "[auto]") || !strings.Contains(both, "[halted]") {
+		t.Fatalf("halted row showed the auto marker:\n%s", both)
+	}
+
+	// The cause precedes a read failure when a projection carries both.
+	expansion.ProgressionEnabled = false
+	expansion.ProgressionDetail = "database failed"
+	ordered := ansi.Strip(strings.Join(expansionVisualLines(epic, true, width, expansion), "\n"))
+	haltAt := strings.Index(ordered, "Auto-progression halted:")
+	unavailableAt := strings.Index(ordered, "Auto-progression unavailable:")
+	if haltAt < 0 || unavailableAt < 0 || haltAt > unavailableAt {
+		t.Fatalf("halt line does not precede the read failure:\n%s", ordered)
 	}
 }
 
@@ -915,5 +966,29 @@ func TestRender_AllBeadsShortcutNavigationRespectsPaneFocus(t *testing.T) {
 				t.Fatalf("left-focused shortcut pane for %v advertised right-pane navigation:\n%s", tt.mode, pane)
 			}
 		})
+	}
+}
+
+func TestRender_HaltedEpicStillOffersReEnable(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+		Width: 90, Height: 12, Mode: ModeBeadsOpen, ActivePane: PaneTop,
+		BeadsOpen:          []beadsquery.Bead{{ID: "epic-1", Title: "Halted epic", IssueType: "epic"}},
+		BeadsOpenAvailable: true,
+		BeadExpansion: BeadExpansion{
+			EpicID: "epic-1", State: BeadExpansionLoaded, ReadinessKnown: true,
+			ProgressionKnown: true, ProgressionHaltDetail: "epic-1.1 is blocked",
+		},
+		EpicAutoOnAvailable: true,
+		EpicAutoKeyOwned:    true,
+	}))
+	if !strings.Contains(view, "[epic]  [halted]") {
+		t.Fatalf("halted epic row missing marker:\n%s", view)
+	}
+	if !strings.Contains(view, "Auto-progression halted: epic-1.1 is blocked") {
+		t.Fatalf("halted expansion missing cause:\n%s", view)
+	}
+	if !strings.Contains(view, "a: auto on") {
+		t.Fatalf("halted epic footer lost the re-enable hint:\n%s", view)
 	}
 }

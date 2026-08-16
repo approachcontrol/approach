@@ -28,8 +28,10 @@ launch.
   successfully exhausted `(!enabled, done, no halt)`, and halted `(!enabled,
   !done, halt)`. Enabled+done, done+halt, and enabled+halt are forbidden.
   Advancement is edge-triggered only
-  from success-terminal transitions observed while the TUI is running. Startup
-  performs no catch-up for completions that occurred while Approach was down.
+  from success-terminal transitions observed while the TUI is running, and the
+  same poll halts progression on the failure-terminal edge (`blocked`,
+  `needs_attention`, `closed`, `abandoned`) of the tracked child. Startup
+  performs no catch-up for either edge while Approach was down.
 - A progression-created child Flow persists its receipt-less exact-link identity
   through `flowCreator.Create` before synchronously claiming the freshly
   revalidated direct-and-Ready child; claim admission runs before worktree
@@ -51,8 +53,11 @@ progression write and final Flow check share one SQLite writer transaction.
 This is a single-Model guarantee. Read-then-create uniqueness across separate
 Approach processes is not provided.
 
-Establishing `done` is an atomic active→done transition. A concurrent manual
+Establishing `done` and establishing a halt are both atomic active→terminal
+transitions. A concurrent manual
 disable or halt therefore wins by making a queued completion fail rather than
 letting it overwrite authoritative state. Repeating done is a timestamp-
 preserving no-op. Explicit manual off clears prior completion while retaining a
-sticky halt; ordinary and prepared enable clear both done and halt.
+sticky halt; ordinary and prepared enable clear both done and halt. Repeating a
+halt is likewise a timestamp-preserving no-op that retains the first cause, so
+the halt a user sees is the one that stopped progression.

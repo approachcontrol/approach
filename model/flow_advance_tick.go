@@ -137,30 +137,62 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 		if !sameRepoPath(baseline.RepoPath, observed.RepoPath) || baseline.Bead != observed.Bead {
 			continue
 		}
-		if !epicProgressionSuccessTerminal(observed) {
+		switch {
+		case epicProgressionSuccessTerminal(observed):
+			if epicProgressionSuccessTerminal(baseline) {
+				continue
+			}
+			var cmd tea.Cmd
+			m, cmd = m.startEpicProgressionAdvance(key, baseline)
+			if cmd != nil {
+				m.epicProgressionAdvanceCursor = key
+				return m, cmd
+			}
+		case epicProgressionFailureTerminal(observed):
+			if epicProgressionFailureTerminal(baseline) {
+				continue
+			}
+			// The halt tuple is composed from the observed record, never from
+			// the baseline: a baseline is only ever installed from a pending
+			// record, and a pending halt status is rejected by the store.
+			var cmd tea.Cmd
+			m, cmd = m.startEpicProgressionHalt(key, baseline, observed)
+			if cmd != nil {
+				m.epicProgressionAdvanceCursor = key
+				return m, cmd
+			}
+		default:
 			m.epicProgressionBaselines[key] = cloneFlowRecord(observed)
-			continue
-		}
-		if epicProgressionSuccessTerminal(baseline) {
-			continue
-		}
-		var cmd tea.Cmd
-		m, cmd = m.startEpicProgressionAdvance(key, baseline)
-		if cmd != nil {
-			m.epicProgressionAdvanceCursor = key
-			return m, cmd
 		}
 	}
 	return m, nil
 }
 
-func epicProgressionSuccessTerminal(flow flowstore.FlowRecord) bool {
-	status := strings.TrimSpace(flow.Status)
-	if status == "" {
-		status = flowstore.DeriveStatus(flow)
+// epicProgressionResolvedStatus is the single status resolver both progression
+// edges classify, so advance and halt are disjoint by construction rather than
+// by argument. A deliberate close outranks any recorded or derived status.
+func epicProgressionResolvedStatus(flow flowstore.FlowRecord) string {
+	if flowstore.FlowClosed(flow) {
+		return flowstore.StatusClosed
 	}
-	switch status {
+	if status := strings.TrimSpace(flow.Status); status != "" {
+		return status
+	}
+	return flowstore.DeriveStatus(flow)
+}
+
+func epicProgressionSuccessTerminal(flow flowstore.FlowRecord) bool {
+	switch epicProgressionResolvedStatus(flow) {
 	case flowstore.StatusCompleted, flowstore.StatusMerged:
+		return true
+	default:
+		return false
+	}
+}
+
+func epicProgressionFailureTerminal(flow flowstore.FlowRecord) bool {
+	switch epicProgressionResolvedStatus(flow) {
+	case flowstore.StatusBlocked, flowstore.StatusNeedsAttention, flowstore.StatusClosed, flowstore.StatusAbandoned:
 		return true
 	default:
 		return false

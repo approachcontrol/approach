@@ -762,6 +762,37 @@ it reports auto-progression completion and turns normal progression off. No
 startup catch-up occurs: explicitly toggle progression off and back on to
 install a new live baseline after reconciling an unknown drain state.
 
+The same poll halts progression when that baseline Flow is instead newly
+observed as `blocked`, `needs_attention`, `closed`, or `abandoned`. A deliberate
+close outranks anything the Flow's phases derive, so a child that completes and
+is then closed halts rather than advancing. Halting is one atomic
+active-to-halted store transition: progression turns off, the durable halt tuple
+records the child Bead ID, its state, and the child Flow ID, and the first cause
+sticks — a later failure never overwrites it. No further child Flow is created,
+because the halt also drops the epic's in-session baseline. The status line
+reports `Auto-progression halted for epic <epic>: child <child> is <state>`, the
+selected epic row shows `[halted]` instead of `[auto]`, and the expansion shows
+`Auto-progression halted: <child> is <state>`, kept distinct from the
+`Auto-progression unavailable: …` line that reports a failed progression read.
+
+Only the currently tracked baseline child can halt its epic. A child that
+progression already advanced past does not halt anything if it later fails: the
+epic has moved on, and sequential progression tracks exactly one child at a
+time.
+
+To resume, press `a: auto on`, which clears the halt and re-selects. Enablement
+is still refused while the failed child's marked Flow is open and unusable
+(`Flow <id> is blocked; auto-progression remains off`), so resolve that child
+first — complete, merge, or close it — and then re-enable to resume from the
+next ready direct child. An `abandoned` marked child is the one exception: it
+stays retry-relevant indefinitely, so closing it is the only way to re-enable.
+
+`blocked` and `needs_attention` are not always durable failures — an ordinary
+merge conflict derives `blocked`, and a plan-sync failure marks a phase
+`needs_attention` — so a ten-second fix still costs a full resolve-and-re-enable
+cycle. That cost is deliberate: a failure the user has not seen must not quietly
+spawn more Flows.
+
 Lowercase `f` produces the same parked Flow as a successful `n` form submission,
 so `g` on its first phase launches the agent inside the Flow's isolated
 worktree. An initial store failure leaves no Flow. If worktree creation fails,

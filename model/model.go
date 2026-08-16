@@ -182,6 +182,7 @@ type Model struct {
 	claimBead                 func(repoPath, beadID string) error
 	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
+	haltEpicProgression       func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error)
 	enableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
 	reconcileEpicSuccessor    func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 	showBead                  func(repoPath, beadID string) (string, error)
@@ -241,6 +242,8 @@ type Model struct {
 	epicProgressionAdvanceSeq      uint64
 	activeEpicProgressionAdvance   epicProgressionAdvanceRequest
 	epicProgressionAdvanceCursor   string
+	epicProgressionHaltSeq         uint64
+	activeEpicProgressionHalt      epicProgressionHaltRequest
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	// flowAutofixTmuxLaunches maps a Flow ID to every autofix tmux
@@ -342,6 +345,7 @@ type Options struct {
 	ClaimBead                 func(repoPath, beadID string) error
 	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
+	HaltEpicProgression       func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error)
 	EnableEpicProgression     func(flowstore.PreparedEpicProgressionUpdate) (flowstore.EpicProgression, flowstore.FlowRecord, error)
 	ReconcileEpicSuccessor    func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 	ListBlockedBeads          func(repoPath string) ([]beadsquery.Bead, error)
@@ -563,6 +567,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.EpicProgression{}, err
 			}
 			return store.SetEpicProgression(update)
+		}
+	}
+	haltEpicProgression := opts.HaltEpicProgression
+	if haltEpicProgression == nil {
+		haltEpicProgression = func(update flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.EpicProgression{}, err
+			}
+			return store.HaltEpicProgression(update)
 		}
 	}
 	enableEpicProgression := opts.EnableEpicProgression
@@ -997,6 +1011,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		claimBead:                 claimBead,
 		readEpicProgression:       readEpicProgression,
 		setEpicProgression:        setEpicProgression,
+		haltEpicProgression:       haltEpicProgression,
 		enableEpicProgression:     enableEpicProgression,
 		reconcileEpicSuccessor:    reconcileEpicSuccessor,
 		showBead:                  showBead,
@@ -2057,6 +2072,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAutoAdvanceResult(msg)
 	case epicProgressionAdvanceResultMsg:
 		return m.handleEpicProgressionAdvanceResult(msg)
+	case epicProgressionHaltResultMsg:
+		return m.handleEpicProgressionHaltResult(msg)
 	case StatusExpiredMsg:
 		return m.handleStatusExpired(msg), nil
 	case StatusFadeMsg:
