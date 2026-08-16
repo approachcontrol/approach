@@ -443,7 +443,7 @@
       </div>
       <div class="meta">
         <span class="chip"><strong>source</strong> docs/architecture.md</span>
-        <span class="chip"><strong>commit</strong> <span id="commit-chip">d2b4fa1</span></span>
+        <span class="chip"><strong>commit</strong> <span id="commit-chip">9321557</span></span>
         <span class="chip"><strong>drag</strong> pan · scroll zoom · click inspect</span>
       </div>
     </header>
@@ -1155,13 +1155,16 @@ paths: ${touching}</div>
     setCites(b.cites);
   }
 
-  // pan / zoom
+  // pan / zoom — require a small move threshold so building clicks never sling the camera
   const stage = document.getElementById("stage");
   const canvas = document.getElementById("canvas");
   let scale = 0.92;
   let tx = 0, ty = 20;
   let dragging = false;
+  let dragArmed = false;
   let lastX = 0, lastY = 0;
+  let startX = 0, startY = 0;
+  const DRAG_THRESHOLD = 5;
 
   function applyTransform() {
     canvas.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(${scale})`;
@@ -1169,20 +1172,38 @@ paths: ${touching}</div>
   applyTransform();
 
   stage.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".bldg")) return;
-    dragging = true;
-    stage.classList.add("dragging");
-    lastX = e.clientX; lastY = e.clientY;
+    if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest(".bldg, .path-btn, .zoom-controls, button")) return;
+    dragArmed = true;
+    dragging = false;
+    startX = lastX = e.clientX;
+    startY = lastY = e.clientY;
     stage.setPointerCapture(e.pointerId);
   });
   stage.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
+    if (!dragArmed) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!dragging) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      dragging = true;
+      stage.classList.add("dragging");
+    }
     tx += e.clientX - lastX;
     ty += e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     applyTransform();
   });
-  stage.addEventListener("pointerup", () => { dragging = false; stage.classList.remove("dragging"); });
+  function endDrag(e) {
+    dragArmed = false;
+    dragging = false;
+    stage.classList.remove("dragging");
+    if (e && e.pointerId !== undefined) {
+      try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+  }
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
   stage.addEventListener("wheel", (e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.94 : 1.06;
@@ -1194,13 +1215,12 @@ paths: ${touching}</div>
   document.getElementById("zoom-out").onclick = () => { scale = Math.max(0.55, scale / 1.1); applyTransform(); };
   document.getElementById("zoom-reset").onclick = () => { scale = 0.92; tx = 0; ty = 20; applyTransform(); };
 
-  // commit chip — filled at serve time if possible
-  document.getElementById("commit-chip").textContent = "d2b4fa1";
+  document.getElementById("commit-chip").textContent = "9321557";
 
   // default selection: Flow launch — the load-bearing path
   selectPath("flow-launch");
 
-  // subtle entrance: fade paths then settle
+  // subtle entrance: fade buildings in
   requestAnimationFrame(() => {
     document.querySelectorAll(".bldg").forEach((el, i) => {
       el.style.opacity = "0";
