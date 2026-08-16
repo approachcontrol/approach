@@ -482,6 +482,47 @@ func TestInspectCostChargesBeadAndProgressionWidths(t *testing.T) {
 	}
 }
 
+// TestInspectCostMeasuresProgressionWidthsWithNoRows is the regression guard for
+// the default state of every store: Flows link epics, and nothing has ever
+// enabled progression, so there is no row to measure a width from.
+//
+// EpicProgression is a non-list object, so an unmeasured scalar of it is charged
+// the pessimistic fallback once per Flow. Measuring only found rows put the
+// fallback on all five fields and rejected an ordinary flows query — over a
+// response that is null for every Flow. TestResultBoundsCoverEveryField cannot
+// catch this: its fixture always has a halted row.
+func TestInspectCostMeasuresProgressionWidthsWithNoRows(t *testing.T) {
+	const flowCount = 500
+	records := make([]flowstore.FlowRecord, 0, flowCount)
+	for i := range flowCount {
+		records = append(records, beadFlow(
+			fmt.Sprintf("flow-%d", i), "/repos/alpha",
+			fmt.Sprintf("approach-y7g.%d", i), "approach-y7g",
+		))
+	}
+	// An epic link on every Flow and not one progression row anywhere.
+	empty := &countingProgressions{}
+	snap := buildSnapshot(staticRepos(), staticFlows(records...), empty.source(), nil)
+	if len(empty.calls) != 1 {
+		t.Fatalf("progression reads = %v, want exactly the one shared key", progressionKeys(empty.calls))
+	}
+
+	bounds := snap.bounds()
+	for _, field := range []string{
+		"EpicProgression.enabled", "EpicProgression.done",
+		"EpicProgressionHalt.childBeadId", "EpicProgressionHalt.status", "EpicProgressionHalt.message",
+	} {
+		if _, measured := bounds.values[field]; !measured {
+			t.Errorf("%s has no measured width with no rows; it would take the %d-byte drift fallback per Flow",
+				field, fallbackValueBytes)
+		}
+	}
+	query := `{ flows { epicProgression { enabled done halt { childBeadId status message } } } }`
+	if err := costOf(t, query, bounds); err != nil {
+		t.Errorf("inspectCost(%s) error = %v, want none: every field resolves null", query, err)
+	}
+}
+
 // TestResultBoundsCoverEveryField is the drift guard for resultBounds. A new
 // list field with no cardinality bound, or a new scalar field with no measured
 // width, silently falls back to a guess — exactly what this design removed.

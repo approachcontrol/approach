@@ -26,15 +26,21 @@ func staticFlows(records ...flowstore.FlowRecord) FlowSource {
 // asked for. The read set is the assertion: progression rows are read once per
 // distinct canonical key per request, so a Flow that links no epic must cause no
 // read at all and siblings sharing an epic must cause exactly one.
+// failKeys fails only the keys it names, so a test can assert that one
+// unreadable row leaves every other key readable.
 type countingProgressions struct {
-	rows  map[flowstore.EpicProgressionKey]flowstore.EpicProgression
-	err   error
-	calls []flowstore.EpicProgressionKey
+	rows     map[flowstore.EpicProgressionKey]flowstore.EpicProgression
+	failKeys map[flowstore.EpicProgressionKey]error
+	err      error
+	calls    []flowstore.EpicProgressionKey
 }
 
 func (c *countingProgressions) source() EpicProgressionSource {
 	return func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 		c.calls = append(c.calls, key)
+		if err, fails := c.failKeys[key]; fails {
+			return flowstore.EpicProgression{}, false, err
+		}
 		if c.err != nil {
 			return flowstore.EpicProgression{}, false, c.err
 		}
@@ -79,9 +85,39 @@ func TestBuildSnapshotReadsNoEpicProgressionWithoutAnEpicLink(t *testing.T) {
 		t.Fatalf("progression reads = %v, want none", progressionKeys(progressions.calls))
 	}
 	for _, flow := range snap.Flows() {
-		if _, ok := snap.EpicProgression(flow); ok {
-			t.Errorf("flow %q resolved a progression with no epic link", flow.Record.FlowID)
+		record, ok, err := snap.EpicProgression(flow)
+		if err != nil {
+			t.Errorf("flow %q progression err = %v, want none", flow.Record.FlowID, err)
 		}
+		if ok {
+			t.Errorf("flow %q resolved progression %+v with no epic link", flow.Record.FlowID, record)
+		}
+	}
+}
+
+// An epic id with no child Bead id is a shape flowstore.validateBeadLink
+// forbids, so only an externally written record holds one. Flow.bead resolves
+// null for it, and reading progression anyway would surface an epic through a
+// Flow the schema reports as unlinked.
+func TestBuildSnapshotReadsNoEpicProgressionForAnEpicWithoutAChildBead(t *testing.T) {
+	progressions := &countingProgressions{rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+		epicKey("/repos/alpha", "approach-y7g"): {RepoPath: "/repos/alpha", EpicID: "approach-y7g", Enabled: true},
+	}}
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(beadFlow("epic-only", "/repos/alpha", "", "approach-y7g")),
+		progressions.source(),
+		nil,
+	)
+	if len(progressions.calls) != 0 {
+		t.Fatalf("progression reads = %v, want none", progressionKeys(progressions.calls))
+	}
+	flow, ok := snap.Flow("epic-only")
+	if !ok {
+		t.Fatal(`Flow("epic-only") not found`)
+	}
+	if record, ok, _ := snap.EpicProgression(flow); ok {
+		t.Errorf("progression = %+v, want none for a Flow whose bead resolves null", record)
 	}
 }
 
@@ -118,7 +154,10 @@ func TestBuildSnapshotReadsOneEpicProgressionPerCanonicalKey(t *testing.T) {
 		if !ok {
 			t.Fatalf("Flow(%q) not found", flowID)
 		}
-		record, ok := snap.EpicProgression(flow)
+		record, ok, err := snap.EpicProgression(flow)
+		if err != nil {
+			t.Fatalf("flow %q progression err = %v, want none", flowID, err)
+		}
 		if !ok {
 			t.Fatalf("flow %q has no progression, want the shared row", flowID)
 		}
@@ -131,29 +170,78 @@ func TestBuildSnapshotReadsOneEpicProgressionPerCanonicalKey(t *testing.T) {
 		if !ok {
 			t.Fatalf("Flow(%q) not found", flowID)
 		}
-		if record, ok := snap.EpicProgression(flow); ok {
+		record, ok, err := snap.EpicProgression(flow)
+		if err != nil {
+			t.Fatalf("flow %q progression err = %v, want none", flowID, err)
+		}
+		if ok {
 			t.Errorf("flow %q progression = %+v, want none (no row exists)", flowID, record)
 		}
 	}
 }
 
-func TestBuildSnapshotEpicProgressionFailureIsSanitized(t *testing.T) {
+// A progression read failure is sanitized like any other source failure, and it
+// is scoped to the key that failed. Progression is a secondary projection: one
+// malformed row must not take down the Flows that do not name that epic, let
+// alone a query that never mentions Beads.
+func TestBuildSnapshotEpicProgressionFailureIsSanitizedAndScopedToItsKey(t *testing.T) {
 	var logged []string
-	progressions := &countingProgressions{err: errors.New("read epic progression: open /tmp/secret-root/flows.db: permission denied")}
+	progressions := &countingProgressions{
+		rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+			epicKey("/repos/beta", "approach-zzz"): {RepoPath: "/repos/beta", EpicID: "approach-zzz", Enabled: true},
+		},
+		failKeys: map[flowstore.EpicProgressionKey]error{
+			epicKey("/repos/alpha", "approach-y7g"): errors.New("read epic progression: open /tmp/secret-root/flows.db: permission denied"),
+		},
+	}
 	snap := buildSnapshot(
 		staticRepos(),
-		staticFlows(beadFlow("a1", "/repos/alpha", "approach-y7g.1", "approach-y7g")),
+		staticFlows(
+			beadFlow("a1", "/repos/alpha", "approach-y7g.1", "approach-y7g"),
+			beadFlow("b1", "/repos/beta", "approach-zzz.1", "approach-zzz"),
+			flowstore.FlowRecord{FlowID: "unlinked", RepoPath: "/repos/gamma"},
+		),
 		progressions.source(),
 		func(format string, args ...any) {
 			logged = append(logged, fmt.Sprintf(format, args...))
 		},
 	)
-	if !errors.Is(snap.err, errStateUnavailable) {
-		t.Fatalf("snapshot err = %v, want errStateUnavailable", snap.err)
+	if snap.err != nil {
+		t.Fatalf("snapshot err = %v, want none: one unreadable row must not fail the whole request", snap.err)
 	}
-	if strings.Contains(snap.err.Error(), "secret-root") || strings.Contains(snap.err.Error(), "permission denied") {
-		t.Fatalf("snapshot err leaked detail: %v", snap.err)
+
+	failed, ok := snap.Flow("a1")
+	if !ok {
+		t.Fatal(`Flow("a1") not found`)
 	}
+	_, found, err := snap.EpicProgression(failed)
+	if !errors.Is(err, errStateUnavailable) {
+		t.Fatalf("flow a1 progression err = %v, want errStateUnavailable", err)
+	}
+	if found {
+		t.Error("flow a1 reported a found progression despite an unreadable row")
+	}
+	if strings.Contains(err.Error(), "secret-root") || strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("progression err leaked detail: %v", err)
+	}
+
+	// The sibling key and an unlinked Flow are untouched by the failure.
+	healthy, ok := snap.Flow("b1")
+	if !ok {
+		t.Fatal(`Flow("b1") not found`)
+	}
+	record, found, err := snap.EpicProgression(healthy)
+	if err != nil || !found || !record.Enabled {
+		t.Errorf("flow b1 progression = (%+v, %v, %v), want the enabled row and no error", record, found, err)
+	}
+	unlinked, ok := snap.Flow("unlinked")
+	if !ok {
+		t.Fatal(`Flow("unlinked") not found`)
+	}
+	if _, found, err := snap.EpicProgression(unlinked); found || err != nil {
+		t.Errorf("unlinked flow progression = (%v, %v), want none and no error", found, err)
+	}
+
 	if len(logged) != 1 {
 		t.Fatalf("logged = %#v, want one epic-progression failure", logged)
 	}

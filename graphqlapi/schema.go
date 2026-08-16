@@ -383,7 +383,13 @@ func newSchema() (graphql.Schema, error) {
 						if err != nil {
 							return nil, err
 						}
-						record, ok := snap.EpicProgression(flow)
+						record, ok, err := snap.EpicProgression(flow)
+						if err != nil {
+							// Scoped to this field on this Flow: an unreadable
+							// progression row nulls it and reports an error
+							// entry, and leaves the rest of the response intact.
+							return nil, err
+						}
 						if !ok {
 							return nil, nil
 						}
@@ -571,8 +577,9 @@ func stringField[T any](description string, get func(T) string) *graphql.Field {
 }
 
 // valueResolver adapts an object type whose source is a value-typed flowstore
-// struct rather than a snapshot pointer, the way stringField already does for
-// nullable strings.
+// struct rather than a snapshot pointer. It reports errStateUnavailable on a
+// source-type mismatch, the way repoResolver and flowResolver do — not the
+// nil, nil that stringField returns.
 func valueResolver[T any](get func(T) (any, error)) graphql.FieldResolveFn {
 	return func(p graphql.ResolveParams) (any, error) {
 		source, ok := p.Source.(T)

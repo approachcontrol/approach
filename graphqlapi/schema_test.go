@@ -462,6 +462,53 @@ func TestSchemaSanitizesEpicProgressionSourceFailure(t *testing.T) {
 			t.Errorf("response leaked %q: %s", leak, encoded)
 		}
 	}
+
+	// The failure nulls the one field that could not be read and nothing else.
+	// epicProgression is an optional projection; a client that never selects it
+	// must not be able to tell that a row was unreadable.
+	flows, ok := result.Data.(map[string]any)["flows"].([]any)
+	if !ok || len(flows) != 1 {
+		t.Fatalf("flows = %#v, want the Flow to resolve despite the failed row", result.Data)
+	}
+	flow := flows[0].(map[string]any)
+	if flow["id"] != "a1" {
+		t.Errorf("flows[0].id = %v, want a1", flow["id"])
+	}
+	if bead, _ := flow["bead"].(map[string]any); bead == nil || bead["id"] != "approach-y7g.1" {
+		t.Errorf("flows[0].bead = %#v, want the link to resolve", flow["bead"])
+	}
+	if flow["epicProgression"] != nil {
+		t.Errorf("flows[0].epicProgression = %#v, want null", flow["epicProgression"])
+	}
+
+	if unrelated := executeQuery(t, snap, `{ repos { id } flows { id } }`); len(unrelated.Errors) != 0 {
+		t.Errorf("errors = %v, want none: an unreadable progression row must not fail a query that never selects it", unrelated.Errors)
+	}
+}
+
+// TestSchemaNilEpicProgressionSourceResolvesNull holds ServerOptions to its
+// promise that the seam is optional: with no source wired, a Flow that links a
+// real epic still resolves its Bead link and simply reports no progression. The
+// alternative — an error, or a synthesized disabled row — would make an
+// unconfigured server look like a store with progression turned off.
+func TestSchemaNilEpicProgressionSourceResolvesNull(t *testing.T) {
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(beadFlow("a1", "/repos/alpha", "approach-y7g.1", "approach-y7g")),
+		nil,
+		nil,
+	)
+	result := executeQuery(t, snap, `{ flows { id bead { id epicId } epicProgression { enabled done } } }`)
+	data := mustSucceed(t, result)
+
+	flow := data["flows"].([]any)[0].(map[string]any)
+	bead, _ := flow["bead"].(map[string]any)
+	if bead == nil || bead["id"] != "approach-y7g.1" || bead["epicId"] != "approach-y7g" {
+		t.Errorf("bead = %#v, want the link to resolve without a progression source", flow["bead"])
+	}
+	if flow["epicProgression"] != nil {
+		t.Errorf("epicProgression = %#v, want null with no source wired", flow["epicProgression"])
+	}
 }
 
 // TestSchemaBeadAndProgressionSDL pins the public contract these fields were

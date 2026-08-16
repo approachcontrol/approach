@@ -1,4 +1,4 @@
-import type { FlowDetail } from '@/lib/approach-api'
+import type { EpicProgression, FlowDetail } from '@/lib/approach-api'
 import { formatCommit, formatTimestamp } from '@/lib/format'
 
 import { Badge, StatusBadge } from './status-badge'
@@ -13,6 +13,11 @@ import { Badge, StatusBadge } from './status-badge'
  */
 export function FlowTracking({ flow }: { flow: FlowDetail }) {
   const { issue, pullRequest, merge, bead } = flow
+  // Trimmed the way the API trims before looking a progression row up, so a
+  // whitespace-only epic id — reachable only through an externally written
+  // record — reads as the no-epic link it resolves as, rather than rendering an
+  // empty `epic` and asking for progression the server never looked for.
+  const epicId = bead?.epicId?.trim()
   // A Bead link is enough on its own: a Flow created from an epic child usually
   // has no issue, PR, or merge yet, and hiding the section would hide the only
   // linkage it has.
@@ -29,13 +34,19 @@ export function FlowTracking({ flow }: { flow: FlowDetail }) {
             <dt>Bead</dt>
             <dd>
               <code>{bead.id}</code>
-              {bead.epicId ? <span> · epic <code>{bead.epicId}</code></span> : null}
+              {epicId ? <span> · epic <code>{epicId}</code></span> : null}
             </dd>
 
-            <dt>Progression</dt>
-            <dd>
-              <Progression flow={flow} />
-            </dd>
+            {/* Omitted entirely for a child-only link: there is no epic, so
+                there is no progression to report either way. */}
+            {epicId ? (
+              <>
+                <dt>Progression</dt>
+                <dd>
+                  <Progression progression={flow.epicProgression} />
+                </dd>
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -84,23 +95,20 @@ export function FlowTracking({ flow }: { flow: FlowDetail }) {
 }
 
 /**
- * Four distinct states, read from the API rather than inferred:
+ * The caller has already established that the Flow links an epic, so this
+ * renders one of four row states plus the no-row case, each read from the API
+ * rather than inferred:
  *
  * - `halted` whenever a halt reason is present, with the child, status, and
  *   message that stopped it;
  * - `done` only when the API says so — a manually disabled epic is not done,
  *   and deriving one from the other would report finished work that never ran;
- * - `enabled` / `disabled` otherwise.
- *
- * An epic link with no progression row is `not configured`, not `disabled`:
- * nobody has turned progression on for that epic, which is a different claim
- * from having turned it off.
+ * - `enabled` / `disabled` otherwise;
+ * - `not configured` when the epic has no row at all. That is not `disabled`:
+ *   nobody has turned progression on for that epic, which is a different claim
+ *   from having turned it off.
  */
-function Progression({ flow }: { flow: FlowDetail }) {
-  const progression = flow.epicProgression
-  if (!flow.bead?.epicId) {
-    return <>—</>
-  }
+function Progression({ progression }: { progression: EpicProgression | null }) {
   if (!progression) {
     return <Badge>not configured</Badge>
   }
@@ -109,7 +117,9 @@ function Progression({ flow }: { flow: FlowDetail }) {
     return (
       <>
         <Badge tone="danger">halted</Badge>
-        <span> · <code>{childBeadId}</code> {status} · {message}</span>
+        {/* The halt status is a Flow status like any other on this page, so it
+            reads through StatusBadge rather than as raw `needs_attention`. */}
+        <span> · <code>{childBeadId}</code> <StatusBadge status={status} /> · {message}</span>
       </>
     )
   }

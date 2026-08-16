@@ -188,11 +188,25 @@ async function query<T>(document: string, variables?: Record<string, unknown>): 
       `status ${response.status}: ${JSON.stringify(body.errors ?? null)}`,
     )
   }
-  if (body.errors?.length) {
-    fail('graphql', JSON.stringify(body.errors))
-  }
+  // A GraphQL response can carry both. The API resolves some optional fields
+  // from their own sources — `Flow.epicProgression` reads a progression row per
+  // epic — and one unreadable row nulls that field and adds an error entry while
+  // every other field, and every other Flow, resolves normally. Discarding a
+  // populated `data` here would turn that into a blank error page for the whole
+  // Flow, which is worse than the missing field it is reporting.
+  //
+  // Nothing is lost silently: the errors are logged server-side, and a field the
+  // schema declares non-null cannot survive as a hole — GraphQL propagates its
+  // error up until it reaches a nullable parent, so a broken required field
+  // still arrives here as a null `data` or a null entity the caller rejects.
   if (body.data == null) {
+    if (body.errors?.length) {
+      fail('graphql', JSON.stringify(body.errors))
+    }
     fail('http', 'response carried neither data nor errors')
+  }
+  if (body.errors?.length) {
+    console.error('approach-api partial response:', JSON.stringify(body.errors))
   }
   return body.data
 }

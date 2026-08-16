@@ -163,6 +163,29 @@ describe('approach api client', () => {
       await expect(getRepos()).rejects.toMatchObject({ kind: 'graphql' })
     })
 
+    // The API scopes some failures to one field: an unreadable epic progression
+    // row nulls `Flow.epicProgression` for the Flows naming that epic and leaves
+    // the rest of the response intact. Discarding the data would turn a missing
+    // optional field into a blank error page for the whole Flow.
+    it('keeps a partial response that carries data alongside errors', async () => {
+      const errors = [{ message: 'internal error reading application state' }]
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          data: { flow: { id: 'f1', bead: { id: 'approach-y7g.7', epicId: 'approach-y7g' }, epicProgression: null } },
+          errors,
+        }),
+      )
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const flow = await getFlow('f1')
+
+      expect(flow?.id).toBe('f1')
+      expect(flow?.epicProgression).toBeNull()
+      // Not silent: the reader sees the Flow, the operator sees the cause.
+      expect(logged).toHaveBeenCalledWith('approach-api partial response:', JSON.stringify(errors))
+      logged.mockRestore()
+    })
+
     it('maps a network failure to an unreachable error', async () => {
       fetchMock.mockRejectedValue(new TypeError('fetch failed'))
 

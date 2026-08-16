@@ -7,7 +7,7 @@ import { FlowTracking } from './flow-tracking'
 
 /**
  * These assert rendered markup rather than element props: the point of the
- * section is what a reader can see, and the four progression states are only
+ * section is what a reader can see, and the progression states are only
  * distinguishable in the output.
  */
 function render(flow: Partial<FlowDetail>): string {
@@ -50,15 +50,28 @@ describe('FlowTracking', () => {
     expect(render({})).toBe('')
   })
 
-  it('renders for a child-only Bead link, with no epic and no progression claim', () => {
+  it('renders for a child-only Bead link, with no epic and no progression row at all', () => {
     const markup = render({ bead: { id: 'approach-y7g.7', epicId: null } })
 
     expect(markup).toContain('Tracking')
     expect(markup).toContain('approach-y7g.7')
     expect(markup).not.toContain('epic')
-    // No epic means nothing is known about progression — not "disabled".
+    // No epic means there is nothing to report, so the row is omitted rather
+    // than filled in — and certainly not reported as "disabled".
+    expect(markup).not.toContain('Progression')
     expect(markup).not.toContain('not configured')
     expect(markup).not.toContain('disabled')
+  })
+
+  // The API trims before looking a row up, so it would never find one for this
+  // link. Rendering an empty epic and a progression verdict would claim more
+  // than the server was ever asked.
+  it('treats a whitespace-only epic id as no epic, the way the API does', () => {
+    const markup = render({ bead: { id: 'approach-y7g.7', epicId: '   ' } })
+
+    expect(markup).toContain('approach-y7g.7')
+    expect(markup).not.toContain('epic')
+    expect(markup).not.toContain('Progression')
   })
 
   it('keeps the child and epic ids when the epic has no progression row', () => {
@@ -67,8 +80,8 @@ describe('FlowTracking', () => {
       epicProgression: null,
     })
 
-    expect(markup).toContain('approach-y7g.7')
-    expect(markup).toContain('approach-y7g<')
+    expect(markup).toContain('<code>approach-y7g.7</code>')
+    expect(markup).toContain('<code>approach-y7g</code>')
     // A missing row is "nobody turned this on", which is not the same as off.
     expect(markup).toContain('not configured')
     expect(markup).not.toContain('disabled')
@@ -119,6 +132,24 @@ describe('FlowTracking', () => {
     expect(markup).toContain('approach-y7g.4')
     expect(markup).toContain('blocked')
     expect(markup).toContain('the child Flow is blocked on review')
+  })
+
+  it('renders the halt status as a badge, not as a raw underscored value', () => {
+    const markup = render({
+      bead: { id: 'approach-y7g.7', epicId: 'approach-y7g' },
+      epicProgression: progression({
+        halt: {
+          childBeadId: 'approach-y7g.4',
+          status: 'needs_attention',
+          message: 'child Flow needs attention',
+        },
+      }),
+    })
+
+    // The same treatment every other status on the page gets: a toned badge
+    // with the underscore spelled out.
+    expect(markup).toContain('<span class="badge badge--warn">needs attention</span>')
+    expect(markup).not.toContain('>needs_attention<')
   })
 
   it('reports only the explicit done flag, never an inference from enabled', () => {
