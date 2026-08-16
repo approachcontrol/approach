@@ -456,7 +456,7 @@
       </div>
       <div class="stage" id="stage" aria-label="Isometric system map">
         <div class="stage-canvas" id="canvas">
-          <svg class="map" id="map" width="1100" height="780" viewBox="-80 -40 1100 780" role="img" aria-labelledby="map-title">
+          <svg class="map" id="map" width="1600" height="860" viewBox="-800 0 1600 860" role="img" aria-labelledby="map-title">
             <title id="map-title">Approach isometric package map</title>
             <defs>
               <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
@@ -584,85 +584,85 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
 
   const buildings = [
     // External shore
-    { id: "ext-git", name: "git repos", sub: "worktrees · branches", role: "ext", x: 1, y: 8, h: 42, shape: "warehouse",
+    { id: "ext-git", name: "git repos", sub: "worktrees · branches", role: "ext", x: 2, y: 16, h: 42, shape: "warehouse",
       blurb: "Repositories under the scan root. Queried read-only by gitquery; mutated only through actions (worktree create/remove, fetch, pull).",
       cites: ["scanner/scanner.go", "gitquery/gitquery.go", "actions/actions.go", "docs/architecture.md"] },
-    { id: "ext-bd", name: "bd (Beads)", sub: "issue tracker CLI", role: "ext", x: 2, y: 10, h: 48, shape: "tower",
+    { id: "ext-bd", name: "bd (Beads)", sub: "issue tracker CLI", role: "ext", x: 4, y: 20, h: 48, shape: "tower",
       blurb: "External Beads CLI. beadsquery is strictly read-only; beadsmutate is the sole write adapter (claim).",
       cites: ["beadsquery/beadsquery.go", "beadsmutate/beadsmutate.go", "docs/beads-view-spec.md"] },
-    { id: "ext-agents", name: "Claude / Codex", sub: "coding agents", role: "ext", x: 0, y: 6, h: 56, shape: "spire",
+    { id: "ext-agents", name: "Claude / Codex", sub: "coding agents", role: "ext", x: 0, y: 12, h: 56, shape: "spire",
       blurb: "Provider CLIs launched with Approach hook metadata and a pinned APPROACH_EXECUTABLE. Session hooks ingest transcripts back into sessions/.",
       cites: ["actions/actions.go", "docs/agent-sessions.md", "internal/controlplane/controlplane.go"] },
-    { id: "ext-tmux", name: "tmux", sub: "external handoff", role: "ext", x: 3, y: 11, h: 36, shape: "block",
+    { id: "ext-tmux", name: "tmux", sub: "external handoff", role: "ext", x: 6, y: 22, h: 36, shape: "block",
       blurb: "Alternate launch backend. Flow lifecycle routes phase launch/resume here when [launch].backend=tmux; probes live windows for reset/resume/repair/release.",
       cites: ["actions/tmux_mode.go", "model/tmux_mode.go", "docs/architecture.md"] },
 
     // Entry
-    { id: "cmd", name: "cmd/approach", sub: "entrypoint tower", role: "entry", x: 4, y: 6, h: 88, shape: "spire",
+    { id: "cmd", name: "cmd/approach", sub: "entrypoint tower", role: "entry", x: 8, y: 12, h: 88, shape: "spire",
       blurb: "Process entry: TUI boot, session-hook, plan/flow CLIs, and serve. Subcommands resolve the artifact root without starting the TUI; serve scans per request.",
       cites: ["cmd/approach/main.go", "cmd/approach/flow.go", "cmd/approach/plan.go", "cmd/approach/serve.go"] },
-    { id: "config", name: "config", sub: "TOML registry", role: "entry", x: 5, y: 5, h: 34, shape: "block",
+    { id: "config", name: "config", sub: "TOML registry", role: "entry", x: 10, y: 10, h: 34, shape: "block",
       blurb: "Optional config.toml. Missing is non-fatal; bad known keys are startup-fatal. Feeds scan root, terminals, launch backend, flow prompts.",
       cites: ["config/config.go", "docs/config.md"] },
-    { id: "scanner", name: "scanner", sub: "repo radar", role: "entry", x: 5, y: 7, h: 46, shape: "radar",
+    { id: "scanner", name: "scanner", sub: "repo radar", role: "entry", x: 10, y: 14, h: 46, shape: "radar",
       blurb: "Discovers repos under WORKTREE_ROOT / [scan].root / ~/dev (default depth 2), excluding *-worktrees.",
       cites: ["scanner/scanner.go", "docs/architecture.md"] },
 
     // Core
-    { id: "model", name: "model", sub: "ops HQ · Bubble Tea", role: "core", x: 7, y: 6, h: 110, shape: "skyscraper",
+    { id: "model", name: "model", sub: "ops HQ · Bubble Tea", role: "core", x: 14, y: 12, h: 110, shape: "skyscraper",
       blurb: "Owns pane focus, keys, Flow launch lifecycle (requestFlowLaunch / handleFlowLaunchEvent), AutoMode, repair, and embedded-terminal dock selection. Single Flow launch attempt per Flow ID.",
       cites: ["model/model.go", "model/flow_launch_lifecycle.go", "model/flow_launch_intent.go", "model/flow_launch_create.go", "docs/architecture.md"] },
-    { id: "ui", name: "ui", sub: "Lip Gloss facade", role: "core", x: 8, y: 5, h: 52, shape: "screen",
+    { id: "ui", name: "ui", sub: "Lip Gloss facade", role: "core", x: 16, y: 10, h: 52, shape: "screen",
       blurb: "Stateless rendering from RenderParams. Stacked panes, Active Flows takeover, terminal dock between content and status bar.",
       cites: ["ui/ui.go", "ui/theme.go", "docs/tui-guide.md"] },
-    { id: "agent", name: "agent", sub: "provider policy", role: "core", x: 8, y: 7, h: 40, shape: "block",
+    { id: "agent", name: "agent", sub: "provider policy", role: "core", x: 16, y: 14, h: 40, shape: "block",
       blurb: "Normalizes provider command names and resolves per-provider model/reasoning preferences for a launch.",
       cites: ["agent/agent.go", "agent/settings.go"] },
 
     // Query lane
-    { id: "gitquery", name: "gitquery", sub: "read-only git", role: "query", x: 6, y: 8, h: 44, shape: "library",
+    { id: "gitquery", name: "gitquery", sub: "read-only git", role: "query", x: 12, y: 16, h: 44, shape: "library",
       blurb: "Pure parse + Runner seam. Model fetches worktrees/branches/stashes/history without mutating repos.",
       cites: ["gitquery/gitquery.go", "gitquery/parse.go", "gitquery/runner.go"] },
-    { id: "beadsquery", name: "beadsquery", sub: "read-only Beads", role: "query", x: 6, y: 9, h: 48, shape: "observatory",
+    { id: "beadsquery", name: "beadsquery", sub: "read-only Beads", role: "query", x: 12, y: 18, h: 48, shape: "observatory",
       blurb: "Ready via bd ready; status lists via bd list; Closed bounded + stats total. ErrNotConfigured only for missing/no-project diagnostics.",
       cites: ["beadsquery/beadsquery.go", "beadsquery/parse.go", "docs/beads-view-spec.md"] },
-    { id: "beadsmutate", name: "beadsmutate", sub: "claim-only write", role: "query", x: 5, y: 10, h: 32, shape: "booth",
+    { id: "beadsmutate", name: "beadsmutate", sub: "claim-only write", role: "query", x: 10, y: 20, h: 32, shape: "booth",
       blurb: "Sole Beads write path: bd update --claim. Used by epic auto-progression preparation, not ordinary Ready browsing.",
       cites: ["beadsmutate/beadsmutate.go", "docs/adr/0001-beads-epic-auto-progression.md"] },
 
     // Action yard
-    { id: "actions", name: "actions", sub: "mutation factory", role: "action", x: 9, y: 6, h: 58, shape: "factory",
+    { id: "actions", name: "actions", sub: "mutation factory", role: "action", x: 18, y: 12, h: 58, shape: "factory",
       blurb: "Git mutations, editor/clipboard, agent command construction, tmux transport. Destructive deletes stay gated by model destructive mode.",
       cites: ["actions/actions.go", "actions/tmux_mode.go", "actions/actions.go"] },
-    { id: "embeddedterm", name: "embeddedterm", sub: "PTY plant", role: "action", x: 10, y: 5, h: 64, shape: "stacks",
+    { id: "embeddedterm", name: "embeddedterm", sub: "PTY plant", role: "action", x: 20, y: 10, h: 64, shape: "stacks",
       blurb: "Runtime-only PTY for embedded agents. Not persisted across TUI quit. Optional OutputTransform for stream-json.",
       cites: ["embeddedterm/terminal.go", "docs/architecture.md"] },
-    { id: "claudestream", name: "claudestream", sub: "JSONL relay", role: "action", x: 10, y: 7, h: 38, shape: "relay",
+    { id: "claudestream", name: "claudestream", sub: "JSONL relay", role: "action", x: 20, y: 14, h: 38, shape: "relay",
       blurb: "Turns claude stream-json events into readable terminal lines for the embedded emulator.",
       cites: ["claudestream/renderer.go"] },
 
     // State vault
-    { id: "flowstore", name: "flowstore", sub: "SQLite vault · v6", role: "store", x: 8, y: 9, h: 72, shape: "vault",
+    { id: "flowstore", name: "flowstore", sub: "SQLite vault · v6", role: "store", x: 16, y: 18, h: 72, shape: "vault",
       blurb: "Authoritative Flows + epic_progressions in approach.db. WAL, BEGIN IMMEDIATE writers, receipt/nonce fencing. Phase transition table in transitions.go.",
       cites: ["flowstore/store.go", "flowstore/transitions.go", "flowstore/sqlite_bootstrap.go", "docs/flow-phases.md"] },
-    { id: "planstore", name: "planstore", sub: "plans warehouse", role: "store", x: 9, y: 10, h: 46, shape: "warehouse",
+    { id: "planstore", name: "planstore", sub: "plans warehouse", role: "store", x: 18, y: 20, h: 46, shape: "warehouse",
       blurb: "File-backed plans at <root>/plans/<id>/ (meta.json + plan.md). Flow completion can sync matching plan phases.",
       cites: ["planstore/store.go", "docs/architecture.md"] },
-    { id: "sessions", name: "sessions", sub: "transcript stacks", role: "store", x: 7, y: 10, h: 50, shape: "stacks",
+    { id: "sessions", name: "sessions", sub: "transcript stacks", role: "store", x: 14, y: 20, h: 50, shape: "stacks",
       blurb: "Session metadata + normalized transcripts under the artifact root. Ingests provider hook payloads; never stored inside repositories.",
       cites: ["sessions/store.go", "sessions/ingest.go", "docs/agent-sessions.md"] },
-    { id: "artifacts", name: "internal/artifacts", sub: "root mechanics", role: "store", x: 7, y: 8, h: 28, shape: "slab",
+    { id: "artifacts", name: "internal/artifacts", sub: "root mechanics", role: "store", x: 14, y: 16, h: 28, shape: "slab",
       blurb: "Absolute root checks, 0700/0600 atomic writes, safe IDs, phase-ID normalization, default vs release-dev root isolation.",
       cites: ["internal/artifacts/artifacts.go"] },
-    { id: "controlplane", name: "internal/controlplane", sub: "binary pin foundry", role: "store", x: 9, y: 8, h: 54, shape: "foundry",
+    { id: "controlplane", name: "internal/controlplane", sub: "binary pin foundry", role: "store", x: 18, y: 16, h: 54, shape: "foundry",
       blurb: "Copies the running binary into <state-root>/bin/approach-<digest>, exports APPROACH_EXECUTABLE, retains pins for live launches. Agents never resolve approach from ambient PATH.",
       cites: ["internal/controlplane/controlplane.go", "model/flow_launch_pin.go", "docs/architecture.md"] },
 
     // API district
-    { id: "graphqlapi", name: "graphqlapi", sub: "read-only broadcast", role: "api", x: 12, y: 6, h: 70, shape: "broadcast",
+    { id: "graphqlapi", name: "graphqlapi", sub: "read-only broadcast", role: "api", x: 24, y: 12, h: 70, shape: "broadcast",
       blurb: "Per-request snapshot (scan + flow list), schema, depth/cost limits, HTTP hardening. No Mutation/Subscription; no transcripts.",
       cites: ["graphqlapi/source.go", "graphqlapi/schema.go", "graphqlapi/server.go", "graphqlapi/limits.go", "docs/graphql-api.md"] },
-    { id: "web", name: "web/", sub: "Next.js viewer", role: "api", x: 13, y: 5, h: 48, shape: "glass",
+    { id: "web", name: "web/", sub: "Next.js viewer", role: "api", x: 26, y: 10, h: 48, shape: "glass",
       blurb: "Separate deployable. Server-side GraphQL only; documents validated against the Go schema in graphqlapi/web_documents_test.go.",
       cites: ["web/src/lib/approach-api.ts", "web/src/app/page.tsx", "web/README.md", "graphqlapi/web_documents_test.go"] }
   ];
@@ -771,9 +771,13 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
   ];
 
   // --- render grid ---
+  const GRID_X0 = 0;
+  const GRID_X1 = 29;
+  const GRID_Y0 = 8;
+  const GRID_Y1 = 25;
   const grid = document.getElementById("grid");
-  for (let x = 0; x <= 14; x++) {
-    for (let y = 4; y <= 12; y++) {
+  for (let x = GRID_X0; x <= GRID_X1; x++) {
+    for (let y = GRID_Y0; y <= GRID_Y1; y++) {
       const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
       poly.setAttribute("points", tilePoints(x, y));
       poly.setAttribute("class", "grid-cell");
@@ -783,13 +787,13 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
 
   // district labels
   const districts = [
-    { text: "EXTERNAL SHORE", x: 1.2, y: 7.2 },
-    { text: "ENTRY", x: 4.5, y: 5.2 },
-    { text: "CORE OPS", x: 7.5, y: 4.6 },
-    { text: "QUERY LANE", x: 5.8, y: 9.6 },
-    { text: "ACTION YARD", x: 10.2, y: 4.8 },
-    { text: "STATE VAULT", x: 8.2, y: 10.6 },
-    { text: "API DISTRICT", x: 12.5, y: 4.5 }
+    { text: "EXTERNAL SHORE", x: 2.4, y: 14.4 },
+    { text: "ENTRY", x: 9, y: 10.4 },
+    { text: "CORE OPS", x: 15, y: 9.2 },
+    { text: "QUERY LANE", x: 11.6, y: 19.2 },
+    { text: "ACTION YARD", x: 20.4, y: 9.6 },
+    { text: "STATE VAULT", x: 16.4, y: 21.2 },
+    { text: "API DISTRICT", x: 25, y: 9 }
   ];
   const dg = document.getElementById("districts");
   districts.forEach(d => {
@@ -1181,7 +1185,10 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
   // pan / zoom — require a small move threshold so building clicks never sling the camera
   const stage = document.getElementById("stage");
   const canvas = document.getElementById("canvas");
-  let scale = 0.92;
+  const SCALE_MIN = 0.4;
+  const SCALE_MAX = 5;
+  const SCALE_DEFAULT = 0.62;
+  let scale = SCALE_DEFAULT;
   let tx = 0, ty = 20;
   let dragging = false;
   let dragArmed = false;
@@ -1230,13 +1237,13 @@ Precedence: APPROACH_FLOW_STATE_ROOT › PLAN › SESSION › [sessions].root</d
   stage.addEventListener("wheel", (e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.94 : 1.06;
-    scale = Math.min(1.6, Math.max(0.55, scale * delta));
+    scale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, scale * delta));
     applyTransform();
   }, { passive: false });
 
-  document.getElementById("zoom-in").onclick = () => { scale = Math.min(1.6, scale * 1.1); applyTransform(); };
-  document.getElementById("zoom-out").onclick = () => { scale = Math.max(0.55, scale / 1.1); applyTransform(); };
-  document.getElementById("zoom-reset").onclick = () => { scale = 0.92; tx = 0; ty = 20; applyTransform(); };
+  document.getElementById("zoom-in").onclick = () => { scale = Math.min(SCALE_MAX, scale * 1.1); applyTransform(); };
+  document.getElementById("zoom-out").onclick = () => { scale = Math.max(SCALE_MIN, scale / 1.1); applyTransform(); };
+  document.getElementById("zoom-reset").onclick = () => { scale = SCALE_DEFAULT; tx = 0; ty = 20; applyTransform(); };
 
   document.getElementById("commit-chip").textContent = "dd64488";
 
