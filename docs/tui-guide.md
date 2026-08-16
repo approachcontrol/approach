@@ -97,7 +97,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (eligible Flow rows) |
-| `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree |
+| `U` | Open an editable launch prompt for an agent in the selected Flow's worktree, prefilled with `autofix pr #<num>` (or the `[flow_prompts].autofix` template), wherever `m` (mark merged) is offered and the Flow has a worktree |
 | `A` | Choose and persist the global coding agent (`codex` or `claude`), or edit the selected expanded Flow phase's agent stamp |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, toggle auto mode for the selected Flow, or toggle persisted auto-progression for a selected epic when `a: auto on/off` is shown |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
@@ -855,8 +855,10 @@ On a Flow row or an expanded phase row:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
   lists without launching a Merge phase agent.
-- `U` on an eligible Flow row launches an agent in that Flow's worktree with the
-  prompt `autofix pr #<num>`, where `<num>` is the Flow's PR number. Its gate is
+- `U` on an eligible Flow row opens an editable launch-instructions prompt for
+  an agent in that Flow's worktree, prefilled with `autofix pr #<num>` (or a
+  rendered `[flow_prompts].autofix` template), where `<num>` is the Flow's PR
+  number. Confirming the prompt launches the agent. Its gate is
   `m`'s — a non-closed, unmerged Flow with a PR target whose Merge phase is ready
   (or completed at a pending/merged Merge boundary) — plus a non-empty worktree
   path: with no worktree the shortcut is simply unavailable rather than running
@@ -865,9 +867,10 @@ On a Flow row or an expanded phase row:
   current agent/model/effort all apply, and interactive embedded launches prefill
   the dock for you to send. Their dock tab/chip uses the display identity
   `autofix pr <num>` without `#`, so PR 116 renders, for example,
-  `1 codex autofix pr 116 running`; the agent prompt remains exactly
-  `autofix pr #116`. Headless launches are unchanged and retain the existing
-  Flow identity rather than using the interactive autofix label.
+  `1 codex autofix pr 116 running`; the default agent prompt remains
+  `autofix pr #116` unless the operator edits it or a custom template is set.
+  Headless launches are unchanged and retain the existing Flow identity rather
+  than using the interactive autofix label.
 
   It is deliberately **phase-untracked**: it writes no phase state, marks no
   phase running, and attaches its session to no phase history, so an autofix run

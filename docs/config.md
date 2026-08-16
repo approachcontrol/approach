@@ -295,11 +295,13 @@ launch yet.
 
 ### `[flow_prompts]`
 
-Optional templates for Flow phase launch prompts. Blank or omitted keys use
-the built-in prompt for that phase. Unknown placeholders remain literal. Approach
-appends `After completing this phase goal, mark this Flow phase done with approach-flow.`
-to both built-in prompts and configured templates unless the template already
-ends with that exact standalone instruction.
+Optional templates for Flow phase launch prompts and the `U` autofix launcher.
+Blank or omitted keys use the built-in prompt for that key. Unknown placeholders
+remain literal. Approach appends `After completing this phase goal, mark this
+Flow phase done with approach-flow.` to both built-in phase prompts and
+configured phase templates unless the template already ends with that exact
+standalone instruction. The `autofix` key is not a phase prompt and never
+receives that suffix.
 
 The `f2` prompt-template editor also manages these Flow prompt keys. Saving a
 blank template resets that key by removing the config override.
@@ -314,6 +316,7 @@ blank template resets that key by removing the config override.
 | `autoreview` | string | Template for Autoreview. |
 | `merge` | string | Template for Merge. |
 | `generic` | string | Template for non-standard Flow phase IDs. |
+| `autofix` | string | Template for the `U` autofix launcher. This is not a phase prompt and does not receive the phase-done instruction suffix. Blank or omitted uses `autofix pr #{pr_number}`. |
 
 Supported Flow placeholders are `{approach_bin}`, `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,

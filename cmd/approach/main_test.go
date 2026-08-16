@@ -687,6 +687,7 @@ func TestModelOptionsFromConfigPassesFlowPromptTemplates(t *testing.T) {
 			Autoreview:     "autoreview",
 			Merge:          "merge",
 			Generic:        "generic",
+			Autofix:        "autofix",
 		},
 	}, nil, sessionStore, planStore, flowStore)
 
@@ -699,6 +700,7 @@ func TestModelOptionsFromConfigPassesFlowPromptTemplates(t *testing.T) {
 		Autoreview:     "autoreview",
 		Merge:          "merge",
 		Generic:        "generic",
+		Autofix:        "autofix",
 	}
 	if opts.FlowPromptTemplates != want {
 		t.Fatalf("flow prompt templates = %#v, want %#v", opts.FlowPromptTemplates, want)
