@@ -447,12 +447,34 @@ func isReleaseOwnedRoot(canonicalRoot string, allowed bool) bool {
 // sameCanonicalPath compares a root the store has already canonicalized against
 // one that has not been. EvalSymlinks failing is not a match: a release default
 // root that does not exist cannot be the root being migrated.
+//
+// String equality is checked first because it is free, but it is not sufficient:
+// EvalSymlinks preserves the caller's spelling of every component, and macOS
+// ships a case-insensitive filesystem by default, so `--state-root` typed as
+// `/Users/x/.local/State/approach/sessions/v1` resolves to the same directory as
+// the release default and compares unequal — silently disarming the guard on the
+// one path it exists to protect. Identity is the real question, so the
+// filesystem answers it.
 func sameCanonicalPath(canonical, candidate string) bool {
 	if canonical == candidate {
 		return true
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
-	return err == nil && resolved == canonical
+	if err != nil {
+		return false
+	}
+	if resolved == canonical {
+		return true
+	}
+	canonicalInfo, err := os.Stat(canonical)
+	if err != nil {
+		return false
+	}
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(canonicalInfo, resolvedInfo)
 }
 
 func inspectCutoverState(root string) (cutoverState, error) {
@@ -537,6 +559,19 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 			tombstonePath, shellQuote(tombstonePath), shellQuote(legacyPath))
 	}
 
+	// Every path out of this function that does not return an error publishes a
+	// current-schema approach.db in root — by promoting the stage below, or by
+	// building a fresh database further down. refuseDevLiveMigration cannot see
+	// either one: the first is a stage that may already be at this build's
+	// schema, in which case migrateAuthoritativeDatabase returns before the
+	// guard ever runs, and the second has no stored version to compare at all.
+	// So the creation guard belongs here, ahead of every branch, rather than
+	// only in front of the build. Checked before anything is renamed or removed
+	// so a refusal leaves the root byte-identical.
+	if err := refuseDevLiveCreation(root, allowDevLiveMigration); err != nil {
+		return err
+	}
+
 	if state.stage {
 		// Integrity and schema only — deliberately NOT a record-by-record diff
 		// against the legacy source. The stage is fsynced before it is promoted,
@@ -548,13 +583,10 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 		// A predecessor-schema stage from an older build is still that durable
 		// corpus: upgrade it in place before current-schema validation, or the
 		// resume path treats a valid predecessor stage as unusable and discards it.
-		// The guard applies here too, and root is passed rather than elided. The
-		// stage is not the live database *yet*, but the very next thing this
-		// branch does on success is rename it onto approach.db in this root — so
-		// a development build resuming a release build's interrupted cutover at
-		// the release default root would otherwise publish a current-schema
-		// database there with the guard disabled by construction, which is the
-		// one outcome the guard exists to prevent.
+		// root is passed rather than elided even though the creation guard above
+		// already covers this branch: the stage is renamed onto approach.db in
+		// this root, so the migration guard is correct here on its own terms and
+		// keeping it wired means a later reordering cannot quietly disarm both.
 		err := migrateAuthoritativeDatabase(stagePath, lockTimeout, root, allowDevLiveMigration)
 		if err == nil {
 			err = settleStagedSQLiteFile(stagePath)
@@ -573,10 +605,12 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 			reportResumedCutover(root, legacyPath, databasePath, state.legacy)
 			return nil
 		case errors.Is(err, errDevLiveMigrationRefused):
-			// A refusal is not a damaged stage. Falling through to the discard
-			// below would destroy an intact corpus over a policy check the
-			// operator was just told how to satisfy, and would do it on the one
-			// path where the stage can be the only copy left.
+			// Unreachable while refuseDevLiveCreation above still gates the same
+			// condition, and kept anyway: it is what makes reordering these two
+			// guards safe. A refusal is not a damaged stage, and falling through
+			// to the discard below would destroy an intact corpus over a policy
+			// check the operator was just told how to satisfy — on the one path
+			// where the stage can be the only copy left.
 			return err
 		case !state.legacy && state.tombstone:
 			// Only a root migrated by a build that renamed flows/ can reach this:
@@ -599,13 +633,6 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 		}
 	}
 
-	// Before anything is removed or built: this branch publishes a fresh
-	// current-schema database, and refuseDevLiveMigration cannot see it because
-	// there is no stored version to compare. Checked ahead of
-	// cleanupReservedSQLiteFiles so a refusal leaves the root byte-identical.
-	if err := refuseDevLiveCreation(root, allowDevLiveMigration); err != nil {
-		return err
-	}
 	if err := cleanupReservedSQLiteFiles(root); err != nil {
 		return err
 	}

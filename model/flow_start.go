@@ -681,11 +681,11 @@ func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templa
 	if strings.TrimSpace(phase.PhaseID) == "" {
 		phase = flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
 	}
+	bin := flowPromptBinary(binary)
 	if strings.TrimSpace(templates.Plan) != "" {
-		prompt := renderFlowPromptTemplate(templates.Plan, flow, phase, flow.PlanPath, "")
+		prompt := renderFlowPromptTemplate(templates.Plan, flow, phase, flow.PlanPath, "", bin)
 		return ensureFlowPhaseDoneInstruction(prompt, templates.Plan)
 	}
-	bin := flowPromptBinary(binary)
 	var b strings.Builder
 	b.WriteString("Use the approach-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)

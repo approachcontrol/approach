@@ -222,6 +222,13 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			event.Err = "Flow launch reservation is unavailable"
 			return event
 		}
+		// Ahead of the reservation, as on every other route: a resume bakes the
+		// pinned path into the resumed session's hook argv just as a fresh
+		// launch does, so an unusable pin is refused before anything is held.
+		if refusal := refuseUnverifiedLaunchPin(pin); refusal != "" {
+			event.Err = refusal
+			return event
+		}
 		record, release, err := reserve(msg.FlowID)
 		event.Release = release
 		if err != nil {

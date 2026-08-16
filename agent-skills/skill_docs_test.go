@@ -767,3 +767,28 @@ func fencedBashBlocks(markdown string) []string {
 	}
 	return blocks
 }
+
+// A pin that was supplied and is unusable must stop the workflow, not degrade to
+// PATH. Degrading there runs whatever build happens to be installed against a
+// database the launcher owns, which is the mixed-schema incident the pin exists
+// to prevent — so the skills report it as a persistence failure and exit. Only a
+// session that never received a pin uses PATH, which is why the test is on
+// APPROACH_EXECUTABLE and not on the resolved APPROACH_BIN.
+func TestBundledSkillsRefuseAnUnusablePinInsteadOfFallingBackToPath(t *testing.T) {
+	root := repoRoot(t)
+	for _, name := range []string{"approach-flow", "approach-flow-create", "approach-plan-persist"} {
+		t.Run(name, func(t *testing.T) {
+			skill := readFile(t, filepath.Join(root, "agent-skills", name, "SKILL.md"))
+			block := fencedBashBlockContaining(t, skill, `APPROACH_BIN="${APPROACH_EXECUTABLE:-approach}"`)
+			if !strings.Contains(block, `[ ! -x "$APPROACH_EXECUTABLE" ]`) {
+				t.Fatalf("%s never tests whether the supplied pin is runnable:\n%s", name, block)
+			}
+			if strings.Contains(block, "unset APPROACH_EXECUTABLE") {
+				t.Fatalf("%s unsets an unusable pin and falls back to approach on PATH:\n%s", name, block)
+			}
+			if !strings.Contains(block, "exit 1") {
+				t.Fatalf("%s does not stop on an unusable pin:\n%s", name, block)
+			}
+		})
+	}
+}

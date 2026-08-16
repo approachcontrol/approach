@@ -284,6 +284,13 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		// Ahead of the reservation, for the same reason the phase preflight puts
+		// it ahead of prepare: a refusal must not leave a reservation or a
+		// half-started launch behind.
+		if refusal := refuseUnverifiedLaunchPin(settings.Pin); refusal != "" {
+			event.Err = refusal
+			return event
+		}
 		reserved, release, reserveErr := reserve(msg.FlowID)
 		if reserveErr != nil {
 			event.Err = reserveErr.Error()

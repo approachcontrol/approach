@@ -16,7 +16,8 @@ it tells you when and how to call the `$APPROACH_BIN plan` CLI.
 
 `APPROACH_EXECUTABLE` pins the build that launched this agent. Resolve it before
 any command below; without it the launcher and this agent can be different builds
-and a save may fail at the database schema gate.
+and a save may fail at the database schema gate. If it is set but not runnable,
+stop and report it — do not fall back to `approach` on `PATH`.
 
 ```bash
 # Resolve the approach binary. APPROACH_EXECUTABLE pins the build that launched
@@ -35,9 +36,15 @@ and a save may fail at the database schema gate.
 # evicted pin fails loudly on a missing binary rather than degrading to PATH.
 # Report that error like any other; do not retry with a bare `approach`, which
 # is how a wrong-build result gets persisted.
+#
+# A pin that WAS supplied but is unusable stops the workflow. Falling back to
+# PATH there would run whatever build happens to be installed against a database
+# the launcher owns, which is precisely the mixed-schema failure the pin exists
+# to prevent, so an unusable pin is a persistence failure and is reported as one.
+# Only a session that never received a pin at all uses PATH.
 if [ -n "${APPROACH_EXECUTABLE:-}" ] && [ ! -x "$APPROACH_EXECUTABLE" ]; then
-  echo "APPROACH_EXECUTABLE ($APPROACH_EXECUTABLE) is not runnable; falling back to approach on PATH, which may be a different build than the launcher. Report this." >&2
-  unset APPROACH_EXECUTABLE
+  echo "APPROACH_EXECUTABLE ($APPROACH_EXECUTABLE) is not runnable. Report this as a persistence failure and stop; do not fall back to approach on PATH, which may be a different build than the launcher." >&2
+  exit 1
 fi
 APPROACH_BIN="${APPROACH_EXECUTABLE:-approach}"
 ```

@@ -40,9 +40,15 @@ the same explicit root keeps created flows and imported plans together.
 # evicted pin fails loudly on a missing binary rather than degrading to PATH.
 # Report that error like any other; do not retry with a bare `approach`, which
 # is how a wrong-build result gets persisted.
+#
+# A pin that WAS supplied but is unusable stops the workflow. Falling back to
+# PATH there would run whatever build happens to be installed against a database
+# the launcher owns, which is precisely the mixed-schema failure the pin exists
+# to prevent, so an unusable pin is a persistence failure and is reported as one.
+# Only a session that never received a pin at all uses PATH.
 if [ -n "${APPROACH_EXECUTABLE:-}" ] && [ ! -x "$APPROACH_EXECUTABLE" ]; then
-  echo "APPROACH_EXECUTABLE ($APPROACH_EXECUTABLE) is not runnable; falling back to approach on PATH, which may be a different build than the launcher. Report this." >&2
-  unset APPROACH_EXECUTABLE
+  echo "APPROACH_EXECUTABLE ($APPROACH_EXECUTABLE) is not runnable. Report this as a persistence failure and stop; do not fall back to approach on PATH, which may be a different build than the launcher." >&2
+  exit 1
 fi
 APPROACH_BIN="${APPROACH_EXECUTABLE:-approach}"
 

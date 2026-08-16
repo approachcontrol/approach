@@ -13,6 +13,37 @@ import (
 // tests can observe the claim without writing into a real state root.
 var retainLaunchPin = controlplane.RetainPin
 
+// verifyLaunchPin re-checks a pinned binary before a route commits to it. It is
+// a var so tests can fail the check without corrupting a real cached binary.
+//
+// It is package-level rather than a field on flowLaunchPreparation because more
+// than one route needs it. The tracked phase-launch preflight is not the only
+// path that marks a phase running and bakes the pinned path into a detached
+// agent's argv: phase resume, repair, autofix, and the generic worktree agent
+// all reserve and write without ever going through that preflight. A check that
+// lived only there would leave every one of them launching an unverified binary
+// — a cached copy the state root lost, or, under a degraded pin, a source path
+// an upgrade replaced underneath a long-lived TUI.
+//
+// An unpinned launch verifies nothing: there is no claim to check, and refusing
+// would break every caller that never had a pin.
+var verifyLaunchPin = func(pin controlplane.Pin) error {
+	if strings.TrimSpace(pin.ExecutablePath) == "" {
+		return nil
+	}
+	return pin.Verify()
+}
+
+// refuseUnverifiedLaunchPin returns the refusal message for pin, or "" when the
+// pin is usable. Routes call it before they reserve or write, so a launch
+// refused for an unusable binary leaves Flow state exactly as it found it.
+func refuseUnverifiedLaunchPin(pin controlplane.Pin) string {
+	if err := verifyLaunchPin(pin); err != nil {
+		return flowPhaseLaunchPinRefusal(pin, err)
+	}
+	return ""
+}
+
 // applyLaunchPin stamps the launching build onto a launch context so the agent
 // invokes exactly the binary that launched it rather than whatever `approach`
 // ambient PATH resolves, and claims the pinned copy against cache retention. A

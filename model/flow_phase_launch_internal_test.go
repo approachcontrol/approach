@@ -519,3 +519,116 @@ func TestApplyLaunchPinDoesNotClaimWhenThereIsNothingToProtect(t *testing.T) {
 		t.Fatalf("claims = %v, want none", *claims)
 	}
 }
+
+// stubVerifyLaunchPin replaces the verification seam so a test can fail the
+// check without corrupting a real cached binary.
+func stubVerifyLaunchPin(t *testing.T, err error) {
+	t.Helper()
+	original := verifyLaunchPin
+	t.Cleanup(func() { verifyLaunchPin = original })
+	verifyLaunchPin = func(controlplane.Pin) error { return err }
+}
+
+func TestRefuseUnverifiedLaunchPinNamesTheCause(t *testing.T) {
+	pin := controlplane.Pin{ExecutablePath: "/state/bin/approach-abc123", Version: "v0.10.3", SchemaVersion: 6}
+
+	stubVerifyLaunchPin(t, nil)
+	if refusal := refuseUnverifiedLaunchPin(pin); refusal != "" {
+		t.Fatalf("a verified pin was refused: %s", refusal)
+	}
+
+	stubVerifyLaunchPin(t, controlplane.ErrPinDigestMismatch)
+	refusal := refuseUnverifiedLaunchPin(pin)
+	for _, want := range []string{pin.ExecutablePath, "no longer matches", "v0.10.3", "schema 6"} {
+		if !strings.Contains(refusal, want) {
+			t.Fatalf("refusal %q does not name %q", refusal, want)
+		}
+	}
+}
+
+// An unpinned launch has nothing to verify. Refusing one would break every
+// caller that never had a pin, which is the pre-pin behaviour and still correct
+// for a manually started session.
+func TestRefuseUnverifiedLaunchPinIgnoresAnUnpinnedLaunch(t *testing.T) {
+	verified := false
+	original := verifyLaunchPin
+	t.Cleanup(func() { verifyLaunchPin = original })
+	verifyLaunchPin = func(pin controlplane.Pin) error {
+		verified = true
+		return original(pin)
+	}
+	if refusal := refuseUnverifiedLaunchPin(controlplane.Pin{}); refusal != "" {
+		t.Fatalf("an unpinned launch was refused: %s", refusal)
+	}
+	if !verified {
+		t.Fatal("refuseUnverifiedLaunchPin never consulted the seam")
+	}
+}
+
+// Files exempt from the verification fence, with the reason each one launches
+// nothing that can mutate tracked Flow state through a wrong build.
+var unverifiedLaunchPinFiles = map[string]string{
+	// Plan implementation, saved-session resume, and the plain repo agent. None
+	// is a Flow launch: they mutate no phase, and the key handlers that build
+	// them return a context rather than an error channel a refusal could use.
+	// Tracked by a follow-up; verification there needs a launch seam that can
+	// refuse, which is a wider change than pinning.
+	"model_keys.go": "non-Flow launches with no refusal channel at context construction",
+}
+
+// preflight is not the only path that marks a phase running and bakes the
+// pinned path into a detached agent's argv: create, resume, repair, autofix, and
+// the generic worktree agent all reserve and write without going through it. A
+// check that lived only in preflight would leave every one of them launching an
+// unverified binary, so this is the fence that keeps the NEXT launch kind from
+// skipping it too — the same file-granularity trade as
+// TestEveryLaunchingContextGoesThroughApplyLaunchPin, for the same reason.
+func TestEveryFlowLaunchRouteRefusesAnUnverifiedPin(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	seenExempt := map[string]bool{}
+	verifiers := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		text := string(source)
+		if !strings.Contains(text, "applyLaunchPin(") {
+			continue
+		}
+		if reason, exempt := unverifiedLaunchPinFiles[name]; exempt {
+			seenExempt[name] = true
+			if strings.Contains(text, "refuseUnverifiedLaunchPin(") {
+				t.Fatalf("%s is exempt (%q) but now refuses unverified pins; remove it from unverifiedLaunchPinFiles", name, reason)
+			}
+			continue
+		}
+		// flow_launch_pin.go defines the helpers; flow_phase_launch.go owns the
+		// preflight spelling. Everything else has to call the shared refusal.
+		if name == "flow_launch_pin.go" || strings.Contains(text, "l.verifyPin()") {
+			verifiers++
+			continue
+		}
+		if !strings.Contains(text, "refuseUnverifiedLaunchPin(") {
+			t.Fatalf("%s stamps a launch pin but never refuses an unverified one, so it can launch a binary the "+
+				"state root lost or an upgrade replaced. Refuse before it reserves or writes, or document the file "+
+				"in unverifiedLaunchPinFiles with the reason it cannot.", name)
+		}
+		verifiers++
+	}
+	if verifiers == 0 {
+		t.Fatal("found no verifying files; the scan matched nothing and would pass vacuously")
+	}
+	for name, reason := range unverifiedLaunchPinFiles {
+		if !seenExempt[name] {
+			t.Fatalf("unverifiedLaunchPinFiles lists %s (%q) but nothing there stamps a launch pin anymore", name, reason)
+		}
+	}
+}

@@ -45,12 +45,20 @@ func (templates FlowPromptTemplates) templateForPhase(phase flowstore.FlowPhase)
 	}
 }
 
-func renderFlowPromptTemplate(template string, record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+// renderFlowPromptTemplate expands a configured [flow_prompts] template. bin is
+// the already-rendered command word for this launch (see flowPromptBinary), and
+// it is exposed as `{approach_bin}` so a template can name the pinned binary the
+// way the built-in prompts do. Without the placeholder a configured template
+// could only spell a bare `approach`, which resolves from the launched agent's
+// ambient PATH and can be a different build from the launcher — the one thing
+// the pin exists to prevent. A template that does not use it is unchanged.
+func renderFlowPromptTemplate(template string, record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	phaseTitle := phase.Title
 	if phaseTitle == "" {
 		phaseTitle = phase.PhaseID
 	}
 	replacer := strings.NewReplacer(
+		"{approach_bin}", bin,
 		"{flow_id}", record.FlowID,
 		"{flow_title}", record.Title,
 		"{instructions}", record.Instructions,
@@ -152,11 +160,11 @@ var flowPromptBinarySafe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 // flowPhasePrompt builds a phase's launch prompt. binary is the pinned approach
 // executable for this launch; see flowPromptBinary for the unpinned case.
 func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates, binary string) string {
+	bin := flowPromptBinary(binary)
 	if template := templates.templateForPhase(phase); strings.TrimSpace(template) != "" {
-		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody)
+		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody, bin)
 		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
-	bin := flowPromptBinary(binary)
 	var prompt string
 	switch flowstore.SemanticKind(phase) {
 	case flowstore.KindPlan:

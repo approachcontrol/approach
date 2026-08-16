@@ -137,13 +137,13 @@ func TestDevBuildMigratesAnArbitraryRoot(t *testing.T) {
 // branch that handles a genuinely damaged stage: the stage is intact, and the
 // operator was just told how to satisfy the check.
 //
-// Both fixtures matter, and only the second exercises the sentinel. With no
-// tombstone the fall-through discards the stage and rebuilds, and
-// refuseDevLiveCreation stops that a few lines later — so the stage survives
-// even with the sentinel case deleted. With a tombstone the fall-through instead
-// instructs the operator to REMOVE the stage, and refuseDevLiveCreation is never
-// reached, so the sentinel is the only thing standing between a policy refusal
-// and a destroyed corpus.
+// Both fixtures matter, because the two failure shapes differ: with no tombstone
+// an unguarded fall-through discards the stage and rebuilds, and with a
+// tombstone it instructs the operator to REMOVE the stage, which is the one path
+// where the stage can be the only copy left. Since refuseDevLiveCreation now runs
+// ahead of the stage branch, neither is reachable while that guard stands; the
+// errDevLiveMigrationRefused sentinel inside the branch is kept as the fence that
+// makes reordering safe, and this test is what would catch its removal together.
 func TestDevBuildRefusesAnInterruptedCutoverAtTheReleaseDefaultRootWithoutDiscardingIt(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -322,4 +322,72 @@ func TestDevBuildOpensACurrentReleaseDefaultRoot(t *testing.T) {
 		t.Fatalf("development build refused an already-current release root: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+}
+
+// A stage already at THIS build's schema is exactly what a crash right after
+// buildStagedDatabase leaves behind, and migrateAuthoritativeDatabase returns
+// successfully for it before refuseDevLiveMigration ever runs — there is nothing
+// to advance. Promotion is still the publication of a current-schema database at
+// the release-owned root, which is the end state the fresh-creation path already
+// refuses, so the guard has to sit ahead of the stage branch rather than inside
+// the migration it may not perform.
+func TestDevBuildRefusesToPromoteACurrentSchemaStageAtTheReleaseDefaultRoot(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	root := filepath.Join(stateHome, "approach", "sessions", "v1")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("create release root: %v", err)
+	}
+	stagePath := filepath.Join(root, stageFilename)
+	if err := buildStagedDatabase(stagePath, nil); err != nil {
+		t.Fatalf("build current-schema stage: %v", err)
+	}
+
+	stubDevelopmentBuild(t, true)
+	if _, err := NewStore(StoreOptions{Root: root}); err == nil {
+		t.Fatal("a development build promoted a current-schema stage at the release-owned root")
+	} else if !strings.Contains(err.Error(), "--allow-dev-live-migration") {
+		t.Fatalf("refusal %q does not name the acknowledgement", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, databaseFilename)); !os.IsNotExist(err) {
+		t.Fatalf("stat approach.db = %v, want no database published", err)
+	}
+	if _, err := os.Lstat(stagePath); err != nil {
+		t.Fatalf("the refused stage was discarded: %v", err)
+	}
+
+	// The refusal is a gate the operator can pass, not a dead end.
+	store, err := NewStore(StoreOptions{Root: root, AllowDevLiveMigration: true})
+	if err != nil {
+		t.Fatalf("acknowledged stage promotion was refused: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if got := storedSchemaVersion(t, root); got != int64(databaseSchemaVersion) {
+		t.Fatalf("user_version = %d, want %d", got, databaseSchemaVersion)
+	}
+}
+
+// EvalSymlinks preserves the caller's spelling of every path component, so on
+// the case-insensitive filesystem macOS ships by default a --state-root typed
+// with different case names the same directory as the release default while
+// comparing unequal as a string. The guard protects exactly one path, so a
+// spelling that walks past it disarms it completely.
+func TestDevBuildRefusesACaseVariantSpellingOfTheReleaseDefaultRoot(t *testing.T) {
+	root := releaseRootFixture(t)
+	variant := filepath.Join(filepath.Dir(filepath.Dir(root)), "SESSIONS", filepath.Base(root))
+	// Checked before NewStore, which would otherwise CREATE this directory on a
+	// case-sensitive filesystem and quietly test a different root than intended.
+	if _, err := os.Stat(variant); err != nil {
+		t.Skipf("case-sensitive filesystem: %q is a different directory (%v)", variant, err)
+	}
+
+	stubDevelopmentBuild(t, true)
+	if _, err := NewStore(StoreOptions{Root: variant}); err == nil {
+		t.Fatal("a development build migrated the release-owned root through a case-variant spelling")
+	} else if !strings.Contains(err.Error(), "--allow-dev-live-migration") {
+		t.Fatalf("refusal %q does not name the acknowledgement", err)
+	}
+	if got := storedSchemaVersion(t, root); got == int64(databaseSchemaVersion) {
+		t.Fatalf("user_version = %d: the release database was migrated anyway", got)
+	}
 }

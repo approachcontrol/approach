@@ -224,6 +224,13 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		// Ahead of the reservation: this agent's argv carries the pinned path
+		// into a session that outlives the launch, so an unusable pin is refused
+		// before anything is written.
+		if refusal := refuseUnverifiedLaunchPin(settings.Pin); refusal != "" {
+			event.Err = refusal
+			return event
+		}
 		record, release, err := reserve(msg.FlowID)
 		if err != nil {
 			event.Err = err.Error()

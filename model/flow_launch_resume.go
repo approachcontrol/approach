@@ -290,6 +290,13 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		// Before the reservation and before AddPhaseLaunchID: a resume marks the
+		// phase running exactly as a tracked launch does, so a launch refused for
+		// an unusable pinned binary must leave the phase as it found it.
+		if refusal := refuseUnverifiedLaunchPin(settings.Pin); refusal != "" {
+			event.Err = refusal
+			return event
+		}
 		// The reserved record is discarded, as it is for every tracked launch:
 		// the read stage's drift check and this write are ordered but not one
 		// transaction, so a peer process can still land a resume in between.

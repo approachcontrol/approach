@@ -315,7 +315,7 @@ blank template resets that key by removing the config override.
 | `merge` | string | Template for Merge. |
 | `generic` | string | Template for non-standard Flow phase IDs. |
 
-Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
+Supported Flow placeholders are `{approach_bin}`, `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,
 `{plan_body}`, `{repo_path}`, `{worktree_path}`, `{branch}`, `{commit}`,
 `{base_ref}`, `{issue_provider}`, `{issue_number}`, `{issue_url}`,
@@ -324,6 +324,14 @@ Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
 Loop, PR Creation, Autoreview, and Merge launches do not pre-read the linked
 plan body, so `{plan_body}` is empty for those built-in phase types unless a
 future phase path explicitly supplies it.
+
+Use `{approach_bin}` for every `approach` invocation a template tells the agent
+to run. It expands to the shell-quoted path of the binary that launched the
+agent, which is what the built-in prompts use; a literal `approach` resolves
+from the agent's ambient `PATH` instead and can be a different build from the
+one that owns the Flow database. On a launch that carries no pin it expands to
+the same self-resolving `${APPROACH_BIN:=${APPROACH_EXECUTABLE:-approach}}`
+form the bundled skills use, so a template written this way works either way.
 
 ### `[flow]`
 

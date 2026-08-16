@@ -154,3 +154,42 @@ func TestFlowPlanPromptRunsThePinnedBinary(t *testing.T) {
 		t.Fatalf("plan prompt does not run the pinned binary:\n%s", prompt)
 	}
 }
+
+// A configured template is the user's own text, so it cannot be rewritten to
+// name the pin — but leaving it with no way to name anything except a bare
+// `approach` means a supported prompt path routes the agent back to ambient
+// PATH. The placeholder is what closes that, and it has to resolve through the
+// same flowPromptBinary the built-in prompts use, including the unpinned
+// fallback.
+func TestConfiguredTemplatesResolveThePinnedBinary(t *testing.T) {
+	record := promptRecord()
+	pinned := "/Users/a b/state/bin/approach-abc123"
+	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady}
+	templates := FlowPromptTemplates{Implementation: "Run {approach_bin} flow phase complete --flow-id {flow_id}."}
+
+	prompt := flowPhasePrompt(record, phase, record.PlanPath, "", templates, pinned)
+	if want := "Run '" + pinned + "' flow phase complete --flow-id flow-1."; !strings.Contains(prompt, want) {
+		t.Fatalf("configured template did not resolve the pinned binary:\n%s", prompt)
+	}
+	if match := bareApproachCommand.FindString(prompt); match != "" {
+		t.Fatalf("configured template still names a bare approach command %q:\n%s", strings.TrimSpace(match), prompt)
+	}
+
+	unpinned := flowPhasePrompt(record, phase, record.PlanPath, "", templates, "")
+	if !strings.Contains(unpinned, flowPromptBinaryFallback+" flow phase complete") {
+		t.Fatalf("unpinned template did not fall back to %s:\n%s", flowPromptBinaryFallback, unpinned)
+	}
+}
+
+// The Plan phase renders through flowPlanPrompt, which returns its configured
+// template on a different branch from every other kind.
+func TestConfiguredPlanTemplateResolvesThePinnedBinary(t *testing.T) {
+	pinned := "/state/bin/approach-abc123"
+	phase := flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}
+	templates := FlowPromptTemplates{Plan: "Save it with {approach_bin} plan save."}
+
+	prompt := flowPlanPrompt(promptRecord(), phase, templates, pinned)
+	if !strings.Contains(prompt, pinned+" plan save") {
+		t.Fatalf("configured plan template did not resolve the pinned binary:\n%s", prompt)
+	}
+}

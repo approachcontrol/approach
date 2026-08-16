@@ -165,7 +165,7 @@ func (l flowLaunchPreparation) verifyPin() error {
 	if l.VerifyPin != nil {
 		return l.VerifyPin(l.Pin)
 	}
-	return l.Pin.Verify()
+	return verifyLaunchPin(l.Pin)
 }
 
 func (l flowLaunchPreparation) preflight(req flowPhaseLaunchRequest) (flowPhaseLaunchPreparedRequest, error) {
