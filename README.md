@@ -73,10 +73,11 @@ right. The essentials:
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |
 | `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane |
 | `ctrl+a` | Toggle Active Flows (all repos) |
+| `ctrl+p` | Toggle PR Babysitter for live mergeability and checks across PRs awaiting merge |
 | `/` | Fuzzy filter the active pane |
 | `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
 | `F` | In a settled Beads Ready pane, create the selected Bead's Flow and start its first actionable phase; pull in eligible Git contexts and elsewhere outside that Ready selection |
-| `f5` | Rescan repositories and refresh both stored content panes; Active Flows also refreshes while its takeover is open |
+| `f5` | Rescan repositories and refresh both stored content panes; the visible takeover refreshes independently too |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent; on a selected epic, toggle its auto-progression; on a Flow, toggle phase auto mode |
 | `n` | Create a worktree, branch, Flow, or repo (context-dependent) |

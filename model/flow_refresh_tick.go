@@ -37,6 +37,9 @@ func (m Model) startActiveFlowsFetchWithRefreshTick() (Model, tea.Cmd) {
 }
 
 func (m Model) startFlowSurfaceFetch() (Model, tea.Cmd) {
+	if m.prBabysitterSurfaceVisible() {
+		return m.startPRBabysitterRefresh()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
@@ -44,6 +47,9 @@ func (m Model) startFlowSurfaceFetch() (Model, tea.Cmd) {
 }
 
 func (m Model) startFlowSurfaceRefreshFetch() (Model, tea.Cmd) {
+	if m.prBabysitterSurfaceVisible() {
+		return m.startPRBabysitterRefresh()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.startActiveFlowRefreshFetch()
 	}

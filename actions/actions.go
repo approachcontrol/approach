@@ -40,10 +40,29 @@ type CommandRunner interface {
 	Run(name string, args ...string) ([]byte, []byte, error)
 }
 
+// ContextCommandRunner executes a command whose process is cancelled with ctx.
+type ContextCommandRunner interface {
+	RunContext(ctx context.Context, name string, args ...string) ([]byte, []byte, error)
+}
+
 type execCommandRunner struct{}
+
+type execContextCommandRunner struct{}
 
 func (execCommandRunner) Run(name string, args ...string) ([]byte, []byte, error) {
 	cmd := exec.Command(name, args...)
+	stdout, err := cmd.Output()
+	if err == nil {
+		return stdout, nil, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return stdout, exitErr.Stderr, err
+	}
+	return stdout, nil, err
+}
+
+func (execContextCommandRunner) RunContext(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
 	stdout, err := cmd.Output()
 	if err == nil {
 		return stdout, nil, nil
@@ -92,6 +111,21 @@ type BootstrapContext struct {
 type PullRequestMerge struct {
 	Commit   string
 	MergedAt time.Time
+}
+
+const (
+	PRStatusUnknown = "unknown"
+	PRMergeable     = "mergeable"
+	PRConflicting   = "conflicting"
+	PRChecksPassing = "passing"
+	PRChecksFailing = "failing"
+	PRChecksPending = "pending"
+)
+
+// PullRequestStatus is the live GitHub status projected in the PR babysitter.
+type PullRequestStatus struct {
+	Mergeability string
+	Checks       string
 }
 
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
@@ -684,6 +718,131 @@ func LookupGitHubPRMergeWithRunner(number int, prURL string, runner CommandRunne
 		return PullRequestMerge{}, fmt.Errorf("invalid mergedAt for GitHub PR #%d: %w", number, err)
 	}
 	return PullRequestMerge{Commit: strings.TrimSpace(parsed.MergeCommit.OID), MergedAt: mergedAt}, nil
+}
+
+// LookupGitHubPRStatus returns live mergeability and checks for a GitHub PR.
+func LookupGitHubPRStatus(ctx context.Context, number int, prURL string) (PullRequestStatus, error) {
+	return LookupGitHubPRStatusWithRunner(ctx, number, prURL, execContextCommandRunner{})
+}
+
+// LookupGitHubPRStatusWithRunner returns live PR status using runner.
+func LookupGitHubPRStatusWithRunner(ctx context.Context, number int, prURL string, runner ContextCommandRunner) (PullRequestStatus, error) {
+	unknown := PullRequestStatus{Mergeability: PRStatusUnknown, Checks: PRStatusUnknown}
+	if number <= 0 {
+		return unknown, fmt.Errorf("PR number must be positive")
+	}
+	pr, err := parsePullRequestInput(prURL)
+	if err != nil || pr.Owner == "" || pr.Repo == "" {
+		return unknown, fmt.Errorf("PR status lookup requires GitHub PR URL with owner and repo")
+	}
+	if pr.Number != number {
+		return unknown, fmt.Errorf("PR URL number %d must match PR number %d", pr.Number, number)
+	}
+	stdout, stderr, err := runner.RunContext(ctx, "gh", "pr", "view", strconv.Itoa(number), "--repo", pr.Owner+"/"+pr.Repo, "--json", "mergeable,statusCheckRollup")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return unknown, fmt.Errorf("gh executable not found")
+		}
+		detail := strings.TrimSpace(string(stderr))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return unknown, fmt.Errorf("gh pr view failed: %s", detail)
+	}
+	var parsed struct {
+		Mergeable         string            `json:"mergeable"`
+		StatusCheckRollup []json.RawMessage `json:"statusCheckRollup"`
+	}
+	if err := json.Unmarshal(stdout, &parsed); err != nil {
+		return unknown, fmt.Errorf("parse gh PR status JSON: %w", err)
+	}
+	return PullRequestStatus{
+		Mergeability: classifyPRMergeability(parsed.Mergeable),
+		Checks:       aggregatePRChecks(parsed.StatusCheckRollup),
+	}, nil
+}
+
+func classifyPRMergeability(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "MERGEABLE":
+		return PRMergeable
+	case "CONFLICTING":
+		return PRConflicting
+	default:
+		return PRStatusUnknown
+	}
+}
+
+func aggregatePRChecks(rollup []json.RawMessage) string {
+	if len(rollup) == 0 {
+		return PRStatusUnknown
+	}
+	best := PRChecksPassing
+	for _, member := range rollup {
+		value := classifyPRCheck(member)
+		if prCheckRank(value) > prCheckRank(best) {
+			best = value
+		}
+	}
+	return best
+}
+
+func prCheckRank(value string) int {
+	switch value {
+	case PRChecksFailing:
+		return 4
+	case PRChecksPending:
+		return 3
+	case PRStatusUnknown:
+		return 2
+	case PRChecksPassing:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func classifyPRCheck(raw json.RawMessage) string {
+	var member struct {
+		TypeName   string `json:"__typename"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		State      string `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &member); err != nil {
+		return PRStatusUnknown
+	}
+	switch member.TypeName {
+	case "CheckRun":
+		switch strings.ToUpper(strings.TrimSpace(member.Status)) {
+		case "CREATED", "QUEUED", "IN_PROGRESS", "PENDING", "REQUESTED", "WAITING":
+			return PRChecksPending
+		case "COMPLETED":
+			switch strings.ToUpper(strings.TrimSpace(member.Conclusion)) {
+			case "ACTION_REQUIRED", "CANCELLED", "FAILURE", "STALE", "STARTUP_FAILURE", "TIMED_OUT":
+				return PRChecksFailing
+			case "SUCCESS", "NEUTRAL", "SKIPPED":
+				return PRChecksPassing
+			default:
+				return PRStatusUnknown
+			}
+		default:
+			return PRStatusUnknown
+		}
+	case "StatusContext":
+		switch strings.ToUpper(strings.TrimSpace(member.State)) {
+		case "ERROR", "FAILURE":
+			return PRChecksFailing
+		case "EXPECTED", "PENDING":
+			return PRChecksPending
+		case "SUCCESS":
+			return PRChecksPassing
+		default:
+			return PRStatusUnknown
+		}
+	default:
+		return PRStatusUnknown
+	}
 }
 
 // DefaultWorktreePath returns the conventional sibling path used for new

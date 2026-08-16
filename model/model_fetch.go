@@ -19,6 +19,9 @@ import (
 const visibleRepoFetchFailureNameLimit = 3
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
+	if m.prBabysitterSurfaceVisible() {
+		return m.startPRBabysitterRefresh()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
@@ -90,6 +93,13 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 			cmds = append(cmds, activeCmd)
 		}
 	}
+	if m.prBabysitterSurfaceVisible() {
+		var babysitterCmd tea.Cmd
+		m, babysitterCmd = m.startPRBabysitterRefresh()
+		if babysitterCmd != nil {
+			cmds = append(cmds, babysitterCmd)
+		}
+	}
 	if len(cmds) == 1 {
 		return m, scanCmd
 	}
@@ -97,6 +107,9 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 }
 
 func (m Model) fetchForMode() tea.Cmd {
+	if m.prBabysitterSurfaceVisible() {
+		return nil
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.fetchActiveFlows(m.currentListRequest(ui.ModeActiveFlows))
 	}
@@ -146,7 +159,7 @@ func (m Model) setCurrentListError(mode ui.Mode, detail string) Model {
 }
 
 func (m Model) flowDegradation(mode ui.Mode) *flowstore.PartialListError {
-	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows {
+	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows && mode != ui.ModePRBabysitter {
 		return nil
 	}
 	state := m.flowDegradations[int(mode)]
@@ -180,7 +193,7 @@ func (m Model) flowDegradationWarning(mode ui.Mode) string {
 }
 
 func (m Model) setFlowDegradation(mode ui.Mode, repoPath string, diagnostic *flowstore.PartialListError) Model {
-	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows {
+	if mode != ui.ModeFlows && mode != ui.ModeActiveFlows && mode != ui.ModePRBabysitter {
 		return m
 	}
 	beforeRows := m.paneFlowDegradationWarningRows(mode)
@@ -210,6 +223,8 @@ func (m Model) reflowMode(mode ui.Mode) Model {
 	switch mode {
 	case ui.ModeActiveFlows:
 		return m.reflowActiveFlows()
+	case ui.ModePRBabysitter:
+		return m.reflowPRBabysitter()
 	case ui.ModeFlows:
 		return m.reflowFlows()
 	case ui.ModeWorktrees:
@@ -246,7 +261,7 @@ func (m Model) invalidateListRequests() Model {
 func (m Model) invalidateStoredListRequests() Model {
 	m.listRequestSeq++
 	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
-		if mode == ui.ModeActiveFlows {
+		if mode == ui.ModeActiveFlows || mode == ui.ModePRBabysitter {
 			continue
 		}
 		m.listRequests[int(mode)] = m.listRequestSeq

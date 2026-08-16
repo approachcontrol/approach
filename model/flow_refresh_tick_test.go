@@ -863,9 +863,10 @@ func TestModel_FocusingDegradedStoredFlowsRestartsRefresh(t *testing.T) {
 
 func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 	tests := []struct {
-		name  string
-		setup func(Model) Model
-		key   tea.KeyMsg
+		name                  string
+		setup                 func(Model) Model
+		key                   tea.KeyMsg
+		wantGenerationAdvance bool
 	}{
 		{
 			name: "focus degraded bottom pane",
@@ -894,7 +895,8 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 				m.activeFlowSurface = true
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyCtrlA},
+			key:                   tea.KeyMsg{Type: tea.KeyCtrlA},
+			wantGenerationAdvance: true,
 		},
 	}
 
@@ -913,8 +915,12 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 			if got := m.ListRequest(ui.ModeFlows); got != beforeRequest {
 				t.Fatalf("no-repo stored Flows request = %d, want unchanged %d", got, beforeRequest)
 			}
-			if m.flowRefreshTickGen != beforeGeneration {
-				t.Fatalf("no-repo stored Flows generation = %d, want unchanged %d", m.flowRefreshTickGen, beforeGeneration)
+			wantGeneration := beforeGeneration
+			if tt.wantGenerationAdvance {
+				wantGeneration++
+			}
+			if m.flowRefreshTickGen != wantGeneration {
+				t.Fatalf("no-repo stored Flows generation = %d, want %d", m.flowRefreshTickGen, wantGeneration)
 			}
 			if m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0 {
 				t.Fatalf("no-repo stored Flows refresh started: request=%d mode=%d", m.flowRefreshInFlight, m.flowRefreshInFlightMode)

@@ -128,6 +128,16 @@ type FlowTerminalActivity struct {
 	PhaseID string
 }
 
+// PRBabysitterRow is the display-only projection for one authoritative Flow.
+type PRBabysitterRow struct {
+	Flow         flowstore.FlowRecord
+	Repo         string
+	Title        string
+	BeadID       string
+	Mergeability string
+	Checks       string
+}
+
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
 // not the other way around), so the type lives here to avoid an import cycle.
@@ -143,6 +153,7 @@ const (
 	ModePlans
 	ModeFlows
 	ModeActiveFlows
+	ModePRBabysitter
 	ModeBeadsReady
 	ModeBeadsBlocked
 	ModeBeadsOpen
@@ -174,9 +185,8 @@ const (
 	PaneBottom
 )
 
-// PaneForMode reports which stored content pane owns mode. Active Flows is a
-// full-surface takeover rather than a stored pane mode, and repositories own
-// no mode, so neither has an ownership mapping.
+// PaneForMode reports which stored content pane owns mode. Takeovers are not
+// stored pane modes, and repositories own no mode, so neither has a mapping.
 func PaneForMode(mode Mode) (Pane, bool) {
 	if IsGitMode(mode) || IsBeadsMode(mode) {
 		return PaneTop, true
@@ -352,139 +362,143 @@ const StashPrefixWidth = 15
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos                        []scanner.Repo
-	ActiveTerminalRepoPaths      map[string]bool
-	Selected                     int
-	Width                        int
-	Height                       int
-	Mode                         Mode
-	TopMode                      Mode
-	BottomMode                   Mode
-	ContentPane                  Pane
-	ActiveFlows                  bool
-	Branches                     []gitquery.BranchRow
-	Stashes                      []gitquery.Stash
-	BranchSelected               int
-	StashSelected                int
-	Overlay                      OverlayState
-	OverlayDiff                  string
-	OverlayScroll                int
-	ConfirmPrompt                string
-	ConfirmForce                 bool
-	InputPrompt                  string
-	InputPlaceholder             string
-	InputValue                   string
-	InputError                   string
-	InputMode                    InputMode
-	InputHeight                  int
-	InputCursor                  int
-	WorktreeInputPrompt          string
-	WorktreeInputPlaceholder     string
-	WorktreeInput                string
-	WorktreeInputErr             string
-	SelectPrompt                 string
-	SelectItems                  []SelectItem
-	SelectSelected               int
-	SelectWidth                  int
-	SelectHeight                 int
-	SelectPlacement              SelectPlacement
-	Form                         FormView
-	BranchScroll                 int
-	RepoScroll                   int
-	StashScroll                  int
-	ActivePane                   Pane
-	RepoPaneCollapsed            bool
-	Destructive                  bool
-	Worktrees                    []gitquery.Worktree
-	WorktreeSelected             int
-	WorktreeScroll               int
-	WorktreeSessions             []sessions.SessionRecord
-	WorktreeSessionSelected      int
-	WorktreeSessionScroll        int
-	InlineWorktreeSessions       bool
-	Commits                      []gitquery.Commit
-	CommitSelected               int
-	CommitScroll                 int
-	Reflogs                      []gitquery.ReflogEntry
-	ReflogSelected               int
-	ReflogScroll                 int
-	Sessions                     []sessions.SessionRecord
-	SessionSelected              int
-	SessionScroll                int
-	EmbeddedTerminals            []EmbeddedTerminalTab
-	EmbeddedTerminalLines        []string
-	EmbeddedTerminalPrefix       bool
-	EmbeddedTerminalVisible      bool
-	EmbeddedTerminalFocused      bool
-	Plans                        []planstore.PlanRecord
-	PlanSelected                 int
-	PlanScroll                   int
-	Flows                        []flowstore.FlowRecord
-	FlowSelected                 int
-	FlowScroll                   int
-	FlowDegradationWarning       string
-	ActiveFlowDegradationWarning string
-	BeadsOpen                    []beadsquery.Bead
-	BeadsOpenSelected            int
-	BeadsOpenScroll              int
-	BeadsOpenAvailable           bool
-	BeadsOpenPending             bool
-	ReadyBeadFlowCreateAvailable bool
-	ReadyBeadFlowStartAvailable  bool
-	ReadyBeadFlowKeysOwned       bool
-	EpicAutoOnAvailable          bool
-	EpicAutoOffAvailable         bool
-	EpicAutoKeyOwned             bool
-	BeadsError                   string
-	BeadsQuery                   string
-	BeadsSourceCount             int
-	BeadsClosedTotal             int
-	BeadExpansion                BeadExpansion
-	FlowTerminalActivity         []FlowTerminalActivity
-	ExpandedPlanID               string
-	ExpandedFlowID               string
-	SelectedPlanPhaseID          string
-	SelectedFlowPhaseID          string
-	FlowHeadless                 bool
-	FlowAutoModeSelected         bool
-	FlowIssueTargetSelected      bool
-	FlowPRTargetSelected         bool
-	FlowAgentLabel               string
-	FlowModel                    string
-	FlowReasoningEffort          string
-	FlowNextLaunchReady          bool
-	FlowWorktreeAgentReady       bool
-	FlowRepairReady              bool
-	FlowManualMergeReadySelected bool
-	FlowAutofixReadySelected     bool
-	FlowCloseActionSelected      FlowCloseAction
-	FlowPhaseResetReadySelected  bool
-	FlowPhaseReleaseSelected     bool
-	FlowPhaseResumableSelected   bool
-	OverlayText                  string
-	TransientError               string
-	TransientErrorFadeStep       int
-	SearchActive                 bool
-	RepoSearch                   string
-	ItemSearch                   string
-	ItemSourceCount              int
-	TopItemSearch                string
-	BottomItemSearch             string
-	TopItemSourceCount           int
-	BottomItemSourceCount        int
-	RepoEmptyMessage             string
-	RightEmptyMessage            string
-	TopListError                 string
-	BottomListError              string
-	ActiveFlowsListError         string
-	FetchAvailable               bool
-	FetchVisibleAvailable        bool
-	RepoCreateAvailable          bool
-	PullAvailable                bool
-	WorktreeMoveAvailable        bool
-	WorktreeSessionsOpen         bool
-	AgentAvailable               bool
-	NewAgentAvailable            bool
+	Repos                          []scanner.Repo
+	ActiveTerminalRepoPaths        map[string]bool
+	Selected                       int
+	Width                          int
+	Height                         int
+	Mode                           Mode
+	TopMode                        Mode
+	BottomMode                     Mode
+	ContentPane                    Pane
+	ActiveFlows                    bool
+	PRBabysitter                   bool
+	Branches                       []gitquery.BranchRow
+	Stashes                        []gitquery.Stash
+	BranchSelected                 int
+	StashSelected                  int
+	Overlay                        OverlayState
+	OverlayDiff                    string
+	OverlayScroll                  int
+	ConfirmPrompt                  string
+	ConfirmForce                   bool
+	InputPrompt                    string
+	InputPlaceholder               string
+	InputValue                     string
+	InputError                     string
+	InputMode                      InputMode
+	InputHeight                    int
+	InputCursor                    int
+	WorktreeInputPrompt            string
+	WorktreeInputPlaceholder       string
+	WorktreeInput                  string
+	WorktreeInputErr               string
+	SelectPrompt                   string
+	SelectItems                    []SelectItem
+	SelectSelected                 int
+	SelectWidth                    int
+	SelectHeight                   int
+	SelectPlacement                SelectPlacement
+	Form                           FormView
+	BranchScroll                   int
+	RepoScroll                     int
+	StashScroll                    int
+	ActivePane                     Pane
+	RepoPaneCollapsed              bool
+	Destructive                    bool
+	Worktrees                      []gitquery.Worktree
+	WorktreeSelected               int
+	WorktreeScroll                 int
+	WorktreeSessions               []sessions.SessionRecord
+	WorktreeSessionSelected        int
+	WorktreeSessionScroll          int
+	InlineWorktreeSessions         bool
+	Commits                        []gitquery.Commit
+	CommitSelected                 int
+	CommitScroll                   int
+	Reflogs                        []gitquery.ReflogEntry
+	ReflogSelected                 int
+	ReflogScroll                   int
+	Sessions                       []sessions.SessionRecord
+	SessionSelected                int
+	SessionScroll                  int
+	EmbeddedTerminals              []EmbeddedTerminalTab
+	EmbeddedTerminalLines          []string
+	EmbeddedTerminalPrefix         bool
+	EmbeddedTerminalVisible        bool
+	EmbeddedTerminalFocused        bool
+	Plans                          []planstore.PlanRecord
+	PlanSelected                   int
+	PlanScroll                     int
+	Flows                          []flowstore.FlowRecord
+	PRBabysitterRows               []PRBabysitterRow
+	FlowSelected                   int
+	FlowScroll                     int
+	FlowDegradationWarning         string
+	ActiveFlowDegradationWarning   string
+	PRBabysitterDegradationWarning string
+	BeadsOpen                      []beadsquery.Bead
+	BeadsOpenSelected              int
+	BeadsOpenScroll                int
+	BeadsOpenAvailable             bool
+	BeadsOpenPending               bool
+	ReadyBeadFlowCreateAvailable   bool
+	ReadyBeadFlowStartAvailable    bool
+	ReadyBeadFlowKeysOwned         bool
+	EpicAutoOnAvailable            bool
+	EpicAutoOffAvailable           bool
+	EpicAutoKeyOwned               bool
+	BeadsError                     string
+	BeadsQuery                     string
+	BeadsSourceCount               int
+	BeadsClosedTotal               int
+	BeadExpansion                  BeadExpansion
+	FlowTerminalActivity           []FlowTerminalActivity
+	ExpandedPlanID                 string
+	ExpandedFlowID                 string
+	SelectedPlanPhaseID            string
+	SelectedFlowPhaseID            string
+	FlowHeadless                   bool
+	FlowAutoModeSelected           bool
+	FlowIssueTargetSelected        bool
+	FlowPRTargetSelected           bool
+	FlowAgentLabel                 string
+	FlowModel                      string
+	FlowReasoningEffort            string
+	FlowNextLaunchReady            bool
+	FlowWorktreeAgentReady         bool
+	FlowRepairReady                bool
+	FlowManualMergeReadySelected   bool
+	FlowAutofixReadySelected       bool
+	FlowCloseActionSelected        FlowCloseAction
+	FlowPhaseResetReadySelected    bool
+	FlowPhaseReleaseSelected       bool
+	FlowPhaseResumableSelected     bool
+	OverlayText                    string
+	TransientError                 string
+	TransientErrorFadeStep         int
+	SearchActive                   bool
+	RepoSearch                     string
+	ItemSearch                     string
+	ItemSourceCount                int
+	TopItemSearch                  string
+	BottomItemSearch               string
+	TopItemSourceCount             int
+	BottomItemSourceCount          int
+	RepoEmptyMessage               string
+	RightEmptyMessage              string
+	TopListError                   string
+	BottomListError                string
+	ActiveFlowsListError           string
+	PRBabysitterListError          string
+	FetchAvailable                 bool
+	FetchVisibleAvailable          bool
+	RepoCreateAvailable            bool
+	PullAvailable                  bool
+	WorktreeMoveAvailable          bool
+	WorktreeSessionsOpen           bool
+	AgentAvailable                 bool
+	NewAgentAvailable              bool
 	// TmuxAttachAvailable reports that [launch].backend is "tmux" and tmux is
 	// installed, so the T attach affordance has something to offer.
 	TmuxAttachAvailable bool
@@ -666,12 +680,14 @@ func renderApplication(p RenderParams) string {
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
 	activeFlows := p.ActiveFlows || p.Mode == ModeActiveFlows
+	prBabysitter := p.PRBabysitter || p.Mode == ModePRBabysitter
+	takeover := activeFlows || prBabysitter
 	embeddedTerminalActive := len(p.EmbeddedTerminals) > 0
 	terminalDockRequested := embeddedTerminalActive && p.EmbeddedTerminalVisible
 	dockAllocation := ResolveEmbeddedTerminalDock(p.Height, terminalDockRequested)
 	terminalEffectivelyExpanded := embeddedTerminalActive && dockAllocation.State == EmbeddedTerminalDockExpanded
 	terminalFocused := terminalEffectivelyExpanded && p.EmbeddedTerminalFocused
-	flowSurfaceActive := p.Mode == ModeFlows || activeFlows
+	flowSurfaceActive := p.Mode == ModeFlows || takeover
 	terminalShortcutsActive := terminalFocused
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
@@ -711,6 +727,7 @@ func renderApplication(p RenderParams) string {
 		Width:                        p.Width,
 		Mode:                         p.Mode,
 		ActiveFlows:                  activeFlows,
+		PRBabysitter:                 prBabysitter,
 		Overlay:                      p.Overlay,
 		InputMode:                    inputRenderParamsFrom(p).mode,
 		FormHasMultiline:             formHasMultilineField(p.Form),
@@ -867,6 +884,8 @@ func renderApplication(p RenderParams) string {
 	listHeight := rightContentHeight
 	var rightLines []string
 	switch {
+	case prBabysitter && len(p.PRBabysitterRows) > 0:
+		rightLines = renderPRBabysitterPane(p.PRBabysitterRows, flowSel, p.FlowScroll, rightContentWidth, listHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
 	case flowSurfaceActive && len(p.Flows) > 0:
 		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, listHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, activeFlows, repoDisplayNames)
 	case flowSurfaceActive:
@@ -933,9 +952,13 @@ func renderApplication(p RenderParams) string {
 		Render(rightContent)
 	if p.TopMode != 0 && p.BottomMode != 0 {
 		sharedOuterRows := paneRowHeight + stackedPaneBorderRows
-		if activeFlows {
+		if takeover {
 			focused := p.ActivePane != PaneRepos && !terminalFocused
-			rightPane = renderStackedModePane(p, ModeActiveFlows, rightContentWidth, sharedOuterRows, focused, true, repoPath)
+			takeoverMode := ModeActiveFlows
+			if prBabysitter {
+				takeoverMode = ModePRBabysitter
+			}
+			rightPane = renderStackedModePane(p, takeoverMode, rightContentWidth, sharedOuterRows, focused, true, repoPath)
 		} else {
 			layout := StackedContentLayout(sharedOuterRows, p.ActivePane, p.ContentPane)
 			stacked := make([]string, 0, 2)
@@ -1009,12 +1032,18 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 		bodyRows--
 	}
 	switch {
-	case (mode == ModeFlows || takeover) && len(p.Flows) > 0:
+	case mode == ModePRBabysitter && len(p.PRBabysitterRows) > 0:
+		body = renderPRBabysitterPane(p.PRBabysitterRows, flowSel, p.FlowScroll, width, bodyRows, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
+	case (mode == ModeFlows || mode == ModeActiveFlows) && len(p.Flows) > 0:
 		body = renderFlowPane(p.Flows, flowSel, p.FlowScroll, width, bodyRows, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, takeover, repoDisplayNames)
 	case mode == ModeFlows || takeover:
 		message := paneEmptyMessage(p, mode, repoPath)
 		if takeover && message == "" {
-			message = "No active flows"
+			if mode == ModePRBabysitter {
+				message = "No PRs awaiting merge"
+			} else {
+				message = "No active flows"
+			}
 		}
 		body = renderPlaceholderPane(width, bodyRows, message)
 	case mode == ModeWorktrees && len(p.Worktrees) > 0:
@@ -1079,6 +1108,8 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 
 func stackedModePaneHasRows(p RenderParams, mode Mode, takeover bool) bool {
 	switch {
+	case mode == ModePRBabysitter:
+		return len(p.PRBabysitterRows) > 0
 	case mode == ModeFlows || takeover:
 		return len(p.Flows) > 0
 	case mode == ModeWorktrees:
@@ -1103,10 +1134,10 @@ func stackedModePaneHasRows(p RenderParams, mode Mode, takeover bool) bool {
 }
 
 func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
-	if mode == ModeActiveFlows && mode == p.Mode && strings.TrimSpace(p.ItemSearch) != "" && strings.Contains(p.RightEmptyMessage, " results for ") {
+	if (mode == ModeActiveFlows || mode == ModePRBabysitter) && mode == p.Mode && strings.TrimSpace(p.ItemSearch) != "" && strings.Contains(p.RightEmptyMessage, " results for ") {
 		return p.RightEmptyMessage
 	}
-	if mode != ModeActiveFlows && repoPath == "" {
+	if mode != ModeActiveFlows && mode != ModePRBabysitter && repoPath == "" {
 		if strings.TrimSpace(p.RepoSearch) != "" {
 			return "No matching repo"
 		}
@@ -1158,6 +1189,10 @@ func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
 		return "No plans"
 	case ModeFlows:
 		return "No flows"
+	case ModeActiveFlows:
+		return "No active flows"
+	case ModePRBabysitter:
+		return "No PRs awaiting merge"
 	default:
 		return p.RightEmptyMessage
 	}
@@ -1175,6 +1210,8 @@ func paneListError(p RenderParams, mode Mode) string {
 	switch {
 	case mode == ModeActiveFlows:
 		return p.ActiveFlowsListError
+	case mode == ModePRBabysitter:
+		return p.PRBabysitterListError
 	case paneOK && pane == PaneTop:
 		return p.TopListError
 	case paneOK && pane == PaneBottom:
@@ -1190,13 +1227,15 @@ func paneFlowDegradationWarning(p RenderParams, mode Mode) string {
 		return p.FlowDegradationWarning
 	case ModeActiveFlows:
 		return p.ActiveFlowDegradationWarning
+	case ModePRBabysitter:
+		return p.PRBabysitterDegradationWarning
 	default:
 		return ""
 	}
 }
 
 func paneItemFilterState(p RenderParams, mode Mode) (string, int) {
-	if mode == ModeActiveFlows {
+	if mode == ModeActiveFlows || mode == ModePRBabysitter {
 		return p.ItemSearch, p.ItemSourceCount
 	}
 	pane, ok := PaneForMode(mode)
@@ -1225,7 +1264,7 @@ func modeResultLabel(mode Mode) string {
 		return "session"
 	case ModePlans:
 		return "plan"
-	case ModeFlows, ModeActiveFlows:
+	case ModeFlows, ModeActiveFlows, ModePRBabysitter:
 		return "flow"
 	default:
 		if IsBeadsMode(mode) {
@@ -1255,6 +1294,8 @@ func modeDataLabel(mode Mode) string {
 		return "flows"
 	case ModeActiveFlows:
 		return "active flows"
+	case ModePRBabysitter:
+		return "PR babysitter"
 	default:
 		if IsBeadsMode(mode) {
 			return beadsModeLabel(mode) + " beads"
@@ -1265,15 +1306,14 @@ func modeDataLabel(mode Mode) string {
 
 func renderStackedModeHeader(p RenderParams, mode Mode, width int, takeover bool) string {
 	if takeover {
-		return renderModeHeaderRowWithRight(nil, &modeHeaderItem{key: "^a", name: "active flows", active: true}, width)
+		return renderModeHeaderRowWithRightItems(nil, takeoverHeaderItems(mode), width)
 	}
 	if IsGitMode(mode) || IsBeadsMode(mode) {
 		topLevel := []modeHeaderItem{
 			{key: "1", name: "git", active: IsGitMode(mode)},
 			{key: "2", name: "beads", active: IsBeadsMode(mode)},
 		}
-		activeFlows := modeHeaderItem{key: "^a", name: "active flows"}
-		header := renderModeHeaderRowWithRight(topLevel, &activeFlows, width)
+		header := renderModeHeaderRowWithRightItems(topLevel, takeoverHeaderItems(mode), width)
 		if IsGitMode(mode) {
 			return header + "\n" + renderModeHeaderRow([]modeHeaderItem{
 				{key: "w", name: "worktrees", active: mode == ModeWorktrees},
@@ -1363,9 +1403,9 @@ func renderModeHeaderWithBeads(mode Mode, width, fetched, total int, available, 
 		{key: "4", name: "flows", active: mode == ModeFlows},
 		{key: "5", name: "beads", active: IsBeadsMode(mode)},
 	}
-	activeFlows := modeHeaderItem{key: "^a", name: "active flows", active: mode == ModeActiveFlows}
+	takeovers := takeoverHeaderItems(mode)
 	separator := strings.Repeat("─", width)
-	header := renderModeHeaderRowWithRight(topLevel, &activeFlows, width)
+	header := renderModeHeaderRowWithRightItems(topLevel, takeovers, width)
 	if IsGitMode(mode) {
 		subviews := []modeHeaderItem{
 			{key: "w", name: "worktrees", active: mode == ModeWorktrees},
@@ -1428,14 +1468,28 @@ func renderedModeHeaderItems(items []modeHeaderItem) []string {
 }
 
 func renderModeHeaderRowWithRight(left []modeHeaderItem, right *modeHeaderItem, width int) string {
-	leftLine := renderModeHeaderRow(left, width)
 	if right == nil {
+		return renderModeHeaderRowWithRightItems(left, nil, width)
+	}
+	return renderModeHeaderRowWithRightItems(left, []modeHeaderItem{*right}, width)
+}
+
+func takeoverHeaderItems(mode Mode) []modeHeaderItem {
+	return []modeHeaderItem{
+		{key: "^p", name: "PR babysitter", active: mode == ModePRBabysitter},
+		{key: "^a", name: "active flows", active: mode == ModeActiveFlows},
+	}
+}
+
+func renderModeHeaderRowWithRightItems(left, right []modeHeaderItem, width int) string {
+	leftLine := renderModeHeaderRow(left, width)
+	if len(right) == 0 {
 		return leftLine
 	}
-	rightLine := renderModeHeaderItem(*right)
+	rightLine := strings.Join(renderedModeHeaderItems(right), " ")
 	rightWidth := ansi.StringWidth(rightLine)
 	if width <= rightWidth {
-		return ansi.Truncate(leftLine+" "+rightLine, width, "")
+		return ansi.Truncate(" "+rightLine, width, "")
 	}
 	leftWidth := ansi.StringWidth(leftLine)
 	if leftWidth+rightWidth <= width {
@@ -1499,6 +1553,7 @@ type statusBarParams struct {
 	Width                        int
 	Mode                         Mode
 	ActiveFlows                  bool
+	PRBabysitter                 bool
 	Overlay                      OverlayState
 	InputMode                    InputMode
 	FormHasMultiline             bool
@@ -1702,7 +1757,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	title := titleStyle.Render("Shortcuts") + "  " + modeStyle.Render(modeShortcutTitleForStatus(sp))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
-	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.Mode == ModePRBabysitter || sp.ActiveFlows || sp.PRBabysitter
 	tight := height <= 7 || (flowSurfaceActive && height <= 14)
 	if !compact && !tight {
 		lines = append(lines, strings.Repeat(" ", width))
@@ -1819,7 +1874,7 @@ func padShortcutKey(key string, width int) string {
 }
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
-	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.Mode == ModePRBabysitter || sp.ActiveFlows || sp.PRBabysitter
 	if sp.EmbeddedTerminalActive {
 		hints := []shortcutHint{{Key: "ctrl+]", Label: "commands"}}
 		if sp.EmbeddedTerminalPrefix {
@@ -1849,7 +1904,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		navigation = append(navigation, shortcutHint{Key: "enter", Label: "pane", Inline: true})
 	}
 	if sp.ActivePane != PaneRepos {
-		if sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
+		if sp.Mode != ModeActiveFlows && sp.Mode != ModePRBabysitter && !sp.ActiveFlows && !sp.PRBabysitter {
 			navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 		}
 		if IsGitMode(sp.Mode) {
@@ -1862,6 +1917,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
 		{Key: "ctrl+a", Label: "active flows"},
+		{Key: "ctrl+p", Label: "PR babysitter"},
 		{Key: "f2", Label: "edit prompts"},
 		{Key: "f5", Label: "refresh"},
 	}
@@ -2033,7 +2089,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			)
 		}
 	}
-	if sp.ActivePane != PaneRepos && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches && !sp.ActiveFlows {
+	if sp.ActivePane != PaneRepos && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches && !sp.ActiveFlows && !sp.PRBabysitter {
 		if sp.FetchAvailable {
 			actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
 		}
@@ -2076,7 +2132,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	var flowModeControls []shortcutHint
 	var flowAgentControls []shortcutHint
 	if sp.ActivePane != PaneRepos && sp.RepoSelected {
-		if !sp.ActiveFlows {
+		if !sp.ActiveFlows && !sp.PRBabysitter {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 		}
 		if sp.FlowSelected {
@@ -2212,8 +2268,8 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
-	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
-	if height < 20 && sp.Mode != ModeFlows && sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.Mode == ModePRBabysitter || sp.ActiveFlows || sp.PRBabysitter
+	if height < 20 && sp.Mode != ModeFlows && sp.Mode != ModeActiveFlows && sp.Mode != ModePRBabysitter && !sp.ActiveFlows && !sp.PRBabysitter {
 		paneKey := paneShortcutKeyForStatus(sp)
 		sections = prioritizeShortcutInSection(sections, "Global", "A", paneKey)
 	}
@@ -2294,7 +2350,7 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 	if sp.Mode == ModeBranches {
 		return renderBranchFooterShortcuts(sp, sections)
 	}
-	if sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows {
+	if sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.Mode == ModePRBabysitter || sp.ActiveFlows || sp.PRBabysitter {
 		return renderFlowFooterShortcuts(sp, sections)
 	}
 	return renderGenericFooterShortcuts(sp, sections)
@@ -2369,22 +2425,23 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 	paneKey := paneShortcutKeyForStatus(sp)
 	for _, drop := range [][]string{
 		{},
-		{"f5"},
-		{"f5", "f2"},
-		{"f5", "f2", "ctrl+a"},
-		{"f5", "f2", "ctrl+a", "A"},
-		{"f5", "f2", "ctrl+a", "A", "D"},
-		{"f5", "f2", "ctrl+a", "A", "D", "←/→"},
-		{"f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓"},
-		{"f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
+		{"ctrl+p"},
+		{"ctrl+p", "f5"},
+		{"ctrl+p", "f5", "f2"},
+		{"ctrl+p", "f5", "f2", "ctrl+a"},
+		{"ctrl+p", "f5", "f2", "ctrl+a", "A"},
+		{"ctrl+p", "f5", "f2", "ctrl+a", "A", "D"},
+		{"ctrl+p", "f5", "f2", "ctrl+a", "A", "D", "←/→"},
+		{"ctrl+p", "f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓"},
+		{"ctrl+p", "f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"ctrl+p", "f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f2", "ctrl+a", "ctrl+p", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -2397,9 +2454,10 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 		return full
 	}
 	for _, drop := range [][]string{
-		{"f2"},
-		{"f2", "f5"},
-		{"f2", "f5", "ctrl+a"},
+		{"ctrl+p"},
+		{"ctrl+p", "f2"},
+		{"ctrl+p", "f2", "f5"},
+		{"ctrl+p", "f2", "f5", "ctrl+a"},
 	} {
 		candidate := "  " + renderFooterHintList(flowFooterSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
@@ -2766,6 +2824,8 @@ func modeShortcutTitle(mode Mode) string {
 		return "Flows"
 	case ModeActiveFlows:
 		return "Active flows"
+	case ModePRBabysitter:
+		return "PR babysitter"
 	case ModeBeadsReady, ModeBeadsBlocked, ModeBeadsOpen, ModeBeadsInProgress, ModeBeadsClosed:
 		return "Beads " + beadsModeTitle(mode)
 	default:
@@ -2799,6 +2859,9 @@ func beadsModeTitle(mode Mode) string {
 }
 
 func modeShortcutTitleForStatus(sp statusBarParams) string {
+	if sp.PRBabysitter || sp.Mode == ModePRBabysitter {
+		return "PR babysitter"
+	}
 	if sp.ActiveFlows || sp.Mode == ModeActiveFlows {
 		return "Active flows"
 	}
@@ -3509,6 +3572,83 @@ const (
 	flowPRWidth      = 8
 	flowUpdatedWidth = 10
 )
+
+const (
+	prBabysitterRepoWidth         = 16
+	prBabysitterFlowWidth         = 34
+	prBabysitterBeadWidth         = 14
+	prBabysitterMergeabilityWidth = 12
+	prBabysitterChecksWidth       = 10
+)
+
+func renderPRBabysitterPane(rows []PRBabysitterRow, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity) []string {
+	if height <= 0 {
+		return nil
+	}
+	header := truncateToWidth(statusStyle.Render(formatPRBabysitterColumns("   ", "Mergeability", "Checks", "Repo", "Flow", "Bead")), width)
+	rowHeight := height - TableHeaderRows
+	if rowHeight <= 0 {
+		return []string{header}
+	}
+	active := newFlowTerminalActivitySet(activity)
+	visualRows := make([]string, 0, len(rows))
+	for index, row := range rows {
+		record := row.Flow
+		title := terminalSafeSingleLine(row.Title)
+		repo := terminalSafeSingleLine(row.Repo)
+		beadID := terminalSafeSingleLine(row.BeadID)
+		mergeability := terminalSafeSingleLine(row.Mergeability)
+		checks := terminalSafeSingleLine(row.Checks)
+		prefix := flowRowPrefix(false, active.hasFlow(record.FlowID))
+		line := formatPRBabysitterColumns(
+			prefix,
+			prBabysitterStatusStyle(mergeability).Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
+			prBabysitterStatusStyle(checks).Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
+			statusStyle.Render(fitSessionColumn(repo, prBabysitterRepoWidth)),
+			stashMsgStyle.Render(fitSessionColumn(title, prBabysitterFlowWidth)),
+			statusStyle.Render(fitSessionColumn(beadID, prBabysitterBeadWidth)),
+		)
+		if index == selected && selectedPhaseID == "" {
+			line = renderSelectedRow(formatPRBabysitterColumns(
+				selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
+				selectedStyle.Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
+				selectedStyle.Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
+				selectedStyle.Render(fitSessionColumn(repo, prBabysitterRepoWidth)),
+				selectedStyle.Render(fitSessionColumn(title, prBabysitterFlowWidth)),
+				selectedStyle.Render(fitSessionColumn(beadID, prBabysitterBeadWidth)),
+			), width)
+		}
+		visualRows = append(visualRows, truncateToWidth(line, width))
+		if record.FlowID == expandedFlowID {
+			visualRows = append(visualRows, renderFlowPhaseRows(record, width, selectedPhaseID, active, true)...)
+		}
+	}
+	return append([]string{header}, scrollAndPad(visualRows, scroll, rowHeight)...)
+}
+
+func formatPRBabysitterColumns(prefix, mergeability, checks, repo, flow, bead string) string {
+	return fmt.Sprintf("%s%s  %s  %s  %s  %s",
+		prefix,
+		fitSessionColumn(mergeability, prBabysitterMergeabilityWidth),
+		fitSessionColumn(checks, prBabysitterChecksWidth),
+		fitSessionColumn(repo, prBabysitterRepoWidth),
+		fitSessionColumn(flow, prBabysitterFlowWidth),
+		fitSessionColumn(bead, prBabysitterBeadWidth),
+	)
+}
+
+func prBabysitterStatusStyle(status string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "mergeable", "passing":
+		return cleanStyle
+	case "conflicting", "failing":
+		return dirtyRedStyle
+	case "pending":
+		return aheadBehindStyle
+	default:
+		return statusStyle
+	}
+}
 
 func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, showRepo bool, repoDisplayNames map[string]string) []string {
 	if height <= 0 {

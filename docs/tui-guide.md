@@ -28,8 +28,8 @@ Each stacked pane reserves at least six list rows. If the shared content row
 budget is below the 19-row split threshold, Approach degrades to one full-height
 content pane: the focused pane, or the remembered content pane while repos owns
 focus. Focus still moves through both stored panes and swaps which one is
-visible. Active Flows is a separate takeover that always spans the combined
-content height and restores both stored panes exactly when closed.
+visible. Active Flows and PR Babysitter are separate takeovers that always span
+the combined content height and restore both stored panes exactly when closed.
 
 Press `f2` from normal TUI views to open the prompt-template editor for the
 `[agent].plan_prompt` and `[flow_prompts]` templates; embedded terminal input
@@ -82,41 +82,42 @@ title, and assignee; repo filtering remains available from the left pane.
 | Top `1` / `2` | Switch the top pane to Git / Beads at its last-used subview; Beads defaults to Ready before first use |
 | Bottom `1` / `2` / `3` | Switch the bottom pane to Sessions / Plans / Flows |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
+| `ctrl+p` | Toggle PR Babysitter; pressing it again from PR Babysitter returns to the previous view. In tmux sessions configured with `ctrl+p` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
-| `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane; grouped entries use their remembered subview. Active Flows is not in either cycle. |
-| `h` | Switch to the history subview inside the Git view; toggle the selected Flow's persisted headless/interactive preference in Flows or Active Flows |
+| `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane; grouped entries use their remembered subview. Active Flows and PR Babysitter are not in either cycle. |
+| `h` | Switch to the history subview inside the Git view; toggle the selected Flow's persisted headless/interactive preference on any Flow surface |
 | `M` | Choose the global CLI model on a Flow row, or the selected expanded phase's model override/fallback in flows view |
 | `E` | Choose the global CLI effort on a Flow row, or the selected expanded phase's effort override/fallback in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
-| `s` | Start the selected CLI agent in the selected Flow's exact existing worktree in Flows or Active Flows; page the selected summary in Sessions |
-| `R` | Launch an embedded repair agent for a genuinely stalled selected Flow in flows or Active Flows view |
+| `s` | Start the selected CLI agent in the selected Flow's exact existing worktree on any Flow surface; page the selected summary in Sessions |
+| `R` | Launch an embedded repair agent for a genuinely stalled selected Flow on any Flow surface |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
-| `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
-| `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree (flows and active flows views) |
+| `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (eligible Flow rows) |
+| `U` | Launch an agent in the selected Flow's worktree with the prompt `autofix pr #<num>`, wherever `m` (mark merged) is offered and the Flow has a worktree |
 | `A` | Choose and persist the global coding agent (`codex` or `claude`), or edit the selected expanded Flow phase's agent stamp |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, toggle auto mode for the selected Flow, or toggle persisted auto-progression for a selected epic when `a: auto on/off` is shown |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
-| `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
+| `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR from any Flow surface when PR metadata exists |
 | `u` | Unlock a locked worktree (worktrees view) |
 | `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview |
 | `F` | Create and immediately start the selected Bead's Flow in a focused, settled Ready subview; pull with `--ff-only` outside that owned Ready selection (including eligible worktrees and checked-out branches) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
-| `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
-| `C` | Close the selected Flow with a required reason, or reopen it after confirmation if it is already closed (flows and active flows views) |
+| `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID on a Flow surface |
+| `C` | Close the selected Flow with a required reason, or reopen it after confirmation if it is already closed |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or recover a selected Flow phase after confirmation — reset it to ready when it is recoverable, otherwise release an unfinished session that is blocking it |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
-| `i` | Alias for plan implementation launch, or open the linked GitHub issue (flows and active flows views, when issue metadata exists) |
+| `i` | Alias for plan implementation launch, or open the linked GitHub issue from any Flow surface when issue metadata exists |
 | `D` | Toggle destructive mode |
 | `ctrl+r` | Restore and focus the full repos pane (outside search or embedded-terminal input focus) |
-| `f5` | Rescan repositories and refetch both stored panes; while Active Flows is open, refresh it independently too |
+| `f5` | Rescan repositories and refetch both stored panes; independently supersede and refresh the visible Active Flows or PR Babysitter takeover too |
 | `ctrl+t` | Hide or show the shared embedded terminal dock (outside search and terminal input); when input is focused, use `ctrl+] t` |
 | `tab` | Cycle focus forward through repos, top, bottom, and an eligible terminal; collapsed repos are skipped |
 | `bksp` | Cycle focus in reverse (outside search or embedded-terminal input focus) |
@@ -125,9 +126,10 @@ title, and assignee; repo filtering remains available from the left pane.
 
 ## View Switching and the Header
 
-The top header shows local `1` Git and `2` Beads, with `^a` Active Flows pinned
-to the right. The bottom header independently shows local `1` Sessions, `2`
-Plans, and `3` Flows. Numbers are silent no-ops from repos, Active Flows, the
+The top header shows local `1` Git and `2` Beads, with `^a` Active Flows and
+`^p` PR Babysitter pinned to the right. The bottom header independently shows
+local `1` Sessions, `2` Plans, and `3` Flows. Numbers are silent no-ops from
+repos, either takeover, the
 other content pane, and raw terminal input.
 
 While Git is stored in the top pane, a second header row lists its subviews with their
@@ -282,11 +284,11 @@ Resuming a CLI `codex` or `claude` session, launching a CLI Flow phase, or
 repairing a stalled Flow opens
 a runtime-only terminal in one shared full-width dock — a top-level pane below
 the repo, content, and shortcut panes, directly above the status bar.
-The dock persists while switching among Git, sessions, plans, flows, and
-Active Flows. Its terminal numbers and active selection are global, so a
-session resume and a Flow launch appear in the same numbered header. The
-current list remains usable above the dock; in particular, the saved-session
-table is never replaced by the terminal surface.
+The dock persists while switching among Git, sessions, plans, flows, Active
+Flows, and PR Babysitter. Its terminal numbers and active selection are
+global, so a session resume and a Flow launch appear in the same numbered
+header. The current list remains usable above the dock; in particular, the
+saved-session table is never replaced by the terminal surface.
 
 Press `ctrl+t` from repo or list focus to store whether the dock is requested
 open or manually hidden. An expanded dock shrinks before either stored pane is
@@ -1233,3 +1235,50 @@ attached-session resumes, auto-mode toggles, `i` issue and `p` PR opening,
 visible active Flow rows and their expanded phase rows. `C` closes a Flow from
 here too, which removes its row; reopening is reachable only from the repo's
 flows pane, since a closed Flow has no Active Flows row to select.
+
+## PR Babysitter View (`ctrl+p`)
+
+Press `ctrl+p` from any normal view to watch GitHub PRs that are waiting at a
+Flow's Merge boundary. The takeover spans the combined content height beside
+repos and above the shared terminal dock. Press `ctrl+p` again to restore the
+exact original top mode, bottom mode, remembered content pane, and focus.
+Number keys and horizontal arrows do not enter or leave it.
+
+`ctrl+a` while PR Babysitter is open switches directly to Active Flows;
+`ctrl+p` from Active Flows switches directly to PR Babysitter. A cross-switch
+keeps the current repo/content focus and the original return snapshot. Closing
+the destination takeover with its own key still restores the view that was
+active before the first takeover opened.
+
+Each row shows repository, terminal-safe Flow title, linked Bead ID (blank when
+the Flow has no Bead link), live GitHub mergeability, and live checks status.
+Mergeability is `mergeable`, `conflicting`, or `unknown`; checks are `passing`,
+`failing`, `pending`, or `unknown`. Expanding a row with `enter` renders the
+ordinary Flow phase details beneath those dashboard columns.
+
+A Flow qualifies only when it is non-terminal, has a complete GitHub PR target,
+has exactly one top-level semantic Merge phase, and has no unresolved recovered
+graph edges. A ready or completed Merge phase must still have satisfied
+predecessors and pending merge metadata. A blocked Merge phase remains visible
+with pending or blocked merge metadata even if an upstream predecessor was
+later reopened. Merged, closed, abandoned, duplicate-Merge, child-Merge, and
+already-recorded-merged records are excluded.
+
+GitHub status is queried with `gh` when the view opens, every 30 seconds after
+the newest visible refresh settles, and immediately when `f5` supersedes the
+current refresh. At most four PR queries run concurrently and each has a
+10-second timeout. Leaving or cross-switching the view cancels in-flight
+processes and hidden views generate no `gh` traffic. A failed Flow-list refresh
+keeps cached rows and statuses with a cached-data warning; an individual `gh`
+failure replaces that row's two live columns with `unknown` and does not break
+the dashboard.
+
+Moving focus to repos filters rows to the selected repository; returning to
+content restores the global list and preserves selection by Flow ID when it is
+still present. The shared Flow handlers provide phase expansion and actions such
+as `p`, `c`, `C`, and `i`. `m` and `U` retain their ordinary manual-merge gate:
+a blocked Merge row can remain useful to babysit without gaining either action.
+
+As with `ctrl+a`, a tmux configuration that uses `ctrl+p` as its prefix consumes
+the key before Approach. Use that tmux configuration's prefix-passthrough
+sequence to send `ctrl+p` through to the TUI.

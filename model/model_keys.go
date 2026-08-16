@@ -72,8 +72,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !m.searchActive && key == "ctrl+a" {
 		return m.handleActiveFlowsToggle()
 	}
+	if !m.searchActive && key == "ctrl+p" {
+		return m.handlePRBabysitterToggle()
+	}
 
-	if !m.searchActive && m.contentListInputEligible() && !m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
+	if !m.searchActive && m.contentListInputEligible() && !m.takeoverVisible() && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd
@@ -171,7 +174,8 @@ func (m Model) toggleEmbeddedTerminalDock() Model {
 func (m Model) reflowForTerminalDock() Model {
 	m = m.reflowRepos()
 	m = m.reflowStoredPanes()
-	return m.reflowActiveFlows()
+	m = m.reflowActiveFlows()
+	return m.reflowPRBabysitter()
 }
 
 func (m Model) reflowStoredPanes() Model {
@@ -338,8 +342,11 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.filteredRepos()) > 0 {
 			m = m.setRepoPaneCollapsed(true)
-			if m.activeFlowSurfaceVisible() {
+			if m.takeoverVisible() {
 				m.activePane = m.contentPane
+				if m.prBabysitterSurfaceVisible() {
+					return m.syncPRBabysitterFromCache(), nil
+				}
 				return m.syncActiveFlowsFromCache(), nil
 			}
 			m = m.focusContentPane(ui.PaneTop)
@@ -379,9 +386,13 @@ func (m Model) moveRepoSelection(delta int) (tea.Model, tea.Cmd) {
 
 func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
 	m = m.invalidateReadyBeadFlowCreateRequest()
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		m = m.resetStoredPaneCursors()
-		m = m.syncActiveFlowsFromCache()
+		if m.prBabysitterSurfaceVisible() {
+			m = m.syncPRBabysitterFromCache()
+		} else {
+			m = m.syncActiveFlowsFromCache()
+		}
 		if repoSelected {
 			return m.startStoredModeFetches()
 		}
@@ -395,7 +406,7 @@ func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd
 }
 
 func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		return m.handleActiveFlowSurfaceKey(key)
 	}
 	if next, cmd, handled := m.handleGitSubviewKey(key); handled {
@@ -623,7 +634,10 @@ func (m Model) handleReadyBeadFlowCreate(intent readyBeadFlowIntent) (Model, tea
 func (m Model) togglePrimaryPaneFocus() Model {
 	if m.activePane == ui.PaneRepos {
 		m.activePane = m.contentPane
-		if m.activeFlowSurfaceVisible() {
+		if m.takeoverVisible() {
+			if m.prBabysitterSurfaceVisible() {
+				return m.syncPRBabysitterFromCache()
+			}
 			return m.syncActiveFlowsFromCache()
 		}
 		return m
@@ -634,14 +648,17 @@ func (m Model) togglePrimaryPaneFocus() Model {
 func (m Model) focusRepoPane() Model {
 	m = m.setRepoPaneCollapsed(false)
 	m.activePane = ui.PaneRepos
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		m = m.clearSelectedFlowPhase()
+		if m.prBabysitterSurfaceVisible() {
+			return m.syncPRBabysitterFromCache()
+		}
 		return m.syncActiveFlowsFromCache()
 	}
 	if m.focusedMode() == ui.ModePlans {
 		m = m.clearSelectedPlanPhase()
 	}
-	if m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible() {
+	if m.focusedMode() == ui.ModeFlows || m.takeoverVisible() {
 		m = m.clearSelectedFlowPhase()
 	}
 	return m
@@ -661,7 +678,7 @@ func (m Model) cyclePaneFocusForward() Model {
 	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		if m.activeFlowSurfaceVisible() && m.repoPaneCollapsed {
+		if m.takeoverVisible() && m.repoPaneCollapsed {
 			return m.focusContentPane(m.contentPane)
 		}
 		if m.repoPaneCollapsed {
@@ -669,7 +686,7 @@ func (m Model) cyclePaneFocusForward() Model {
 		}
 		return m.focusRepoPane()
 	}
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		if m.activePane == ui.PaneRepos {
 			return m.focusContentPane(m.contentPane)
 		}
@@ -704,12 +721,12 @@ func (m Model) cyclePaneFocusBackward() Model {
 	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		if m.activeFlowSurfaceVisible() {
+		if m.takeoverVisible() {
 			return m.focusContentPane(m.contentPane)
 		}
 		return m.focusContentPane(ui.PaneBottom)
 	}
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		if m.activePane != ui.PaneRepos {
 			if m.repoPaneCollapsed && terminalEligible {
 				return m.focusTerminalCommand()
@@ -757,7 +774,10 @@ func (m Model) focusContentPane(pane ui.Pane) Model {
 	m.contentPane = pane
 	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
+		if m.prBabysitterSurfaceVisible() {
+			return m.syncPRBabysitterFromCache()
+		}
 		return m.syncActiveFlowsFromCache()
 	}
 	if changed {
@@ -902,20 +922,20 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 // (-1 for up, +1 for down) and keeps the new selection visible.
 func (m Model) moveCursor(delta int) Model {
 	w := m.contentWidth()
-	if m.activeFlowSurfaceVisible() {
+	if m.takeoverVisible() {
 		h := m.flowSurfaceContentHeight()
 		if next, ok := m.moveSelectedFlowPhase(delta); ok {
 			return next
 		}
 		if m.canScrollExpandedFlow(delta, h) {
-			m.activeFlows = m.activeFlows.ScrollBy(delta, h, w)
+			m = m.setCurrentFlowPane(m.currentFlowPane().ScrollBy(delta, h, w))
 			return m
 		}
-		if m.activeFlows.Len() <= 1 {
+		if m.currentFlowPane().Len() <= 1 {
 			return m
 		}
 		before := m.selectedFlowID()
-		m.activeFlows = m.activeFlows.Move(delta, h, w)
+		m = m.setCurrentFlowPane(m.currentFlowPane().Move(delta, h, w))
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.setExpandedFlowID("")
 		}
@@ -1075,7 +1095,7 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 	if repoPath == "" {
 		return m, nil
 	}
-	allRepositories := m.activeFlowSurfaceVisible()
+	allRepositories := m.takeoverVisible()
 	// The other half of the fence admission holds. Admission refuses a launch
 	// while a headless write is outstanding; this refuses the toggle once the
 	// launch is past admission, which is the only ordering the launch side
@@ -1467,6 +1487,38 @@ func flowManualMergeEligible(record flowstore.FlowRecord) bool {
 		return true
 	case flowstore.PhaseCompleted:
 		return record.Merge.Status == flowstore.MergePending || record.Merge.Status == flowstore.MergeMerged
+	default:
+		return false
+	}
+}
+
+func prBabysitterEligible(record flowstore.FlowRecord) bool {
+	if !flowstore.HasPRTarget(record.PR) ||
+		record.GraphRecovery.Status == flowstore.GraphRecoveryMissingEdgesUnresolved {
+		return false
+	}
+	switch flowstore.DeriveStatus(record) {
+	case flowstore.StatusMerged, flowstore.StatusClosed, flowstore.StatusAbandoned:
+		return false
+	}
+	mergeCount := 0
+	var merge flowstore.FlowPhase
+	for _, phase := range record.Phases {
+		if flowstore.SemanticKind(phase) != flowstore.KindMerge {
+			continue
+		}
+		mergeCount++
+		merge = phase
+	}
+	if mergeCount != 1 || merge.ParentPhaseID != "" || record.Merge.Status == flowstore.MergeMerged {
+		return false
+	}
+	switch merge.Status {
+	case flowstore.PhaseReady, flowstore.PhaseCompleted:
+		return record.Merge.Status == flowstore.MergePending &&
+			flowstore.PhasePredecessorsSatisfied(record, merge.PhaseID)
+	case flowstore.PhaseBlocked:
+		return record.Merge.Status == flowstore.MergePending || record.Merge.Status == flowstore.MergeBlocked
 	default:
 		return false
 	}
@@ -2511,7 +2563,7 @@ func flowEmbeddedTerminalSlotMatchesPhaseLaunch(slot embeddedTerminalSlot, flowI
 }
 
 func (m Model) handleFlowPhaseResetConfirmed(msg flowPhaseResetConfirmedMsg) (Model, tea.Cmd) {
-	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	if m.hasRunningFlowEmbeddedTerminalForPhase(msg.FlowID, msg.PhaseID) {
@@ -3417,7 +3469,7 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 	if from != to && (ui.IsBeadsMode(from) || ui.IsBeadsMode(to)) {
 		m = m.clearBeadExpansion()
 	}
-	if from == ui.ModeActiveFlows || to == ui.ModeActiveFlows {
+	if from == ui.ModeActiveFlows || to == ui.ModeActiveFlows || from == ui.ModePRBabysitter || to == ui.ModePRBabysitter {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
 		return m.invalidateViewRequest()
@@ -3462,10 +3514,18 @@ func (m Model) resetRightPaneCursors() Model {
 	m = m.resetStoredPaneCursors()
 	m.listRequestSeq++
 	m.listRequests[int(ui.ModeActiveFlows)] = m.listRequestSeq
+	m.listRequests[int(ui.ModePRBabysitter)] = m.listRequestSeq
 	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
 	m.expandedActiveFlowID = ""
 	m.selectedActiveFlowPhaseID = ""
 	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
+	m.prBabysitterRecords = nil
+	m.prBabysitterStatuses = make(map[string]actions.PullRequestStatus)
+	m.prBabysitterFlows = m.prBabysitterFlows.SetItems(nil).ResetSelection()
+	m.expandedPRBabysitterFlowID = ""
+	m.selectedPRBabysitterPhaseID = ""
+	m.prBabysitterFlows = m.prBabysitterFlows.SetItemHeight(flowItemHeight(""))
+	m = m.setFlowDegradation(ui.ModePRBabysitter, "", nil)
 	return m
 }
 
@@ -3552,7 +3612,7 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 	sharedOuterRows := m.embeddedTerminalDockAllocation().SharedOuterRows
 	outerRows := sharedOuterRows
 	headerRows := 1
-	if mode != ui.ModeActiveFlows {
+	if mode != ui.ModeActiveFlows && mode != ui.ModePRBabysitter {
 		layout := ui.StackedContentLayout(sharedOuterRows, m.activePane, m.contentPane)
 		pane, ok := ui.PaneForMode(mode)
 		if !ok {
@@ -3566,7 +3626,7 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 		}
 	}
 	rows := outerRows - 2 - headerRows
-	if mode == ui.ModeSessions || mode == ui.ModePlans || mode == ui.ModeFlows || mode == ui.ModeActiveFlows {
+	if mode == ui.ModeSessions || mode == ui.ModePlans || mode == ui.ModeFlows || mode == ui.ModeActiveFlows || mode == ui.ModePRBabysitter {
 		rows -= ui.TableHeaderRows
 	}
 	rows -= m.paneCachedWarningRows(mode)
@@ -3592,7 +3652,7 @@ func (m Model) paneCachedWarningRows(mode ui.Mode) int {
 }
 
 func (m Model) paneSourceCount(mode ui.Mode) int {
-	if mode == ui.ModeActiveFlows {
+	if mode == ui.ModeActiveFlows || mode == ui.ModePRBabysitter {
 		return m.activeItemPaneSourceCount()
 	}
 	return m.itemPaneSourceCount(mode)
@@ -3607,6 +3667,8 @@ func (m Model) paneHasRows(mode ui.Mode) bool {
 	switch mode {
 	case ui.ModeActiveFlows:
 		return m.activeFlows.Len() > 0
+	case ui.ModePRBabysitter:
+		return m.prBabysitterFlows.Len() > 0
 	case ui.ModeFlows:
 		return m.flows.Len() > 0
 	case ui.ModeWorktrees:
