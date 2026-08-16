@@ -51,6 +51,18 @@ const (
 	// plus the braces around an object one. It is charged per resolved
 	// occurrence, where fieldNameOverheadBytes is charged per response key.
 	elementOverheadBytes = 3
+	// errorEntryOverheadBytes covers one `errors` entry for a field whose
+	// failure is scoped to the field rather than the request: the sanitized
+	// message, the locations array, the braces and separators, and the numeric
+	// list indices along its path. The path's response *keys* are not in here —
+	// an alias makes those as wide as the client cares to type, so they are
+	// charged from the document in documentKeyBytes.
+	//
+	// The response body is not only `data`. Flow.epicProgression fails per Flow,
+	// so one unreadable progression row yields one entry per Flow naming that
+	// epic and per aliased selection of it — unbounded amplification of a
+	// snapshot the data budget alone measures as small.
+	errorEntryOverheadBytes = 512
 	// typenameField resolves per object instance rather than against the
 	// schema, so it is exempt from the depth limit but not the cost limit.
 	typenameField = "__typename"
@@ -343,6 +355,31 @@ type resultBounds struct {
 	phasesPerFlow     int
 	dependsOnPerPhase int
 	values            fieldValueBytes
+	// progressionErrorBytes is errorEntryOverheadBytes when this snapshot holds
+	// an unreadable progression row, and zero otherwise — a healthy snapshot
+	// emits no per-field errors, so it is charged for none.
+	//
+	// One flag for the whole snapshot, not a count of the Flows that name the
+	// failed key: an unreadable row then charges every Flow.epicProgression
+	// occurrence, including Flows whose own row read fine. That is deliberate
+	// over-counting, of a piece with the pessimistic fallbacks above.
+	// Distinguishing them means a second cardinality threaded through the cost
+	// walk beside flows/flowsPerRepo, and the walk multiplies by list bounds,
+	// not by per-field counts — a bound that is subtly wrong reopens the hole,
+	// where one that is merely generous costs a 400 on an unusually wide
+	// document against a store that already has a row needing repair.
+	progressionErrorBytes int64
+}
+
+// errorBytes maps a field to the fixed part of the `errors` entry one resolved
+// occurrence of it can add. It is zero for every field that cannot fail on its
+// own: those either succeed or fail the whole request, which produces one entry
+// for the response rather than one per occurrence.
+func (b resultBounds) errorBytes(parentType, field string) int64 {
+	if parentType == "Flow" && field == "epicProgression" {
+		return b.progressionErrorBytes
+	}
+	return 0
 }
 
 // listSize maps a *schema* list field to its cardinality bound; a schema field
@@ -432,6 +469,7 @@ func inspectCost(schema *graphql.Schema, document *ast.Document, bounds resultBo
 	walker := &costWalker{
 		schema:    schema,
 		bounds:    bounds,
+		keyBytes:  documentKeyBytes(document),
 		fragments: make(map[string]*ast.FragmentDefinition),
 		memo:      make(map[string]costMeasure),
 		budget:    maxWalkBudget,
@@ -458,11 +496,63 @@ func inspectCost(schema *graphql.Schema, document *ast.Document, bounds resultBo
 }
 
 type costWalker struct {
-	schema    *graphql.Schema
-	bounds    resultBounds
+	schema *graphql.Schema
+	bounds resultBounds
+	// keyBytes bounds the response keys along any one error path. It is a
+	// property of the document, not of where the walk currently is, so it does
+	// not disturb the per-fragment memoization below.
+	keyBytes  int64
 	fragments map[string]*ast.FragmentDefinition
 	memo      map[string]costMeasure
 	budget    int
+}
+
+// documentKeyBytes is the total width of every response key in the document.
+//
+// It bounds the keys `errors[].path` can name for any one failure: a path is a
+// chain of nested fields, each contributed by a distinct field node — a node
+// can only repeat on a single path through a fragment cycle, which
+// rejectFragmentCycles has already refused — so no path names more keys than
+// the document contains. Charging the enclosing field's own key is not enough:
+// `{ <55 KiB alias>: flows { epicProgression { enabled } } }` writes that alias
+// once in `data` and once per failing Flow in `errors`.
+//
+// Iterative rather than recursive: this walks raw definitions, including
+// fragments no operation spreads, so its nesting is not the nesting
+// measureDocument bounded.
+func documentKeyBytes(document *ast.Document) int64 {
+	var total int64
+	var pending []*ast.SelectionSet
+	push := func(set *ast.SelectionSet) {
+		if set != nil {
+			pending = append(pending, set)
+		}
+	}
+	for _, definition := range document.Definitions {
+		switch node := definition.(type) {
+		case *ast.OperationDefinition:
+			push(node.SelectionSet)
+		case *ast.FragmentDefinition:
+			push(node.SelectionSet)
+		}
+	}
+	for len(pending) > 0 {
+		set := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		for _, selection := range set.Selections {
+			switch node := selection.(type) {
+			case *ast.Field:
+				total += int64(len(responseKey(node)))
+				push(node.SelectionSet)
+			case *ast.InlineFragment:
+				push(node.SelectionSet)
+			}
+		}
+		if total > maxResponseBytes {
+			return maxResponseBytes + 1
+		}
+	}
+	return total
 }
 
 // costOfSelectionSet sums the cost of every selection against parent, the
@@ -526,6 +616,11 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 		// response, and 999 aliases of `flows { id }` across 800 repos really
 		// do run Repo.flows 799 200 times, both assessed at nearly nothing.
 		perParent := costMeasure{values: 1, bytes: int64(fieldNameOverheadBytes + len(responseKey(node)))}
+		// Charged alongside the response key, and for the same reason: one
+		// resolved occurrence of a field that fails on its own writes one
+		// `errors` entry, whatever its subtree would have held. It is zero
+		// unless this snapshot actually holds a row that cannot be read.
+		perParent.bytes = saturate(perParent.bytes+w.errorEntryBytes(node, parent), maxResponseBytes)
 		return perParent.plus(w.elementCost(node, parent, shape).plus(subtree).scaledBy(shape.multiplier)), nil
 	case *ast.InlineFragment:
 		// The schema has no interfaces or unions, so an inline fragment's type
@@ -566,6 +661,22 @@ func (w *costWalker) elementCost(node *ast.Field, parent *graphql.Object, shape 
 	}
 	cost.bytes += w.bounds.valueBytes(parent.Name(), node.Name.Value)
 	return cost
+}
+
+// errorEntryBytes is what one resolved occurrence of this field can add to the
+// response's `errors` array: the fixed entry overhead plus an upper bound on
+// the response keys its path names. Fields that cannot fail on their own carry
+// nothing, and neither does any field in a snapshot with nothing unreadable in
+// it.
+func (w *costWalker) errorEntryBytes(node *ast.Field, parent *graphql.Object) int64 {
+	if parent == nil || node.Name == nil {
+		return 0
+	}
+	overhead := w.bounds.errorBytes(parent.Name(), node.Name.Value)
+	if overhead == 0 {
+		return 0
+	}
+	return saturate(overhead+w.keyBytes, maxResponseBytes)
 }
 
 // selectsBeneathALeaf reports whether the document selects fields under a

@@ -338,10 +338,15 @@ push terminal escapes into a foreground stderr.
 
 ## Live state and consistency
 
-Each request builds **one snapshot** — one `scanner.Scan` plus one
-`flowstore.List` — and resolves the whole query from it. A single response is
-therefore internally consistent, and every new request re-reads disk. There is
-no cross-request cache.
+Each request builds **one snapshot** — one `scanner.Scan`, one `flowstore.List`,
+and one `ReadEpicProgression` per distinct epic those Flows name — and resolves
+the whole query from it. A single response is therefore internally consistent,
+and every new request re-reads disk. There is no cross-request cache.
+
+All three reads happen before execution and none of them depends on the query:
+the response-size limiter has to bound what the snapshot *could* serialize, not
+what this query selected. The progression reads are indexed point lookups on the
+already-open store, so the `scanner.Scan` filesystem walk dominates.
 
 **A failing scan degrades; a non-partial failing store errors.** A missing or
 mistyped scan root is the ordinary case, not an exceptional one, so a scan
@@ -352,9 +357,9 @@ snapshot logs the diagnostic and indexes those rows. Every other Flow-store
 failure is a real failure of the primary data source and surfaces as the
 sanitized GraphQL error above.
 
-**The scan cannot be cancelled.** `scanner.Scan` and `flowstore.List` take no
-`context.Context` and walk the filesystem synchronously, so the request timeout
-cannot interrupt them. The design is explicit about this:
+**The scan cannot be cancelled.** `scanner.Scan`, `flowstore.List`, and
+`ReadEpicProgression` take no `context.Context` and read synchronously, so the
+request timeout cannot interrupt them. The design is explicit about this:
 
 1. The handler takes an in-flight semaphore slot *before* launching snapshot
    construction; if none is free it returns 503 immediately.
@@ -420,6 +425,8 @@ type Flow {
   presetName: String
   planId: String
   autoMode: Boolean!
+  bead: BeadLink
+  epicProgression: EpicProgression
   issue: Issue
   pullRequest: PullRequest
   merge: Merge
@@ -427,6 +434,23 @@ type Flow {
   currentPhase: Phase
   createdAt: DateTime!
   updatedAt: DateTime!
+}
+
+type BeadLink {
+  id: ID!
+  epicId: ID
+}
+
+type EpicProgression {
+  enabled: Boolean!
+  done: Boolean!
+  halt: EpicProgressionHalt
+}
+
+type EpicProgressionHalt {
+  childBeadId: ID!
+  status: String!
+  message: String!
 }
 
 type Phase {
@@ -495,9 +519,71 @@ sitting on", not "the phase actively executing"** — `blocked` and
 | `Merge.mergedAt` | the merge has not landed |
 | `Flow.currentPhase` | no phase is actionable |
 | `Issue.number`, `PullRequest.number` | the number is unset (`0` is not emitted) |
+| `Flow.bead` | the Flow links no Bead |
+| `BeadLink.epicId` | the link records a child Bead but no epic |
+| `Flow.epicProgression` | the Flow links no epic, **or** that epic has no progression row |
+| `EpicProgression.halt` | progression has not halted |
 
 `Phase.dependsOn` is `[String!]!` and is **never** null: a phase with no edges
 serializes as `[]`.
+
+### Bead linkage and epic progression
+
+`Flow.bead` is the Beads issue the Flow tracks, and `Flow.epicProgression` is
+the durable auto-progression state of that Bead's epic (`docs/flow-phases.md`
+covers what progression does). Both are read-only projections of what the store
+already holds — **the API never reads Beads itself and never writes progression
+state**; the server is wired to `flowstore.Store.ReadEpicProgression` and to
+nothing else.
+
+- `BeadLink.id` and `BeadLink.epicId` are the persisted link text, **verbatim**.
+  A child-only link resolves a non-null `bead` with `epicId: null`.
+- Progression is looked up by canonical `(normalized repo path, trimmed epic
+  id)`, compatible with what `ReadEpicProgression` canonicalizes, so a padded or
+  differently spelled epic id still resolves the right row while `bead.epicId`
+  keeps reading back exactly as stored.
+- `epicProgression` is null whenever `bead` is. An epic id with no child Bead id
+  is a shape the store forbids, so only an externally written record holds one;
+  the two fields never disagree about whether a Flow is linked.
+- A **missing row is `null`, not a disabled epic.** Nothing is synthesized:
+  "nobody enabled progression for this epic" and "somebody turned it off" are
+  different claims, and only the second one has a row.
+- `done` is the persisted completion flag. It is never derived from
+  `enabled: false` — a manually disabled epic is not finished.
+- `halt` carries the child Bead, the child Flow status that stopped
+  progression (`blocked`, `needs_attention`, `closed`, or `abandoned`), and a
+  free-text message.
+- One request reads **one row per distinct canonical key**. Sibling Flows under
+  the same epic share a single read, found or missing, and a Flow that links no
+  epic causes none. The reads are eager and do not depend on the query — the
+  response-size limiter has to know the widest halt message before executing —
+  so a request costs one indexed point lookup per distinct epic your Flows
+  name, whether or not it selects `epicProgression`.
+- A row that cannot be read — a malformed record is likelier here than I/O —
+  is **scoped to the epic that failed**. `Flow.epicProgression` resolves null
+  for the Flows naming that epic and reports the fixed `internal error reading
+  application state` message in the `errors` array; the key and the cause go to
+  the server log only. Every other field, every other Flow, and any query that
+  does not select `epicProgression` are unaffected. This is deliberately weaker
+  than the Flow-list failure, which fails the request: progression is an
+  optional projection and must not be a single point of failure for the API.
+  Because that error repeats per Flow and per aliased selection, the
+  response-size limit charges each of those entries — including the response
+  keys its `path` names — so an unreadable row cannot amplify past the cap. A
+  snapshot with nothing unreadable in it is charged nothing.
+
+```graphql
+{
+  flow(id: "20260814T210915Z-surface-bead-link") {
+    bead { id epicId }
+    epicProgression {
+      enabled
+      done
+      halt { childBeadId status message }
+    }
+  }
+}
+```
 
 ### Statuses are strings, not enums
 

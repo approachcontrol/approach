@@ -9,6 +9,8 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/parser"
+
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 func nestedQuery(depth int) string {
@@ -235,7 +237,7 @@ func costOf(t *testing.T, query string, bounds resultBounds) error {
 	t.Helper()
 	if bounds.values == nil {
 		repos, flows := testSources()
-		bounds.values = buildSnapshot(repos, flows, nil).bounds().values
+		bounds.values = buildSnapshot(repos, flows, nil, nil).bounds().values
 	}
 	schema, err := newSchema()
 	if err != nil {
@@ -439,6 +441,156 @@ func TestInspectCostIgnoresUnknownFields(t *testing.T) {
 	bounds := resultBounds{repos: 1000, flows: 1000, flowsPerRepo: 1000}
 	if err := costOf(t, `{ nope { alsoNope { stillNope } } }`, bounds); err != nil {
 		t.Fatalf("inspectCost(unknown fields) error = %v, want nil", err)
+	}
+}
+
+// TestInspectCostChargesBeadAndProgressionWidths keeps the Bead link and the
+// progression projection inside the byte budget. They add no list field — so no
+// cardinality bound moves — but their scalars serialize like any other leaf, and
+// the halt message is unbounded agent-supplied text.
+func TestInspectCostChargesBeadAndProgressionWidths(t *testing.T) {
+	repos, flows, progressions, logf := fullyPopulatedSources()
+	values := buildSnapshot(repos, flows, progressions, logf).bounds().values
+	for field, want := range map[string]int64{
+		"BeadLink.id":                     int64(jsonStringBytes("approach-y7g.9")),
+		"BeadLink.epicId":                 int64(jsonStringBytes("approach-y7g")),
+		"EpicProgression.enabled":         boolValueBytes,
+		"EpicProgression.done":            boolValueBytes,
+		"EpicProgressionHalt.childBeadId": int64(jsonStringBytes("approach-y7g.9")),
+		"EpicProgressionHalt.status":      int64(jsonStringBytes(flowstore.StatusBlocked)),
+		"EpicProgressionHalt.message":     int64(jsonStringBytes("the child Flow is blocked on review")),
+	} {
+		got, measured := values[field]
+		if !measured {
+			t.Errorf("%s has no measured width; it would take the %d-byte drift fallback", field, fallbackValueBytes)
+			continue
+		}
+		if got != want {
+			t.Errorf("valueBytes(%s) = %d, want %d", field, got, want)
+		}
+	}
+
+	// A halt message wide enough to matter is still charged per Flow that
+	// resolves it, so the response budget rejects the query rather than
+	// building the body.
+	bounds := resultBounds{
+		repos: 1, flows: 1000, flowsPerRepo: 1000, phasesPerFlow: 1, dependsOnPerPhase: 1,
+		values: fieldValueBytes{"EpicProgressionHalt.message": maxResponseBytes},
+	}
+	if err := costOf(t, `{ flows { epicProgression { halt { message } } } }`, bounds); !errors.Is(err, errResponseTooLarge) {
+		t.Errorf("inspectCost(wide halt message) error = %v, want errResponseTooLarge", err)
+	}
+}
+
+// TestInspectCostMeasuresProgressionWidthsWithNoRows is the regression guard for
+// the default state of every store: Flows link epics, and nothing has ever
+// enabled progression, so there is no row to measure a width from.
+//
+// EpicProgression is a non-list object, so an unmeasured scalar of it is charged
+// the pessimistic fallback once per Flow. Measuring only found rows put the
+// fallback on all five fields and rejected an ordinary flows query — over a
+// response that is null for every Flow. TestResultBoundsCoverEveryField cannot
+// catch this: its fixture always has a halted row.
+func TestInspectCostMeasuresProgressionWidthsWithNoRows(t *testing.T) {
+	const flowCount = 500
+	records := make([]flowstore.FlowRecord, 0, flowCount)
+	for i := range flowCount {
+		records = append(records, beadFlow(
+			fmt.Sprintf("flow-%d", i), "/repos/alpha",
+			fmt.Sprintf("approach-y7g.%d", i), "approach-y7g",
+		))
+	}
+	// An epic link on every Flow and not one progression row anywhere.
+	empty := &countingProgressions{}
+	snap := buildSnapshot(staticRepos(), staticFlows(records...), empty.source(), nil)
+	if len(empty.calls) != 1 {
+		t.Fatalf("progression reads = %v, want exactly the one shared key", progressionKeys(empty.calls))
+	}
+
+	bounds := snap.bounds()
+	for _, field := range []string{
+		"EpicProgression.enabled", "EpicProgression.done",
+		"EpicProgressionHalt.childBeadId", "EpicProgressionHalt.status", "EpicProgressionHalt.message",
+	} {
+		if _, measured := bounds.values[field]; !measured {
+			t.Errorf("%s has no measured width with no rows; it would take the %d-byte drift fallback per Flow",
+				field, fallbackValueBytes)
+		}
+	}
+	query := `{ flows { epicProgression { enabled done halt { childBeadId status message } } } }`
+	if err := costOf(t, query, bounds); err != nil {
+		t.Errorf("inspectCost(%s) error = %v, want none: every field resolves null", query, err)
+	}
+}
+
+// TestInspectCostChargesProgressionErrorEntries closes the amplification path
+// that is not in `data` at all. An unreadable progression row is scoped to the
+// field, so it writes one `errors` entry per Flow naming that epic and per
+// aliased selection of it — and encoding/json buffers errors and data together.
+// Measuring only the data tree let one bad row build a body several times over
+// the cap while every scalar in it measured small.
+func TestInspectCostChargesProgressionErrorEntries(t *testing.T) {
+	const flowCount = 2000
+	records := make([]flowstore.FlowRecord, 0, flowCount)
+	for i := range flowCount {
+		records = append(records, beadFlow(
+			fmt.Sprintf("flow-%d", i), "/repos/alpha",
+			fmt.Sprintf("approach-y7g.%d", i), "approach-y7g",
+		))
+	}
+	unreadable := &countingProgressions{failKeys: map[flowstore.EpicProgressionKey]error{
+		epicKey("/repos/alpha", "approach-y7g"): errors.New("malformed epic progression row"),
+	}}
+	snap := buildSnapshot(staticRepos(), staticFlows(records...), unreadable.source(), nil)
+	bounds := snap.bounds()
+	bounds.flows = flowCount
+	if bounds.progressionErrorBytes == 0 {
+		t.Fatal("an unreadable row is charged nothing; every error entry it writes is off the budget")
+	}
+
+	// The response key of a failing field is written twice: once in `data`, and
+	// once in that Flow's `errors[].path`. Charging only the first left the
+	// alias free for all 2000 entries.
+	alias := strings.Repeat("k", 32<<10)
+	query := fmt.Sprintf(`{ %s: flows { epicProgression { enabled } } }`, alias)
+	if err := costOf(t, query, bounds); !errors.Is(err, errResponseTooLarge) {
+		t.Errorf("inspectCost(wide alias over unreadable rows) error = %v, want errResponseTooLarge", err)
+	}
+
+	// The charge is conditional on this snapshot, not on the schema: a store
+	// with nothing unreadable in it emits no entries and must pay for none.
+	healthy := buildSnapshot(staticRepos(), staticFlows(records...), (&countingProgressions{}).source(), nil).bounds()
+	healthy.flows = flowCount
+	if healthy.progressionErrorBytes != 0 {
+		t.Errorf("progressionErrorBytes = %d with every row readable, want 0", healthy.progressionErrorBytes)
+	}
+	if err := costOf(t, query, healthy); err != nil {
+		t.Errorf("inspectCost(wide alias over readable rows) error = %v, want nil", err)
+	}
+}
+
+// TestDocumentKeyBytesBoundsAnyErrorPath pins what makes the charge above an
+// upper bound: an error path names nested fields, and each one is a distinct
+// node in the document text.
+func TestDocumentKeyBytesBoundsAnyErrorPath(t *testing.T) {
+	document := parseQuery(`{ alpha: repos { beta: flows { gamma: epicProgression { enabled } } } }`)
+	if document == nil {
+		t.Fatal("parseQuery() did not parse")
+	}
+	// The deepest path is alpha/beta/gamma/enabled; the total also covers the
+	// keys off that path, which is what makes it a bound rather than a guess.
+	if got, want := documentKeyBytes(document), int64(len("alpha")+len("beta")+len("gamma")+len("enabled")); got != want {
+		t.Errorf("documentKeyBytes() = %d, want %d", got, want)
+	}
+
+	// Fragments are counted from their definitions, so a spread path is charged
+	// even though the walk never expands it here.
+	spread := parseQuery(`{ ...Outer } fragment Outer on Query { wide: flows { epicProgression { done } } }`)
+	if spread == nil {
+		t.Fatal("parseQuery(fragment) did not parse")
+	}
+	if got, want := documentKeyBytes(spread), int64(len("wide")+len("epicProgression")+len("done")); got != want {
+		t.Errorf("documentKeyBytes(fragment) = %d, want %d", got, want)
 	}
 }
 

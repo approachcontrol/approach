@@ -108,6 +108,77 @@ func TestServeReflectsLiveStoreMutations(t *testing.T) {
 	}
 }
 
+// TestServeSurfacesBeadLinkAndEpicProgression proves the progression read seam
+// is wired to the same store `serve` lists Flows from. The GraphQL package
+// tests the projection against a fake source; only this one shows a row written
+// through flowstore reaching a client.
+func TestServeSurfacesBeadLinkAndEpicProgression(t *testing.T) {
+	root := t.TempDir()
+	repoPath := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	linked, err := store.Create(flowstore.FlowRecord{
+		Title:        "Linked to an epic child",
+		Instructions: "Work the child Bead",
+		RepoPath:     repoPath,
+		Bead:         flowstore.BeadLink{ID: "approach-y7g.7", EpicID: "approach-y7g"},
+	})
+	if err != nil {
+		t.Fatalf("Create(linked) error = %v", err)
+	}
+	unlinked, err := store.Create(flowstore.FlowRecord{
+		Title:        "No Bead at all",
+		Instructions: "Nothing to track",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create(unlinked) error = %v", err)
+	}
+	if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{
+		Key:     flowstore.EpicProgressionKey{RepoPath: repoPath, EpicID: "approach-y7g"},
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("SetEpicProgression() error = %v", err)
+	}
+
+	harness := startServe(t, []string{"approach", "serve", "--addr", "127.0.0.1:0", "--state-root", root},
+		serveDeps(t, t.TempDir(), nil))
+	query := func(flowID string) map[string]any {
+		t.Helper()
+		status, payload := harness.query(t,
+			`{ flow(id: "`+flowID+`") { bead { id epicId } epicProgression { enabled done halt { childBeadId } } } }`)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (%v)", status, payload)
+		}
+		return flowFromPayload(t, payload)
+	}
+
+	flow := query(linked.FlowID)
+	bead, ok := flow["bead"].(map[string]any)
+	if !ok {
+		t.Fatalf("bead = %#v, want the persisted link", flow["bead"])
+	}
+	if bead["id"] != "approach-y7g.7" || bead["epicId"] != "approach-y7g" {
+		t.Errorf("bead = %#v, want the child and epic ids written at creation", bead)
+	}
+	progression, ok := flow["epicProgression"].(map[string]any)
+	if !ok {
+		t.Fatalf("epicProgression = %#v, want the row written through the store", flow["epicProgression"])
+	}
+	if progression["enabled"] != true || progression["done"] != false || progression["halt"] != nil {
+		t.Errorf("epicProgression = %#v, want enabled, not done, not halted", progression)
+	}
+
+	// A Flow with no Bead reads back as linked to nothing, with no progression
+	// invented for it.
+	bare := query(unlinked.FlowID)
+	if bare["bead"] != nil || bare["epicProgression"] != nil {
+		t.Errorf("unlinked flow = %#v, want null bead and epicProgression", bare)
+	}
+}
+
 // TestServePassesPresetsToStore proves cfg.Flow.Presets reaches the store.
 // Presets are consulted during migrate-on-open to restore depends_on edges
 // missing from legacy records, so a store built without them reports

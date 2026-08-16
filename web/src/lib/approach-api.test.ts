@@ -163,6 +163,99 @@ describe('approach api client', () => {
       await expect(getRepos()).rejects.toMatchObject({ kind: 'graphql' })
     })
 
+    // The API scopes some failures to one field: an unreadable epic progression
+    // row nulls `Flow.epicProgression` for the Flows naming that epic and leaves
+    // the rest of the response intact. Discarding the data would turn a missing
+    // optional field into a blank error page for the whole Flow.
+    it('keeps a partial response whose errors all name a tolerated field', async () => {
+      const errors = [
+        {
+          message: 'internal error reading application state',
+          path: ['flow', 'epicProgression'],
+        },
+      ]
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          data: { flow: { id: 'f1', bead: { id: 'approach-y7g.7', epicId: 'approach-y7g' }, epicProgression: null } },
+          errors,
+        }),
+      )
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const flow = await getFlow('f1')
+
+      expect(flow?.id).toBe('f1')
+      expect(flow?.epicProgression).toBeNull()
+      // The null is the same one a missing row produces, so the failure has to
+      // survive as its own flag or the viewer reports "not configured".
+      expect(flow?.epicProgressionUnavailable).toBe(true)
+      // Not silent: the reader sees the Flow, the operator sees the cause.
+      expect(logged).toHaveBeenCalledWith('approach-api partial response:', JSON.stringify(errors))
+      logged.mockRestore()
+    })
+
+    it('leaves the progression flag clear when nothing failed', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({ data: { flow: { id: 'f1', bead: null, epicProgression: null } } }),
+      )
+
+      expect((await getFlow('f1'))?.epicProgressionUnavailable).toBe(false)
+    })
+
+    // The regression the whitelist exists for. A failed snapshot errors the
+    // `flow` root, and GraphQL nulls a failed field up to its nearest nullable
+    // parent — so the body is byte-identical to an unknown id apart from the
+    // errors array. Tolerating any response that carries `data` rendered "flow
+    // not found" for a store the server could not read at all.
+    it('rejects an errored null root rather than reporting it as a missing flow', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          data: { flow: null },
+          errors: [{ message: 'internal error reading application state', path: ['flow'] }],
+        }),
+      )
+
+      await expect(getFlow('f1')).rejects.toMatchObject({ kind: 'graphql' })
+    })
+
+    // The response body is a cast, not a parsed shape. A TypeError raised while
+    // reading it would escape the ApproachApiError path into the generic error
+    // boundary — the outcome the non-object-body check exists to prevent.
+    it.each([
+      ['a non-list errors field', { data: { flow: null }, errors: {} }],
+      ['a null entry in the errors list', { data: { flow: null }, errors: [null] }],
+      ['a scalar entry in the errors list', { data: { flow: null }, errors: ['boom'] }],
+    ])('rejects %s without throwing past fail()', async (_name, body) => {
+      fetchMock.mockResolvedValue(jsonResponse(body))
+
+      await expect(getFlow('f1')).rejects.toBeInstanceOf(ApproachApiError)
+    })
+
+    it('rejects an error with no path, which is a request-level failure', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          data: { repos: [] },
+          errors: [{ message: 'internal error reading application state' }],
+        }),
+      )
+
+      await expect(getRepos()).rejects.toMatchObject({ kind: 'graphql' })
+    })
+
+    it('rejects a response whose errors are only partly tolerated', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          data: { flow: { id: 'f1', epicProgression: null } },
+          errors: [
+            { message: 'internal error reading application state', path: ['flow', 'epicProgression'] },
+            { message: 'internal error reading application state', path: ['flow', 'phases'] },
+          ],
+        }),
+      )
+
+      await expect(getFlow('f1')).rejects.toMatchObject({ kind: 'graphql' })
+    })
+
     it('maps a network failure to an unreachable error', async () => {
       fetchMock.mockRejectedValue(new TypeError('fetch failed'))
 

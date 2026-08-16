@@ -34,9 +34,12 @@ const (
 
 // ServerOptions configures the GraphQL HTTP handler.
 type ServerOptions struct {
-	// Repos and Flows are the read seams for one snapshot per request.
-	Repos RepoSource
-	Flows FlowSource
+	// Repos, Flows, and EpicProgressions are the read seams for one snapshot
+	// per request. EpicProgressions may be nil: the snapshot then reads no
+	// progression rows and Flow.epicProgression resolves null everywhere.
+	Repos            RepoSource
+	Flows            FlowSource
+	EpicProgressions EpicProgressionSource
 
 	// Token, when non-empty, is required on every /graphql request as either
 	// `Authorization: Bearer <token>` or `X-Approach-Token`.
@@ -73,6 +76,7 @@ type server struct {
 	schema         graphql.Schema
 	repos          RepoSource
 	flows          FlowSource
+	progressions   EpicProgressionSource
 	token          string
 	logger         io.Writer
 	requestTimeout time.Duration
@@ -102,6 +106,7 @@ func NewServer(opts ServerOptions) (http.Handler, error) {
 		schema:         schema,
 		repos:          opts.Repos,
 		flows:          opts.Flows,
+		progressions:   opts.EpicProgressions,
 		token:          opts.Token,
 		logger:         logger,
 		requestTimeout: timeout,
@@ -289,7 +294,7 @@ func (s *server) acquireSnapshot(ctx context.Context) (*snapshot, func(), snapsh
 	// Buffered, so the builder never blocks on a handler that has given up and
 	// exactly one of the two receives below consumes the result.
 	built := make(chan *snapshot, 1)
-	go func() { built <- buildSnapshot(s.repos, s.flows, s.logf) }()
+	go func() { built <- buildSnapshot(s.repos, s.flows, s.progressions, s.logf) }()
 
 	timer := time.NewTimer(s.requestTimeout)
 	defer timer.Stop()

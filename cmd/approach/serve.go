@@ -85,7 +85,11 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 	handler, err := graphqlapi.NewServer(graphqlapi.ServerOptions{
 		Repos: func() ([]scanner.Repo, error) { return deps.scan(scanOptions) },
 		Flows: func() ([]flowstore.FlowRecord, error) { return store.List(flowstore.FlowFilter{}) },
-		Token: token,
+		// Read-only by construction: the store's read API is the only epic
+		// progression seam the API gets, so serving can observe progression
+		// state but never enable, disable, or halt it.
+		EpicProgressions: store.ReadEpicProgression,
+		Token:            token,
 		// The Logger seam keeps request logging off stdout, where the
 		// resolved address is printed for scripts to read.
 		Logger: deps.stderr,

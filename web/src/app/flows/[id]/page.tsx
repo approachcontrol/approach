@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { EmptyPanel, ErrorPanel } from '@/components/error-panel'
+import { FlowTracking } from '@/components/flow-tracking'
 import { Badge, OutcomeBadge, StatusBadge } from '@/components/status-badge'
 import { getFlow, type FlowDetail, type Phase } from '@/lib/approach-api'
 import { formatCommit, formatTimestamp } from '@/lib/format'
@@ -47,7 +48,7 @@ export default async function FlowPage({ params }: { params: Promise<{ id: strin
       </div>
 
       <FlowFacts flow={detail} />
-      <FlowLinks flow={detail} />
+      <FlowTracking flow={detail} />
 
       <h2 className="section-heading">Phases ({detail.phases.length})</h2>
       {detail.phases.length === 0 ? (
@@ -99,87 +100,6 @@ function FlowFacts({ flow }: { flow: FlowDetail }) {
       <dt>Updated</dt>
       <dd>{formatTimestamp(flow.updatedAt)}</dd>
     </dl>
-  )
-}
-
-function FlowLinks({ flow }: { flow: FlowDetail }) {
-  const { issue, pullRequest, merge } = flow
-  if (!issue && !pullRequest && !merge) {
-    return null
-  }
-
-  return (
-    <>
-      <h2 className="section-heading">Tracking</h2>
-      <dl className="facts">
-        {issue ? (
-          <>
-            <dt>Issue</dt>
-            <dd>
-              <Ref
-                provider={issue.provider}
-                number={issue.number}
-                url={issue.url}
-                fallback="issue"
-              />
-            </dd>
-          </>
-        ) : null}
-
-        {pullRequest ? (
-          <>
-            <dt>Pull request</dt>
-            <dd>
-              <Ref
-                provider={pullRequest.provider}
-                number={pullRequest.number}
-                url={pullRequest.url}
-                fallback="pull request"
-              />
-              {pullRequest.headBranch || pullRequest.baseBranch ? (
-                <span> · {pullRequest.headBranch ?? '?'} → {pullRequest.baseBranch ?? '?'}</span>
-              ) : null}
-              {pullRequest.status ? (
-                <span> · <StatusBadge status={pullRequest.status} /></span>
-              ) : null}
-            </dd>
-          </>
-        ) : null}
-
-        {merge ? (
-          <>
-            <dt>Merge</dt>
-            <dd>
-              <StatusBadge status={merge.status ?? 'pending'} />
-              {merge.commit ? <span> · {formatCommit(merge.commit)}</span> : null}
-              {merge.mergedAt ? <span> · {formatTimestamp(merge.mergedAt)}</span> : null}
-            </dd>
-          </>
-        ) : null}
-      </dl>
-    </>
-  )
-}
-
-function Ref({
-  provider,
-  number,
-  url,
-  fallback,
-}: {
-  provider: string | null
-  number: number | null
-  url: string | null
-  fallback: string
-}) {
-  const label = number !== null ? `${provider ?? fallback} #${number}` : (provider ?? fallback)
-  if (!url) {
-    return <>{label}</>
-  }
-  return (
-    <a href={url} rel="noreferrer noopener" target="_blank">
-      {label}
-    </a>
   )
 }
 

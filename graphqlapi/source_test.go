@@ -22,6 +22,236 @@ func staticFlows(records ...flowstore.FlowRecord) FlowSource {
 	return func() ([]flowstore.FlowRecord, error) { return records, nil }
 }
 
+// countingProgressions is an EpicProgressionSource that records every key it is
+// asked for. The read set is the assertion: progression rows are read once per
+// distinct canonical key per request, so a Flow that links no epic must cause no
+// read at all and siblings sharing an epic must cause exactly one.
+// failKeys fails only the keys it names, so a test can assert that one
+// unreadable row leaves every other key readable.
+type countingProgressions struct {
+	rows     map[flowstore.EpicProgressionKey]flowstore.EpicProgression
+	failKeys map[flowstore.EpicProgressionKey]error
+	err      error
+	calls    []flowstore.EpicProgressionKey
+}
+
+func (c *countingProgressions) source() EpicProgressionSource {
+	return func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+		c.calls = append(c.calls, key)
+		if err, fails := c.failKeys[key]; fails {
+			return flowstore.EpicProgression{}, false, err
+		}
+		if c.err != nil {
+			return flowstore.EpicProgression{}, false, c.err
+		}
+		record, found := c.rows[key]
+		return record, found, nil
+	}
+}
+
+func epicKey(repoPath, epicID string) flowstore.EpicProgressionKey {
+	return flowstore.EpicProgressionKey{RepoPath: repoPath, EpicID: epicID}
+}
+
+func progressionKeys(keys []flowstore.EpicProgressionKey) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key.RepoPath+"|"+key.EpicID)
+	}
+	return out
+}
+
+func beadFlow(flowID, repoPath, beadID, epicID string) flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:   flowID,
+		RepoPath: repoPath,
+		Bead:     flowstore.BeadLink{ID: beadID, EpicID: epicID},
+	}
+}
+
+func TestBuildSnapshotReadsNoEpicProgressionWithoutAnEpicLink(t *testing.T) {
+	progressions := &countingProgressions{}
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(
+			flowstore.FlowRecord{FlowID: "unlinked", RepoPath: "/repos/alpha"},
+			beadFlow("child-only", "/repos/alpha", "approach-y7g.7", ""),
+			beadFlow("blank-epic", "/repos/alpha", "approach-y7g.8", "   "),
+		),
+		progressions.source(),
+		nil,
+	)
+	if len(progressions.calls) != 0 {
+		t.Fatalf("progression reads = %v, want none", progressionKeys(progressions.calls))
+	}
+	for _, flow := range snap.Flows() {
+		record, ok, err := snap.EpicProgression(flow)
+		if err != nil {
+			t.Errorf("flow %q progression err = %v, want none", flow.Record.FlowID, err)
+		}
+		if ok {
+			t.Errorf("flow %q resolved progression %+v with no epic link", flow.Record.FlowID, record)
+		}
+	}
+}
+
+// An epic id with no child Bead id is a shape flowstore.validateBeadLink
+// forbids, so only an externally written record holds one. Flow.bead resolves
+// null for it, and reading progression anyway would surface an epic through a
+// Flow the schema reports as unlinked.
+func TestBuildSnapshotReadsNoEpicProgressionForAnEpicWithoutAChildBead(t *testing.T) {
+	progressions := &countingProgressions{rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+		epicKey("/repos/alpha", "approach-y7g"): {RepoPath: "/repos/alpha", EpicID: "approach-y7g", Enabled: true},
+	}}
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(beadFlow("epic-only", "/repos/alpha", "", "approach-y7g")),
+		progressions.source(),
+		nil,
+	)
+	if len(progressions.calls) != 0 {
+		t.Fatalf("progression reads = %v, want none", progressionKeys(progressions.calls))
+	}
+	flow, ok := snap.Flow("epic-only")
+	if !ok {
+		t.Fatal(`Flow("epic-only") not found`)
+	}
+	if record, ok, _ := snap.EpicProgression(flow); ok {
+		t.Errorf("progression = %+v, want none for a Flow whose bead resolves null", record)
+	}
+}
+
+func TestBuildSnapshotReadsOneEpicProgressionPerCanonicalKey(t *testing.T) {
+	found := flowstore.EpicProgression{RepoPath: "/repos/alpha", EpicID: "approach-y7g", Enabled: true}
+	progressions := &countingProgressions{rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+		epicKey("/repos/alpha", "approach-y7g"): found,
+	}}
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(
+			// Equivalent raw repo paths and whitespace-variant epic ids collapse
+			// onto one canonical key, so these four cause one read of a found row.
+			beadFlow("a1", "/repos/alpha", "approach-y7g.1", "approach-y7g"),
+			beadFlow("a2", "/repos/alpha/", "approach-y7g.2", "  approach-y7g  "),
+			beadFlow("a3", "/repos/beta/../alpha", "approach-y7g.3", "approach-y7g"),
+			// A second distinct key whose row is absent, shared by two siblings:
+			// a missing row is read once and remembered as missing.
+			beadFlow("b1", "/repos/beta", "approach-zzz.1", "approach-zzz"),
+			beadFlow("b2", "/repos/beta", "approach-zzz.2", "approach-zzz"),
+			// Same epic id, different repo: genuinely distinct, so a third read.
+			beadFlow("c1", "/repos/gamma", "approach-y7g.4", "approach-y7g"),
+		),
+		progressions.source(),
+		nil,
+	)
+	want := []string{"/repos/alpha|approach-y7g", "/repos/beta|approach-zzz", "/repos/gamma|approach-y7g"}
+	if got := progressionKeys(progressions.calls); !equalStrings(got, want) {
+		t.Fatalf("progression reads = %v, want %v", got, want)
+	}
+
+	for _, flowID := range []string{"a1", "a2", "a3"} {
+		flow, ok := snap.Flow(flowID)
+		if !ok {
+			t.Fatalf("Flow(%q) not found", flowID)
+		}
+		record, ok, err := snap.EpicProgression(flow)
+		if err != nil {
+			t.Fatalf("flow %q progression err = %v, want none", flowID, err)
+		}
+		if !ok {
+			t.Fatalf("flow %q has no progression, want the shared row", flowID)
+		}
+		if record != found {
+			t.Errorf("flow %q progression = %+v, want %+v", flowID, record, found)
+		}
+	}
+	for _, flowID := range []string{"b1", "b2", "c1"} {
+		flow, ok := snap.Flow(flowID)
+		if !ok {
+			t.Fatalf("Flow(%q) not found", flowID)
+		}
+		record, ok, err := snap.EpicProgression(flow)
+		if err != nil {
+			t.Fatalf("flow %q progression err = %v, want none", flowID, err)
+		}
+		if ok {
+			t.Errorf("flow %q progression = %+v, want none (no row exists)", flowID, record)
+		}
+	}
+}
+
+// A progression read failure is sanitized like any other source failure, and it
+// is scoped to the key that failed. Progression is a secondary projection: one
+// malformed row must not take down the Flows that do not name that epic, let
+// alone a query that never mentions Beads.
+func TestBuildSnapshotEpicProgressionFailureIsSanitizedAndScopedToItsKey(t *testing.T) {
+	var logged []string
+	progressions := &countingProgressions{
+		rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+			epicKey("/repos/beta", "approach-zzz"): {RepoPath: "/repos/beta", EpicID: "approach-zzz", Enabled: true},
+		},
+		failKeys: map[flowstore.EpicProgressionKey]error{
+			epicKey("/repos/alpha", "approach-y7g"): errors.New("read epic progression: open /tmp/secret-root/flows.db: permission denied"),
+		},
+	}
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(
+			beadFlow("a1", "/repos/alpha", "approach-y7g.1", "approach-y7g"),
+			beadFlow("b1", "/repos/beta", "approach-zzz.1", "approach-zzz"),
+			flowstore.FlowRecord{FlowID: "unlinked", RepoPath: "/repos/gamma"},
+		),
+		progressions.source(),
+		func(format string, args ...any) {
+			logged = append(logged, fmt.Sprintf(format, args...))
+		},
+	)
+	if snap.err != nil {
+		t.Fatalf("snapshot err = %v, want none: one unreadable row must not fail the whole request", snap.err)
+	}
+
+	failed, ok := snap.Flow("a1")
+	if !ok {
+		t.Fatal(`Flow("a1") not found`)
+	}
+	_, found, err := snap.EpicProgression(failed)
+	if !errors.Is(err, errStateUnavailable) {
+		t.Fatalf("flow a1 progression err = %v, want errStateUnavailable", err)
+	}
+	if found {
+		t.Error("flow a1 reported a found progression despite an unreadable row")
+	}
+	if strings.Contains(err.Error(), "secret-root") || strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("progression err leaked detail: %v", err)
+	}
+
+	// The sibling key and an unlinked Flow are untouched by the failure.
+	healthy, ok := snap.Flow("b1")
+	if !ok {
+		t.Fatal(`Flow("b1") not found`)
+	}
+	record, found, err := snap.EpicProgression(healthy)
+	if err != nil || !found || !record.Enabled {
+		t.Errorf("flow b1 progression = (%+v, %v, %v), want the enabled row and no error", record, found, err)
+	}
+	unlinked, ok := snap.Flow("unlinked")
+	if !ok {
+		t.Fatal(`Flow("unlinked") not found`)
+	}
+	if _, found, err := snap.EpicProgression(unlinked); found || err != nil {
+		t.Errorf("unlinked flow progression = (%v, %v), want none and no error", found, err)
+	}
+
+	if len(logged) != 1 {
+		t.Fatalf("logged = %#v, want one epic-progression failure", logged)
+	}
+	for _, want := range []string{"/repos/alpha", "approach-y7g", "permission denied"} {
+		if !strings.Contains(logged[0], want) {
+			t.Errorf("log %q is missing %q; the unsanitized key and cause belong server-side", logged[0], want)
+		}
+	}
+}
+
 func repoPaths(repos []*Repo) []string {
 	out := make([]string, 0, len(repos))
 	for _, repo := range repos {
@@ -59,6 +289,7 @@ func TestBuildSnapshotKeepsStoreFlowOrder(t *testing.T) {
 			flowstore.FlowRecord{FlowID: "oldest", RepoPath: "/repos/alpha"},
 		),
 		nil,
+		nil,
 	)
 	if got, want := flowIDs(snap.Flows()), []string{"newest", "middle", "oldest"}; !equalStrings(got, want) {
 		t.Fatalf("Flows() = %v, want %v", got, want)
@@ -80,6 +311,7 @@ func TestBuildSnapshotGroupsFlowsByRepo(t *testing.T) {
 			flowstore.FlowRecord{FlowID: "a2", RepoPath: "/repos/alpha"},
 		),
 		nil,
+		nil,
 	)
 	if got, want := flowIDs(snap.FlowsForRepo("/repos/alpha")), []string{"a1", "a2"}; !equalStrings(got, want) {
 		t.Fatalf("FlowsForRepo(alpha) = %v, want %v", got, want)
@@ -96,6 +328,7 @@ func TestBuildSnapshotSynthesizesRepoOutsideScanRoot(t *testing.T) {
 	snap := buildSnapshot(
 		staticRepos(scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha", IsBare: true}),
 		staticFlows(flowstore.FlowRecord{FlowID: "f1", RepoPath: "/elsewhere/outsider"}),
+		nil,
 		nil,
 	)
 	repo, ok := snap.Repo("/elsewhere/outsider")
@@ -129,6 +362,7 @@ func TestBuildSnapshotNormalizesFlowRepoPathOntoScannedRepo(t *testing.T) {
 			flowstore.FlowRecord{FlowID: "dotdot", RepoPath: "/repos/beta/../alpha"},
 		),
 		nil,
+		nil,
 	)
 	if got, want := len(snap.Repos()), 1; got != want {
 		t.Fatalf("len(Repos()) = %d (%v), want %d", got, repoPaths(snap.Repos()), want)
@@ -147,6 +381,7 @@ func TestSnapshotRepoResolvesUnnormalizedArgument(t *testing.T) {
 	snap := buildSnapshot(
 		staticRepos(scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha"}),
 		staticFlows(),
+		nil,
 		nil,
 	)
 	for _, id := range []string{"/repos/alpha/", "/repos/alpha/.", "  /repos/alpha  ", "/repos/beta/../alpha"} {
@@ -168,6 +403,7 @@ func TestSnapshotRepoResolvesRelativeArgumentAgainstWorkingDirectory(t *testing.
 		staticRepos(scanner.Repo{Path: filepath.Join(wd, "here"), DisplayName: "here"}),
 		staticFlows(),
 		nil,
+		nil,
 	)
 	if _, ok := snap.Repo("here"); !ok {
 		t.Fatalf("Repo(%q) not found, want the scanned repo", "here")
@@ -181,6 +417,7 @@ func TestBuildSnapshotUnionOrderingIsDeterministic(t *testing.T) {
 			flowstore.FlowRecord{FlowID: "f2", RepoPath: "/other/zeta/child"},
 			flowstore.FlowRecord{FlowID: "f1", RepoPath: "/other/alpha/child"},
 		),
+		nil,
 		nil,
 	)
 	// "child" sorts before "parent/child"; the two synthesized "child"
@@ -200,6 +437,7 @@ func TestBuildSnapshotSortsCaseInsensitively(t *testing.T) {
 		),
 		staticFlows(),
 		nil,
+		nil,
 	)
 	want := []string{"/repos/alpha", "/repos/Bravo", "/repos/Zulu"}
 	if got := repoPaths(snap.Repos()); !equalStrings(got, want) {
@@ -218,6 +456,7 @@ func TestBuildSnapshotSkipsRecordWithEmptyRepoPath(t *testing.T) {
 			flowstore.FlowRecord{FlowID: "phantom", RepoPath: ""},
 			flowstore.FlowRecord{FlowID: "blank", RepoPath: "   "},
 		),
+		nil,
 		nil,
 	)
 	if got := len(snap.Repos()); got != 0 {
@@ -241,10 +480,11 @@ func TestBuildSnapshotDegradesOnScanError(t *testing.T) {
 			return nil, errors.New("open /nope/dev: no such file or directory")
 		},
 		staticFlows(flowstore.FlowRecord{FlowID: "f1", RepoPath: "/repos/alpha"}),
+		nil,
 		func(format string, args ...any) {
 			logged = append(logged, format)
-		},
-	)
+		})
+
 	if snap.err != nil {
 		t.Fatalf("snapshot err = %v, want nil (scan failures degrade)", snap.err)
 	}
@@ -269,10 +509,11 @@ func TestBuildSnapshotFlowErrorIsSanitized(t *testing.T) {
 		func() ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("list flows: open /tmp/secret-root/flows: permission denied")
 		},
+		nil,
 		func(format string, args ...any) {
 			logged = append(logged, format)
-		},
-	)
+		})
+
 	if !errors.Is(snap.err, errStateUnavailable) {
 		t.Fatalf("snapshot err = %v, want errStateUnavailable", snap.err)
 	}
@@ -295,10 +536,11 @@ func TestBuildSnapshotIndexesHealthyFlowsFromTypedPartialResultAndLogsDiagnostic
 		func() ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{{FlowID: "healthy", RepoPath: "/repos/alpha"}}, partial
 		},
+		nil,
 		func(format string, args ...any) {
 			logged = append(logged, fmt.Sprintf(format, args...))
-		},
-	)
+		})
+
 	if snap.err != nil {
 		t.Fatalf("snapshot err = %v, want typed partial result accepted", snap.err)
 	}
@@ -316,7 +558,7 @@ func TestBuildSnapshotIndexesHealthyFlowsFromTypedPartialResultAndLogsDiagnostic
 }
 
 func TestBuildSnapshotEmptySources(t *testing.T) {
-	snap := buildSnapshot(staticRepos(), staticFlows(), nil)
+	snap := buildSnapshot(staticRepos(), staticFlows(), nil, nil)
 	if len(snap.Repos()) != 0 || len(snap.Flows()) != 0 {
 		t.Fatalf("empty sources produced repos=%v flows=%v", repoPaths(snap.Repos()), flowIDs(snap.Flows()))
 	}
@@ -327,7 +569,7 @@ func TestBuildSnapshotEmptySources(t *testing.T) {
 		t.Fatalf("Flow(nope) resolved against an empty snapshot")
 	}
 
-	nilSources := buildSnapshot(nil, nil, nil)
+	nilSources := buildSnapshot(nil, nil, nil, nil)
 	if len(nilSources.Repos()) != 0 || len(nilSources.Flows()) != 0 || nilSources.err != nil {
 		t.Fatalf("nil sources produced repos=%v flows=%v err=%v",
 			repoPaths(nilSources.Repos()), flowIDs(nilSources.Flows()), nilSources.err)
@@ -341,6 +583,7 @@ func TestBuildSnapshotDeduplicatesScannedPaths(t *testing.T) {
 			scanner.Repo{Path: "/repos/alpha/", DisplayName: "alpha-dup"},
 		),
 		staticFlows(),
+		nil,
 		nil,
 	)
 	if got, want := len(snap.Repos()), 1; got != want {
@@ -360,6 +603,7 @@ func TestBuildSnapshotFlowLookupPrefersFirstRecordForDuplicateID(t *testing.T) {
 			flowstore.FlowRecord{FlowID: "dupe", RepoPath: "/repos/beta", UpdatedAt: now.Add(-time.Hour)},
 		),
 		nil,
+		nil,
 	)
 	flow, ok := snap.Flow("dupe")
 	if !ok {
@@ -373,15 +617,27 @@ func TestBuildSnapshotFlowLookupPrefersFirstRecordForDuplicateID(t *testing.T) {
 // fullyPopulatedSources fills every optional field on every type, so the
 // drift guard sees a width for each one and byte-budget tests have realistic
 // free text to measure.
-func fullyPopulatedSources() (RepoSource, FlowSource, func(string, ...any)) {
+func fullyPopulatedSources() (RepoSource, FlowSource, EpicProgressionSource, func(string, ...any)) {
 	created := fixtureTime(0)
 	merged := fixtureTime(time.Hour)
+	// Halted, so the halt tuple's widths are measured too. A row that is merely
+	// enabled would leave three scalar fields unobserved, which is exactly the
+	// drift the bounds guard exists to catch.
+	halted := flowstore.EpicProgression{
+		SchemaVersion: 1, RepoPath: "/repos/alpha", EpicID: "approach-y7g",
+		Halt: &flowstore.EpicProgressionHalt{
+			ChildBeadID: "approach-y7g.9", Status: flowstore.StatusBlocked,
+			Message: "the child Flow is blocked on review",
+		},
+		CreatedAt: created, UpdatedAt: created,
+	}
 	return staticRepos(scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha", IsBare: true}),
 		staticFlows(flowstore.FlowRecord{
 			FlowID: "flow-alpha-1", Title: "Alpha one", Instructions: "do the thing",
 			Status: flowstore.StatusInProgress, RepoPath: "/repos/alpha",
 			WorktreePath: "/repos/alpha-worktrees/one", Branch: "flow/one", BaseRef: "main",
 			Commit: "abc123", PresetName: "default", PlanID: "plan-1", AutoMode: true,
+			Bead:  flowstore.BeadLink{ID: "approach-y7g.9", EpicID: "approach-y7g"},
 			Issue: flowstore.Issue{Provider: "github", Number: 7, URL: "https://example.test/i/7"},
 			PR: flowstore.PullRequest{
 				Provider: "github", Number: 9, URL: "https://example.test/p/9",
@@ -402,6 +658,9 @@ func fullyPopulatedSources() (RepoSource, FlowSource, func(string, ...any)) {
 			},
 			CreatedAt: created, UpdatedAt: created,
 		}),
+		(&countingProgressions{rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+			epicKey("/repos/alpha", "approach-y7g"): halted,
+		}}).source(),
 		nil
 }
 
@@ -425,7 +684,7 @@ func TestSnapshotBounds(t *testing.T) {
 		{FlowID: "a3", Title: "a3", RepoPath: "/repos/alpha", CreatedAt: created, UpdatedAt: created},
 		{FlowID: "b1", Title: "b1", RepoPath: "/repos/beta", CreatedAt: created, UpdatedAt: created},
 	}
-	bounds := buildSnapshot(repos, staticFlows(records...), nil).bounds()
+	bounds := buildSnapshot(repos, staticFlows(records...), nil, nil).bounds()
 
 	for name, got := range map[string][2]int{
 		"repos":             {bounds.repos, 2},
@@ -524,7 +783,7 @@ func TestSnapshotBoundsCountPhasesAsResolved(t *testing.T) {
 	bounds := buildSnapshot(nil, staticFlows(flowstore.FlowRecord{
 		FlowID: "f1", Title: "f1", RepoPath: "/repos/alpha", Phases: phases,
 		CreatedAt: created, UpdatedAt: created,
-	}), nil).bounds()
+	}), nil, nil).bounds()
 	if bounds.phasesPerFlow < resolved {
 		t.Fatalf("bounds.phasesPerFlow = %d, want >= %d (the number Flow.phases actually resolves)",
 			bounds.phasesPerFlow, resolved)

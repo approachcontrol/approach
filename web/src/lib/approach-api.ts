@@ -124,12 +124,86 @@ function authHeaders(): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {}
 }
 
-interface GraphQLResponse<T> {
-  data?: T | null
-  errors?: { message?: string }[]
+interface GraphQLError {
+  message?: string
+  path?: (string | number)[]
 }
 
-async function query<T>(document: string, variables?: Record<string, unknown>): Promise<T> {
+interface GraphQLResponse<T> {
+  data?: T | null
+  errors?: GraphQLError[]
+}
+
+/**
+ * The only fields whose failure this client serves around. The API resolves
+ * each of them from its own source — `Flow.epicProgression` reads one
+ * progression row per epic — and scopes a failed read to that field, so the
+ * rest of the response is still the answer the reader asked for.
+ *
+ * Everything else stays fatal. This is a whitelist rather than "any response
+ * carrying data" because GraphQL nulls a failed field up to its nearest
+ * nullable parent: a failed snapshot nulls the whole `flow` root and still
+ * sends `{"data":{"flow":null}}`, which is byte-identical to an unknown id.
+ * Accepting that would render "flow not found" for an unreachable store.
+ */
+const PARTIAL_FIELDS = new Set(['epicProgression'])
+
+/**
+ * Reports whether one error entry names a field this client can serve without.
+ * Matched on the path's last element — the response key of the field that
+ * actually failed — so an error that propagated up to a parent, and therefore
+ * nulled more than the field itself, is not matched and stays fatal. An entry
+ * with no path (a request-level failure) is never partial.
+ */
+function isPartialFieldError(error: GraphQLError): boolean {
+  return PARTIAL_FIELDS.has(failedField(error) ?? '')
+}
+
+/**
+ * Reads the errors envelope as the list of objects everything below assumes it
+ * is. `body` is a TypeScript cast, not a parsed shape — a stale tunnel or a
+ * misconfigured endpoint can answer 200 with any JSON at all — and a TypeError
+ * raised while filtering it would escape `fail()`, and therefore `load()`'s
+ * ApproachApiError handling, into the generic Next.js boundary. That is the
+ * one outcome this module exists to prevent, which is why a non-object body is
+ * already checked above.
+ *
+ * A malformed entry inside a well-formed array is kept rather than dropped: it
+ * names no field, so the whitelist below treats it as fatal, which is the
+ * conservative reading of an error nobody can attribute.
+ */
+function errorEntries(value: unknown): GraphQLError[] {
+  if (value === undefined || value === null) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    fail('http', `response carried ${describe(value)} where an errors list was expected`)
+  }
+  return value.map((entry) =>
+    typeof entry === 'object' && entry !== null ? (entry as GraphQLError) : {},
+  )
+}
+
+/** The response key of the field an error entry names, if it names one. */
+function failedField(error: GraphQLError): string | undefined {
+  const path = error.path
+  if (!Array.isArray(path) || path.length === 0) {
+    return undefined
+  }
+  const failed = path[path.length - 1]
+  return typeof failed === 'string' ? failed : undefined
+}
+
+/** A successful read: the selected data, plus whichever fields failed anyway. */
+interface QueryResult<T> {
+  data: T
+  partial: GraphQLError[]
+}
+
+async function query<T>(
+  document: string,
+  variables?: Record<string, unknown>,
+): Promise<QueryResult<T>> {
   const url = endpoint()
 
   let response: Response
@@ -188,13 +262,35 @@ async function query<T>(document: string, variables?: Record<string, unknown>): 
       `status ${response.status}: ${JSON.stringify(body.errors ?? null)}`,
     )
   }
-  if (body.errors?.length) {
-    fail('graphql', JSON.stringify(body.errors))
+  // A GraphQL response can carry both, and one field failing is not the same
+  // event as the query failing. `Flow.epicProgression` reads a progression row
+  // per epic, and one unreadable row nulls that field and adds an error entry
+  // while every other field, and every other Flow, resolves normally. Failing
+  // the whole load there would turn a missing Tracking row into a blank error
+  // page for the entire Flow.
+  //
+  // Only the fields named above buy that tolerance. Any other error is still
+  // fatal, whatever `data` holds, because a failed field nulls its way up to
+  // the nearest nullable parent — a failed snapshot arrives as
+  // `{"data":{"flow":null},"errors":[...]}`, which without this check reads as
+  // an unknown id and renders a 404 instead of the error panel.
+  const errors = errorEntries(body.errors)
+  const fatal = errors.filter((error) => !isPartialFieldError(error))
+  if (fatal.length > 0) {
+    fail('graphql', JSON.stringify(fatal))
   }
   if (body.data == null) {
+    // Every error was partial, so the data envelope cannot be null: a nullable
+    // field's error stops at that field. Reaching here means a malformed body.
     fail('http', 'response carried neither data nor errors')
   }
-  return body.data
+  if (errors.length > 0) {
+    console.error('approach-api partial response:', JSON.stringify(errors))
+  }
+  // The tolerated errors come back with the data: a field this client serves
+  // without still has to be *reported* as missing rather than rendered as an
+  // ordinary null, and only the response knows which fields those were.
+  return { data: body.data, partial: errors }
 }
 
 export interface FlowRef {
@@ -271,6 +367,23 @@ export interface Merge {
   mergedAt: string | null
 }
 
+export interface BeadLink {
+  id: string
+  epicId: string | null
+}
+
+export interface EpicProgressionHalt {
+  childBeadId: string
+  status: string
+  message: string
+}
+
+export interface EpicProgression {
+  enabled: boolean
+  done: boolean
+  halt: EpicProgressionHalt | null
+}
+
 export interface FlowDetail {
   id: string
   title: string
@@ -284,6 +397,21 @@ export interface FlowDetail {
   presetName: string | null
   planId: string | null
   autoMode: boolean
+  bead: BeadLink | null
+  // Null both when the Flow links no epic and when that epic has no persisted
+  // progression row; the two are distinguished by `bead.epicId`.
+  epicProgression: EpicProgression | null
+  /**
+   * Client-derived, not a schema field: the API could not read this Flow's
+   * progression row and said so in `errors`.
+   *
+   * It nulls `epicProgression` when that happens, which is the same null a
+   * Flow whose epic has no row at all gets. The API keeps the two apart on
+   * purpose, so the viewer has to as well — otherwise an unreadable row reads
+   * back as "nobody has configured progression for this epic", which is a
+   * claim nothing checked.
+   */
+  epicProgressionUnavailable: boolean
   issue: Issue | null
   pullRequest: PullRequest | null
   merge: Merge | null
@@ -334,6 +462,8 @@ const FLOW_QUERY = `query Flow($id: ID!) {
     presetName
     planId
     autoMode
+    bead { id epicId }
+    epicProgression { enabled done halt { childBeadId status message } }
     issue { provider number url }
     pullRequest { provider number url headBranch baseBranch status }
     merge { status commit mergedAt }
@@ -394,16 +524,26 @@ function describe(value: unknown): string {
 }
 
 export async function getRepos(): Promise<RepoSummary[]> {
-  const data = await query<{ repos: RepoSummary[] }>(REPOS_QUERY)
+  const { data } = await query<{ repos: RepoSummary[] }>(REPOS_QUERY)
   return requireList<RepoSummary>(data.repos, 'repos')
 }
 
 export async function getRepo(id: string): Promise<RepoDetail | null> {
-  const data = await query<{ repo: RepoDetail | null }>(REPO_QUERY, { id })
+  const { data } = await query<{ repo: RepoDetail | null }>(REPO_QUERY, { id })
   return requireNodeOrNull<RepoDetail>(data.repo, 'repo')
 }
 
 export async function getFlow(id: string): Promise<FlowDetail | null> {
-  const data = await query<{ flow: FlowDetail | null }>(FLOW_QUERY, { id })
-  return requireNodeOrNull<FlowDetail>(data.flow, 'flow')
+  const { data, partial } = await query<{ flow: FlowDetail | null }>(FLOW_QUERY, { id })
+  const flow = requireNodeOrNull<FlowDetail>(data.flow, 'flow')
+  if (flow === null) {
+    return null
+  }
+  // Set from the response rather than read off the Flow: the API reports an
+  // unreadable progression row out of band, and the field it nulls is the same
+  // null a missing row produces.
+  return {
+    ...flow,
+    epicProgressionUnavailable: partial.some((error) => failedField(error) === 'epicProgression'),
+  }
 }
