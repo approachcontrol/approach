@@ -33,6 +33,13 @@ const (
 // v6 flows.preparation_nonce projection, backfill, and nonce-protection trigger.
 const databaseSchemaVersion = 6
 
+// DatabaseSchemaVersion is the physical flow database schema this build writes.
+// It is exported so launch and diagnostic surfaces can report the schema an
+// agent's binary must be able to write without importing store internals.
+func DatabaseSchemaVersion() int {
+	return databaseSchemaVersion
+}
+
 // errDatabaseFromNewerBuild marks the one validation failure that is NOT a
 // damaged database. The file is fine; this binary is old. It must stay
 // distinguishable, because the recovery advice attached to a corrupt database —

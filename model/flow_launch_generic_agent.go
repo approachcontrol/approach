@@ -224,6 +224,13 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		// Ahead of the reservation: this agent's argv carries the pinned path
+		// into a session that outlives the launch, so an unusable pin is refused
+		// before anything is written.
+		if refusal := refuseUnverifiedLaunchPin(settings.Pin); refusal != "" {
+			event.Err = refusal
+			return event
+		}
 		record, release, err := reserve(msg.FlowID)
 		if err != nil {
 			event.Err = err.Error()
@@ -267,13 +274,13 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event.RepoPath = record.RepoPath
 		event.WorktreePath = record.WorktreePath
 		event.PlanPath = planPath
-		event.Context = actions.AgentLaunchContext{
+		event.Context = applyLaunchPin(actions.AgentLaunchContext{
 			Command: settings.Command, LaunchID: msg.Token,
 			RepoPath: record.RepoPath, WorktreePath: record.WorktreePath, WorkingDir: record.WorktreePath,
 			Branch: record.Branch, Commit: record.Commit, Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
 			SessionStateRoot: settings.SessionStateRoot, PlanID: record.PlanID, PlanPath: planPath,
 			FlowID: record.FlowID, FlowAgent: true, Embedded: true, Headless: false, InitialPrompt: "",
-		}
+		}, settings.Pin)
 		event.Route = flowLaunchRouteEmbedded
 		return event
 	}

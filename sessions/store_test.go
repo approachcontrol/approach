@@ -755,7 +755,9 @@ func TestNewStoreDefaultsRootFromXDGStateHome(t *testing.T) {
 		t.Fatalf("Upsert() error = %v", err)
 	}
 
-	metaPath := singleSessionFile(t, filepath.Join(stateHome, "approach", "sessions", "v1"), sessions.ProviderCodex, "meta.json")
+	// A test binary carries no release version, so it resolves the
+	// development-isolated default root rather than the release-owned one.
+	metaPath := singleSessionFile(t, filepath.Join(stateHome, "approach-dev", "sessions", "v1"), sessions.ProviderCodex, "meta.json")
 	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf("expected default-root metadata at %s: %v", metaPath, err)
 	}

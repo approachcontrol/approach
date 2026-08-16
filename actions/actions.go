@@ -1060,6 +1060,19 @@ type AgentLaunchContext struct {
 	// InitialPrompt is canonical launch metadata. It is delivered either as a
 	// provider argv or by embedded PTY prefill, depending on launch mode.
 	InitialPrompt string
+	// Executable pins the approach binary this launch's agent must invoke,
+	// exported as APPROACH_EXECUTABLE and baked into the provider session hook.
+	// It is the launching build, not whatever `approach` ambient PATH resolves:
+	// a phase launched by a schema-N build and reported by a schema-(N-1) CLI
+	// cannot persist its result at all. Empty means "no pin" and leaves agents
+	// on PATH, which is the pre-pin behaviour and still correct for a manually
+	// started session.
+	Executable string
+	// BuildVersion and DBSchemaVersion describe the pinned build, exported as
+	// APPROACH_BUILD_VERSION and APPROACH_DB_SCHEMA so an agent-side
+	// compatibility refusal can name both binaries rather than one integer.
+	BuildVersion    string
+	DBSchemaVersion int
 }
 
 // AgentLaunch builds a supported coding-agent command for ctx and wraps it in a
@@ -1323,6 +1336,7 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	args := agentLaunchArgs(command, resumeSessionID, ctx.Headless, model, reasoningEffort, agentLaunchArgsOptions{
 		embedded:   ctx.Embedded,
 		streamJSON: UsesStreamJSONOutput(ctx),
+		executable: ctx.Executable,
 	})
 	if ctx.InitialPrompt != "" && !ShouldPrefillEmbeddedPrompt(ctx) {
 		args = append(args, ctx.InitialPrompt)
@@ -1355,6 +1369,9 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		{key: "APPROACH_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
 		{key: "APPROACH_FLOW_ID", value: ctx.FlowID},
 		{key: "APPROACH_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
+		{key: "APPROACH_EXECUTABLE", value: ctx.Executable},
+		{key: "APPROACH_BUILD_VERSION", value: ctx.BuildVersion},
+		{key: "APPROACH_DB_SCHEMA", value: schemaVersionEnvValue(ctx.DBSchemaVersion)},
 	}
 	cmd.Env = envWithOverrides(overrides...)
 	return cmd, overrides, nil
@@ -1455,12 +1472,17 @@ type agentLaunchArgsOptions struct {
 	// it must equal UsesStreamJSONOutput for the same context so the args and
 	// the renderer stay in lockstep (raw JSON in the panel otherwise).
 	streamJSON bool
+	// executable is the pinned approach binary for this launch. It is baked
+	// into the provider session-hook argv so a detached agent's SessionEnd hook
+	// runs the same build that launched it. Empty falls back to the running
+	// binary.
+	executable string
 }
 
 func agentLaunchArgs(command, resumeSessionID string, headless bool, model string, reasoningEffort string, opts agentLaunchArgsOptions) []string {
 	switch command {
 	case "codex":
-		hookCommand := approachSessionHookCommand("codex")
+		hookCommand := approachSessionHookCommand("codex", opts.executable)
 		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving approach session\"}]}]"
 		args := []string{"--config", hookConfig}
 		if model != "" && model != agent.ModelDefault {
@@ -1480,7 +1502,7 @@ func agentLaunchArgs(command, resumeSessionID string, headless bool, model strin
 		}
 		return args
 	case "claude":
-		hookCommand := approachSessionHookCommand("claude")
+		hookCommand := approachSessionHookCommand("claude", opts.executable)
 		settings := claudeSessionHookSettings(hookCommand)
 		args := []string{"--settings", settings}
 		if model != "" && model != agent.ModelDefault {
@@ -1531,12 +1553,29 @@ func claudeSessionHookSettings(hookCommand string) string {
 	return string(data)
 }
 
-func approachSessionHookCommand(provider string) string {
-	executable, err := os.Executable()
-	if err != nil {
-		executable = os.Args[0]
+// approachSessionHookCommand builds the provider hook argv. It takes the pinned
+// executable rather than calling os.Executable itself so the hook and
+// APPROACH_EXECUTABLE can never name different builds; an empty pin keeps the
+// previous running-binary behaviour for untracked launches.
+func approachSessionHookCommand(provider, executable string) string {
+	if strings.TrimSpace(executable) == "" {
+		resolved, err := os.Executable()
+		if err != nil {
+			resolved = os.Args[0]
+		}
+		executable = resolved
 	}
 	return shellQuote(executable) + " session-hook --provider " + provider
+}
+
+// schemaVersionEnvValue renders a schema version for the environment. Zero means
+// "no pin was supplied" and exports empty rather than a literal 0, which an
+// agent-side check would otherwise read as a real schema generation.
+func schemaVersionEnvValue(version int) string {
+	if version <= 0 {
+		return ""
+	}
+	return strconv.Itoa(version)
 }
 
 // terminalCommand describes an inner process (such as a coding agent) that a

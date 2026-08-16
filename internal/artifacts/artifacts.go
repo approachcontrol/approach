@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/approachcontrol/approach/internal/version"
 )
 
 const (
@@ -39,15 +41,79 @@ type IDOptions struct {
 
 // DefaultRoot returns the shared approach artifact root used by sessions, plans,
 // and flows.
+//
+// A development build defaults to its own root (`approach-dev`) so it cannot
+// silently migrate the database a released build owns. Only the *default*
+// changes: an explicit --state-root, the APPROACH_*_STATE_ROOT variables, and
+// [sessions].root are untouched, so Flow-launched agents — which always receive
+// an explicit root — are unaffected.
+//
+// The blast radius is wider than Flows. artifacts.DefaultRoot backs the session
+// store, the plan store, and the flow store alike, so a development build moves
+// its session history and plan list along with its Flow list. That is the
+// correct outcome — development state should be isolated as a unit rather than
+// split across two roots — but it is a user-visible change, not just "an empty
+// Flow list on first run".
 func DefaultRoot() (string, error) {
+	if version.IsDevelopment() {
+		return rootUnder("approach-dev")
+	}
+	return ReleaseDefaultRoot()
+}
+
+// ReleaseDefaultRoot is the root a released build defaults to, whatever this
+// build is. It exists so the migration guard can test for "this development
+// build is about to migrate the release-owned database" by exact path equality
+// rather than by a broader rule that would also fire in every temp directory.
+func ReleaseDefaultRoot() (string, error) {
+	return rootUnder("approach")
+}
+
+func rootUnder(namespace string) (string, error) {
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "approach", "sessions", "v1"), nil
+		return filepath.Join(stateHome, namespace, "sessions", "v1"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve artifact state root: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "approach", "sessions", "v1"), nil
+	return filepath.Join(home, ".local", "state", namespace, "sessions", "v1"), nil
+}
+
+// SecureCanonicalRoot creates root when absent, forces it to 0700, resolves it
+// through symlinks, and returns the canonical path only when the resolved
+// directory is genuinely owner-only. label names the root in every error so a
+// caller's diagnostics read the way its own messages always did.
+//
+// Every consumer that stores executable or authoritative state under an
+// approach root shares this check: the flow database is written through it, and
+// the pinned launch binary is executed out of it.
+func SecureCanonicalRoot(root, label string) (string, error) {
+	if err := os.MkdirAll(root, DirPerm); err != nil {
+		return "", fmt.Errorf("create %s: %w", label, err)
+	}
+	if err := os.Chmod(root, DirPerm); err != nil {
+		return "", fmt.Errorf("secure %s: %w", label, err)
+	}
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s must resolve to a directory", label)
+	}
+	if err := os.Chmod(canonical, DirPerm); err != nil {
+		return "", fmt.Errorf("secure resolved %s: %w", label, err)
+	}
+	info, err = os.Stat(canonical)
+	if err != nil || info.Mode().Perm() != DirPerm {
+		return "", fmt.Errorf("%s permissions are not 0700", label)
+	}
+	return canonical, nil
 }
 
 // RequireAbsoluteRoot returns the same root when it is absolute.

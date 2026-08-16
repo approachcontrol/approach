@@ -36,6 +36,11 @@ readiness, agents own honest reporting of their own phase.
 | `blocked` | agent | Phase cannot proceed; requires intervention. |
 | `skipped` | agent | Phase intentionally bypassed (requires notes). |
 
+A Flow-launched agent runs these commands through the pinned binary its launch
+exported as `APPROACH_EXECUTABLE`, not through whatever `approach` is on `PATH`
+(see `docs/architecture.md`). The bare `approach` spellings below are the ones a
+human types at a shell.
+
 Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
 `skipped` through `approach flow phase set`. The high-level wrappers
 `approach flow phase complete`, `approach flow phase block`, and

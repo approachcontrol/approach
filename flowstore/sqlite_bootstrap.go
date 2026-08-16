@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/version"
 )
 
 const bootstrapLockFilename = ".approach.db.bootstrap.lock"
@@ -48,7 +49,20 @@ type cutoverState struct {
 	stage     bool
 }
 
-func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPresets []Preset) (*sqliteBackend, error) {
+// isDevelopmentBuild classifies this build. It is a var so tests can reach both
+// branches: under `go test` the version ldflags are unset, so the ambient answer
+// is always "development".
+var isDevelopmentBuild = version.IsDevelopment
+
+// errDevLiveMigrationRefused marks the guard's refusal so it stays
+// distinguishable from a damaged predecessor schema. The distinction is
+// load-bearing on the cutover-resume path: an unusable stage is discarded and
+// rebuilt, which is right for corruption and catastrophic for a refusal, since
+// the stage is intact and the operator was told to re-run with an
+// acknowledgement.
+var errDevLiveMigrationRefused = errors.New("development build refused to migrate the release artifact root")
+
+func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPresets []Preset, allowDevLiveMigration bool) (*sqliteBackend, error) {
 	canonicalRoot, err := secureCanonicalRoot(root)
 	if err != nil {
 		return nil, err
@@ -68,7 +82,7 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 		return nil, err
 	}
 	if state.database {
-		if err := migrateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename), lockTimeout); err != nil {
+		if err := migrateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename), lockTimeout, canonicalRoot, allowDevLiveMigration); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
 		}
 		if err := validateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename)); err != nil {
@@ -96,7 +110,7 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 	if err != nil {
 		return nil, err
 	}
-	if err := completeCutover(canonicalRoot, state, presets, lockTimeout); err != nil {
+	if err := completeCutover(canonicalRoot, state, presets, lockTimeout, allowDevLiveMigration); err != nil {
 		return nil, err
 	}
 	backend, err := openSQLiteBackend(canonicalRoot, lockTimeout)
@@ -109,7 +123,7 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
 // It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
 // authoritative read-only validation and before the WAL runtime handle opens.
-func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error {
+func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canonicalRoot string, allowDevLiveMigration bool) error {
 	millis, err := sqliteBusyTimeoutMillis(lockTimeout)
 	if err != nil {
 		return err
@@ -148,6 +162,9 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration) error 
 	}
 	if version != 0 && version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
 		return fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
+	}
+	if err := refuseDevLiveMigration(canonicalRoot, version, allowDevLiveMigration); err != nil {
+		return err
 	}
 	predecessor := int64(1)
 	if version >= 2 {
@@ -299,7 +316,13 @@ func describeUnusableDatabase(root string, cause error) error {
 	// binary. Attaching "re-migrate from flows/" to it would tell the operator to
 	// roll a live corpus back to its migration-day snapshot, immediately after
 	// correctly telling them to upgrade. Return it untouched.
-	if errors.Is(cause, errDatabaseFromNewerBuild) {
+	//
+	// The dev-live-migration refusal is the same shape and worse to get wrong:
+	// the database is healthy, this build simply declined to advance it, and the
+	// recovery paragraph would talk an operator into moving a perfectly good
+	// release database aside over a check whose own message already says to pass
+	// an acknowledgement or use a scratch root.
+	if errors.Is(cause, errDatabaseFromNewerBuild) || errors.Is(cause, errDevLiveMigrationRefused) {
 		return cause
 	}
 	databasePath := filepath.Join(root, databaseFilename)
@@ -344,32 +367,114 @@ func shellQuote(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
+// secureCanonicalRoot is the flow store's spelling of
+// artifacts.SecureCanonicalRoot. The shared helper lives in internal/artifacts
+// because internal/controlplane executes a binary out of the same root and must
+// apply the identical trust checks.
 func secureCanonicalRoot(root string) (string, error) {
-	if err := os.MkdirAll(root, artifacts.DirPerm); err != nil {
-		return "", fmt.Errorf("create flow store root: %w", err)
+	return artifacts.SecureCanonicalRoot(root, "flow store root")
+}
+
+// refuseDevLiveMigration stops a development build from silently advancing the
+// schema of the database a released build owns.
+//
+// The condition is deliberately narrow — a development build, an older stored
+// schema, and *exact* path equality with the release default root. What it
+// protects is the state a *released* build owns by default, which is one path.
+//
+// The broader rule ("refuse on any root but the dev default") was considered and
+// rejected on cost, not on test breakage: the other two conditions already
+// restrict this to roots holding a predecessor-schema database, which no test
+// outside this package creates. It was rejected because iterating on a schema
+// change means repeatedly reopening scratch roots written by the previous
+// iteration of the same development build, and a guard that fires there charges
+// a daily toll to protect state nobody else reads. The residual gap is real and
+// stated in docs/architecture.md: an explicit shared root — `[sessions].root` on
+// a mixed dev/release team — gets no protection.
+//
+// Reads of an already-current release database stay allowed: this gate exists to
+// stop a schema advance, not to fence development builds out of release state.
+func refuseDevLiveMigration(canonicalRoot string, storedVersion int64, allowed bool) error {
+	if storedVersion >= databaseSchemaVersion {
+		return nil
 	}
-	if err := os.Chmod(root, artifacts.DirPerm); err != nil {
-		return "", fmt.Errorf("secure flow store root: %w", err)
+	if !isReleaseOwnedRoot(canonicalRoot, allowed) {
+		return nil
 	}
-	canonical, err := filepath.EvalSymlinks(root)
+	return fmt.Errorf(
+		"%w %s from schema %d to %d: this is a development build (%s), "+
+			"and a released approach would then be unable to open its own state. "+
+			"Use a scratch --state-root, or pass --allow-dev-live-migration on the TUI "+
+			"(or set APPROACH_ALLOW_DEV_LIVE_MIGRATION=1, which the `approach flow` and "+
+			"`approach serve` commands read too) to acknowledge it",
+		errDevLiveMigrationRefused, canonicalRoot, storedVersion, databaseSchemaVersion, version.Version())
+}
+
+// refuseDevLiveCreation is the same guard for the path that has no stored schema
+// to compare. `completeCutover` does not migrate anything — it BUILDS a
+// current-schema database and renames it onto approach.db — so a development
+// build importing a legacy `flows/` tree, or bootstrapping an empty release
+// root, reaches exactly the end state refuseDevLiveMigration exists to prevent
+// (a database a released build cannot open) by creating rather than advancing.
+// Same narrow condition, same acknowledgement.
+func refuseDevLiveCreation(canonicalRoot string, allowed bool) error {
+	if !isReleaseOwnedRoot(canonicalRoot, allowed) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w %s: this is a development build (%s), and creating a schema-%d Flow database there would "+
+			"leave a released approach unable to open its own state. Use a scratch --state-root, or pass "+
+			"--allow-dev-live-migration on the TUI (or set APPROACH_ALLOW_DEV_LIVE_MIGRATION=1, which the "+
+			"`approach flow` and `approach serve` commands read too) to acknowledge it",
+		errDevLiveMigrationRefused, canonicalRoot, version.Version(), databaseSchemaVersion)
+}
+
+// isReleaseOwnedRoot reports whether an unacknowledged development build is
+// about to write the state a *released* build owns by default.
+func isReleaseOwnedRoot(canonicalRoot string, allowed bool) bool {
+	if allowed || !isDevelopmentBuild() {
+		return false
+	}
+	releaseRoot, err := artifacts.ReleaseDefaultRoot()
 	if err != nil {
-		return "", fmt.Errorf("resolve flow store root: %w", err)
+		// Not knowing the release default is not a reason to refuse: the guard
+		// is about one exact path, and without it there is nothing to compare.
+		return false
 	}
-	info, err := os.Stat(canonical)
+	return sameCanonicalPath(canonicalRoot, releaseRoot)
+}
+
+// sameCanonicalPath compares a root the store has already canonicalized against
+// one that has not been. EvalSymlinks failing is not a match: a release default
+// root that does not exist cannot be the root being migrated.
+//
+// String equality is checked first because it is free, but it is not sufficient:
+// EvalSymlinks preserves the caller's spelling of every component, and macOS
+// ships a case-insensitive filesystem by default, so `--state-root` typed as
+// `/Users/x/.local/State/approach/sessions/v1` resolves to the same directory as
+// the release default and compares unequal — silently disarming the guard on the
+// one path it exists to protect. Identity is the real question, so the
+// filesystem answers it.
+func sameCanonicalPath(canonical, candidate string) bool {
+	if canonical == candidate {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return "", fmt.Errorf("inspect flow store root: %w", err)
+		return false
 	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("flow store root must resolve to a directory")
+	if resolved == canonical {
+		return true
 	}
-	if err := os.Chmod(canonical, artifacts.DirPerm); err != nil {
-		return "", fmt.Errorf("secure resolved flow store root: %w", err)
+	canonicalInfo, err := os.Stat(canonical)
+	if err != nil {
+		return false
 	}
-	info, err = os.Stat(canonical)
-	if err != nil || info.Mode().Perm() != artifacts.DirPerm {
-		return "", fmt.Errorf("flow store root permissions are not 0700")
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil {
+		return false
 	}
-	return canonical, nil
+	return os.SameFile(canonicalInfo, resolvedInfo)
 }
 
 func inspectCutoverState(root string) (cutoverState, error) {
@@ -436,7 +541,7 @@ func inspectReservedDirectory(path string) (bool, error) {
 	return true, nil
 }
 
-func completeCutover(root string, state cutoverState, presets map[string]Preset, lockTimeout time.Duration) error {
+func completeCutover(root string, state cutoverState, presets map[string]Preset, lockTimeout time.Duration, allowDevLiveMigration bool) error {
 	stagePath := filepath.Join(root, stageFilename)
 	legacyPath := filepath.Join(root, "flows")
 	tombstonePath := filepath.Join(root, "flows.legacy")
@@ -454,6 +559,19 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 			tombstonePath, shellQuote(tombstonePath), shellQuote(legacyPath))
 	}
 
+	// Every path out of this function that does not return an error publishes a
+	// current-schema approach.db in root — by promoting the stage below, or by
+	// building a fresh database further down. refuseDevLiveMigration cannot see
+	// either one: the first is a stage that may already be at this build's
+	// schema, in which case migrateAuthoritativeDatabase returns before the
+	// guard ever runs, and the second has no stored version to compare at all.
+	// So the creation guard belongs here, ahead of every branch, rather than
+	// only in front of the build. Checked before anything is renamed or removed
+	// so a refusal leaves the root byte-identical.
+	if err := refuseDevLiveCreation(root, allowDevLiveMigration); err != nil {
+		return err
+	}
+
 	if state.stage {
 		// Integrity and schema only — deliberately NOT a record-by-record diff
 		// against the legacy source. The stage is fsynced before it is promoted,
@@ -465,7 +583,11 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 		// A predecessor-schema stage from an older build is still that durable
 		// corpus: upgrade it in place before current-schema validation, or the
 		// resume path treats a valid predecessor stage as unusable and discards it.
-		err := migrateAuthoritativeDatabase(stagePath, lockTimeout)
+		// root is passed rather than elided even though the creation guard above
+		// already covers this branch: the stage is renamed onto approach.db in
+		// this root, so the migration guard is correct here on its own terms and
+		// keeping it wired means a later reordering cannot quietly disarm both.
+		err := migrateAuthoritativeDatabase(stagePath, lockTimeout, root, allowDevLiveMigration)
 		if err == nil {
 			err = settleStagedSQLiteFile(stagePath)
 		}
@@ -482,6 +604,14 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 			}
 			reportResumedCutover(root, legacyPath, databasePath, state.legacy)
 			return nil
+		case errors.Is(err, errDevLiveMigrationRefused):
+			// Unreachable while refuseDevLiveCreation above still gates the same
+			// condition, and kept anyway: it is what makes reordering these two
+			// guards safe. A refusal is not a damaged stage, and falling through
+			// to the discard below would destroy an intact corpus over a policy
+			// check the operator was just told how to satisfy — on the one path
+			// where the stage can be the only copy left.
+			return err
 		case !state.legacy && state.tombstone:
 			// Only a root migrated by a build that renamed flows/ can reach this:
 			// the stage is unusable and the tombstone is the sole surviving copy,

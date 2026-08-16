@@ -2723,3 +2723,69 @@ func TestRunFlowCreateRejectsInvalidAgentConfig(t *testing.T) {
 		}
 	}
 }
+
+// The dev-live-migration refusal names an environment variable as the way to
+// acknowledge it from the CLI, because --allow-dev-live-migration belongs to the
+// TUI's flag set. Advice a surface cannot act on is worse than no advice, so the
+// store opener shared by `flow` and `serve` has to read it.
+func TestNewFlowStoreHonorsTheDevLiveMigrationAcknowledgement(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	root := filepath.Join(stateHome, "approach", "sessions", "v1")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("create release root: %v", err)
+	}
+	seedParentReleaseV4Database(t, root)
+
+	env := map[string]string{}
+	deps := runDeps{getenv: func(key string) string { return env[key] }}
+	cfg := config.Config{}
+
+	if _, err := newFlowStoreWithConfig(root, cfg, deps); err == nil {
+		t.Fatal("the CLI store opener migrated the release-owned root without acknowledgement")
+	} else if !strings.Contains(err.Error(), "APPROACH_ALLOW_DEV_LIVE_MIGRATION") {
+		t.Fatalf("refusal %q does not name the environment acknowledgement", err)
+	}
+
+	// With the acknowledgement the guard no longer fires. This fixture's schema
+	// is deliberately minimal, so the migration still fails further in on schema
+	// validation — the assertion is that the failure is no longer the *refusal*,
+	// which is the only thing the env plumbing controls. flowstore's own tests
+	// own the end-to-end migration against a full predecessor fixture.
+	env["APPROACH_ALLOW_DEV_LIVE_MIGRATION"] = "1"
+	store, err := newFlowStoreWithConfig(root, cfg, deps)
+	if err == nil {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if strings.Contains(err.Error(), "APPROACH_ALLOW_DEV_LIVE_MIGRATION") {
+		t.Fatalf("acknowledged open still hit the dev-live-migration refusal: %v", err)
+	}
+}
+
+// seedParentReleaseV4Database writes a predecessor-schema database, which is
+// what makes the guard's "stored schema older than this build's" condition true.
+func seedParentReleaseV4Database(t *testing.T, root string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(root, "approach.db")+"?mode=rwc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE flows (
+  flow_id TEXT PRIMARY KEY,
+  repo_path TEXT NOT NULL,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  bead_id TEXT NOT NULL DEFAULT '',
+  epic_id TEXT NOT NULL DEFAULT '',
+  prepared_at TEXT NOT NULL DEFAULT '',
+  record BLOB NOT NULL
+);
+PRAGMA user_version = 4;`); err != nil {
+		t.Fatal(err)
+	}
+}

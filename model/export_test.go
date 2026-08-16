@@ -167,9 +167,9 @@ func FlowPhaseDoneInstructionForTest() string {
 }
 
 func FlowPlanPromptForTest(record flowstore.FlowRecord, templates FlowPromptTemplates) string {
-	return flowPlanPrompt(record, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, templates)
+	return flowPlanPrompt(record, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, templates, "")
 }
 
 func FlowPhasePromptForTest(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
-	return flowPhasePrompt(record, phase, planPath, planBody, templates)
+	return flowPhasePrompt(record, phase, planPath, planBody, templates, "")
 }
