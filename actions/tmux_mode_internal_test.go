@@ -431,6 +431,33 @@ func TestRepoTmuxTrackedLaunchRejectsMissingLeaseIdentity(t *testing.T) {
 	}
 }
 
+func TestRepoTmuxTrackedLaunchRejectsIncompatibleRoles(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	tests := []struct {
+		name   string
+		mutate func(*AgentLaunchContext)
+	}{
+		{name: "auto launch", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAutoLaunch = true }},
+		{name: "headless", mutate: func(ctx *AgentLaunchContext) { ctx.Headless = true }},
+		{name: "repair", mutate: func(ctx *AgentLaunchContext) { ctx.FlowRepair = true }},
+		{name: "generic Flow agent", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAgent = true }},
+		{name: "saved session resume", mutate: func(ctx *AgentLaunchContext) { ctx.FlowSavedSessionResume = true }},
+		{name: "autofix", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAutofix = true }},
+		{name: "autofix PR", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAutofixPRNumber = 42 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := tmuxModeContext(t)
+			ctx.WorktreePath = t.TempDir()
+			tc.mutate(&ctx)
+			if _, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux")); err == nil ||
+				!strings.Contains(err.Error(), "invalid tracked Flow tmux launch role") {
+				t.Fatalf("tracked launch error = %v, want incompatible role rejection", err)
+			}
+		})
+	}
+}
+
 func TestRepoTmuxTrackedLaunchRejectsSelfExecutableResolutionFailure(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	ctx := tmuxModeContext(t)

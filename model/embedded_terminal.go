@@ -137,7 +137,9 @@ type terminateEmbeddedTerminalMsg struct {
 
 type quitEmbeddedTerminalsMsg struct{}
 
-type flowLaunchQuitRequestedMsg struct{}
+type flowLaunchQuitRequestedMsg struct {
+	Interrupt bool
+}
 
 // DeferQuitDuringFlowLaunch keeps Bubble Tea's signal-generated quit messages
 // inside the model while a private tmux handoff owns a Flow reservation. The
@@ -149,8 +151,10 @@ func DeferQuitDuringFlowLaunch(current tea.Model, msg tea.Msg) tea.Msg {
 		return msg
 	}
 	switch msg.(type) {
-	case tea.QuitMsg, tea.InterruptMsg:
+	case tea.QuitMsg:
 		return flowLaunchQuitRequestedMsg{}
+	case tea.InterruptMsg:
+		return flowLaunchQuitRequestedMsg{Interrupt: true}
 	default:
 		return msg
 	}

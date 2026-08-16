@@ -243,6 +243,11 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	if command != agent.CommandCodex && command != agent.CommandClaude {
 		return RepoTmuxAgentSpec{}, errors.New("tmux launch mode supports only CLI agents")
 	}
+	if ctx.FlowLaunchTracked {
+		if err := validateTrackedRepoTmuxRole(ctx); err != nil {
+			return RepoTmuxAgentSpec{}, err
+		}
+	}
 	// The window is not an embedded slot: there is no dock to prefill, so the
 	// initial prompt has to reach the agent as argv, and no stream-json
 	// rendering applies. Both follow from Embedded being false.
@@ -372,6 +377,22 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 			ErrorDetail: stderr.String,
 		},
 	}, nil
+}
+
+func validateTrackedRepoTmuxRole(ctx AgentLaunchContext) error {
+	if !ctx.FlowLaunchTracked ||
+		strings.TrimSpace(ctx.FlowID) == "" ||
+		strings.TrimSpace(ctx.FlowPhaseID) == "" ||
+		ctx.FlowAutoLaunch ||
+		ctx.Headless ||
+		ctx.FlowRepair ||
+		ctx.FlowAgent ||
+		ctx.FlowSavedSessionResume ||
+		ctx.FlowAutofix ||
+		ctx.FlowAutofixPRNumber != 0 {
+		return errors.New("invalid tracked Flow tmux launch role")
+	}
+	return nil
 }
 
 func randomHex(byteCount int) (string, error) {

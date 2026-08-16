@@ -255,11 +255,12 @@ type Model struct {
 	// It needs no expiry: the probe asks whether those windows are still live,
 	// so closed ones re-enable the shortcut on their own, and the slice is
 	// bounded by how many times one Flow was launched in one TUI session.
-	flowAutofixTmuxLaunches map[string][]string
-	flowLaunchAttempts      map[string]flowLaunchAttempt
-	flowLaunchSessionOwners map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
-	quitAfterFlowLaunch     bool
-	launchSeams             flowLaunchSeams
+	flowAutofixTmuxLaunches  map[string][]string
+	flowLaunchAttempts       map[string]flowLaunchAttempt
+	flowLaunchSessionOwners  map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
+	quitAfterFlowLaunch      bool
+	interruptAfterFlowLaunch bool
+	launchSeams              flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
 	flowRefreshTickGen      uint64
@@ -1892,7 +1893,11 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
 		if modelNext.quitAfterFlowLaunch && len(modelNext.flowLaunchAttempts) == 0 {
-			cmd = batchNonNil(cmd, tea.Quit)
+			shutdownCmd := tea.Quit
+			if modelNext.interruptAfterFlowLaunch {
+				shutdownCmd = func() tea.Msg { return tea.Interrupt() }
+			}
+			cmd = batchNonNil(cmd, shutdownCmd)
 		}
 		next = modelNext
 	}()
@@ -1901,6 +1906,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleKey(msg)
 	case flowLaunchQuitRequestedMsg:
 		m.quitAfterFlowLaunch = true
+		m.interruptAfterFlowLaunch = msg.Interrupt
 		return m.setStatus(statusOther, flowLaunchQuitPendingStatus), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
