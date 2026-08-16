@@ -9,35 +9,49 @@ description: Persist agent plans to Approach so they show up in the plans pane (
 agent-artifact root (`$XDG_STATE_HOME/approach/sessions/v1/plans/...` or
 `~/.local/state/approach/sessions/v1/plans/...`). Persisted plans appear in the
 `approach` TUI under the plans pane (mode key `7`). This skill is instruction-only:
-it tells you when and how to call the `approach plan` CLI.
+it tells you when and how to call the `$APPROACH_BIN plan` CLI.
+
+## Resolve the approach binary first
+
+`APPROACH_EXECUTABLE` pins the build that launched this agent. Resolve it once,
+before any command below; without it the launcher and this agent can be
+different builds and a save may fail at the database schema gate. The `-x`
+retest matters: `:-` only substitutes when the variable is *unset*, so a pinned
+path that was evicted or never materialized would hard-fail instead of degrading
+to `PATH`.
+
+```bash
+APPROACH_BIN="${APPROACH_EXECUTABLE:-approach}"
+[ -x "$APPROACH_BIN" ] || APPROACH_BIN=approach
+```
 
 ## When to persist
 
 Save or update the plan whenever its lifecycle changes:
 
-- **created** — first time you write a plan → `approach plan save` (status `draft`).
-- **revised** — you edited the plan body → `approach plan save` reusing the same `--plan-id`.
-- **approved** — the user accepted the plan → `approach plan save --status approved`.
-- **started** — you began executing → `approach plan save --status in_progress`.
-- **completed** / **blocked** / **superseded** → `approach plan save --status <status>`.
+- **created** — first time you write a plan → `$APPROACH_BIN plan save` (status `draft`).
+- **revised** — you edited the plan body → `$APPROACH_BIN plan save` reusing the same `--plan-id`.
+- **approved** — the user accepted the plan → `$APPROACH_BIN plan save --status approved`.
+- **started** — you began executing → `$APPROACH_BIN plan save --status in_progress`.
+- **completed** / **blocked** / **superseded** → `$APPROACH_BIN plan save --status <status>`.
 
 Plan statuses: `draft`, `approved`, `in_progress`, `completed`, `blocked`,
 `superseded`.
 
 ## How to persist the plan body
 
-Pipe the full Markdown plan on stdin (or pass `--file`). `approach plan save` prints
+Pipe the full Markdown plan on stdin (or pass `--file`). `$APPROACH_BIN plan save` prints
 only the generated (or reused) `plan_id` on success:
 
 ```bash
-PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | approach plan save --title "Persist plans in approach")
+PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | "$APPROACH_BIN" plan save --title "Persist plans in approach")
 ```
 
 Reuse the `plan_id` for every later edit so you update the same record instead of
 creating duplicates:
 
 ```bash
-printf '%s' "$UPDATED_MARKDOWN" | approach plan save --plan-id "$PLAN_ID" --status in_progress
+printf '%s' "$UPDATED_MARKDOWN" | "$APPROACH_BIN" plan save --plan-id "$PLAN_ID" --status in_progress
 ```
 
 `save` always replaces the Markdown and title from the command (both are
@@ -57,8 +71,8 @@ Record each phase explicitly as its status changes (v1 does not parse phases out
 of the Markdown):
 
 ```bash
-approach plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store tracer bullet" --status completed --order 1
-approach plan phase set --plan-id "$PLAN_ID" --phase-id cli   --title "CLI subcommands"      --status in_progress --order 2
+"$APPROACH_BIN" plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store tracer bullet" --status completed --order 1
+"$APPROACH_BIN" plan phase set --plan-id "$PLAN_ID" --phase-id cli   --title "CLI subcommands"      --status in_progress --order 2
 ```
 
 Phase statuses: `pending`, `in_progress`, `completed`, `blocked`, `skipped`.
@@ -67,11 +81,11 @@ Re-running `phase set` with the same `--phase-id` updates that phase in place.
 ## Reading plans back
 
 ```bash
-approach plan list --repo-path "$APPROACH_REPO_PATH" --json   # machine-readable list (requires --json)
-approach plan read --plan-id "$PLAN_ID"                    # prints the plan Markdown only
+"$APPROACH_BIN" plan list --repo-path "$APPROACH_REPO_PATH" --json   # machine-readable list (requires --json)
+"$APPROACH_BIN" plan read --plan-id "$PLAN_ID"                    # prints the plan Markdown only
 ```
 
 ## If persistence fails
 
-If any `approach plan` command exits non-zero, tell the user the plan was not saved
+If any `$APPROACH_BIN plan` command exits non-zero, tell the user the plan was not saved
 (include the error). Do not silently continue as if it succeeded.

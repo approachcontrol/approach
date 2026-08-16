@@ -296,10 +296,10 @@ func (m Model) builtInPromptTemplatePreview(target promptTemplateTarget) string 
 		},
 	}
 	if target.Key == "plan" {
-		return flowPlanPrompt(record, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, FlowPromptTemplates{})
+		return flowPlanPrompt(record, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, FlowPromptTemplates{}, "")
 	}
 	phase := flowstore.FlowPhase{PhaseID: flowPhaseIDForPromptTemplateKey(target.Key), Title: "{phase_title}"}
-	return flowPhasePrompt(record, phase, "{plan_path}", "{plan_body}", FlowPromptTemplates{})
+	return flowPhasePrompt(record, phase, "{plan_path}", "{plan_body}", FlowPromptTemplates{}, "")
 }
 
 func flowPhaseIDForPromptTemplateKey(key string) string {

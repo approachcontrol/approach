@@ -13,16 +13,24 @@ This skill is for ad hoc sessions. It does not require `APPROACH_FLOW_ID` or
 `APPROACH_FLOW_PHASE_ID`; those belong to the `approach-flow` skill for agents already
 launched inside an existing Flow phase. This skill can create a Flow and link a
 saved plan, but v1 cannot attach the current provider session to the new Flow.
-Do not claim the session is attached, and do not run `approach flow session attach`
+Do not claim the session is attached, and do not run `$APPROACH_BIN flow session attach`
 unless a future CLI implements it.
 
 ## Start With Shared State
 
-Build reusable state-root arguments before running commands. `approach flow` reads
-`APPROACH_FLOW_STATE_ROOT`, and `approach plan` reads `APPROACH_PLAN_STATE_ROOT`, but passing
+Build reusable state-root arguments before running commands. `$APPROACH_BIN flow` reads
+`APPROACH_FLOW_STATE_ROOT`, and `$APPROACH_BIN plan` reads `APPROACH_PLAN_STATE_ROOT`, but passing
 the same explicit root keeps created flows and imported plans together.
 
 ```bash
+# Resolve the approach binary once. APPROACH_EXECUTABLE pins the build that
+# launched this agent; without it the launcher and this agent can be different
+# builds, and a phase result may then be unpersistable. The -x retest matters:
+# `:-` only substitutes when the variable is *unset*, so a pinned path that was
+# evicted or never materialized would hard-fail instead of degrading to PATH.
+APPROACH_BIN="${APPROACH_EXECUTABLE:-approach}"
+[ -x "$APPROACH_BIN" ] || APPROACH_BIN=approach
+
 APPROACH_ARTIFACT_ROOT="${APPROACH_FLOW_STATE_ROOT:-${APPROACH_PLAN_STATE_ROOT:-${APPROACH_SESSION_STATE_ROOT:-}}}"
 FLOW_STATE_ARGS=()
 PLAN_STATE_ARGS=()
@@ -99,7 +107,7 @@ Skip worktree creation only in two cases:
 ## Create Or Reuse A Worktree
 
 For a normal repo-backed Flow, fetch the base ref and create a dedicated branch
-and worktree before running `approach flow create`. This mirrors Approach's own
+and worktree before running `$APPROACH_BIN flow create`. This mirrors Approach's own
 `flow/<slug>` branch at `<repo>-worktrees/flow-<slug>` convention. If worktree
 creation fails, stop and report the command error instead of creating a partial
 Flow.
@@ -192,7 +200,7 @@ fi
 ## Create And Verify The Flow
 
 Prefer `--instructions-file` when the instructions are more than a short
-sentence; use `--instructions` for compact task text. `approach flow create --json`
+sentence; use `--instructions` for compact task text. `$APPROACH_BIN flow create --json`
 prints machine-readable output containing `flow_id`. Set `FLOW_PRESET` only
 when the user or surrounding workflow explicitly asks for a configured custom
 phase graph; omitted uses `[flow].preset` or the built-in `default` preset.
@@ -219,7 +227,7 @@ if [ -n "${FLOW_PRESET:-}" ]; then
 fi
 
 if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
-  if ! FLOW_JSON=$(approach flow create \
+  if ! FLOW_JSON=$("$APPROACH_BIN" flow create \
     --title "${FLOW_TITLE:-}" \
     --instructions-file "${FLOW_INSTRUCTIONS_FILE:-}" \
     --repo-path "${APPROACH_REPO_PATH:-}" \
@@ -234,7 +242,7 @@ if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
     exit 1
   fi
 else
-  if ! FLOW_JSON=$(approach flow create \
+  if ! FLOW_JSON=$("$APPROACH_BIN" flow create \
     --title "${FLOW_TITLE:-}" \
     --instructions "${FLOW_INSTRUCTIONS:-}" \
     --repo-path "${APPROACH_REPO_PATH:-}" \
@@ -253,14 +261,14 @@ if ! FLOW_ID=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, sys; print(js
   echo "approach flow create returned JSON that could not be parsed for flow_id; report the command error to the user." >&2
   exit 1
 fi
-if ! approach flow read --flow-id "$FLOW_ID" "${FLOW_STATE_ARGS[@]}" >/dev/null; then
+if ! "$APPROACH_BIN" flow read --flow-id "$FLOW_ID" "${FLOW_STATE_ARGS[@]}" >/dev/null; then
   echo "approach flow read failed for $FLOW_ID; report the command error to the user." >&2
   exit 1
 fi
 ```
 
 If any command in this section fails, report the command error and stop. Do not
-say a Flow was created unless `approach flow create` succeeded and `approach flow read
+say a Flow was created unless `$APPROACH_BIN flow create` succeeded and `$APPROACH_BIN flow read
 --flow-id "$FLOW_ID"` verified it.
 
 For a repo-backed Flow, also confirm the readback carries the worktree metadata
@@ -269,7 +277,7 @@ repair. Skip this check only for an explicit metadata-only Flow.
 
 ```bash
 if [ -z "${APPROACH_FLOW_METADATA_ONLY:-}" ]; then
-  if ! approach flow read --flow-id "${FLOW_ID:-}" "${FLOW_STATE_ARGS[@]}" \
+  if ! "$APPROACH_BIN" flow read --flow-id "${FLOW_ID:-}" "${FLOW_STATE_ARGS[@]}" \
     | python3 -c 'import json, sys
 record = json.load(sys.stdin)
 missing = [field for field in ("worktree_path", "branch", "base_ref", "commit") if not record.get(field)]
@@ -289,7 +297,7 @@ the new Flow. Do not invent a plan body just to satisfy this path.
 
 ```bash
 if [ -z "${FLOW_ID:-}" ]; then
-  echo "Plan import requires FLOW_ID from a verified approach flow create result." >&2
+  echo "Plan import requires FLOW_ID from a verified "$APPROACH_BIN" flow create result." >&2
   exit 1
 fi
 if [ -z "${PLAN_MARKDOWN:-}" ]; then
@@ -319,7 +327,7 @@ record_plan_import_failure() {
     echo "Plan import failed, and Flow $FLOW_ID has no plan-kind phase to mark blocked; report both facts to the user." >&2
     return 0
   fi
-  if ! approach flow phase block \
+  if ! "$APPROACH_BIN" flow phase block \
     --flow-id "$FLOW_ID" \
     --phase-id "$FLOW_PLAN_PHASE_ID" \
     --notes "$notes" \
@@ -328,7 +336,7 @@ record_plan_import_failure() {
   fi
 }
 
-if ! PLAN_ID=$(printf '%s' "${PLAN_MARKDOWN:-}" | approach plan save \
+if ! PLAN_ID=$(printf '%s' "${PLAN_MARKDOWN:-}" | "$APPROACH_BIN" plan save \
   --title "${FLOW_TITLE:-}" \
   --status approved \
   --repo-path "${APPROACH_REPO_PATH:-}" \
@@ -340,7 +348,7 @@ if ! PLAN_ID=$(printf '%s' "${PLAN_MARKDOWN:-}" | approach plan save \
   exit 1
 fi
 
-if ! approach flow plan set \
+if ! "$APPROACH_BIN" flow plan set \
   --flow-id "$FLOW_ID" \
   --plan-id "$PLAN_ID" \
   "${FLOW_STATE_ARGS[@]}"; then
@@ -348,13 +356,13 @@ if ! approach flow plan set \
   exit 1
 fi
 
-if ! approach plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
+if ! "$APPROACH_BIN" plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
   record_plan_import_failure "approach plan read failed for $PLAN_ID; report the command error to the user."
   exit 1
 fi
 
 if [ -n "${FLOW_PLAN_PHASE_ID:-}" ]; then
-  if ! approach flow phase complete \
+  if ! "$APPROACH_BIN" flow phase complete \
     --flow-id "$FLOW_ID" \
     --phase-id "$FLOW_PLAN_PHASE_ID" \
     --summary "Imported plan $PLAN_ID." \
@@ -376,7 +384,7 @@ for a normal Flow Plan launch.
 
 ## Persistence Failures
 
-If any `approach flow` or `approach plan` command exits non-zero, report the command
+If any `$APPROACH_BIN flow` or `$APPROACH_BIN plan` command exits non-zero, report the command
 error. These persistence failures must not be treated as success. Do not say a
 Flow was created, a plan was saved, a plan was linked, or a phase was completed
 unless the corresponding command succeeded.
@@ -386,14 +394,14 @@ failed import on the new Flow Plan phase and report whether that persistence
 also succeeded. The import snippet above uses this recovery command:
 
 ```bash
-approach flow phase block \
+"$APPROACH_BIN" flow phase block \
   --flow-id "$FLOW_ID" \
   --phase-id "$FLOW_PLAN_PHASE_ID" \
   --notes "Plan import failed; report the approach command error to the user." \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
-Use `approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id
+Use `$APPROACH_BIN flow phase needs-attention --flow-id "$FLOW_ID" --phase-id
 "$FLOW_PLAN_PHASE_ID" --notes "..." "${FLOW_STATE_ARGS[@]}"` instead when the
 Flow can continue but the imported plan should be reviewed before
 implementation. If this recovery update fails too, report both the original

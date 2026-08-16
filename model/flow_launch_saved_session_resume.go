@@ -201,6 +201,7 @@ func validateSavedSessionResumeFlow(flowID string, record flowstore.FlowRecord, 
 func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd {
 	reserve := m.reserveFlowLaunch
 	seams := m.launchSeams
+	pin := m.launchPin
 	sessionStateRoot := m.sessionStateRoot
 	if root := strings.TrimSpace(m.flowLaunchAttempts[msg.FlowID].Settings.SessionStateRoot); root != "" {
 		sessionStateRoot = root
@@ -272,7 +273,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 		event.Record = record
 		event.Session = refreshed
 		event.RepoPath = refreshed.RepoPath
-		event.Context = actions.AgentLaunchContext{
+		event.Context = applyLaunchPin(actions.AgentLaunchContext{
 			Command:                string(refreshed.Provider),
 			LaunchID:               msg.Token,
 			RepoPath:               refreshed.RepoPath,
@@ -287,7 +288,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			FlowID:                 record.FlowID,
 			FlowSavedSessionResume: true,
 			Embedded:               true,
-		}
+		}, pin)
 		return event
 	}
 }

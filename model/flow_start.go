@@ -522,11 +522,11 @@ func findFlowPhaseByID(flow flowstore.FlowRecord, phaseID string) (flowstore.Flo
 	return flowPhaseByID(flow, phaseID)
 }
 
-func initialFlowLaunchPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates) string {
+func initialFlowLaunchPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates, binary string) string {
 	if flowstore.SemanticKind(phase) == flowstore.KindPlan {
-		return flowPlanPrompt(flow, phase, templates)
+		return flowPlanPrompt(flow, phase, templates, binary)
 	}
-	return flowPhasePrompt(flow, phase, flow.PlanPath, "", templates)
+	return flowPhasePrompt(flow, phase, flow.PlanPath, "", templates, binary)
 }
 
 func (s flowCreator) runBootstrap(repoPath string, worktree actions.FlowWorktreeCreateResult) error {
@@ -677,7 +677,7 @@ func flowStartPromptRecord(flow flowstore.FlowRecord, req FlowStartRequest, work
 	return flow
 }
 
-func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates) string {
+func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates, binary string) string {
 	if strings.TrimSpace(phase.PhaseID) == "" {
 		phase = flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
 	}
@@ -685,11 +685,12 @@ func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templa
 		prompt := renderFlowPromptTemplate(templates.Plan, flow, phase, flow.PlanPath, "")
 		return ensureFlowPhaseDoneInstruction(prompt, templates.Plan)
 	}
+	bin := flowPromptBinary(binary)
 	var b strings.Builder
 	b.WriteString("Use the approach-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)
 	b.WriteString("\n\nProduce a plan only; do not start coding in this phase.")
-	b.WriteString("\nCreate and persist the plan with approach plan save, link it back with approach flow plan set, then report Flow persistence failures explicitly before ending.")
-	b.WriteString("\nIf the task references a GitHub issue, link it with approach flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.")
+	b.WriteString("\nCreate and persist the plan with " + bin + " plan save, link it back with " + bin + " flow plan set, then report Flow persistence failures explicitly before ending.")
+	b.WriteString("\nIf the task references a GitHub issue, link it with " + bin + " flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.")
 	return ensureFlowPhaseDoneInstruction(b.String(), "")
 }

@@ -112,3 +112,54 @@ func TestStringPrefersLdflagsOverBuildInfo(t *testing.T) {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
 }
+
+func TestVersionAndCommitAccessors(t *testing.T) {
+	originalVersion, originalCommit, originalDate := version, commit, date
+	originalReadBuildInfo := readBuildInfo
+	t.Cleanup(func() {
+		version, commit, date = originalVersion, originalCommit, originalDate
+		readBuildInfo = originalReadBuildInfo
+	})
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+
+	version, commit, date = "v0.10.3", "abc1234", "2026-08-16T00:00:00Z"
+	if got := Version(); got != "v0.10.3" {
+		t.Fatalf("Version() = %q, want %q", got, "v0.10.3")
+	}
+	if got := Commit(); got != "abc1234" {
+		t.Fatalf("Commit() = %q, want %q", got, "abc1234")
+	}
+	if got := String(); got != "approach v0.10.3 (abc1234) built 2026-08-16T00:00:00Z" {
+		t.Fatalf("String() = %q", got)
+	}
+}
+
+func TestIsDevelopment(t *testing.T) {
+	originalVersion, originalCommit, originalDate := version, commit, date
+	originalReadBuildInfo := readBuildInfo
+	t.Cleanup(func() {
+		version, commit, date = originalVersion, originalCommit, originalDate
+		readBuildInfo = originalReadBuildInfo
+	})
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{version: "dev", want: true},
+		{version: "", want: true},
+		{version: "v0.10.3", want: false},
+		{version: "v1.0.0", want: false},
+		{version: "0.10.3", want: true},
+		{version: "v0.10.3-next", want: true},
+		{version: "v0.0.0-20260101120000-abcdef123456", want: true},
+		{version: "(devel)", want: true},
+	}
+	for _, test := range tests {
+		version, commit, date = test.version, "abc1234", "2026-08-16T00:00:00Z"
+		if got := IsDevelopment(); got != test.want {
+			t.Fatalf("IsDevelopment() for %q = %v, want %v", test.version, got, test.want)
+		}
+	}
+}

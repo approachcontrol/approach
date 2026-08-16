@@ -2,10 +2,14 @@ package model
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/scanner"
 )
 
@@ -315,13 +319,88 @@ func TestFlowPhasePromptTemplatesNormalizePhaseIDs(t *testing.T) {
 
 	prompt := flowPhasePrompt(record, phase, "", "", FlowPromptTemplates{
 		ReviewLoop: "Custom review loop for {phase_id}",
-	})
+	}, "")
 	if !strings.Contains(prompt, "Custom review loop for  Review-Loop") {
 		t.Fatalf("normalized phase template was not used:\n%s", prompt)
 	}
 
-	prompt = flowPhasePrompt(record, phase, "", "", FlowPromptTemplates{})
+	prompt = flowPhasePrompt(record, phase, "", "", FlowPromptTemplates{}, "")
 	if !strings.Contains(prompt, "Use the review-loop workflow with goal: review-and-revise.") {
 		t.Fatalf("normalized built-in review-loop prompt was not used:\n%s", prompt)
+	}
+}
+
+// A launch refused because its pinned binary no longer verifies must leave the
+// phase exactly as it found it: no `running` stamp, no worktree.
+func TestFlowPhaseLaunchPreflightRefusesUnverifiablePinWithoutMutatingState(t *testing.T) {
+	worktreeCalls := 0
+	launchIDs := 0
+	launcher := flowLaunchPreparation{
+		AgentCommand: "codex",
+		Pin: controlplane.Pin{
+			ExecutablePath: "/state/approach/sessions/v1/bin/approach-abc123",
+			Version:        "v0.10.3",
+			SchemaVersion:  6,
+		},
+		VerifyPin: func(controlplane.Pin) error {
+			return fmt.Errorf("%w: /state/approach/sessions/v1/bin/approach-abc123", controlplane.ErrPinDigestMismatch)
+		},
+		EnsureWorktree: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			worktreeCalls++
+			return record, nil
+		},
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchIDs++
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+
+	_, err := launcher.preflight(flowPhaseLaunchRequest{
+		Record: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktree"},
+		Phase:  flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseReady},
+	})
+	var validation flowPhaseLaunchValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("preflight error = %v, want a validation refusal", err)
+	}
+	for _, want := range []string{"/state/approach/sessions/v1/bin/approach-abc123", "v0.10.3", "schema 6"} {
+		if !strings.Contains(validation.Message, want) {
+			t.Fatalf("refusal %q does not name %q", validation.Message, want)
+		}
+	}
+	if worktreeCalls != 0 || launchIDs != 0 {
+		t.Fatalf("refused launch mutated state: worktree=%d launchIDs=%d", worktreeCalls, launchIDs)
+	}
+}
+
+func TestFlowPhaseLaunchPreflightAcceptsAnUnpinnedLaunch(t *testing.T) {
+	launcher := flowLaunchPreparation{
+		AgentCommand: "codex",
+		VerifyPin: func(controlplane.Pin) error {
+			t.Fatal("an unpinned launch must not verify anything")
+			return nil
+		},
+	}
+	if _, err := launcher.preflight(flowPhaseLaunchRequest{
+		Record: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktree"},
+		Phase:  flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseReady},
+	}); err != nil {
+		t.Fatalf("preflight on an unpinned launch: %v", err)
+	}
+}
+
+func TestApplyLaunchPinStampsTheLaunchingBuild(t *testing.T) {
+	pin := controlplane.Pin{
+		ExecutablePath: "/state/bin/approach-abc123",
+		Version:        "v0.10.3",
+		SchemaVersion:  6,
+	}
+	ctx := applyLaunchPin(actions.AgentLaunchContext{Command: "codex"}, pin)
+	if ctx.Executable != pin.ExecutablePath || ctx.BuildVersion != "v0.10.3" || ctx.DBSchemaVersion != 6 {
+		t.Fatalf("pinned context = %+v", ctx)
+	}
+	unpinned := applyLaunchPin(actions.AgentLaunchContext{Command: "codex"}, controlplane.Pin{})
+	if unpinned.Executable != "" || unpinned.BuildVersion != "" || unpinned.DBSchemaVersion != 0 {
+		t.Fatalf("zero pin stamped a context: %+v", unpinned)
 	}
 }

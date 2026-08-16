@@ -63,7 +63,7 @@ func TestApproachFlowSkillDocumentsAgentContract(t *testing.T) {
 
 func TestApproachFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
+	skill := canonicalizeApproachInvocations(readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md")))
 	flowCLI := readFile(t, filepath.Join(root, "cmd", "approach", "flow.go"))
 	planCLI := readFile(t, filepath.Join(root, "cmd", "approach", "plan.go"))
 	flowStore := readFile(t, filepath.Join(root, "flowstore", "store.go"))
@@ -261,8 +261,9 @@ func TestApproachFlowCreateSkillGuardsPersistenceFailures(t *testing.T) {
 		t.Fatal("plan import should leave FLOW_PLAN_PHASE_ID empty when no plan-kind phase is ready")
 	}
 
-	readbackIndex := strings.Index(skill, `if ! approach plan read --plan-id "$PLAN_ID"`)
-	completeIndex := strings.Index(skill, "if ! approach flow phase complete")
+	canonical := canonicalizeApproachInvocations(skill)
+	readbackIndex := strings.Index(canonical, `if ! approach plan read --plan-id "$PLAN_ID"`)
+	completeIndex := strings.Index(canonical, "if ! approach flow phase complete")
 	if readbackIndex < 0 || completeIndex < 0 || completeIndex < readbackIndex {
 		t.Fatal("skill should guard plan readback before attempting to complete the Flow plan phase")
 	}
@@ -334,10 +335,11 @@ func assertSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T, skill string) {
 	})
 
 	for _, block := range fencedBashBlocks(skill) {
-		if strings.Contains(block, "approach flow ") && !strings.Contains(block, `"${FLOW_STATE_ARGS[@]}"`) {
+		canonical := canonicalizeApproachInvocations(block)
+		if strings.Contains(canonical, "approach flow ") && !strings.Contains(block, `"${FLOW_STATE_ARGS[@]}"`) {
 			t.Fatalf("flow example missing FLOW_STATE_ARGS:\n%s", block)
 		}
-		if strings.Contains(block, "approach plan ") && !strings.Contains(block, `"${PLAN_STATE_ARGS[@]}"`) {
+		if strings.Contains(canonical, "approach plan ") && !strings.Contains(block, `"${PLAN_STATE_ARGS[@]}"`) {
 			t.Fatalf("plan example missing PLAN_STATE_ARGS:\n%s", block)
 		}
 	}
@@ -431,6 +433,7 @@ func readFile(t *testing.T, path string) string {
 
 func requireContainsAll(t *testing.T, label, haystack string, needles []string) {
 	t.Helper()
+	haystack = canonicalizeApproachInvocations(haystack)
 	normalized := strings.Join(strings.Fields(haystack), " ")
 	for _, needle := range needles {
 		if !strings.Contains(haystack, needle) && !strings.Contains(normalized, needle) {
@@ -439,8 +442,24 @@ func requireContainsAll(t *testing.T, label, haystack string, needles []string) 
 	}
 }
 
+// canonicalizeApproachInvocations rewrites the pinned spelling a skill uses —
+// `"$APPROACH_BIN" flow read` — back to `approach flow read` so every matcher in
+// this file keeps expressing one grammar.
+//
+// This normalization is load-bearing, not cosmetic. The literals below, the
+// state-root scan, and runnableApproachSubcommands all key on the token
+// `approach`. Without it, rewriting the skills to the pinned form would make
+// every one of them match nothing and pass *vacuously* — silently disabling the
+// state-root and flag-validation guards, which is worse than a red test.
+func canonicalizeApproachInvocations(text string) string {
+	return approachBinInvocation.ReplaceAllString(text, "approach ")
+}
+
+var approachBinInvocation = regexp.MustCompile(`"\$APPROACH_BIN"\s+|\$APPROACH_BIN\s+`)
+
 func hasRunnableCommandExample(markdown, command string) bool {
 	for _, block := range fencedBashBlocks(markdown) {
+		block = canonicalizeApproachInvocations(block)
 		for _, line := range strings.Split(block, "\n") {
 			if strings.Contains(line, command) {
 				return true
@@ -453,8 +472,8 @@ func hasRunnableCommandExample(markdown, command string) bool {
 func fencedBashBlockContaining(t *testing.T, markdown, text string) string {
 	t.Helper()
 	for _, block := range fencedBashBlocks(markdown) {
-		if strings.Contains(block, text) {
-			return block
+		if strings.Contains(canonicalizeApproachInvocations(block), text) {
+			return canonicalizeApproachInvocations(block)
 		}
 	}
 	t.Fatalf("no fenced bash block contains %q", text)
@@ -505,7 +524,15 @@ func guardedBodyEnd(text string) int {
 
 func assertRunnableExampleFlagsExist(t *testing.T, markdown, cliSource, command string) {
 	t.Helper()
-	for _, use := range runnableCommandFlagUses(markdown, command) {
+	uses := runnableCommandFlagUses(markdown, command)
+	// A zero count is the failure mode this assertion exists for: if the skill's
+	// invocation grammar drifts away from what runnableApproachSubcommands
+	// recognizes, every check below silently stops running and the test passes
+	// having validated nothing.
+	if len(uses) == 0 {
+		t.Fatalf("no runnable approach %s examples were discovered; the invocation grammar has drifted", command)
+	}
+	for _, use := range uses {
 		source, ok := commandFlagSource(cliSource, append([]string{command}, use.Subcommands...))
 		if !ok {
 			t.Fatalf("runnable %s example has no CLI contract mapping", use.Command())
@@ -543,6 +570,7 @@ func runnableCommandFlagUses(markdown, command string) []runnableCommandFlagUse 
 				continue
 			}
 
+			trimmed = canonicalizeApproachInvocations(trimmed)
 			if subcommands, ok := runnableApproachSubcommands(trimmed, command); ok {
 				activeSubcommands = subcommands
 			} else if !continues {
@@ -605,6 +633,12 @@ func hasRunnableApproachCommand(line, command string) bool {
 }
 
 func runnableApproachSubcommands(line, command string) ([]string, bool) {
+	// The pinned spelling is canonicalized first, so the prefix and field checks
+	// below stay written against the single token `approach`. Both of the
+	// checks matter independently: `"$APPROACH_BIN" flow read` would fail the
+	// prefix test (the text before the match is `"`, not empty) and the
+	// fields[0] test (strings.Fields yields `"$APPROACH_BIN"`).
+	line = canonicalizeApproachInvocations(line)
 	pattern := "approach " + command + " "
 	index := strings.Index(line, pattern)
 	if index < 0 {

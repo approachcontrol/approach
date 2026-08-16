@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/version"
 )
 
 func TestEnsureCollectionSecuresRootAndCollection(t *testing.T) {
@@ -273,5 +274,54 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("%s mode = %o, want %o", path, got, want)
+	}
+}
+
+func TestDefaultRootIsolatesDevelopmentBuilds(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	// Under `go test` the ldflags vars are unset and debug.ReadBuildInfo reports
+	// "(devel)", so this binary is always a development build.
+	if !version.IsDevelopment() {
+		t.Fatal("expected the test binary to look like a development build")
+	}
+
+	got, err := artifacts.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot() error = %v", err)
+	}
+	want := filepath.Join(stateHome, "approach-dev", "sessions", "v1")
+	if got != want {
+		t.Fatalf("DefaultRoot() = %q, want %q", got, want)
+	}
+
+	release, err := artifacts.ReleaseDefaultRoot()
+	if err != nil {
+		t.Fatalf("ReleaseDefaultRoot() error = %v", err)
+	}
+	wantRelease := filepath.Join(stateHome, "approach", "sessions", "v1")
+	if release != wantRelease {
+		t.Fatalf("ReleaseDefaultRoot() = %q, want %q", release, wantRelease)
+	}
+	if got == release {
+		t.Fatal("a development build must not default to the release-owned root")
+	}
+}
+
+func TestReleaseDefaultRootFallsBackToHomeWithoutXDGStateHome(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home directory: %v", err)
+	}
+
+	release, err := artifacts.ReleaseDefaultRoot()
+	if err != nil {
+		t.Fatalf("ReleaseDefaultRoot() error = %v", err)
+	}
+	want := filepath.Join(home, ".local", "state", "approach", "sessions", "v1")
+	if release != want {
+		t.Fatalf("ReleaseDefaultRoot() = %q, want %q", release, want)
 	}
 }

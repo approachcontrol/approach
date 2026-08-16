@@ -21,6 +21,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/model/pane"
 	"github.com/approachcontrol/approach/planstore"
@@ -268,8 +269,10 @@ type Model struct {
 	terminalConfirmID       embeddedTerminalID
 	finalizeAgentSession    func(actions.AgentLaunchContext) error
 	sessionStateRoot        string
-	bootstrapHookForRepo    func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook        func(actions.BootstrapContext, actions.BootstrapHook) error
+	// launchPin is the approach binary agents launched by this Model must run.
+	launchPin            controlplane.Pin
+	bootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type statusSource int
@@ -393,6 +396,15 @@ type Options struct {
 	FlowStore            *flowstore.Store
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
+	// LaunchPin identifies the approach binary every agent this TUI launches
+	// must invoke. It is resolved by the process entry point rather than here so
+	// model construction stays free of filesystem work: a zero Pin means "no
+	// pin", which leaves agents on ambient PATH exactly as before.
+	LaunchPin controlplane.Pin
+	// LaunchPinNotice is context, never a gate: a degraded binary cache, or an
+	// `approach` on PATH that is a different build from the one launching
+	// agents. It is shown once at startup and changes nothing about routing.
+	LaunchPinNotice string
 }
 
 // New creates a Model from discovered repos.
@@ -1008,6 +1020,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		startEmbeddedTerminal:     startEmbeddedTerminal,
 		finalizeAgentSession:      finalizeAgentSession,
 		sessionStateRoot:          opts.SessionStateRoot,
+		launchPin:                 opts.LaunchPin,
 		bootstrapHookForRepo:      bootstrapHookForRepo,
 		runBootstrapHook:          runBootstrapHook,
 	}
@@ -1029,6 +1042,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			m.flowRefreshInFlight = m.currentListRequest(ui.ModeFlows)
 			m.flowRefreshInFlightMode = ui.ModeFlows
 		}
+	}
+	// setStatusNow rather than setStatus: construction has no command channel to
+	// queue the expiry on, and the first real status replaces this one anyway.
+	if notice := strings.TrimSpace(opts.LaunchPinNotice); notice != "" {
+		m = m.setStatusNow(statusOther, notice)
 	}
 	return m
 }

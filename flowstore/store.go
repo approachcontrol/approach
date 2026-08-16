@@ -199,6 +199,12 @@ type StoreOptions struct {
 	// LockTimeout bounds bootstrap lease and SQLite writer acquisition waits.
 	LockTimeout time.Duration
 	Presets     []Preset
+	// AllowDevLiveMigration acknowledges that a development build may advance
+	// the schema of the database a *released* build owns. Without it that one
+	// case is refused; every other root, and every release build, is unaffected.
+	// Surfaced as --allow-dev-live-migration and
+	// APPROACH_ALLOW_DEV_LIVE_MIGRATION=1.
+	AllowDevLiveMigration bool
 }
 
 // IsNotFound reports whether err means the requested Flow record does not exist.
@@ -697,7 +703,7 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	store, err := newSQLiteStoreBackend(root, lockTimeout, opts.Presets)
+	store, err := newSQLiteStoreBackend(root, lockTimeout, opts.Presets, opts.AllowDevLiveMigration)
 	if err != nil {
 		return nil, err
 	}

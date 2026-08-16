@@ -639,3 +639,93 @@ func envValue(env []string, key string) string {
 	}
 	return ""
 }
+
+func TestAgentCommandSpecExportsPinnedControlPlaneEnvironment(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := planAgentContext()
+	ctx.Executable = "/state/approach/sessions/v1/bin/approach-abc123"
+	ctx.BuildVersion = "v0.10.3"
+	ctx.DBSchemaVersion = 6
+
+	_, overrides, err := agentCommandSpec(ctx)
+	if err != nil {
+		t.Fatalf("agentCommandSpec: %v", err)
+	}
+	env := map[string]string{}
+	for _, override := range overrides {
+		env[override.key] = override.value
+	}
+	want := map[string]string{
+		"APPROACH_EXECUTABLE":    "/state/approach/sessions/v1/bin/approach-abc123",
+		"APPROACH_BUILD_VERSION": "v0.10.3",
+		"APPROACH_DB_SCHEMA":     "6",
+	}
+	for key, value := range want {
+		if env[key] != value {
+			t.Fatalf("%s = %q, want %q", key, env[key], value)
+		}
+	}
+}
+
+func TestAgentCommandSpecOmitsUnsetControlPlaneEnvironment(t *testing.T) {
+	putAgentOnPath(t, "codex")
+
+	_, overrides, err := agentCommandSpec(planAgentContext())
+	if err != nil {
+		t.Fatalf("agentCommandSpec: %v", err)
+	}
+	for _, override := range overrides {
+		switch override.key {
+		case "APPROACH_EXECUTABLE", "APPROACH_BUILD_VERSION":
+			if override.value != "" {
+				t.Fatalf("%s = %q, want empty when no pin was supplied", override.key, override.value)
+			}
+		case "APPROACH_DB_SCHEMA":
+			if override.value != "" {
+				t.Fatalf("APPROACH_DB_SCHEMA = %q, want empty when no pin was supplied", override.value)
+			}
+		}
+	}
+}
+
+// The session hook is baked into the agent's argv, so it must name the same
+// binary APPROACH_EXECUTABLE does. A drift between the two is exactly the
+// mixed-build split this pin exists to close.
+func TestSessionHookCommandMatchesExportedExecutable(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			putAgentOnPath(t, command)
+			ctx := planAgentContext()
+			ctx.Command = command
+			ctx.Executable = "/state/approach/sessions/v1/bin/approach-abc123"
+
+			cmd, overrides, err := agentCommandSpec(ctx)
+			if err != nil {
+				t.Fatalf("agentCommandSpec: %v", err)
+			}
+			exported := ""
+			for _, override := range overrides {
+				if override.key == "APPROACH_EXECUTABLE" {
+					exported = override.value
+				}
+			}
+			if exported != ctx.Executable {
+				t.Fatalf("APPROACH_EXECUTABLE = %q, want %q", exported, ctx.Executable)
+			}
+			argv := strings.Join(cmd.Args, " ")
+			if !strings.Contains(argv, shellQuote(exported)+" session-hook") {
+				t.Fatalf("argv does not embed the pinned session hook %q:\n%s", exported, argv)
+			}
+		})
+	}
+}
+
+func TestSessionHookCommandFallsBackToRunningBinary(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	if got := approachSessionHookCommand("claude", ""); got != shellQuote(executable)+" session-hook --provider claude" {
+		t.Fatalf("hook command = %q", got)
+	}
+}

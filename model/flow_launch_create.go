@@ -697,14 +697,16 @@ func createFlowLaunchContext(attempt flowLaunchAttempt, msg flowLaunchEventMsg, 
 	if strings.TrimSpace(title) == "" {
 		title = phase.PhaseID
 	}
-	return actions.AgentLaunchContext{
+	ctx := actions.AgentLaunchContext{
 		Command: settings.Command, Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
 		LaunchID: attempt.Token, RepoPath: req.RepoPath, WorktreePath: msg.Worktree.WorktreePath,
 		Branch: msg.Worktree.Branch, Commit: msg.Commit, SessionStateRoot: attempt.Settings.SessionStateRoot,
 		PlanPhaseID: phase.PhaseID, PlanPhaseTitle: title, PlanPhaseStatus: flowstore.PhaseRunning,
 		FlowID: msg.FlowID, FlowPhaseID: phase.PhaseID, FlowPhaseKind: flowstore.SemanticKind(phase),
-		Headless: msg.Record.Headless, InitialPrompt: initialFlowLaunchPrompt(record, phase, attempt.Settings.PromptTemplates),
+		Headless:      msg.Record.Headless,
+		InitialPrompt: initialFlowLaunchPrompt(record, phase, attempt.Settings.PromptTemplates, attempt.Settings.Pin.ExecutablePath),
 	}
+	return applyLaunchPin(ctx, attempt.Settings.Pin)
 }
 
 func flowPhaseContainsLaunch(phase flowstore.FlowPhase, launchID string) bool {

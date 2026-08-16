@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
@@ -46,6 +48,10 @@ type startProgramOptions struct {
 	Config         config.Config
 	ScanRepos      func() ([]scanner.Repo, error)
 	RepoCreateRoot string
+	// AllowDevLiveMigration acknowledges that this development build may advance
+	// the schema of the database a released build owns. It is off by default and
+	// has no effect on a release build or on any root but the release default.
+	AllowDevLiveMigration bool
 }
 
 func run(args []string, deps runDeps) error {
@@ -71,6 +77,8 @@ func run(args []string, deps runDeps) error {
 	flags.SetOutput(io.Discard)
 	versionFlag := flags.Bool("version", false, "print version and exit")
 	flags.BoolVar(versionFlag, "v", false, "print version and exit")
+	allowDevLiveMigration := flags.Bool("allow-dev-live-migration", false,
+		"let this development build migrate the release artifact root")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -110,8 +118,9 @@ func run(args []string, deps runDeps) error {
 		MaxDepth: cfg.Scan.MaxDepth,
 	}
 	if err := deps.startProgramWithOptions(repos, startProgramOptions{
-		Config:         cfg,
-		RepoCreateRoot: repoCreateRoot,
+		Config:                cfg,
+		RepoCreateRoot:        repoCreateRoot,
+		AllowDevLiveMigration: *allowDevLiveMigration || truthyEnv(deps.getenv("APPROACH_ALLOW_DEV_LIVE_MIGRATION")),
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return deps.scan(scanOptions)
 		},
@@ -119,6 +128,18 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
+}
+
+// truthyEnv accepts the spellings a shell script is likely to use for an
+// acknowledgement that must be given deliberately. Anything else, including an
+// unset variable, means "not acknowledged".
+func truthyEnv(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func isHelpArg(arg string) bool {
@@ -142,6 +163,11 @@ Commands:
 Flags:
   --version, -v  Print version and exit.
   --help, -h     Print this help and exit.
+  --allow-dev-live-migration
+                 Let this development build migrate the release artifact root
+                 (also APPROACH_ALLOW_DEV_LIVE_MIGRATION=1). A development build
+                 otherwise defaults to its own root and refuses to advance the
+                 schema of the database a released approach owns.
 
 Examples:
   approach
@@ -321,7 +347,11 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
-	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root(), Presets: cfg.Flow.Presets})
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:                  sessionStore.Root(),
+		Presets:               cfg.Flow.Presets,
+		AllowDevLiveMigration: opts.AllowDevLiveMigration,
+	})
 	if err != nil {
 		return err
 	}
@@ -339,6 +369,16 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// window means draining in-flight mutations before returning, not closing.
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
+	// Pin the launching build before any agent starts. Resolve never fails on a
+	// cache problem — it degrades to the running binary and says so — so a
+	// resolve error here means the running binary itself is unreadable, which is
+	// worth reporting rather than launching agents that cannot report results.
+	pin, err := controlplane.Resolve(sessionStore.Root(), flowstore.DatabaseSchemaVersion())
+	if err != nil {
+		return err
+	}
+	modelOpts.LaunchPin = pin
+	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
 	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
 	_, err = p.Run()
 	return err
@@ -390,6 +430,10 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		LaunchBackend: cfg.Launch.Backend,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			endedAt := time.Now().UTC()
+			// The launch is over, so its claim on a cached binary is too. Best
+			// effort: an orphaned claim only costs one retained copy, while
+			// failing finalization over it would lose the session record.
+			_ = controlplane.ReleasePin(sessionStore.Root(), ctx.LaunchID)
 			if err := sessionStore.MarkLaunchEnded(ctx.LaunchID, endedAt); err != nil {
 				return err
 			}

@@ -329,7 +329,7 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		if persistedPhase, ok := flowPhaseByID(updated, msg.PhaseID); ok {
 			launchPhase = persistedPhase
 		}
-		event.Context = actions.AgentLaunchContext{
+		event.Context = applyLaunchPin(actions.AgentLaunchContext{
 			Command: msg.ResumeCommand,
 			// The admission token, never a fresh ID: the prefill-failure
 			// re-reservation and the failure-persisted fence both key on it.
@@ -352,7 +352,7 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 			FlowPhaseTerminal: flowstore.PhaseStatusTerminal(launchPhase.Status),
 			Embedded:          true,
 			FlowLaunchTracked: true,
-		}
+		}, settings.Pin)
 		event.Route = flowLaunchRouteEmbedded
 		if tmuxRoute {
 			// A tmux window has no dock to prefill and renders its own output,

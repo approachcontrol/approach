@@ -1126,3 +1126,38 @@ func TestBootstrapHookResolverDoesNotMatchDifferentRepoPath(t *testing.T) {
 		t.Fatal("expected non-matching repo to have no hook")
 	}
 }
+
+func TestRunPassesDevLiveMigrationAcknowledgement(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want bool
+	}{
+		{name: "default", args: []string{"approach"}, want: false},
+		{name: "flag", args: []string{"approach", "--allow-dev-live-migration"}, want: true},
+		{name: "env", args: []string{"approach"}, env: map[string]string{"APPROACH_ALLOW_DEV_LIVE_MIGRATION": "1"}, want: true},
+		{name: "env off", args: []string{"approach"}, env: map[string]string{"APPROACH_ALLOW_DEV_LIVE_MIGRATION": "0"}, want: false},
+		{name: "env garbage", args: []string{"approach"}, env: map[string]string{"APPROACH_ALLOW_DEV_LIVE_MIGRATION": "maybe"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var got startProgramOptions
+			err := run(test.args, runDeps{
+				loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+				getenv:     func(key string) string { return test.env[key] },
+				scan:       func(scanner.ScanOptions) ([]scanner.Repo, error) { return nil, nil },
+				startProgramWithOptions: func(repos []scanner.Repo, opts startProgramOptions) error {
+					got = opts
+					return nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("run() error = %v", err)
+			}
+			if got.AllowDevLiveMigration != test.want {
+				t.Fatalf("AllowDevLiveMigration = %v, want %v", got.AllowDevLiveMigration, test.want)
+			}
+		})
+	}
+}
