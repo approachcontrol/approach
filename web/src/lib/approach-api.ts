@@ -271,6 +271,23 @@ export interface Merge {
   mergedAt: string | null
 }
 
+export interface BeadLink {
+  id: string
+  epicId: string | null
+}
+
+export interface EpicProgressionHalt {
+  childBeadId: string
+  status: string
+  message: string
+}
+
+export interface EpicProgression {
+  enabled: boolean
+  done: boolean
+  halt: EpicProgressionHalt | null
+}
+
 export interface FlowDetail {
   id: string
   title: string
@@ -284,6 +301,10 @@ export interface FlowDetail {
   presetName: string | null
   planId: string | null
   autoMode: boolean
+  bead: BeadLink | null
+  // Null both when the Flow links no epic and when that epic has no persisted
+  // progression row; the two are distinguished by `bead.epicId`.
+  epicProgression: EpicProgression | null
   issue: Issue | null
   pullRequest: PullRequest | null
   merge: Merge | null
@@ -334,6 +355,8 @@ const FLOW_QUERY = `query Flow($id: ID!) {
     presetName
     planId
     autoMode
+    bead { id epicId }
+    epicProgression { enabled done halt { childBeadId status message } }
     issue { provider number url }
     pullRequest { provider number url headBranch baseBranch status }
     merge { status commit mergedAt }

@@ -95,6 +95,79 @@ func newSchema() (graphql.Schema, error) {
 		},
 	})
 
+	beadLinkType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "BeadLink",
+		Description: "The Beads issue a Flow tracks. Both ids are the persisted link text, " +
+			"verbatim; the API never reads Beads itself.",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.ID),
+				Description: "Child Bead id. A linked Flow always has one — the link is what makes bead non-null.",
+				Resolve:     valueResolver(func(link flowstore.BeadLink) (any, error) { return link.ID, nil }),
+			},
+			"epicId": &graphql.Field{
+				Type:        graphql.ID,
+				Description: "Parent epic Bead id; null when the link records only a child Bead.",
+				Resolve:     valueResolver(func(link flowstore.BeadLink) (any, error) { return nullableString(link.EpicID), nil }),
+			},
+		},
+	})
+
+	epicProgressionHaltType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "EpicProgressionHalt",
+		Description: "The durable reason auto-progression stopped for an epic.",
+		Fields: graphql.Fields{
+			"childBeadId": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.ID),
+				Description: "The child Bead whose Flow stopped progression.",
+				Resolve:     valueResolver(func(halt flowstore.EpicProgressionHalt) (any, error) { return halt.ChildBeadID, nil }),
+			},
+			"status": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.String),
+				Description: "The child Flow status that halted progression: blocked, needs_attention, closed, or abandoned.",
+				Resolve:     valueResolver(func(halt flowstore.EpicProgressionHalt) (any, error) { return halt.Status, nil }),
+			},
+			"message": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.String),
+				Description: "Human-readable halt reason. Free text; the store only requires it to be non-empty.",
+				Resolve:     valueResolver(func(halt flowstore.EpicProgressionHalt) (any, error) { return halt.Message, nil }),
+			},
+		},
+	})
+
+	epicProgressionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "EpicProgression",
+		Description: "Durable auto-progression state for the epic a Flow's Bead link names. " +
+			"Read-only: nothing in this schema enables, disables, or halts it.",
+		Fields: graphql.Fields{
+			"enabled": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.Boolean),
+				Description: "Whether progression is currently active for this epic.",
+				Resolve: valueResolver(func(record flowstore.EpicProgression) (any, error) {
+					return record.Enabled, nil
+				}),
+			},
+			"done": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.Boolean),
+				Description: "The persisted completion flag. It is never inferred from enabled: a manually " +
+					"disabled epic is not done.",
+				Resolve: valueResolver(func(record flowstore.EpicProgression) (any, error) {
+					return record.Done, nil
+				}),
+			},
+			"halt": &graphql.Field{
+				Type:        epicProgressionHaltType,
+				Description: "Why progression stopped; null when it stopped for no recorded reason or never stopped.",
+				Resolve: valueResolver(func(record flowstore.EpicProgression) (any, error) {
+					if record.Halt == nil {
+						return nil, nil
+					}
+					return *record.Halt, nil
+				}),
+			},
+		},
+	})
+
 	phaseType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "Phase",
 		Description: "One phase in a Flow's phase graph.",
@@ -286,6 +359,37 @@ func newSchema() (graphql.Schema, error) {
 					Type:    graphql.NewNonNull(graphql.Boolean),
 					Resolve: flowResolver(func(flow *Flow) (any, error) { return flow.Record.AutoMode, nil }),
 				},
+				"bead": &graphql.Field{
+					Type:        beadLinkType,
+					Description: "The Flow's persisted Beads linkage; null when no Bead is linked.",
+					Resolve: flowResolver(func(flow *Flow) (any, error) {
+						if flow.Record.Bead.ID == "" {
+							return nil, nil
+						}
+						return flow.Record.Bead, nil
+					}),
+				},
+				"epicProgression": &graphql.Field{
+					Type: epicProgressionType,
+					Description: "Auto-progression state for the epic this Flow's Bead link names. Null when the " +
+						"Flow links no epic and when no progression row exists for it — an absent row is not a " +
+						"disabled epic, and neither is synthesized into one.",
+					Resolve: func(p graphql.ResolveParams) (any, error) {
+						flow, ok := p.Source.(*Flow)
+						if !ok {
+							return nil, errStateUnavailable
+						}
+						snap, err := snapshotFrom(p.Context)
+						if err != nil {
+							return nil, err
+						}
+						record, ok := snap.EpicProgression(flow)
+						if !ok {
+							return nil, nil
+						}
+						return record, nil
+					},
+				},
 				"issue": &graphql.Field{
 					Type: issueType,
 					Resolve: flowResolver(func(flow *Flow) (any, error) {
@@ -463,6 +567,19 @@ func stringField[T any](description string, get func(T) string) *graphql.Field {
 			}
 			return nullableString(get(source)), nil
 		},
+	}
+}
+
+// valueResolver adapts an object type whose source is a value-typed flowstore
+// struct rather than a snapshot pointer, the way stringField already does for
+// nullable strings.
+func valueResolver[T any](get func(T) (any, error)) graphql.FieldResolveFn {
+	return func(p graphql.ResolveParams) (any, error) {
+		source, ok := p.Source.(T)
+		if !ok {
+			return nil, errStateUnavailable
+		}
+		return get(source)
 	}
 }
 

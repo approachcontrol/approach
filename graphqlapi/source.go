@@ -31,6 +31,12 @@ type RepoSource func() ([]scanner.Repo, error)
 // a sanitized GraphQL error.
 type FlowSource func() ([]flowstore.FlowRecord, error)
 
+// EpicProgressionSource reads one persisted epic auto-progression row by its
+// canonical key, distinguishing a missing row (found=false) from an unreadable
+// one (a non-nil error). It is a read seam onto flowstore only: the API never
+// enables, disables, or halts progression, and it never reaches Beads itself.
+type EpicProgressionSource func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
+
 // errStateUnavailable is the fixed message clients see when the primary data
 // source fails. Underlying paths and os error text are logged server-side and
 // never reach a response body.
@@ -52,28 +58,39 @@ type Flow struct {
 	RepoPath string
 }
 
+// epicProgressionProjection is one request's single read of one canonical key:
+// either the row that was there, or the fact that there was none. Holding both
+// in the snapshot is what keeps sibling Flows sharing an epic — found or
+// missing — from re-reading the store per resolver.
+type epicProgressionProjection struct {
+	record flowstore.EpicProgression
+	found  bool
+}
+
 // snapshot is the immutable read model for exactly one request: one scan plus
 // one store list, indexed for pure map and slice reads by every resolver.
 type snapshot struct {
-	repos       []*Repo
-	repoByPath  map[string]*Repo
-	flows       []*Flow
-	flowByID    map[string]*Flow
-	flowsByRepo map[string][]*Flow
-	err         error
+	repos        []*Repo
+	repoByPath   map[string]*Repo
+	flows        []*Flow
+	flowByID     map[string]*Flow
+	flowsByRepo  map[string][]*Flow
+	progressions map[flowstore.EpicProgressionKey]epicProgressionProjection
+	err          error
 }
 
-// buildSnapshot reads both sources once and indexes the result. logf receives
+// buildSnapshot reads every source once and indexes the result. logf receives
 // the unsanitized failure detail; it is never nil-checked by callers below, so
 // buildSnapshot substitutes a no-op.
-func buildSnapshot(repos RepoSource, flows FlowSource, logf func(string, ...any)) *snapshot {
+func buildSnapshot(repos RepoSource, flows FlowSource, progressions EpicProgressionSource, logf func(string, ...any)) *snapshot {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	snap := &snapshot{
-		repoByPath:  make(map[string]*Repo),
-		flowByID:    make(map[string]*Flow),
-		flowsByRepo: make(map[string][]*Flow),
+		repoByPath:   make(map[string]*Repo),
+		flowByID:     make(map[string]*Flow),
+		flowsByRepo:  make(map[string][]*Flow),
+		progressions: make(map[flowstore.EpicProgressionKey]epicProgressionProjection),
 	}
 
 	var scanned []scanner.Repo
@@ -143,7 +160,51 @@ func buildSnapshot(repos RepoSource, flows FlowSource, logf func(string, ...any)
 		snap.flowsByRepo[path] = append(snap.flowsByRepo[path], flow)
 	}
 	sortRepos(snap.repos)
+	if progressions != nil {
+		snap.loadEpicProgressions(progressions, logf)
+	}
 	return snap
+}
+
+// loadEpicProgressions reads one row per distinct canonical key referenced by a
+// loaded Flow, so the resolvers below do no I/O at all.
+//
+// The key is built exactly the way flowstore.ReadEpicProgression canonicalizes
+// one — the snapshot's normalized absolute repo path plus the trimmed epic id —
+// so two Flows that name the same epic through different spellings collapse to
+// a single read, and a Flow with no epic link causes none.
+func (s *snapshot) loadEpicProgressions(read EpicProgressionSource, logf func(string, ...any)) {
+	for _, flow := range s.flows {
+		key, ok := epicProgressionKey(flow)
+		if !ok {
+			continue
+		}
+		if _, loaded := s.progressions[key]; loaded {
+			continue
+		}
+		record, found, err := read(key)
+		if err != nil {
+			// The key names a real path on this machine and the cause may name
+			// the store file, so both stay server-side; clients get the same
+			// fixed message a failed flow list produces.
+			logf("reading epic progression %q/%q failed: %v", key.RepoPath, key.EpicID, err)
+			s.err = errStateUnavailable
+			return
+		}
+		s.progressions[key] = epicProgressionProjection{record: record, found: found}
+	}
+}
+
+// epicProgressionKey is the canonical lookup key for a Flow's linked epic, and
+// false for a Flow that links none. It deliberately does not consult the child
+// Bead id: progression is keyed by epic, and a child-only link has no epic to
+// read state for.
+func epicProgressionKey(flow *Flow) (flowstore.EpicProgressionKey, bool) {
+	epicID := strings.TrimSpace(flow.Record.Bead.EpicID)
+	if epicID == "" {
+		return flowstore.EpicProgressionKey{}, false
+	}
+	return flowstore.EpicProgressionKey{RepoPath: flow.RepoPath, EpicID: epicID}, true
 }
 
 func (s *snapshot) addRepo(repo *Repo) {
@@ -179,6 +240,14 @@ func (s *snapshot) bounds() resultBounds {
 			limits.dependsOnPerPhase = maxInt(limits.dependsOnPerPhase, len(phase.DependsOn))
 			limits.values.observePhase(phase)
 		}
+	}
+	// Measured over the projections rather than the Flows: many Flows resolve
+	// Flow.epicProgression from one row, and only a found row serializes.
+	for _, projection := range s.progressions {
+		if !projection.found {
+			continue
+		}
+		limits.values.observeEpicProgression(projection.record)
 	}
 	return limits
 }
@@ -257,6 +326,28 @@ func (f fieldValueBytes) observeFlow(flow *Flow) {
 	f.observeText("Merge.status", record.Merge.Status)
 	f.observeText("Merge.commit", record.Merge.Commit)
 	f.observe("Merge.mergedAt", dateTimeValueBytes)
+
+	// The persisted link text, which is what BeadLink resolves verbatim.
+	f.observeText("BeadLink.id", record.Bead.ID)
+	f.observeText("BeadLink.epicId", record.Bead.EpicID)
+}
+
+func (f fieldValueBytes) observeEpicProgression(record flowstore.EpicProgression) {
+	f.observe("EpicProgression.enabled", boolValueBytes)
+	f.observe("EpicProgression.done", boolValueBytes)
+	// Seeded outside the halt branch: a snapshot where nothing is halted still
+	// has to register these fields, or they would look like schema drift and
+	// take the pessimistic fallback. The message is unbounded agent-supplied
+	// text, so it is measured at its encoded width like any other free text.
+	f.observeText("EpicProgressionHalt.childBeadId", "")
+	f.observeText("EpicProgressionHalt.status", "")
+	f.observeText("EpicProgressionHalt.message", "")
+	if record.Halt == nil {
+		return
+	}
+	f.observeText("EpicProgressionHalt.childBeadId", record.Halt.ChildBeadID)
+	f.observeText("EpicProgressionHalt.status", record.Halt.Status)
+	f.observeText("EpicProgressionHalt.message", record.Halt.Message)
 }
 
 func (f fieldValueBytes) observePhase(phase flowstore.FlowPhase) {
@@ -359,6 +450,22 @@ func (s *snapshot) Flows() []*Flow { return s.flows }
 func (s *snapshot) Flow(id string) (*Flow, bool) {
 	flow, ok := s.flowByID[strings.TrimSpace(id)]
 	return flow, ok
+}
+
+// EpicProgression returns the persisted progression row for the Flow's linked
+// epic. It reports false both for a Flow that links no epic and for a link
+// whose row is absent: neither case fabricates an epic or a progression record,
+// and "no row" is not the same claim as "disabled".
+func (s *snapshot) EpicProgression(flow *Flow) (flowstore.EpicProgression, bool) {
+	key, ok := epicProgressionKey(flow)
+	if !ok {
+		return flowstore.EpicProgression{}, false
+	}
+	projection, loaded := s.progressions[key]
+	if !loaded || !projection.found {
+		return flowstore.EpicProgression{}, false
+	}
+	return projection.record, true
 }
 
 // FlowsForRepo serves both flows(repoId:) and Repo.flows from the same index,

@@ -111,6 +111,7 @@ func fixtureSnapshot() *snapshot {
 			},
 		),
 		nil,
+		nil,
 	)
 }
 
@@ -249,7 +250,10 @@ func TestSchemaCurrentPhase(t *testing.T) {
 				RepoPath: "/repos/alpha",
 				Merge:    flowstore.Merge{Status: flowstore.MergePending},
 				Phases:   testCase.phases,
-			}), nil)
+			}),
+				nil,
+				nil,
+			)
 			result := executeQuery(t, snap, `{ flow(id: "f1") { currentPhase { id status } } }`)
 			data := mustSucceed(t, result)
 			flow := data["flow"].(map[string]any)
@@ -293,7 +297,10 @@ func TestSchemaNullabilityMatrix(t *testing.T) {
 			Merge:    flowstore.Merge{Status: flowstore.MergePending, Commit: "cafe"},
 			Phases:   []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseCompleted}},
 		},
-	), nil)
+	),
+		nil,
+		nil,
+	)
 
 	result := executeQuery(t, snap, `{
 		empty: flow(id: "empty") {
@@ -330,6 +337,191 @@ func TestSchemaNullabilityMatrix(t *testing.T) {
 	if strings.Contains(jsonOf(t, data), "0001-01-01") {
 		t.Errorf("response serialized a zero time: %s", jsonOf(t, data))
 	}
+}
+
+// beadSnapshot pairs the four link shapes with the four progression states the
+// store can persist, so one query can prove every projection at once.
+func beadSnapshot(progressions *countingProgressions) *snapshot {
+	return buildSnapshot(
+		staticRepos(),
+		staticFlows(
+			flowstore.FlowRecord{FlowID: "unlinked", RepoPath: "/repos/alpha"},
+			beadFlow("child-only", "/repos/alpha", "approach-y7g.7", ""),
+			beadFlow("enabled", "/repos/enabled", "approach-e.1", "approach-e"),
+			beadFlow("disabled", "/repos/disabled", "approach-d.1", "approach-d"),
+			beadFlow("halted", "/repos/halted", "approach-h.1", "approach-h"),
+			beadFlow("done", "/repos/done", "approach-done.1", "approach-done"),
+			// A padded epic id: the key is canonicalized for the read, the link
+			// is emitted exactly as persisted.
+			beadFlow("missing-row", "/repos/missing", "approach-m.1", "  approach-m  "),
+		),
+		progressions.source(),
+		nil,
+	)
+}
+
+func beadProgressions() *countingProgressions {
+	created := fixtureTime(0)
+	row := func(repoPath, epicID string, enabled, done bool, halt *flowstore.EpicProgressionHalt) flowstore.EpicProgression {
+		return flowstore.EpicProgression{
+			SchemaVersion: 1, RepoPath: repoPath, EpicID: epicID,
+			Enabled: enabled, Done: done, Halt: halt,
+			CreatedAt: created, UpdatedAt: created,
+		}
+	}
+	return &countingProgressions{rows: map[flowstore.EpicProgressionKey]flowstore.EpicProgression{
+		epicKey("/repos/enabled", "approach-e"):  row("/repos/enabled", "approach-e", true, false, nil),
+		epicKey("/repos/disabled", "approach-d"): row("/repos/disabled", "approach-d", false, false, nil),
+		epicKey("/repos/done", "approach-done"):  row("/repos/done", "approach-done", false, true, nil),
+		epicKey("/repos/halted", "approach-h"): row("/repos/halted", "approach-h", false, false, &flowstore.EpicProgressionHalt{
+			ChildBeadID: "approach-h.4", Status: flowstore.StatusNeedsAttention, Message: "child Flow needs attention",
+		}),
+	}}
+}
+
+func TestSchemaBeadLinkIsVerbatimAndNullOnlyWhenUnlinked(t *testing.T) {
+	result := executeQuery(t, beadSnapshot(beadProgressions()), `{
+		unlinked: flow(id: "unlinked") { bead { id epicId } }
+		childOnly: flow(id: "child-only") { bead { id epicId } }
+		linked: flow(id: "missing-row") { bead { id epicId } }
+	}`)
+	data := mustSucceed(t, result)
+	for name, want := range map[string]string{
+		"unlinked":  `{"bead":null}`,
+		"childOnly": `{"bead":{"epicId":null,"id":"approach-y7g.7"}}`,
+		// Padded exactly as persisted: the trim happens on the progression key,
+		// not on the link the client reads back.
+		"linked": `{"bead":{"epicId":"  approach-m  ","id":"approach-m.1"}}`,
+	} {
+		if got := jsonOf(t, data[name]); got != want {
+			t.Errorf("%s = %s, want %s", name, got, want)
+		}
+	}
+}
+
+func TestSchemaEpicProgressionProjectsEveryDurableState(t *testing.T) {
+	progressions := beadProgressions()
+	result := executeQuery(t, beadSnapshot(progressions), `{
+		unlinked: flow(id: "unlinked") { epicProgression { enabled done halt { childBeadId } } }
+		childOnly: flow(id: "child-only") { epicProgression { enabled done halt { childBeadId } } }
+		missingRow: flow(id: "missing-row") { epicProgression { enabled done halt { childBeadId } } }
+		enabled: flow(id: "enabled") { epicProgression { enabled done halt { childBeadId status message } } }
+		disabled: flow(id: "disabled") { epicProgression { enabled done halt { childBeadId status message } } }
+		done: flow(id: "done") { epicProgression { enabled done halt { childBeadId status message } } }
+		halted: flow(id: "halted") { epicProgression { enabled done halt { childBeadId status message } } }
+	}`)
+	data := mustSucceed(t, result)
+	for name, want := range map[string]string{
+		// No epic link and no row are both "nothing to say", never a fabricated
+		// record: a disabled projection here would invent an epic.
+		"unlinked":   `{"epicProgression":null}`,
+		"childOnly":  `{"epicProgression":null}`,
+		"missingRow": `{"epicProgression":null}`,
+		"enabled":    `{"epicProgression":{"done":false,"enabled":true,"halt":null}}`,
+		// Manually disabled is not done: only the explicit durable flag is.
+		"disabled": `{"epicProgression":{"done":false,"enabled":false,"halt":null}}`,
+		"done":     `{"epicProgression":{"done":true,"enabled":false,"halt":null}}`,
+		"halted": `{"epicProgression":{"done":false,"enabled":false,` +
+			`"halt":{"childBeadId":"approach-h.4","message":"child Flow needs attention","status":"needs_attention"}}}`,
+	} {
+		if got := jsonOf(t, data[name]); got != want {
+			t.Errorf("%s = %s, want %s", name, got, want)
+		}
+	}
+	// One read per canonical key, none for the two Flows with no epic link, and
+	// the padded epic id was trimmed before the read.
+	want := []string{
+		"/repos/enabled|approach-e", "/repos/disabled|approach-d",
+		"/repos/halted|approach-h", "/repos/done|approach-done",
+		"/repos/missing|approach-m",
+	}
+	if got := progressionKeys(progressions.calls); !equalStrings(got, want) {
+		t.Errorf("progression reads = %v, want %v", got, want)
+	}
+}
+
+func TestSchemaSanitizesEpicProgressionSourceFailure(t *testing.T) {
+	secretPath := "/tmp/approach-secret-root/flows.db"
+	progressions := &countingProgressions{err: errors.New("read epic progression: open " + secretPath + ": permission denied")}
+	snap := buildSnapshot(
+		staticRepos(),
+		staticFlows(beadFlow("a1", "/repos/alpha", "approach-y7g.1", "approach-y7g")),
+		progressions.source(),
+		nil,
+	)
+	result := executeQuery(t, snap, `{ flows { id bead { id } epicProgression { enabled } } }`)
+	if len(result.Errors) == 0 {
+		t.Fatalf("errors = none, want a sanitized failure")
+	}
+	encoded := jsonOf(t, result)
+	if !strings.Contains(encoded, errStateUnavailable.Error()) {
+		t.Errorf("response = %s, want it to contain %q", encoded, errStateUnavailable.Error())
+	}
+	for _, leak := range []string{secretPath, "permission denied", "approach-secret-root"} {
+		if strings.Contains(encoded, leak) {
+			t.Errorf("response leaked %q: %s", leak, encoded)
+		}
+	}
+}
+
+// TestSchemaBeadAndProgressionSDL pins the public contract these fields were
+// specified as: an unexpectedly nullable id or a widened halt tuple is a
+// breaking change for every client, and introspection is where clients read it.
+func TestSchemaBeadAndProgressionSDL(t *testing.T) {
+	result := executeQuery(t, fixtureSnapshot(), `{
+		mutationType: __schema { mutationType { name } subscriptionType { name } }
+		flow: __type(name: "Flow") { fields { name type { kind name ofType { kind name } } } }
+		bead: __type(name: "BeadLink") { fields { name type { kind name ofType { kind name } } } }
+		progression: __type(name: "EpicProgression") { fields { name type { kind name ofType { kind name } } } }
+		halt: __type(name: "EpicProgressionHalt") { fields { name type { kind name ofType { kind name } } } }
+	}`)
+	data := mustSucceed(t, result)
+
+	roots := data["mutationType"].(map[string]any)
+	if roots["mutationType"] != nil || roots["subscriptionType"] != nil {
+		t.Fatalf("roots = %#v, want no mutation or subscription type", roots)
+	}
+
+	for _, testCase := range []struct {
+		typeName string
+		field    string
+		want     string
+	}{
+		{"flow", "bead", `{"kind":"OBJECT","name":"BeadLink","ofType":null}`},
+		{"flow", "epicProgression", `{"kind":"OBJECT","name":"EpicProgression","ofType":null}`},
+		{"bead", "id", `{"kind":"NON_NULL","name":null,"ofType":{"kind":"SCALAR","name":"ID"}}`},
+		{"bead", "epicId", `{"kind":"SCALAR","name":"ID","ofType":null}`},
+		{"progression", "enabled", `{"kind":"NON_NULL","name":null,"ofType":{"kind":"SCALAR","name":"Boolean"}}`},
+		{"progression", "done", `{"kind":"NON_NULL","name":null,"ofType":{"kind":"SCALAR","name":"Boolean"}}`},
+		{"progression", "halt", `{"kind":"OBJECT","name":"EpicProgressionHalt","ofType":null}`},
+		{"halt", "childBeadId", `{"kind":"NON_NULL","name":null,"ofType":{"kind":"SCALAR","name":"ID"}}`},
+		{"halt", "status", `{"kind":"NON_NULL","name":null,"ofType":{"kind":"SCALAR","name":"String"}}`},
+		{"halt", "message", `{"kind":"NON_NULL","name":null,"ofType":{"kind":"SCALAR","name":"String"}}`},
+	} {
+		got, ok := introspectedFieldType(t, data, testCase.typeName, testCase.field)
+		if !ok {
+			t.Errorf("%s has no field %q", testCase.typeName, testCase.field)
+			continue
+		}
+		if got != testCase.want {
+			t.Errorf("%s.%s type = %s, want %s", testCase.typeName, testCase.field, got, testCase.want)
+		}
+	}
+}
+
+func introspectedFieldType(t *testing.T, data map[string]any, alias, field string) (string, bool) {
+	t.Helper()
+	typeInfo, ok := data[alias].(map[string]any)
+	if !ok {
+		t.Fatalf("%s = %#v, want an introspected type", alias, data[alias])
+	}
+	for _, entry := range typeInfo["fields"].([]any) {
+		fieldInfo := entry.(map[string]any)
+		if fieldInfo["name"] == field {
+			return jsonOf(t, fieldInfo["type"]), true
+		}
+	}
+	return "", false
 }
 
 func TestSchemaDateTimeIsRFC3339(t *testing.T) {
@@ -404,6 +596,7 @@ func TestSchemaSanitizesFlowSourceFailure(t *testing.T) {
 		func() ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("list flows: open " + secretPath + ": permission denied")
 		},
+		nil,
 		nil,
 	)
 	result := executeQuery(t, snap, `{ flows { id } repos { id } }`)

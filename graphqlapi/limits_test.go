@@ -9,6 +9,8 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/parser"
+
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 func nestedQuery(depth int) string {
@@ -235,7 +237,7 @@ func costOf(t *testing.T, query string, bounds resultBounds) error {
 	t.Helper()
 	if bounds.values == nil {
 		repos, flows := testSources()
-		bounds.values = buildSnapshot(repos, flows, nil).bounds().values
+		bounds.values = buildSnapshot(repos, flows, nil, nil).bounds().values
 	}
 	schema, err := newSchema()
 	if err != nil {
@@ -439,6 +441,44 @@ func TestInspectCostIgnoresUnknownFields(t *testing.T) {
 	bounds := resultBounds{repos: 1000, flows: 1000, flowsPerRepo: 1000}
 	if err := costOf(t, `{ nope { alsoNope { stillNope } } }`, bounds); err != nil {
 		t.Fatalf("inspectCost(unknown fields) error = %v, want nil", err)
+	}
+}
+
+// TestInspectCostChargesBeadAndProgressionWidths keeps the Bead link and the
+// progression projection inside the byte budget. They add no list field — so no
+// cardinality bound moves — but their scalars serialize like any other leaf, and
+// the halt message is unbounded agent-supplied text.
+func TestInspectCostChargesBeadAndProgressionWidths(t *testing.T) {
+	repos, flows, progressions, logf := fullyPopulatedSources()
+	values := buildSnapshot(repos, flows, progressions, logf).bounds().values
+	for field, want := range map[string]int64{
+		"BeadLink.id":                     int64(jsonStringBytes("approach-y7g.9")),
+		"BeadLink.epicId":                 int64(jsonStringBytes("approach-y7g")),
+		"EpicProgression.enabled":         boolValueBytes,
+		"EpicProgression.done":            boolValueBytes,
+		"EpicProgressionHalt.childBeadId": int64(jsonStringBytes("approach-y7g.9")),
+		"EpicProgressionHalt.status":      int64(jsonStringBytes(flowstore.StatusBlocked)),
+		"EpicProgressionHalt.message":     int64(jsonStringBytes("the child Flow is blocked on review")),
+	} {
+		got, measured := values[field]
+		if !measured {
+			t.Errorf("%s has no measured width; it would take the %d-byte drift fallback", field, fallbackValueBytes)
+			continue
+		}
+		if got != want {
+			t.Errorf("valueBytes(%s) = %d, want %d", field, got, want)
+		}
+	}
+
+	// A halt message wide enough to matter is still charged per Flow that
+	// resolves it, so the response budget rejects the query rather than
+	// building the body.
+	bounds := resultBounds{
+		repos: 1, flows: 1000, flowsPerRepo: 1000, phasesPerFlow: 1, dependsOnPerPhase: 1,
+		values: fieldValueBytes{"EpicProgressionHalt.message": maxResponseBytes},
+	}
+	if err := costOf(t, `{ flows { epicProgression { halt { message } } } }`, bounds); !errors.Is(err, errResponseTooLarge) {
+		t.Errorf("inspectCost(wide halt message) error = %v, want errResponseTooLarge", err)
 	}
 }
 

@@ -420,6 +420,8 @@ type Flow {
   presetName: String
   planId: String
   autoMode: Boolean!
+  bead: BeadLink
+  epicProgression: EpicProgression
   issue: Issue
   pullRequest: PullRequest
   merge: Merge
@@ -427,6 +429,23 @@ type Flow {
   currentPhase: Phase
   createdAt: DateTime!
   updatedAt: DateTime!
+}
+
+type BeadLink {
+  id: ID!
+  epicId: ID
+}
+
+type EpicProgression {
+  enabled: Boolean!
+  done: Boolean!
+  halt: EpicProgressionHalt
+}
+
+type EpicProgressionHalt {
+  childBeadId: ID!
+  status: String!
+  message: String!
 }
 
 type Phase {
@@ -495,9 +514,55 @@ sitting on", not "the phase actively executing"** — `blocked` and
 | `Merge.mergedAt` | the merge has not landed |
 | `Flow.currentPhase` | no phase is actionable |
 | `Issue.number`, `PullRequest.number` | the number is unset (`0` is not emitted) |
+| `Flow.bead` | the Flow links no Bead |
+| `BeadLink.epicId` | the link records a child Bead but no epic |
+| `Flow.epicProgression` | the Flow links no epic, **or** that epic has no progression row |
+| `EpicProgression.halt` | progression has not halted |
 
 `Phase.dependsOn` is `[String!]!` and is **never** null: a phase with no edges
 serializes as `[]`.
+
+### Bead linkage and epic progression
+
+`Flow.bead` is the Beads issue the Flow tracks, and `Flow.epicProgression` is
+the durable auto-progression state of that Bead's epic (`docs/flow-phases.md`
+covers what progression does). Both are read-only projections of what the store
+already holds — **the API never reads Beads itself and never writes progression
+state**; the server is wired to `flowstore.Store.ReadEpicProgression` and to
+nothing else.
+
+- `BeadLink.id` and `BeadLink.epicId` are the persisted link text, **verbatim**.
+  A child-only link resolves a non-null `bead` with `epicId: null`.
+- Progression is looked up by canonical `(normalized repo path, trimmed epic
+  id)` — the same key `ReadEpicProgression` canonicalizes — so a padded or
+  differently spelled epic id still resolves the right row while `bead.epicId`
+  keeps reading back exactly as stored.
+- A **missing row is `null`, not a disabled epic.** Nothing is synthesized:
+  "nobody enabled progression for this epic" and "somebody turned it off" are
+  different claims, and only the second one has a row.
+- `done` is the persisted completion flag. It is never derived from
+  `enabled: false` — a manually disabled epic is not finished.
+- `halt` carries the child Bead, the child Flow status that stopped
+  progression (`blocked`, `needs_attention`, `closed`, or `abandoned`), and a
+  free-text message.
+- One request reads **one row per distinct canonical key**. Sibling Flows under
+  the same epic share a single read, found or missing, and a Flow that links no
+  epic causes none. A row that cannot be read fails the request the same way an
+  unreadable Flow list does: the fixed `internal error reading application
+  state` message to the client, the key and the cause in the server log only.
+
+```graphql
+{
+  flow(id: "20260814T210915Z-surface-bead-link") {
+    bead { id epicId }
+    epicProgression {
+      enabled
+      done
+      halt { childBeadId status message }
+    }
+  }
+}
+```
 
 ### Statuses are strings, not enums
 
