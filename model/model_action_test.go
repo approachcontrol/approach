@@ -3528,6 +3528,7 @@ func TestModel_F2OpensPromptTemplatePicker(t *testing.T) {
 		"Plan launch",
 		"Flow plan",
 		"Plan review",
+		"Autofix",
 		"custom",
 		"default",
 	} {
@@ -3731,6 +3732,17 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 		if !strings.Contains(preview, want) {
 			t.Fatalf("expected Flow plan preview to contain %q:\n%s", want, preview)
 		}
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	for range 9 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	preview = m.OverlayText()
+	if preview != "autofix pr #{pr_number}" {
+		t.Fatalf("autofix built-in preview = %q, want the default template", preview)
 	}
 }
 

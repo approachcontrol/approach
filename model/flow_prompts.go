@@ -11,8 +11,9 @@ import (
 
 const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with approach-flow."
 
-// FlowPromptTemplates stores optional launch prompt templates for Flow phases.
-// Unknown placeholders are left literal so users can evolve templates safely.
+// FlowPromptTemplates stores optional launch prompt templates for Flow phases
+// and the U autofix launcher. Unknown placeholders are left literal so users
+// can evolve templates safely.
 type FlowPromptTemplates struct {
 	Plan           string
 	PlanReview     string
@@ -22,6 +23,9 @@ type FlowPromptTemplates struct {
 	Autoreview     string
 	Merge          string
 	Generic        string
+	// Autofix is the U launcher prompt, not a phase template. It does not
+	// receive the phase-done instruction suffix.
+	Autofix string
 }
 
 func (templates FlowPromptTemplates) templateForPhase(phase flowstore.FlowPhase) string {
