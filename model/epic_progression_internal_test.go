@@ -361,3 +361,60 @@ func epicProgressionTestCommandMessages(cmd tea.Cmd) []tea.Msg {
 	}
 	return messages
 }
+
+// TestEnableEpicProgressionReportsBeadSlotRefusalNotBeadAdmission pins path 4.
+// The enable pre-check matches flow.Bead == link exactly, so a Flow for this
+// Bead under a different epic slips past it and reaches the store guard. Left
+// unhandled, the refusal surfaces through the !claimAttempted arm as a message
+// about Bead admission, which describes the wrong failure.
+func TestEnableEpicProgressionReportsBeadSlotRefusalNotBeadAdmission(t *testing.T) {
+	stamp := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+	winner := flowstore.FlowRecord{
+		FlowID: "flow-winner", RepoPath: "/repo", Status: flowstore.StatusPending,
+		Bead: flowstore.BeadLink{ID: "epic.1", EpicID: "another-epic"}, PreparedAt: &stamp,
+	}
+	claims := 0
+	m := Model{
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{winner}, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.1", Title: "Child"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.1", Title: "Child"}}, nil
+		},
+		claimBead: func(string, string) error { claims++; return nil },
+		createFlow: func(request FlowStartRequest) (FlowStartResult, error) {
+			return FlowStartResult{}, &flowstore.BeadFlowActiveError{
+				RepoPath: "/repo", BeadID: request.Bead.ID, Existing: winner,
+			}
+		},
+		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID}, false, nil
+		},
+	}
+	target := beadExpansionTarget{token: 1, repoPath: "/repo", mode: ui.ModeBeadsOpen, epicID: "epic"}
+	msg, ok := m.enableEpicProgressionCmd(target, ui.BeadExpansion{
+		Children: []beadsquery.Bead{{ID: "epic.1", Title: "Child"}},
+		ReadyIDs: map[string]bool{"epic.1": true},
+	})().(epicProgressionToggleResultMsg)
+	if !ok {
+		t.Fatal("enable command returned unexpected message")
+	}
+	if want := conflictStatus(winner, false); msg.status != want {
+		t.Fatalf("status = %q, want %q", msg.status, want)
+	}
+	if strings.Contains(msg.status, "Could not admit child") {
+		t.Fatalf("status = %q, want the duplicate-Bead refusal rather than the Bead-admission message", msg.status)
+	}
+	if msg.baselineDisposition != epicProgressionBaselineRemove {
+		t.Fatalf("baselineDisposition = %v, want remove", msg.baselineDisposition)
+	}
+	if msg.enabled {
+		t.Fatal("enable succeeded despite the duplicate-Bead refusal")
+	}
+	if claims != 0 {
+		t.Fatalf("claimBead calls = %d, want 0; AfterFlowPersisted never runs on a guard refusal", claims)
+	}
+}

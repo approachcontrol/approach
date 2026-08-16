@@ -2468,3 +2468,55 @@ func equalStrings(left, right []string) bool {
 	}
 	return true
 }
+
+// TestBeadsReadyCreateFlowRefusesDuplicateBeadFlow pins the manual `f` path.
+// The store refuses the create outright, so the status must name the existing
+// Flow rather than claim a Flow "was created, but preparation failed".
+func TestBeadsReadyCreateFlowRefusesDuplicateBeadFlow(t *testing.T) {
+	existing := flowstore.FlowRecord{
+		FlowID: "20260816T025735Z-bd-1",
+		Bead:   flowstore.BeadLink{ID: "bd-1"},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "implementation", Status: flowstore.PhaseRunning},
+		},
+	}
+	createCalls := 0
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		AgentCommand:   "codex",
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			createCalls++
+			return model.FlowStartResult{}, &flowstore.BeadFlowActiveError{
+				RepoPath: req.RepoPath, BeadID: req.Bead.ID, Existing: existing,
+			}
+		},
+		FetchRepo: func(string) error { return nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-1", Title: "One"}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	failed, ok := cmd().(model.ReadyBeadFlowCreateFailedMsg)
+	if !ok {
+		t.Fatal("Ready create did not report a create failure")
+	}
+	if failed.ExistingFlow.FlowID != existing.FlowID {
+		t.Fatalf("ExistingFlow.FlowID = %q, want %q", failed.ExistingFlow.FlowID, existing.FlowID)
+	}
+	m, _ = update(m, failed)
+
+	want := "Bead bd-1 already has a in progress flow 20260816T025735Z-bd-1: close it from the Flows view with C"
+	if got := m.TransientError(); got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if createCalls != 1 {
+		t.Fatalf("CreateFlow calls = %d, want exactly 1; the refusal must not be retried", createCalls)
+	}
+	if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); retry == nil {
+		t.Fatal("duplicate-Bead refusal did not release Ready create readiness")
+	}
+}

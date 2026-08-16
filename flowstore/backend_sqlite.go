@@ -237,6 +237,11 @@ type flowListRows interface {
 
 type sqliteTransaction interface {
 	QueryRow(query string, args ...any) *sql.Row
+	// Query returns *sql.Rows and NOT flowListRows on purpose. Go return types
+	// are invariant, so declaring it as (flowListRows, error) — even though
+	// *sql.Rows satisfies that interface — would stop *sql.Tx from satisfying
+	// sqliteTransaction and break beginTx below. Do not "improve" it.
+	Query(query string, args ...any) (*sql.Rows, error)
 	Exec(query string, args ...any) (sql.Result, error)
 	Commit() error
 	Rollback() error
@@ -1038,6 +1043,39 @@ func (s sqliteSession) exists() (bool, error) {
 		return false, err
 	}
 	return exists != 0, nil
+}
+
+// beadLinkedFlows reads through the session's own transaction, never through
+// b.db: sqliteBackend.queryListRows would read outside the writer transaction
+// and reopen the race the guard exists to close.
+func (s sqliteSession) beadLinkedFlows(repoPath string) ([]storedFlow, error) {
+	rows, err := s.tx.Query(`
+SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record
+FROM flows
+WHERE repo_path = ? AND bead_id <> '' AND flow_id <> ?
+ORDER BY updated_at DESC, flow_id ASC`, filepath.Clean(repoPath), s.flowID)
+	if err != nil {
+		return nil, fmt.Errorf("list bead-linked flows for %q: %w", repoPath, err)
+	}
+	defer func() { _ = rows.Close() }()
+	flows := make([]storedFlow, 0)
+	for rows.Next() {
+		var flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var record []byte
+		if err := rows.Scan(&flowID, &rowRepoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+			return nil, fmt.Errorf("scan bead-linked flow row: %w", err)
+		}
+		decoded, err := decodeStoredFlowWithPreparation(flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+		if err != nil {
+			// Skipped, not fatal — see the interface contract.
+			continue
+		}
+		flows = append(flows, decoded)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bead-linked flows: %w", err)
+	}
+	return flows, nil
 }
 
 func (s sqliteSession) save(record FlowRecord) error {

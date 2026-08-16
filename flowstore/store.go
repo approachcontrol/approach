@@ -847,6 +847,37 @@ func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, prepara
 			return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
 		}
 
+		// Bead-slot admission, inside the writer transaction so a second
+		// process cannot slip a duplicate in between a read and this write.
+		// Returning here is safe: the closure runs at most once and returns
+		// before any saveSession, so a refusal writes nothing.
+		if requested := strings.TrimSpace(record.Bead.ID); requested != "" {
+			candidates, err := sess.beadLinkedFlows(record.RepoPath)
+			if err != nil {
+				return FlowRecord{}, err
+			}
+			for _, candidate := range candidates {
+				// bead_id is compared here, never in SQL: the column is
+				// projected verbatim, so a stored " x " must still match a
+				// requested "x". Pushing a trimmed value into the WHERE clause
+				// would filter such rows out before this comparison could run.
+				if strings.TrimSpace(candidate.record.Bead.ID) != requested {
+					continue
+				}
+				if !BeadFlowSlotOccupied(candidate.record) {
+					continue
+				}
+				// Query order is updated_at DESC, flow_id ASC, so databases
+				// already carrying duplicates resolve deterministically to the
+				// most recently updated occupying Flow.
+				return FlowRecord{}, &BeadFlowActiveError{
+					RepoPath: record.RepoPath,
+					BeadID:   requested,
+					Existing: candidate.record,
+				}
+			}
+		}
+
 		// draft is a shallow copy: draft.Phases still aliases the caller's
 		// array, and backfillLinearDependsOnForCreate rewrites depends_on
 		// through it. That makes this closure single-use — a second pass would

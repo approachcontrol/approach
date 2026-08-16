@@ -108,4 +108,19 @@ type flowSession interface {
 	// timestamp. Unlike save, it preserves key presence and raw values on every
 	// unrelated legacy field.
 	savePhaseAgentSettings(update phaseAgentSettingsSave) error
+
+	// beadLinkedFlows returns every stored record in this transaction for
+	// repoPath that carries a non-empty bead_id, excluding this session's own
+	// Flow ID, ordered updated_at DESC, flow_id ASC.
+	//
+	// It applies no domain rule: activeness and Bead-ID matching are the
+	// store's decision. Reading inside the section is the point — a
+	// List-then-Create pre-check is the racy shape that let two Flows be
+	// created for one Bead.
+	//
+	// Rows that fail to decode are skipped rather than fatal, matching
+	// sqliteBackend.list. Refusing every Bead-linked creation in a repository
+	// because one unrelated row is unreadable would be a permanent outage
+	// traded against a hypothetical missed duplicate.
+	beadLinkedFlows(repoPath string) ([]storedFlow, error)
 }

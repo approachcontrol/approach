@@ -223,10 +223,26 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 					direct[id] = struct{}{}
 				}
 			}
-			exactLinked := make(map[string]struct{})
+			// This filter must agree with the store's creation guard in every
+			// dimension the guard uses — repository, TRIMMED Bead ID, and slot
+			// occupancy — or a child the filter selects gets refused by the
+			// guard on every pass. The retryable arm sets no backoff and
+			// nothing here sets Halt, so a disagreement is an unbounded 1 Hz
+			// create-refuse loop rather than a cosmetic mismatch.
+			//
+			// Hence flowstore.BeadFlowSlotOccupied itself rather than a
+			// hand-rolled status test: a child whose only Flow is closed or
+			// merged is still selected, and the guard still permits the create.
+			// The epic disjunct preserves today's behaviour for a child whose
+			// epic-linked Flow has since completed — progression treats that
+			// child as done, and this fix is not the place to revisit that.
+			linkedChildren := make(map[string]struct{})
 			for _, flow := range flows {
-				if filepath.Clean(flow.RepoPath) == repoPath && flow.Bead.EpicID == epicID && flow.Bead.ID != "" {
-					exactLinked[flow.Bead.ID] = struct{}{}
+				if filepath.Clean(flow.RepoPath) != repoPath || strings.TrimSpace(flow.Bead.ID) == "" {
+					continue
+				}
+				if flow.Bead.EpicID == epicID || flowstore.BeadFlowSlotOccupied(flow) {
+					linkedChildren[strings.TrimSpace(flow.Bead.ID)] = struct{}{}
 				}
 			}
 			intersection, linked := 0, 0
@@ -237,7 +253,7 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 					continue
 				}
 				intersection++
-				if _, ok := exactLinked[childID]; ok {
+				if _, ok := linkedChildren[childID]; ok {
 					linked++
 					continue
 				}
@@ -275,6 +291,17 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 				AgentPreferences: preferences, AgentPreferencesProvided: true,
 			})
 			candidate.FlowID = strings.TrimSpace(flowResult.Flow.FlowID)
+			// With the selection filter aligned above, a store refusal here can
+			// only be a genuine race: another process committed the Flow
+			// between listFlows and createFlow. Retrying converges in one beat
+			// because the next pass's snapshot contains the winner, so
+			// linkedChildren skips this child and selection moves on (or the
+			// exhausted path fires). Adopting the winner as the owned successor
+			// does NOT work — its EpicID would fail reconcile's exact struct
+			// equality and livelock instead.
+			if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
+				return result(epicProgressionAdvanceRetryable, conflictStatus(existing, false))
+			}
 			if createErr != nil && candidate.FlowID == "" {
 				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not prepare Flow for child %s: %v", candidate.ChildID, createErr))
 			}
@@ -764,6 +791,17 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			if siblingMarkerDetail != "" {
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
 					status: siblingMarkerDetail}
+			}
+			// The pre-check above matches flow.Bead == link exactly, so a Flow
+			// for this Bead under a different (or empty) epic slips past it and
+			// reaches the guard. Without this branch the refusal would surface
+			// through the !claimAttempted arm as a Bead-admission message —
+			// AfterFlowPersisted never runs on a guard refusal — which
+			// describes the wrong failure. Enabling still declines; the user is
+			// just told why.
+			if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: conflictStatus(existing, false)}
 			}
 			if claimErr != nil {
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,

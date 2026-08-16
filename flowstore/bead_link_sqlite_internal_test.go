@@ -549,3 +549,261 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 		})
 	}
 }
+
+// beadSlotSeedRecord builds a record shaped for slot tests. Phases are set
+// explicitly because DeriveStatus ignores FlowRecord.Status except for
+// abandoned, so a fixture that only sets Status silently derives pending.
+func beadSlotSeedRecord(flowID, repoPath, beadID string, updatedAt time.Time) FlowRecord {
+	return FlowRecord{
+		SchemaVersion: schemaVersion,
+		FlowID:        flowID,
+		Title:         "Seeded",
+		Instructions:  "Seeded by test.",
+		Status:        StatusPending,
+		RepoPath:      repoPath,
+		Bead:          BeadLink{ID: beadID},
+		CreatedAt:     updatedAt,
+		UpdatedAt:     updatedAt,
+		Phases:        []FlowPhase{{PhaseID: "plan", Title: "Plan", Status: PhasePending, CreatedAt: updatedAt, UpdatedAt: updatedAt}},
+	}
+}
+
+func TestBeadLinkedFlowsScopesToRepositoryAndOrdersDeterministically(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	repoPath := filepath.Join(root, "repo")
+	otherRepo := filepath.Join(root, "other")
+	base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+
+	seed := []FlowRecord{
+		beadSlotSeedRecord("20260816T030000Z-older", repoPath, "bead-older", base),
+		beadSlotSeedRecord("20260816T030001Z-newer", repoPath, "bead-newer", base.Add(time.Minute)),
+		beadSlotSeedRecord("20260816T030002Z-tied", repoPath, "bead-tied", base.Add(time.Minute)),
+		beadSlotSeedRecord("20260816T030003Z-other-repo", otherRepo, "bead-elsewhere", base.Add(2*time.Minute)),
+	}
+	unlinked := beadSlotSeedRecord("20260816T030004Z-unlinked", repoPath, "", base.Add(3*time.Minute))
+	unlinked.Bead = BeadLink{}
+	seed = append(seed, unlinked)
+	for _, record := range seed {
+		if err := store.write(record); err != nil {
+			t.Fatalf("write(%q) error = %v", record.FlowID, err)
+		}
+	}
+
+	var got []string
+	if _, err := store.backend.update("20260816T030099Z-probe", func(sess flowSession) (FlowRecord, error) {
+		flows, err := sess.beadLinkedFlows(repoPath)
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		for _, flow := range flows {
+			got = append(got, flow.record.FlowID)
+		}
+		return FlowRecord{}, nil
+	}); err != nil {
+		t.Fatalf("update() error = %v", err)
+	}
+
+	want := []string{
+		"20260816T030001Z-newer",
+		"20260816T030002Z-tied",
+		"20260816T030000Z-older",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("beadLinkedFlows() = %v, want %v", got, want)
+	}
+}
+
+func TestCreateRefusesUntrimmedStoredBeadIDForTrimmedRequest(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	repoPath := filepath.Join(root, "repo")
+	existing := beadSlotSeedRecord("20260816T030000Z-untrimmed", repoPath, " child ", time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC))
+	if err := store.write(existing); err != nil {
+		t.Fatalf("write() error = %v", err)
+	}
+
+	_, err = store.Create(FlowRecord{
+		Title: "Second", Instructions: "Duplicate.", RepoPath: repoPath, Bead: BeadLink{ID: "child"},
+	})
+	if !IsBeadFlowActive(err) {
+		t.Fatalf("Create() error = %v, want IsBeadFlowActive", err)
+	}
+	conflict, ok := ActiveBeadFlow(err)
+	if !ok || conflict.FlowID != existing.FlowID {
+		t.Fatalf("ActiveBeadFlow() = (%q, %v), want (%q, true)", conflict.FlowID, ok, existing.FlowID)
+	}
+}
+
+func TestCreateRefusalNamesMostRecentlyUpdatedOccupyingFlow(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	repoPath := filepath.Join(root, "repo")
+	base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+	for _, record := range []FlowRecord{
+		beadSlotSeedRecord("20260816T030000Z-first", repoPath, "child", base),
+		beadSlotSeedRecord("20260816T030001Z-second", repoPath, "child", base.Add(time.Minute)),
+		beadSlotSeedRecord("20260816T030002Z-third", repoPath, "child", base.Add(30*time.Second)),
+	} {
+		if err := store.write(record); err != nil {
+			t.Fatalf("write(%q) error = %v", record.FlowID, err)
+		}
+	}
+
+	_, err = store.Create(FlowRecord{
+		Title: "Fourth", Instructions: "Duplicate.", RepoPath: repoPath, Bead: BeadLink{ID: "child"},
+	})
+	conflict, ok := ActiveBeadFlow(err)
+	if !ok {
+		t.Fatalf("Create() error = %v, want a bead-slot refusal", err)
+	}
+	if conflict.FlowID != "20260816T030001Z-second" {
+		t.Fatalf("refusal named %q, want the most recently updated %q", conflict.FlowID, "20260816T030001Z-second")
+	}
+}
+
+func TestBeadSlotGuardSkipsUndecodableRowsInsteadOfFailing(t *testing.T) {
+	repoPath := func(root string) string { return filepath.Join(root, "repo") }
+	corrupt := func(t *testing.T, store *Store, flowID string) {
+		t.Helper()
+		backend := store.backend.(*sqliteBackend)
+		var data []byte
+		if err := backend.db.QueryRow("SELECT record FROM flows WHERE flow_id = ?", flowID).Scan(&data); err != nil {
+			t.Fatalf("read record: %v", err)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			t.Fatalf("decode record: %v", err)
+		}
+		raw["schema_version"] = json.RawMessage("9999")
+		patched, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatalf("encode record: %v", err)
+		}
+		if _, err := backend.db.Exec("UPDATE flows SET record = ? WHERE flow_id = ?", patched, flowID); err != nil {
+			t.Fatalf("corrupt record: %v", err)
+		}
+	}
+
+	t.Run("healthy occupying row still refuses", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := NewStore(StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+
+		base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+		// The bad row is newer, so a fatal decode would be hit first.
+		if err := store.write(beadSlotSeedRecord("20260816T030000Z-healthy", repoPath(root), "child", base)); err != nil {
+			t.Fatalf("write() error = %v", err)
+		}
+		if err := store.write(beadSlotSeedRecord("20260816T030001Z-bad", repoPath(root), "child", base.Add(time.Minute))); err != nil {
+			t.Fatalf("write() error = %v", err)
+		}
+		corrupt(t, store, "20260816T030001Z-bad")
+
+		_, err = store.Create(FlowRecord{
+			Title: "Second", Instructions: "Duplicate.", RepoPath: repoPath(root), Bead: BeadLink{ID: "child"},
+		})
+		conflict, ok := ActiveBeadFlow(err)
+		if !ok {
+			t.Fatalf("Create() error = %v, want a bead-slot refusal naming the healthy row", err)
+		}
+		if conflict.FlowID != "20260816T030000Z-healthy" {
+			t.Fatalf("refusal named %q, want %q", conflict.FlowID, "20260816T030000Z-healthy")
+		}
+	})
+
+	t.Run("only an undecodable row permits creation", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := NewStore(StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+
+		base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+		if err := store.write(beadSlotSeedRecord("20260816T030001Z-bad", repoPath(root), "child", base)); err != nil {
+			t.Fatalf("write() error = %v", err)
+		}
+		corrupt(t, store, "20260816T030001Z-bad")
+
+		created, err := store.Create(FlowRecord{
+			Title: "Second", Instructions: "Allowed.", RepoPath: repoPath(root), Bead: BeadLink{ID: "child"},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v, want success when the only candidate row is unreadable", err)
+		}
+		if created.FlowID == "" {
+			t.Fatal("Create() returned an empty flow id")
+		}
+	})
+}
+
+// TestCreateAllowsSecondFlowAfterMergedOrAbandoned covers the two terminal
+// statuses no public API can construct: Merge.Status is only reachable through
+// merge-phase validation, and nothing sets Status abandoned any more. Both are
+// still decodable states, so the guard must release the slot for them.
+func TestCreateAllowsSecondFlowAfterMergedOrAbandoned(t *testing.T) {
+	base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name       string
+		mutate     func(record *FlowRecord)
+		wantStatus string
+	}{
+		{
+			name: "merged",
+			mutate: func(record *FlowRecord) {
+				mergedAt := base
+				record.Merge = Merge{Status: MergeMerged, Commit: "abc1234", MergedAt: &mergedAt}
+			},
+			wantStatus: StatusMerged,
+		},
+		{
+			name:       "abandoned",
+			mutate:     func(record *FlowRecord) { record.Status = StatusAbandoned },
+			wantStatus: StatusAbandoned,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := NewStore(StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+
+			repoPath := filepath.Join(root, "repo")
+			existing := beadSlotSeedRecord("20260816T030000Z-terminal", repoPath, "child", base)
+			tt.mutate(&existing)
+			if got := DeriveStatus(existing); got != tt.wantStatus {
+				t.Fatalf("DeriveStatus() = %q, want %q", got, tt.wantStatus)
+			}
+			if err := store.write(existing); err != nil {
+				t.Fatalf("write() error = %v", err)
+			}
+
+			if _, err := store.Create(FlowRecord{
+				Title: "Follow-up", Instructions: "Legitimate follow-up.", RepoPath: repoPath, Bead: BeadLink{ID: "child"},
+			}); err != nil {
+				t.Fatalf("Create() error = %v, want success once the first Flow is %s", err, tt.wantStatus)
+			}
+		})
+	}
+}

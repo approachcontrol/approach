@@ -1662,3 +1662,47 @@ func TestCreateFlowLaunchPrefillTerminationFailureRetainsNondetachableOccupancy(
 		})
 	}
 }
+
+// TestCreateFlowLaunchReadyOriginRefusesDuplicateBeadFlow pins the manual `F`
+// path. The store refuses before anything is written, so nothing needs
+// compensating — but finishCreateBeforeWrite does not refresh the Flow surface
+// the way finishCreateAfterWrite does, so the conflict branch must chain that
+// fetch itself.
+func TestCreateFlowLaunchReadyOriginRefusesDuplicateBeadFlow(t *testing.T) {
+	existing := flowstore.FlowRecord{
+		FlowID: "20260816T025735Z-bd-1",
+		Bead:   flowstore.BeadLink{ID: "bd-1"},
+		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseNeedsAttention}},
+	}
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.Bead = flowstore.BeadLink{ID: "bd-1", EpicID: "epic-1"}
+	h.createErr = &flowstore.BeadFlowActiveError{RepoPath: "/dev/alpha", BeadID: "bd-1", Existing: existing}
+
+	m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
+	m, written := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateWritten)
+	if written.BeadFlowConflict.FlowID != existing.FlowID {
+		t.Fatalf("event BeadFlowConflict.FlowID = %q, want %q", written.BeadFlowConflict.FlowID, existing.FlowID)
+	}
+	surfaceVisible := m.flowRefreshSurfaceVisible()
+	next, followUp := m.handleFlowLaunchEvent(written)
+
+	want := "Bead bd-1 already has a needs attention flow 20260816T025735Z-bd-1: close it from the Flows view with C"
+	if next.status.Text != want {
+		t.Fatalf("status = %q, want %q", next.status.Text, want)
+	}
+	if slices.Contains(h.order, "worktree") || len(h.phaseUpdates) != 0 || h.releases != 0 {
+		t.Fatalf("refused create provisioned: order=%#v updates=%#v releases=%d", h.order, h.phaseUpdates, h.releases)
+	}
+	if next.flowLaunchAttemptOccupied(h.record.FlowID) {
+		t.Fatal("refused create did not release the launch attempt")
+	}
+	if next.flowPreparationAdmission {
+		t.Fatal("refused create did not release the Ready admission")
+	}
+	if !surfaceVisible {
+		t.Fatal("harness did not have the Flow surface visible; the refresh assertion below would be vacuous")
+	}
+	if followUp == nil {
+		t.Fatal("refused create did not issue the Flow surface fetch")
+	}
+}

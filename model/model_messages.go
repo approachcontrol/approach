@@ -571,10 +571,14 @@ type ReadyBeadFlowCreatedMsg struct {
 }
 
 type ReadyBeadFlowCreateFailedMsg struct {
-	RepoPath         string
-	FlowID           string
-	Title            string
-	Err              string
+	RepoPath string
+	FlowID   string
+	Title    string
+	Err      string
+	// ExistingFlow is the Flow that already holds this Bead's slot when the
+	// store refused the create. A non-empty FlowID selects the duplicate-Bead
+	// status over the generic failure text.
+	ExistingFlow     flowstore.FlowRecord
 	preparationToken uint64
 	Request          uint64
 }

@@ -163,6 +163,19 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateWritten:
 		if msg.Err != "" {
+			// A duplicate-Bead refusal wrote nothing: no record, no worktree,
+			// no reservation, no finalizer. finishCreateBeforeWrite releases
+			// the launch attempt and the Ready admission, but — unlike
+			// finishCreateAfterWrite — it does not refresh the Flow surface,
+			// so the conflict branch chains that fetch itself.
+			if strings.TrimSpace(msg.BeadFlowConflict.FlowID) != "" {
+				next, cmd := m.finishCreateBeforeWrite(attempt, conflictStatus(msg.BeadFlowConflict, true))
+				if next.flowRefreshSurfaceVisible() {
+					refreshed, refreshCmd := next.startFlowSurfaceFetch()
+					return refreshed, tea.Batch(cmd, refreshCmd)
+				}
+				return next, cmd
+			}
 			return m.finishCreateBeforeWrite(attempt, fmt.Sprintf("create flow %s: %s", msg.FlowID, msg.Err))
 		}
 		if msg.Record.FlowID != msg.FlowID {
@@ -428,6 +441,7 @@ func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, 
 		event.Record = record
 		if err != nil {
 			event.Err = err.Error()
+			event.BeadFlowConflict, _ = flowstore.ActiveBeadFlow(err)
 		}
 		return event
 	}

@@ -2212,7 +2212,11 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 	if errText == "" {
 		errText = "Unable to create flow"
 	}
-	if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
+	// A duplicate-Bead refusal creates nothing, so it must not be reported as
+	// a Flow that "was created, but preparation failed".
+	if strings.TrimSpace(msg.ExistingFlow.FlowID) != "" {
+		errText = conflictStatus(msg.ExistingFlow, true)
+	} else if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
 		errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
 	}
 	m = m.setStatus(statusOther, errText)

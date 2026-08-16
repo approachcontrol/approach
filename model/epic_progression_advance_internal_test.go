@@ -571,7 +571,17 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 	}
 }
 
-func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryEpicOrNoncanonicalLink(t *testing.T) {
+// TestEpicProgressionSelectionScopeDoesNotSuppressOtherRepositoryLink pins the
+// one dimension of the selection filter that repository scoping still governs.
+//
+// This test used to assert that a same-repository Flow under a different epic,
+// and a Flow with an untrimmed Bead ID, also failed to suppress selection.
+// Those cases are now deliberately suppressed: the filter is keyed on
+// (repository, trimmed Bead ID, slot occupancy) to match the store's creation
+// guard, and selecting a child the guard would refuse is an unbounded
+// create-refuse loop. See TestEpicProgressionSelectionMatchesBeadSlotGuard for
+// the cases that moved.
+func TestEpicProgressionSelectionScopeDoesNotSuppressOtherRepositoryLink(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
@@ -587,11 +597,8 @@ func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryEpicOrNoncan
 		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "epic.a"}}, nil },
 		listReadyBeads:    func(string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "epic.a", Title: "A"}}, nil },
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			otherEpic := progressionAdvanceFlow("other-epic", repo, "epic.a", "another-epic", flowstore.StatusPending)
 			otherRepo := progressionAdvanceFlow("other-repo", "/elsewhere", "epic.a", epic, flowstore.StatusPending)
-			noncanonicalChild := progressionAdvanceFlow("noncanonical-child", repo, "epic.a ", epic, flowstore.StatusPending)
-			noncanonicalEpic := progressionAdvanceFlow("noncanonical-epic", repo, "epic.a", " "+epic, flowstore.StatusPending)
-			return []flowstore.FlowRecord{otherEpic, otherRepo, noncanonicalChild, noncanonicalEpic}, nil
+			return []flowstore.FlowRecord{otherRepo}, nil
 		},
 		createFlow: func(candidate FlowStartRequest) (FlowStartResult, error) {
 			request = candidate
@@ -735,4 +742,238 @@ func epicProgressionAdvanceMessage(t *testing.T, cmd tea.Cmd) epicProgressionAdv
 	}
 	t.Fatal("command returned no epic progression result")
 	return epicProgressionAdvanceResultMsg{}
+}
+
+// progressionAdvanceFlow sets Status but no Phases, and DeriveStatus ignores
+// FlowRecord.Status except for abandoned — so every fixture it builds derives
+// pending and occupies its Bead slot. Tests that need a genuinely terminal Flow
+// must say so structurally, which is what this helper is for.
+func progressionAdvanceTerminalFlow(flowID, repoPath, childID, epicID string, closed bool) flowstore.FlowRecord {
+	record := progressionAdvanceFlow(flowID, repoPath, childID, epicID, flowstore.StatusCompleted)
+	stamp := time.Date(2026, 8, 14, 18, 0, 0, 0, time.UTC)
+	if closed {
+		record.Closed = flowstore.Closure{Reason: "retired", ClosedAt: &stamp}
+		return record
+	}
+	record.Merge = flowstore.Merge{Status: flowstore.MergeMerged, Commit: "abc1234", MergedAt: &stamp}
+	return record
+}
+
+// TestEpicProgressionSelectionMatchesBeadSlotGuard pins the selection filter to
+// the store's creation guard in every dimension the guard uses. A child the
+// filter selects but the guard refuses is an unbounded create-refuse loop, and
+// a child the filter suppresses but the guard would permit is a stalled epic.
+func TestEpicProgressionSelectionMatchesBeadSlotGuard(t *testing.T) {
+	repo, epic := "/repo", "epic"
+
+	for _, tt := range []struct {
+		name       string
+		existing   func() flowstore.FlowRecord
+		wantCreate bool
+	}{
+		{
+			name: "non-terminal flow under a different epic suppresses selection",
+			existing: func() flowstore.FlowRecord {
+				return progressionAdvanceFlow("other-epic", repo, "epic.a", "another-epic", flowstore.StatusPending)
+			},
+			wantCreate: false,
+		},
+		{
+			name: "closed flow under a different epic still permits selection",
+			existing: func() flowstore.FlowRecord {
+				return progressionAdvanceTerminalFlow("closed-other-epic", repo, "epic.a", "another-epic", true)
+			},
+			wantCreate: true,
+		},
+		{
+			name: "merged flow under a different epic still permits selection",
+			existing: func() flowstore.FlowRecord {
+				return progressionAdvanceTerminalFlow("merged-other-epic", repo, "epic.a", "another-epic", false)
+			},
+			wantCreate: true,
+		},
+		{
+			name: "untrimmed stored bead id suppresses selection",
+			existing: func() flowstore.FlowRecord {
+				return progressionAdvanceFlow("noncanonical-child", repo, "epic.a ", "another-epic", flowstore.StatusPending)
+			},
+			wantCreate: false,
+		},
+		{
+			name: "flow in a different repository does not suppress selection",
+			existing: func() flowstore.FlowRecord {
+				return progressionAdvanceFlow("other-repo", "/elsewhere", "epic.a", epic, flowstore.StatusPending)
+			},
+			wantCreate: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			key := epicProgressionBaselineKey(repo, epic)
+			source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+			terminal := cloneFlowRecord(source)
+			terminal.Status = flowstore.StatusCompleted
+			successor := progressionAdvanceFlow("flow-new-a", repo, "epic.a", epic, flowstore.StatusPending)
+			existing := tt.existing()
+			creates := 0
+			m := Model{
+				autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+				},
+				listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+					return []beadsquery.Bead{{ID: "epic.a"}}, nil
+				},
+				listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+					return []beadsquery.Bead{{ID: "epic.a", Title: "A"}}, nil
+				},
+				listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{existing}, nil
+				},
+				createFlow: func(FlowStartRequest) (FlowStartResult, error) {
+					creates++
+					return FlowStartResult{Flow: successor}, nil
+				},
+				reserveEpicSuccessor: func(string) (func(), error) { return func() {}, nil },
+				reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
+					return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
+				},
+				setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, nil
+				},
+			}
+			_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+			result := epicProgressionAdvanceMessage(t, cmd)
+			wantCreates := 0
+			if tt.wantCreate {
+				wantCreates = 1
+			}
+			if creates != wantCreates {
+				t.Fatalf("createFlow calls = %d, want %d (disposition=%v status=%q)", creates, wantCreates, result.disposition, result.status)
+			}
+			if !tt.wantCreate && result.disposition != epicProgressionAdvanceExhausted {
+				t.Fatalf("disposition = %v, want exhausted when every ready child is filtered", result.disposition)
+			}
+		})
+	}
+}
+
+func TestEpicProgressionAdvanceMapsBeadSlotRefusalToRetryable(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	terminal := cloneFlowRecord(source)
+	terminal.Status = flowstore.StatusCompleted
+	winner := progressionAdvanceFlow("winner", repo, "epic.b", "another-epic", flowstore.StatusPending)
+
+	m := Model{
+		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.b"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.b", Title: "B"}}, nil
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+		createFlow: func(FlowStartRequest) (FlowStartResult, error) {
+			return FlowStartResult{}, &flowstore.BeadFlowActiveError{RepoPath: repo, BeadID: "epic.b", Existing: winner}
+		},
+	}
+	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+	result := epicProgressionAdvanceMessage(t, cmd)
+	if result.disposition != epicProgressionAdvanceRetryable {
+		t.Fatalf("disposition = %v, want retryable", result.disposition)
+	}
+	if want := conflictStatus(winner, false); result.status != want {
+		t.Fatalf("status = %q, want %q", result.status, want)
+	}
+	if !strings.Contains(result.status, winner.FlowID) {
+		t.Fatalf("status %q does not name the winning Flow", result.status)
+	}
+	next, _ = updateFlowRefreshTest(next, result)
+	if len(next.epicProgressionOwnedSuccessors) != 0 {
+		t.Fatalf("owned successors = %#v, want none; adopting the conflicting Flow livelocks", next.epicProgressionOwnedSuccessors)
+	}
+}
+
+// TestEpicProgressionBeadSlotRefusalConvergesAcrossPasses drives three passes.
+// A test that only checks pass 2 cannot distinguish a fix from a longer
+// livelock: the rejected owned-successor design skips creation on pass 2 and
+// still loops forever.
+func TestEpicProgressionBeadSlotRefusalConvergesAcrossPasses(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	terminal := cloneFlowRecord(source)
+	terminal.Status = flowstore.StatusCompleted
+	// The winner carries a different EpicID on purpose: that is the case the
+	// old exact-link pre-filter missed and the guard now catches.
+	winner := progressionAdvanceFlow("winner", repo, "epic.b", "another-epic", flowstore.StatusPending)
+
+	// A pass that schedules no progression at all is termination, which is the
+	// outcome this test is really after; scheduled is what distinguishes it
+	// from a pass that ran and asked to be retried.
+	type pass struct {
+		scheduled   bool
+		disposition epicProgressionAdvanceDisposition
+	}
+	refused := false
+	createdChildren := []string{}
+	passes := []pass{}
+	m := Model{
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.b"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.b", Title: "B"}}, nil
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			if refused {
+				return []flowstore.FlowRecord{winner}, nil
+			}
+			return nil, nil
+		},
+		createFlow: func(candidate FlowStartRequest) (FlowStartResult, error) {
+			createdChildren = append(createdChildren, candidate.Bead.ID)
+			refused = true
+			return FlowStartResult{}, &flowstore.BeadFlowActiveError{RepoPath: repo, BeadID: candidate.Bead.ID, Existing: winner}
+		},
+		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Done: true}, nil
+		},
+	}
+	for request := uint64(1); request <= 3; request++ {
+		m.autoAdvanceInFlight = request
+		next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: request})
+		current := pass{}
+		for _, msg := range immediateFlowRefreshMessages(cmd) {
+			if result, ok := msg.(epicProgressionAdvanceResultMsg); ok {
+				current = pass{scheduled: true, disposition: result.disposition}
+				next, _ = updateFlowRefreshTest(next, result)
+				break
+			}
+		}
+		passes = append(passes, current)
+		m = next
+	}
+
+	if len(createdChildren) != 1 || createdChildren[0] != "epic.b" {
+		t.Fatalf("createFlow called for %v, want exactly one attempt for epic.b", createdChildren)
+	}
+	if !passes[0].scheduled || passes[0].disposition != epicProgressionAdvanceRetryable {
+		t.Fatalf("pass 1 = %#v, want a scheduled retryable", passes[0])
+	}
+	// Passes 2 and 3 must terminate rather than retry: the winner is in the
+	// snapshot, so the child is filtered out and no ready child remains.
+	for index, current := range passes[1:] {
+		if current.scheduled && current.disposition == epicProgressionAdvanceRetryable {
+			t.Fatalf("pass %d = %#v, want termination rather than another retry", index+2, current)
+		}
+	}
 }
