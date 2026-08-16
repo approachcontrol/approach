@@ -2,6 +2,8 @@
 
 `approach` is a Go Bubble Tea TUI for managing git worktrees across repositories. User-facing behavior and key bindings are documented in `docs/tui-guide.md` (`README.md` is the short overview); session hooks and storage are `docs/agent-sessions.md`; config reference is `docs/config.md`; Flow phase semantics are `docs/flow-phases.md`; the read-only GraphQL API is `docs/graphql-api.md`.
 
+An interactive isometric package map — buildings for packages, cables for control/data/mutation paths, legend and file citations — lives in [`docs/system-map.html`](system-map.html).
+
 ## Package Map
 
 - `cmd/approach/` — entrypoint. Handles `--version`, `session-hook --provider claude|codex`, the `plan save|list|read|phase set` and `flow create|list|read|phase complete|phase block|phase needs-attention|phase restart|phase reset|phase set|phase add-child|phase agent set|plan set|issue set|pr set|merge set` subcommands (`plan.go`, `flow.go`), and `serve` (`serve.go`), which hosts the read-only GraphQL API. Subcommands resolve the artifact root without starting the TUI; only `serve` scans repos, and it does so per request.
