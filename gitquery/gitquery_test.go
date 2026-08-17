@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/testgit"
 )
 
 // realPath resolves symlinks (macOS /var → /private/var).
@@ -21,12 +22,16 @@ func realPath(t *testing.T, path string) string {
 	return resolved
 }
 
+func disableGitMaintenance(t *testing.T, dir string) {
+	t.Helper()
+	testgit.ConfigureRepo(t, dir)
+}
+
 // initRepo creates a git repo in dir with one commit on "main".
 func initRepo(t *testing.T, dir string) {
 	t.Helper()
 	run(t, dir, "git", "init", "-b", "main")
-	run(t, dir, "git", "config", "user.email", "test@test.com")
-	run(t, dir, "git", "config", "user.name", "Test")
+	disableGitMaintenance(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +43,7 @@ func initRepo(t *testing.T, dir string) {
 func initRepoWithInitialBranch(t *testing.T, dir, initialBranch string) {
 	t.Helper()
 	run(t, dir, "git", "init", "-b", initialBranch)
-	run(t, dir, "git", "config", "user.email", "test@test.com")
-	run(t, dir, "git", "config", "user.name", "Test")
+	disableGitMaintenance(t, dir)
 	writeFile(t, dir, "README.md", "init")
 	run(t, dir, "git", "add", ".")
 	run(t, dir, "git", "commit", "-m", "initial")
@@ -50,8 +54,7 @@ func initBranchRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	run(t, dir, "git", "init")
-	run(t, dir, "git", "config", "user.email", "test@test.com")
-	run(t, dir, "git", "config", "user.name", "Test")
+	disableGitMaintenance(t, dir)
 	writeFile(t, dir, "README.md", "init")
 	run(t, dir, "git", "add", ".")
 	run(t, dir, "git", "commit", "-m", "initial")
@@ -60,8 +63,13 @@ func initBranchRepo(t *testing.T) string {
 
 func run(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
+	var cmd *exec.Cmd
+	if name == "git" {
+		cmd = testgit.Command(dir, args...)
+	} else {
+		cmd = exec.Command(name, args...)
+		cmd.Dir = dir
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v failed: %v\n%s", name, args, err, out)
@@ -85,6 +93,7 @@ func initBareUpstream(t *testing.T, repo string) string {
 	t.Helper()
 	bare := t.TempDir()
 	run(t, bare, "git", "init", "--bare")
+	disableGitMaintenance(t, bare)
 	run(t, repo, "git", "remote", "add", "origin", bare)
 	run(t, repo, "git", "push", "-u", "origin", "HEAD")
 	return bare
@@ -887,21 +896,31 @@ func TestListCommits_ReturnsCommits(t *testing.T) {
 }
 
 func TestListCommits_Limit50(t *testing.T) {
-	dir := realPath(t, t.TempDir())
-	initRepo(t, dir)
-
-	for i := 0; i < 54; i++ {
-		writeFile(t, dir, "f.txt", fmt.Sprintf("v%d", i))
-		run(t, dir, "git", "add", ".")
-		run(t, dir, "git", "commit", "-m", fmt.Sprintf("commit %d", i))
+	// The 50-commit cap is the git `-n 50` argument, not a post-parse slice.
+	// Building 55 real commits here previously failed CI sporadically with
+	// "fatal: unable to read tree" during sequential add/commit.
+	var log strings.Builder
+	for i := 0; i < 50; i++ {
+		fmt.Fprintf(&log, "h%02d\x00Test\x00%ds ago\x00commit %d\n", i, i, i)
+	}
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "log", "--format=%h%x00%an%x00%ar%x00%s", "-n", "50"): {
+				out: log.String(),
+			},
+		},
 	}
 
-	commits, err := gitquery.ListCommits(dir)
+	commits, err := gitquery.NewQuerier(f).ListCommits("/repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(commits) != 50 {
 		t.Fatalf("expected 50 commits, got %d", len(commits))
+	}
+	if commits[0].Subject != "commit 0" || commits[49].Subject != "commit 49" {
+		t.Fatalf("unexpected first/last subjects: %q / %q", commits[0].Subject, commits[49].Subject)
 	}
 }
 

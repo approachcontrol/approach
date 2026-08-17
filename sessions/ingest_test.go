@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/sessions"
 )
 
@@ -238,8 +238,7 @@ func TestIngestHookResolvesGitMetadataFromCWD(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repoPath := t.TempDir()
 	runGit(t, repoPath, "init")
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -280,8 +279,7 @@ func TestIngestHookResolvesLinkedWorktreeToMainRepoPath(t *testing.T) {
 		t.Fatalf("create repo dir: %v", err)
 	}
 	runGit(t, repoPath, "init")
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -322,8 +320,7 @@ func TestIngestHookKeepsSeparateGitDirRepoPathAsWorktree(t *testing.T) {
 		t.Fatalf("create repo dir: %v", err)
 	}
 	runGit(t, root, "init", "--separate-git-dir", gitDir, repoPath)
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -357,8 +354,7 @@ func TestIngestHookAvoidsSeparateGitDirMetadataPathForLinkedWorktree(t *testing.
 		t.Fatalf("create repo dir: %v", err)
 	}
 	runGit(t, root, "init", "--separate-git-dir", gitDir, repoPath)
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -957,20 +953,12 @@ func assertNoSessionRecords(t *testing.T, root string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
+	testgit.Run(t, dir, args...)
 }
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git %v failed: %v", args, err)
-	}
-	return string(bytes.TrimSpace(out))
+	return testgit.Output(t, dir, args...)
 }
 
 func quoteJSON(value string) string {
