@@ -478,6 +478,27 @@ func TestRender_PromptTemplatePickerReservesANoteRow(t *testing.T) {
 	}
 }
 
+func TestRenderSelectPanelDropsNoteBeforeStealingItemRows(t *testing.T) {
+	items := []SelectItem{{Label: "alpha", Value: "a"}, {Label: "bravo", Value: "b"}}
+	width, height := selectPanelDimensions("Prompt templates", items, 20, 6, 20, 5)
+	if height != 5 {
+		t.Fatalf("clamped height = %d, want 5", height)
+	}
+
+	lines := renderSelectPanel(selectPanelSpec{
+		prompt:   "Prompt templates",
+		items:    items,
+		note:     "Saved",
+		noteKind: NoteSuccess,
+		width:    width,
+		height:   height,
+	})
+	got := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(got, "alpha") || !strings.Contains(got, "bravo") {
+		t.Fatalf("clamped note stole an item row:\n%s", got)
+	}
+}
+
 func TestRender_SelectPanelWithoutANoteKeepsItsAutoGeometry(t *testing.T) {
 	items := []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}}
 	view := Render(RenderParams{

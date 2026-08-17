@@ -507,6 +507,23 @@ func TestDiffCancelIgnoresCancelHook(t *testing.T) {
 	}
 }
 
+func TestFormCancelIgnoresCancelHook(t *testing.T) {
+	fired := false
+	m := modal.OpenForm(modal.FormSpec{Title: "Create", Fields: []modal.FormField{{ID: "a", Label: "A"}}}).
+		WithCancel(func(modal.View) tea.Cmd {
+			fired = true
+			return func() tea.Msg { return sentinelMsg("cancelled") }
+		})
+
+	_, out, cmd := m.Update(keyOf("esc"))
+	if out != modal.Cancelled {
+		t.Fatalf("outcome = %v, want Cancelled", out)
+	}
+	if cmd != nil || fired {
+		t.Fatal("form overlays should not use the cancel hook")
+	}
+}
+
 func TestSetSelectNoteCarriesFeedbackWithoutDisturbingSelection(t *testing.T) {
 	items := []modal.SelectItem{{Label: "a", Value: "a"}, {Label: "b", Value: "b"}}
 	layout := modal.Layout{Width: 42, Height: 13, Placement: modal.PlacementCenter}

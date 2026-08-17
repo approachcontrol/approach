@@ -85,6 +85,8 @@ type EditorSpec struct {
 	// deliberately independent of the modal's initial value so an editor
 	// reconstructed after a failed save opens already dirty.
 	Original string
+	// Cursor is the rune offset to restore. Zero is buffer start, not "keep
+	// the Open* end cursor"; callers that want the end must pass it.
 	Cursor   int
 	Note     string
 	NoteKind NoteKind

@@ -4451,20 +4451,22 @@ func renderSelectPanel(spec selectPanelSpec) []string {
 	if selected < 0 || selected >= len(items) {
 		selected = 0
 	}
-	// The note reserves a row only when there is one to show and the panel is
-	// tall enough that it would not displace the bottom border.
+	// A note takes a row only when the panel already has a spare item slot.
+	// Designed picker height includes that spare; a clamped panel does not, so
+	// the note is dropped instead of hiding an item that would otherwise fit.
+	itemRows := height - 3
+	if itemRows < 0 {
+		itemRows = 0
+	}
 	noteRows := 0
-	if spec.note != "" && height > 3 {
+	if spec.note != "" && height > 3 && itemRows > len(items) {
 		noteRows = 1
+		itemRows--
 	}
 	lines := make([]string, 0, height)
 	lines = append(lines, selectPanelBorderLine("┌", "─", "┐", width))
 	if height > 1 {
 		lines = append(lines, selectPanelContentLine(activeModeStyle.Render(prompt), width))
-	}
-	itemRows := height - 3 - noteRows
-	if itemRows < 0 {
-		itemRows = 0
 	}
 	start := selectItemViewportStart(len(items), selected, itemRows)
 	for i := 0; i < itemRows; i++ {

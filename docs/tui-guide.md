@@ -151,7 +151,8 @@ with the custom value untouched, and closing a preview returns there too.
 separately framed 12-line text viewport, a two-row feedback block, and a hint
 row. It stays that size no matter how long the template, the draft, or the
 error is, and clamps cleanly — shedding the second note row, then the hint row,
-then the identity row — on terminals too small for the full panel.
+then the identity row, then the remaining note, then the viewport frame, then
+the viewport to the cursor line — on terminals too small for the full panel.
 
 | Key | Action |
 |-----|--------|
