@@ -42,6 +42,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
+		} else if outcome == modal.Accepted && cmd != nil && isPromptTemplateEditor(view) {
+			cmd = tagPromptTemplateCursor(cmd, view.InputCursor)
 		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
 			if m.activeFlowCreate != 0 {
 				return m.setStatus(statusOther, flowCreateInProgressStatus), nil
@@ -203,6 +205,29 @@ func isWorktreeCreateInput(view modal.View) bool {
 		return false
 	}
 	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
+}
+
+func isPromptTemplateEditor(view modal.View) bool {
+	return view.Kind == modal.Input && view.Editor.Enabled
+}
+
+// tagPromptTemplateCursor stamps the pre-submit cursor onto a failed write. The
+// submit closure cannot supply it: it receives only the string, and by the
+// time it runs the modal has already been zeroed. Both failure messages are
+// tagged because a whitespace-only submit fails as a reset, not a save.
+func tagPromptTemplateCursor(cmd tea.Cmd, cursor int) tea.Cmd {
+	return func() tea.Msg {
+		switch failed := cmd().(type) {
+		case PromptTemplateSaveFailedMsg:
+			failed.Cursor = cursor
+			return failed
+		case PromptTemplateResetFailedMsg:
+			failed.Cursor = cursor
+			return failed
+		default:
+			return failed
+		}
+	}
 }
 
 func isRepoCreateForm(view modal.View) bool {

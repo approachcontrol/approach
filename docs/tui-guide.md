@@ -31,9 +31,10 @@ focus. Focus still moves through both stored panes and swaps which one is
 visible. Active Flows and PR Babysitter are separate takeovers that always span
 the combined content height and restore both stored panes exactly when closed.
 
-Press `f2` from normal TUI views to open the prompt-template editor for the
+Press `f2` from normal TUI views to open the prompt-template picker for the
 `[agent].plan_prompt` and `[flow_prompts]` templates; embedded terminal input
-focus passes F2 through to the embedded agent.
+focus passes F2 through to the embedded agent. See
+[Prompt Templates](#prompt-templates) for the picker and editor workflow.
 
 Empty panes explain why they are empty: no data for the selected repo, no
 fuzzy filter matches, or a load failure with details in the status bar. Beads
@@ -69,7 +70,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `enter` | Collapse the repos pane and focus the top content pane |
 | `tab` | Focus the top content pane without collapsing the repos pane |
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only) |
-| `f2` | Edit prompt templates |
+| `f2` | Open the prompt-template picker |
 | `q`/`esc` | Quit |
 
 **Content panes**
@@ -121,8 +122,58 @@ title, and assignee; repo filtering remains available from the left pane.
 | `ctrl+t` | Hide or show the shared embedded terminal dock (outside search and terminal input); when input is focused, use `ctrl+] t` |
 | `tab` | Cycle focus forward through repos, top, bottom, and an eligible terminal; collapsed repos are skipped |
 | `bksp` | Cycle focus in reverse (outside search or embedded-terminal input focus) |
-| `f2` | Edit prompt templates |
+| `f2` | Open the prompt-template picker |
 | `q`/`esc` | Close a prompt/dialog or quit |
+
+## Prompt Templates
+
+`f2` opens the prompt-template picker: a fixed 42-column panel listing every
+`[agent].plan_prompt` and `[flow_prompts]` template with its `default` or
+`custom` state, plus one reserved row at the bottom for feedback. The feedback
+row reports what just happened (saved, discarded, reset, or the error that
+stopped it) and clears on the next keystroke, so key hints stay in the status
+bar.
+
+| Key | Action |
+|-----|--------|
+| `up`/`down` | Move the selection |
+| `enter` | Open the selected template in the editor |
+| `r` | Reset the selected template to its built-in default, after a `y`/`n` confirmation |
+| `v` | Preview the built-in template with its placeholders literal |
+| `esc` | Close the picker |
+
+`r` on a template that is already the built-in default is a no-op with an
+informational note. Cancelling the confirmation returns to the same selection
+with the custom value untouched, and closing a preview returns there too.
+
+**The editor.** The editor is a fixed 72x21 panel: a title, the
+`section.key` identity with its `default`/`custom` and `modified` state, a
+separately framed 12-line text viewport, a two-row feedback block, and a hint
+row. It stays that size no matter how long the template, the draft, or the
+error is, and clamps cleanly — shedding the second note row, then the hint row,
+then the identity row, then the remaining note, then the viewport frame, then
+the viewport to the cursor line — on terminals too small for the full panel.
+
+| Key | Action |
+|-----|--------|
+| `ctrl+s` | Save the template exactly as typed |
+| `enter` / `alt+enter` | Insert a newline |
+| `esc` | Cancel without persisting anything |
+| `home`/`end`, `ctrl+a`/`ctrl+e` | Move to the start or end of the current line |
+| `arrows`, `bksp`, `del` | Move and edit |
+| `ctrl+u` | Clear the buffer |
+
+Text is stored raw: blank lines, leading and trailing whitespace, repeated
+spaces, and Unicode are preserved verbatim. Long templates scroll inside the
+viewport, which keeps the cursor visible and shows overflow arrows and a
+logical `line L/N` indicator on its frame rather than resizing the modal.
+
+Saving a blank or whitespace-only template still means reset-to-default; while
+the buffer is blank over a custom template the note block says so. Cancelling
+returns to the picker and distinguishes a clean cancel from discarded unsaved
+changes. A failed write keeps the draft and cursor in the editor with the error
+in the note block, so the save can be retried with `ctrl+s` or abandoned with
+`esc`; it is never reported as success.
 
 ## View Switching and the Header
 

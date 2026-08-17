@@ -139,6 +139,24 @@ type promptTemplateEditRequestedMsg struct {
 	Value string
 }
 
+// promptTemplatePickerReturnMsg reopens the prompt-template picker at a target
+// with optional feedback. A tea.Cmd cannot reopen a modal on its own, so every
+// return path — editor cancel, cancelled reset confirm, closed preview —
+// produces this message.
+type promptTemplatePickerReturnMsg struct {
+	Target promptTemplateTarget
+	Note   promptNote
+}
+
+// PromptTemplateResetOrigin distinguishes the two ways a reset can start, so
+// failure can restore the surface the user was actually on.
+type PromptTemplateResetOrigin int
+
+const (
+	ResetFromPicker PromptTemplateResetOrigin = iota
+	ResetFromEditor
+)
+
 type PromptTemplateSavedMsg struct {
 	Section string
 	Key     string
@@ -149,17 +167,22 @@ type PromptTemplateSaveFailedMsg struct {
 	Section string
 	Key     string
 	Value   string
+	Cursor  int
 	Err     string
 }
 
 type PromptTemplateResetMsg struct {
 	Section string
 	Key     string
+	Origin  PromptTemplateResetOrigin
 }
 
 type PromptTemplateResetFailedMsg struct {
 	Section string
 	Key     string
+	Origin  PromptTemplateResetOrigin
+	Draft   string
+	Cursor  int
 	Err     string
 }
 

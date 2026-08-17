@@ -276,9 +276,10 @@ value immediately, creating the config file if needed.
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
-Press `f2` in normal TUI views to open the prompt-template editor. The editor
-can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
-preview the built-in prompt.
+Press `f2` in normal TUI views to open the prompt-template picker. From it you
+can edit `[agent].plan_prompt` (`enter`, then `ctrl+s` to save — `enter` inserts
+a newline), reset it to the built-in default (`r`, then confirm), or preview the
+built-in prompt (`v`). See `docs/tui-guide.md` for the full key map.
 
 In the flows pane, `M` opens a provider-specific model picker and persists the
 corresponding key for the selected CLI agent. `E` opens the reasoning-effort
@@ -303,8 +304,9 @@ configured phase templates unless the template already ends with that exact
 standalone instruction. The `autofix` key is not a phase prompt and never
 receives that suffix.
 
-The `f2` prompt-template editor also manages these Flow prompt keys. Saving a
-blank template resets that key by removing the config override.
+The `f2` prompt-template picker also manages these Flow prompt keys. Saving a
+blank or whitespace-only template with `ctrl+s` resets that key by removing the
+config override, the same as a confirmed `r` from the picker.
 
 | Key | Type | Description |
 |-----|------|-------------|
