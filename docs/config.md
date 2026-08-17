@@ -33,7 +33,7 @@ exist:
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | Flow phase graph preset | `approach flow create --preset` | `[flow].preset` | `default` |
-| TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1` |
+| TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1`; a development build substitutes `approach-dev` (see [`[sessions]`](#sessions)) |
 | Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
 | Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/approach.db`) |
@@ -295,11 +295,13 @@ launch yet.
 
 ### `[flow_prompts]`
 
-Optional templates for Flow phase launch prompts. Blank or omitted keys use
-the built-in prompt for that phase. Unknown placeholders remain literal. Approach
-appends `After completing this phase goal, mark this Flow phase done with approach-flow.`
-to both built-in prompts and configured templates unless the template already
-ends with that exact standalone instruction.
+Optional templates for Flow phase launch prompts and the `U` autofix launcher.
+Blank or omitted keys use the built-in prompt for that key. Unknown placeholders
+remain literal. Approach appends `After completing this phase goal, mark this
+Flow phase done with approach-flow.` to both built-in phase prompts and
+configured phase templates unless the template already ends with that exact
+standalone instruction. The `autofix` key is not a phase prompt and never
+receives that suffix.
 
 The `f2` prompt-template editor also manages these Flow prompt keys. Saving a
 blank template resets that key by removing the config override.
@@ -314,8 +316,9 @@ blank template resets that key by removing the config override.
 | `autoreview` | string | Template for Autoreview. |
 | `merge` | string | Template for Merge. |
 | `generic` | string | Template for non-standard Flow phase IDs. |
+| `autofix` | string | Template for the `U` autofix launcher. This is not a phase prompt and does not receive the phase-done instruction suffix. Blank or omitted uses `autofix pr #{pr_number}`. Headless and tmux launches send the rendered prompt on argv; interactive embedded launches prefill the dock with it. |
 
-Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
+Supported Flow placeholders are `{approach_bin}`, `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,
 `{plan_body}`, `{repo_path}`, `{worktree_path}`, `{branch}`, `{commit}`,
 `{base_ref}`, `{issue_provider}`, `{issue_number}`, `{issue_url}`,
@@ -324,6 +327,14 @@ Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
 Loop, PR Creation, Autoreview, and Merge launches do not pre-read the linked
 plan body, so `{plan_body}` is empty for those built-in phase types unless a
 future phase path explicitly supplies it.
+
+Use `{approach_bin}` for every `approach` invocation a template tells the agent
+to run. It expands to the shell-quoted path of the binary that launched the
+agent, which is what the built-in prompts use; a literal `approach` resolves
+from the agent's ambient `PATH` instead and can be a different build from the
+one that owns the Flow database. On a launch that carries no pin it expands to
+the same self-resolving `"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"`
+form the bundled skills use, so a template written this way works either way.
 
 ### `[flow]`
 
@@ -363,8 +374,12 @@ stored under a hashed session directory, with the raw provider session ID kept i
 | `root` | string | Optional absolute state root for session files. Supports `~` expansion. |
 | `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `false`. |
 
-When `root` is omitted, Approach uses `$XDG_STATE_HOME/approach/sessions/v1`, or
-`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset.
+When `root` is omitted, a released build uses `$XDG_STATE_HOME/approach/sessions/v1`,
+or `~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. A build
+whose version is not a published release tag (`make build`, `go run`, a snapshot)
+substitutes `approach-dev` for `approach` in that path, so development state
+never shares a database with the release you have installed. Setting `root`
+explicitly opts out of that split — both builds then use exactly what you named.
 Relative roots other than `~`/`~/...` fail config parsing.
 
 `[sessions].root` doubles as the **agent-artifact root**: sessions, saved plans,

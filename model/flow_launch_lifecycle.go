@@ -12,6 +12,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -194,6 +195,11 @@ type flowLaunchAgentSettingsSnapshot struct {
 	ReasoningEffort  string
 	SessionStateRoot string
 	PromptTemplates  FlowPromptTemplates
+	// Pin is the approach binary agents started by this launch must invoke. It
+	// travels with the settings rather than being re-resolved per launch kind so
+	// repair, autofix, generic-agent, and resume launches cannot drift onto
+	// ambient PATH while tracked phase launches stay pinned.
+	Pin controlplane.Pin
 }
 
 func snapshotFlowLaunchAgentSettings(launcher flowLaunchPreparation) flowLaunchAgentSettingsSnapshot {
@@ -204,6 +210,7 @@ func snapshotFlowLaunchAgentSettings(launcher flowLaunchPreparation) flowLaunchA
 		ReasoningEffort:  launcher.ReasoningEffort,
 		SessionStateRoot: launcher.SessionStateRoot,
 		PromptTemplates:  launcher.PromptTemplates,
+		Pin:              launcher.Pin,
 	}
 }
 
@@ -214,6 +221,7 @@ func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher flowLaunchPrepara
 	launcher.ReasoningEffort = snapshot.ReasoningEffort
 	launcher.SessionStateRoot = snapshot.SessionStateRoot
 	launcher.PromptTemplates = snapshot.PromptTemplates
+	launcher.Pin = snapshot.Pin
 	return launcher
 }
 

@@ -9,10 +9,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
@@ -705,6 +707,7 @@ func TestModelOptionsFromConfigPassesFlowPromptTemplates(t *testing.T) {
 			Autoreview:     "autoreview",
 			Merge:          "merge",
 			Generic:        "generic",
+			Autofix:        "autofix",
 		},
 	}, nil, sessionStore, planStore, flowStore)
 
@@ -717,6 +720,7 @@ func TestModelOptionsFromConfigPassesFlowPromptTemplates(t *testing.T) {
 		Autoreview:     "autoreview",
 		Merge:          "merge",
 		Generic:        "generic",
+		Autofix:        "autofix",
 	}
 	if opts.FlowPromptTemplates != want {
 		t.Fatalf("flow prompt templates = %#v, want %#v", opts.FlowPromptTemplates, want)
@@ -784,6 +788,58 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 		if !strings.Contains(string(meta), want) {
 			t.Fatalf("metadata missing %s:\n%s", want, meta)
 		}
+	}
+}
+
+// The session hook is a keep-alive, not a release, for EVERY provider. No
+// provider hook here is a reliable death certificate — Codex wires Stop, which
+// fires per turn, and Claude wires SessionEnd, which also fires on /clear while
+// the agent keeps running — so releasing on one would unpin a live agent still
+// bound to the path baked into its argv. Retirement belongs to
+// FinalizeAgentSession and to expiry.
+func TestRunSessionHookRefreshesTheLaunchPinClaimForEveryProvider(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		payload  string
+	}{
+		{provider: "claude", payload: `{"session_id":"claude-session-1","cwd":"/repo/worktree","reason":"clear","ended_at":"2026-06-06T14:45:00Z"}`},
+		{provider: "codex", payload: `{"session_id":"codex-session-1","cwd":"/repo/worktree","ended_at":"2026-06-06T14:45:00Z"}`},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			root := t.TempDir()
+			if err := controlplane.RetainPin(root, "launch-1", "abc123def456abc1"); err != nil {
+				t.Fatalf("RetainPin: %v", err)
+			}
+			claimPath := filepath.Join(root, "bin", "pins", "launch-1")
+			stale := time.Now().Add(-72 * time.Hour)
+			if err := os.Chtimes(claimPath, stale, stale); err != nil {
+				t.Fatalf("chtimes claim: %v", err)
+			}
+
+			err := run([]string{"approach", "session-hook", "--provider", tc.provider, "--state-root", root}, runDeps{
+				loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+				getenv: func(key string) string {
+					if key == "APPROACH_LAUNCH_ID" {
+						return "launch-1"
+					}
+					return ""
+				},
+				stdin: bytes.NewBufferString(tc.payload),
+			})
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+
+			info, statErr := os.Stat(claimPath)
+			if statErr != nil {
+				t.Fatalf("the %s hook released a claim instead of refreshing it: %v", tc.provider, statErr)
+			}
+			// Refreshed, not merely left alone: expiry keys on the mtime, so a
+			// claim that is never restamped ages out under a long session.
+			if !info.ModTime().After(stale) {
+				t.Fatalf("claim mtime %v was not refreshed past %v", info.ModTime(), stale)
+			}
+		})
 	}
 }
 
@@ -1144,5 +1200,40 @@ func TestBootstrapHookResolverDoesNotMatchDifferentRepoPath(t *testing.T) {
 
 	if _, ok := resolve("/dev/approach-other"); ok {
 		t.Fatal("expected non-matching repo to have no hook")
+	}
+}
+
+func TestRunPassesDevLiveMigrationAcknowledgement(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want bool
+	}{
+		{name: "default", args: []string{"approach"}, want: false},
+		{name: "flag", args: []string{"approach", "--allow-dev-live-migration"}, want: true},
+		{name: "env", args: []string{"approach"}, env: map[string]string{"APPROACH_ALLOW_DEV_LIVE_MIGRATION": "1"}, want: true},
+		{name: "env off", args: []string{"approach"}, env: map[string]string{"APPROACH_ALLOW_DEV_LIVE_MIGRATION": "0"}, want: false},
+		{name: "env garbage", args: []string{"approach"}, env: map[string]string{"APPROACH_ALLOW_DEV_LIVE_MIGRATION": "maybe"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var got startProgramOptions
+			err := run(test.args, runDeps{
+				loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+				getenv:     func(key string) string { return test.env[key] },
+				scan:       func(scanner.ScanOptions) ([]scanner.Repo, error) { return nil, nil },
+				startProgramWithOptions: func(repos []scanner.Repo, opts startProgramOptions) error {
+					got = opts
+					return nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("run() error = %v", err)
+			}
+			if got.AllowDevLiveMigration != test.want {
+				t.Fatalf("AllowDevLiveMigration = %v, want %v", got.AllowDevLiveMigration, test.want)
+			}
+		})
 	}
 }

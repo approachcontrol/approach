@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -10,8 +11,9 @@ import (
 
 const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with approach-flow."
 
-// FlowPromptTemplates stores optional launch prompt templates for Flow phases.
-// Unknown placeholders are left literal so users can evolve templates safely.
+// FlowPromptTemplates stores optional launch prompt templates for Flow phases
+// and the U autofix launcher. Unknown placeholders are left literal so users
+// can evolve templates safely.
 type FlowPromptTemplates struct {
 	Plan           string
 	PlanReview     string
@@ -21,6 +23,9 @@ type FlowPromptTemplates struct {
 	Autoreview     string
 	Merge          string
 	Generic        string
+	// Autofix is the U launcher prompt, not a phase template. It does not
+	// receive the phase-done instruction suffix.
+	Autofix string
 }
 
 func (templates FlowPromptTemplates) templateForPhase(phase flowstore.FlowPhase) string {
@@ -44,12 +49,20 @@ func (templates FlowPromptTemplates) templateForPhase(phase flowstore.FlowPhase)
 	}
 }
 
-func renderFlowPromptTemplate(template string, record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+// renderFlowPromptTemplate expands a configured [flow_prompts] template. bin is
+// the already-rendered command word for this launch (see flowPromptBinary), and
+// it is exposed as `{approach_bin}` so a template can name the pinned binary the
+// way the built-in prompts do. Without the placeholder a configured template
+// could only spell a bare `approach`, which resolves from the launched agent's
+// ambient PATH and can be a different build from the launcher — the one thing
+// the pin exists to prevent. A template that does not use it is unchanged.
+func renderFlowPromptTemplate(template string, record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	phaseTitle := phase.Title
 	if phaseTitle == "" {
 		phaseTitle = phase.PhaseID
 	}
 	replacer := strings.NewReplacer(
+		"{approach_bin}", bin,
 		"{flow_id}", record.FlowID,
 		"{flow_title}", record.Title,
 		"{instructions}", record.Instructions,
@@ -112,29 +125,80 @@ func lastNonEmptyPromptLine(text string) string {
 	return ""
 }
 
-func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
+// flowPromptBinaryFallback is what a generated prompt names when, and only
+// when, the launch carries no pinned executable. It is double-quoted for the
+// same reason flowPromptBinary quotes a pinned path: this is a shell command
+// word, and the inherited APPROACH_BIN it may resolve to is an arbitrary
+// user-supplied string. An unquoted expansion of a valid path containing a space
+// or a glob character word-splits, and every generated persistence command in
+// the prompt fails on an argument the agent never wrote. The bundled skills export
+// APPROACH_BIN from APPROACH_EXECUTABLE and fall back to PATH themselves, so an
+// unpinned prompt still runs, while a bare `approach` — which resolves to
+// whatever build is on PATH, not the one that launched the agent — never
+// appears in either case.
+//
+// It is the self-resolving form, matching the skills, and not a bare
+// `$APPROACH_BIN`: APPROACH_BIN is a shell variable the skills set, NOT an
+// exported environment variable, so a bare reference expands to nothing in any
+// shell that has not run the skill's resolution block and the command word
+// silently shifts. This expansion re-resolves from the exported
+// APPROACH_EXECUTABLE, or PATH, in any shell.
+//
+// APPROACH_EXECUTABLE is tried FIRST, ahead of APPROACH_BIN, and the order is
+// load-bearing. APPROACH_BIN is an ordinary name a user's shell profile may
+// already export, and every launched agent inherits the ambient environment, so
+// the other order would let a stale exported APPROACH_BIN outrank the pin the
+// launcher just exported — the mixed-build failure this constant exists to
+// avoid. TestUnpinnedPromptsPreferTheExportedPinOverInheritedShellState.
+//
+// Nothing may interpolate this constant directly either. Every prompt goes
+// through the `bin` that flowPhasePrompt derives, so a pinned launch names its
+// pinned path everywhere or nowhere.
+// TestGeneratedPhasePromptsNeverNameABareApproachBinary pins that.
+const flowPromptBinaryFallback = `"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"`
+
+// flowPromptBinary renders executable as a shell command word. A prompt is
+// copied into a shell by the agent, so a path containing spaces or shell
+// metacharacters has to be quoted rather than pasted raw.
+func flowPromptBinary(executable string) string {
+	trimmed := strings.TrimSpace(executable)
+	if trimmed == "" {
+		return flowPromptBinaryFallback
+	}
+	if flowPromptBinarySafe.MatchString(trimmed) {
+		return trimmed
+	}
+	return "'" + strings.ReplaceAll(trimmed, "'", `'\''`) + "'"
+}
+
+var flowPromptBinarySafe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// flowPhasePrompt builds a phase's launch prompt. binary is the pinned approach
+// executable for this launch; see flowPromptBinary for the unpinned case.
+func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates, binary string) string {
+	bin := flowPromptBinary(binary)
 	if template := templates.templateForPhase(phase); strings.TrimSpace(template) != "" {
-		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody)
+		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody, bin)
 		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
 	var prompt string
 	switch flowstore.SemanticKind(phase) {
 	case flowstore.KindPlan:
-		prompt = flowPlanPrompt(record, phase, templates)
+		prompt = flowPlanPrompt(record, phase, templates, binary)
 	case flowstore.KindPlanReview:
-		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
+		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody, bin)
 	case flowstore.KindImplementation:
-		prompt = flowImplementationPrompt(record, phase, planPath, planBody)
+		prompt = flowImplementationPrompt(record, phase, planPath, planBody, bin)
 	case flowstore.KindReviewLoop:
-		prompt = flowReviewLoopPrompt(record, phase, planPath, planBody)
+		prompt = flowReviewLoopPrompt(record, phase, planPath, planBody, bin)
 	case flowstore.KindPRCreation:
-		prompt = flowPRCreationPrompt(record, phase, planPath, planBody)
+		prompt = flowPRCreationPrompt(record, phase, planPath, planBody, bin)
 	case flowstore.KindAutoreview:
-		prompt = flowAutoreviewPrompt(record, phase, planPath, planBody)
+		prompt = flowAutoreviewPrompt(record, phase, planPath, planBody, bin)
 	case flowstore.KindMerge:
-		prompt = flowMergePrompt(record, phase, planPath, planBody)
+		prompt = flowMergePrompt(record, phase, planPath, planBody, bin)
 	default:
-		prompt = flowGenericPhasePrompt(record, phase, planPath, planBody)
+		prompt = flowGenericPhasePrompt(record, phase, planPath, planBody, bin)
 	}
 	return ensureFlowPhaseDoneInstruction(prompt, "")
 }
@@ -148,35 +212,35 @@ func flowPhasePromptNeedsPlanBody(phase flowstore.FlowPhase) bool {
 	}
 }
 
-func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalArtifactPrompt("Use the review-loop skill to review the saved plan, max 6 loops.\nUse the approach-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
+func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
+	return flowMinimalArtifactPrompt("Use the review-loop skill to review the saved plan, max 6 loops.\nUse the approach-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase, bin)
 }
 
-func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	if strings.TrimSpace(planPath) == "" {
-		return flowImplementationWithoutPlanPrompt(record, phase)
+		return flowImplementationWithoutPlanPrompt(record, phase, bin)
 	}
-	return flowMinimalArtifactPrompt("Implement the approved plan.\nUse the commit skill before completing this phase.", planPath, record, phase)
+	return flowMinimalArtifactPrompt("Implement the approved plan.\nUse the commit skill before completing this phase.", planPath, record, phase, bin)
 }
 
-func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, bin string) string {
 	var b strings.Builder
 	b.WriteString("Implement the Flow instructions.\n\n")
 	writeFlowChangeMetadata(&b, record)
 	writeFlowPromptHeader(&b, record, "")
 	writeFlowPromptPlanContext(&b, record, "")
 	writeFlowPromptPhaseSummaryByKind(&b, record, "Plan Review context", flowstore.KindPlanReview)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
+	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
 	b.WriteString("\nUse the commit skill before completing this phase.")
-	b.WriteString("\nAdvance this phase with `approach flow phase set` only after the implementation is complete, blocked, or needs attention.")
+	b.WriteString("\nAdvance this phase with `" + bin + " flow phase set` only after the implementation is complete, blocked, or needs attention.")
 	return b.String()
 }
 
-func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the approach-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
+func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
+	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the approach-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase, bin)
 }
 
-func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	head := strings.TrimSpace(record.Branch)
 	if head == "" {
 		head = "<head>"
@@ -185,22 +249,22 @@ func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 	if base == "" {
 		base = "<base>"
 	}
-	instruction := fmt.Sprintf("Use the ship skill to create a PR for the changes.\nAfter the PR exists, run `approach flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
-	return flowMinimalChangePrompt(instruction, record, phase)
+	instruction := fmt.Sprintf("Use the ship skill to create a PR for the changes.\nAfter the PR exists, run `%s flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", bin, record.FlowID, head, base)
+	return flowMinimalChangePrompt(instruction, record, phase, bin)
 }
 
-func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.FlowRecord, phase flowstore.FlowPhase, bin string) string {
 	var b strings.Builder
 	b.WriteString(instruction)
 	b.WriteString("\n\nPlan: ")
 	b.WriteString(planPath)
 	b.WriteString("\n")
 	writeFlowChangeMetadata(&b, record)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
+	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
 	return b.String()
 }
 
-func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n")
 	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
@@ -212,20 +276,20 @@ func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 			fmt.Fprintf(&b, "\n- Status: %s", record.PR.Status)
 		}
 	} else {
-		b.WriteString("\nPR target: missing. Do not run Autoreview until `approach flow pr set` records provider, number, URL, head, and base.\n")
+		b.WriteString("\nPR target: missing. Do not run Autoreview until `" + bin + " flow pr set` records provider, number, URL, head, and base.\n")
 	}
 	return b.String()
 }
 
-func writeFlowRestartPromptIfNeeded(b *strings.Builder, record flowstore.FlowRecord, phase flowstore.FlowPhase) {
+func writeFlowRestartPromptIfNeeded(b *strings.Builder, record flowstore.FlowRecord, phase flowstore.FlowPhase, bin string) {
 	if phase.Status != flowstore.PhaseNeedsAttention && phase.Status != flowstore.PhaseBlocked {
 		return
 	}
 	fmt.Fprintf(b, "\nRestart required: this phase is %s. Before marking it completed, record the rerun:\n", phase.Status)
-	fmt.Fprintf(b, "approach flow phase restart --flow-id %s --phase-id %s --notes \"Rerunning %s after addressing prior findings.\"\n", record.FlowID, phase.PhaseID, phase.Title)
+	fmt.Fprintf(b, "%s flow phase restart --flow-id %s --phase-id %s --notes \"Rerunning %s after addressing prior findings.\"\n", bin, record.FlowID, phase.PhaseID, phase.Title)
 }
 
-func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	var b strings.Builder
 	b.WriteString("Merge the PR deliberately.\n\n")
 	writeFlowChangeMetadata(&b, record)
@@ -235,22 +299,22 @@ func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 			fmt.Fprintf(&b, "- Status: %s\n", record.PR.Status)
 		}
 	} else {
-		b.WriteString("\n\nPR target: missing. Do not merge until `approach flow pr set` records provider, number, URL, head, and base.\n")
+		b.WriteString("\n\nPR target: missing. Do not merge until `" + bin + " flow pr set` records provider, number, URL, head, and base.\n")
 	}
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	fmt.Fprintf(&b, "\nmerged:\napproach flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "approach flow merge set --flow-id %s --status merged --commit <merge-commit> --merged-at <rfc3339>\n\n", record.FlowID)
-	fmt.Fprintf(&b, "blocked:\napproach flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "approach flow merge set --flow-id %s --status blocked", record.FlowID)
+	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
+	fmt.Fprintf(&b, "\nmerged:\n%s flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", bin, record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "%s flow merge set --flow-id %s --status merged --commit <merge-commit> --merged-at <rfc3339>\n\n", bin, record.FlowID)
+	fmt.Fprintf(&b, "blocked:\n%s flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"\n", bin, record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "%s flow merge set --flow-id %s --status blocked", bin, record.FlowID)
 	return b.String()
 }
 
-func flowMinimalChangePrompt(instruction string, record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+func flowMinimalChangePrompt(instruction string, record flowstore.FlowRecord, phase flowstore.FlowPhase, bin string) string {
 	var b strings.Builder
 	b.WriteString(instruction)
 	b.WriteString("\n\n")
 	writeFlowChangeMetadata(&b, record)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
+	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
 	return b.String()
 }
 
@@ -271,7 +335,7 @@ func writeFlowChangeMetadata(b *strings.Builder, record flowstore.FlowRecord) {
 	}
 }
 
-func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody, bin string) string {
 	var b strings.Builder
 	b.WriteString("Use the approach-flow skill for this launch.\n\n")
 	b.WriteString("Flow phase: ")
@@ -285,8 +349,8 @@ func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPha
 	b.WriteString(").\n")
 	writeFlowPromptHeader(&b, record, planPath)
 	writeFlowPromptPlanContext(&b, record, planBody)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	b.WriteString("\nAdvance this phase with `approach flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
+	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
+	b.WriteString("\nAdvance this phase with `" + bin + " flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
 	return b.String()
 }
 

@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/planstore"
@@ -395,6 +397,59 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 	}
 	if got.LaunchID == "" {
 		t.Fatalf("expected launch ID in context: %#v", got)
+	}
+}
+
+func TestModel_PlanLaunchInstructionsSubmitReverifiesPin(t *testing.T) {
+	dir := t.TempDir()
+	pinned := filepath.Join(dir, "approach")
+	if err := os.WriteFile(pinned, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write pin: %v", err)
+	}
+	digest, err := controlplane.FileDigest(pinned)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	var launched bool
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/approach/sessions/v1",
+		LaunchPin: controlplane.Pin{
+			ExecutablePath: pinned,
+			Digest:         digest,
+			Version:        "v0.10.3",
+			SchemaVersion:  6,
+		},
+		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{{
+		PlanID:   "plan-1",
+		Title:    "Implement plans",
+		Status:   "approved",
+		RepoPath: "/dev/alpha",
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	if err := os.WriteFile(pinned, []byte("#!/bin/sh\n# replaced\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("replace pin: %v", err)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	m, _ = update(m, cmd())
+	if launched {
+		t.Fatal("submit launched after the pin was replaced")
+	}
+	if !strings.Contains(m.TransientError(), "Launch refused") {
+		t.Fatalf("status %q does not refuse the replaced pin", m.TransientError())
 	}
 }
 

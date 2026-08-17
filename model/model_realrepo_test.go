@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
@@ -24,19 +25,12 @@ import (
 
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
+	testgit.Run(t, dir, args...)
 }
 
 func gitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
-	if err != nil {
-		t.Fatalf("git %v: %v", args, err)
-	}
-	return strings.TrimSpace(string(out))
+	return testgit.Output(t, dir, args...)
 }
 
 func initWorktreeResult(t *testing.T, m model.Model) (model.Model, model.WorktreeResultMsg) {
@@ -96,8 +90,7 @@ func setupModelRepo(t *testing.T) (model.Model, string) {
 		dir = resolved
 	}
 	mustGit(t, dir, "init")
-	mustGit(t, dir, "config", "user.email", "test@test.com")
-	mustGit(t, dir, "config", "user.name", "Test")
+	testgit.ConfigureRepo(t, dir)
 	writeFile(t, dir, "README.md", "hello\n")
 	mustGit(t, dir, "add", "README.md")
 	mustGit(t, dir, "commit", "-m", "initial commit")
@@ -119,8 +112,7 @@ func setupModelPullRequestRepoWithOptions(t *testing.T, opts model.Options) (mod
 	origin := filepath.Join(dir, "origin.git")
 	local := filepath.Join(dir, "local")
 	mustGit(t, dir, "init", upstream)
-	mustGit(t, upstream, "config", "user.email", "test@test.com")
-	mustGit(t, upstream, "config", "user.name", "Test")
+	testgit.ConfigureRepo(t, upstream)
 	writeFile(t, upstream, "README.md", "hello\n")
 	mustGit(t, upstream, "add", "README.md")
 	mustGit(t, upstream, "commit", "-m", "initial commit")
@@ -136,8 +128,7 @@ func setupModelPullRequestRepoWithOptions(t *testing.T, opts model.Options) (mod
 	if resolved, err := filepath.EvalSymlinks(local); err == nil {
 		local = resolved
 	}
-	mustGit(t, local, "config", "user.email", "test@test.com")
-	mustGit(t, local, "config", "user.name", "Test")
+	testgit.ConfigureRepo(t, local)
 	m := newTestModel([]scanner.Repo{{Path: local, DisplayName: filepath.Base(local)}}, opts)
 	return m, local
 }

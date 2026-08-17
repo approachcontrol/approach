@@ -2,11 +2,10 @@ package scanner_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/scanner"
 )
 
@@ -35,27 +34,7 @@ func makeBareRepo(t *testing.T, path string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = hermeticGitEnv()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, output)
-	}
-}
-
-func hermeticGitEnv() []string {
-	env := make([]string, 0, len(os.Environ())+2)
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "GIT_CONFIG_") || strings.HasPrefix(entry, "GIT_TEMPLATE_DIR=") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	return append(env,
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-	)
+	testgit.Run(t, dir, args...)
 }
 
 func makeCommittedGitRepo(t *testing.T, path string) {
@@ -170,9 +149,7 @@ func TestScan_DiscoversNestedBareRepo(t *testing.T) {
 func TestScan_BareRepoCarriesIsBare(t *testing.T) {
 	root := t.TempDir()
 	repoDir := filepath.Join(root, "real.git")
-	if err := exec.Command("git", "init", "--bare", repoDir).Run(); err != nil {
-		t.Fatalf("git init --bare failed: %v", err)
-	}
+	testgit.Run(t, root, "init", "--bare", repoDir)
 
 	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
 	if err != nil {

@@ -59,7 +59,9 @@ func TestMarkdownPathDefaultsEmptyRoot(t *testing.T) {
 		t.Fatalf("MarkdownPath() error = %v", err)
 	}
 
-	want := filepath.Join(stateHome, "approach", "sessions", "v1", "plans", "plan-1", "plan.md")
+	// A test binary carries no release version, so it resolves the
+	// development-isolated default root rather than the release-owned one.
+	want := filepath.Join(stateHome, "approach-dev", "sessions", "v1", "plans", "plan-1", "plan.md")
 	if got != want {
 		t.Fatalf("MarkdownPath() = %q, want %q", got, want)
 	}

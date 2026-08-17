@@ -108,6 +108,13 @@ func (m Model) admitCreateFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, err.Error()), nil, false
 	}
 	settings.Command = command
+	// At admission, before a Flow ID is allocated and long before a worktree
+	// exists: this is the only stage of the create pipeline where a refusal
+	// leaves nothing behind, and the phase this creates is tracked exactly like
+	// one launched from preflight.
+	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
+		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, refusal), nil, false
+	}
 	allocate := m.launchSeams.AllocateFlowID
 	if allocate == nil {
 		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, "Flow launch lifecycle is missing ID allocation"), nil, false
@@ -697,14 +704,16 @@ func createFlowLaunchContext(attempt flowLaunchAttempt, msg flowLaunchEventMsg, 
 	if strings.TrimSpace(title) == "" {
 		title = phase.PhaseID
 	}
-	return actions.AgentLaunchContext{
+	ctx := actions.AgentLaunchContext{
 		Command: settings.Command, Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
 		LaunchID: attempt.Token, RepoPath: req.RepoPath, WorktreePath: msg.Worktree.WorktreePath,
 		Branch: msg.Worktree.Branch, Commit: msg.Commit, SessionStateRoot: attempt.Settings.SessionStateRoot,
 		PlanPhaseID: phase.PhaseID, PlanPhaseTitle: title, PlanPhaseStatus: flowstore.PhaseRunning,
 		FlowID: msg.FlowID, FlowPhaseID: phase.PhaseID, FlowPhaseKind: flowstore.SemanticKind(phase),
-		Headless: msg.Record.Headless, InitialPrompt: initialFlowLaunchPrompt(record, phase, attempt.Settings.PromptTemplates),
+		Headless:      msg.Record.Headless,
+		InitialPrompt: initialFlowLaunchPrompt(record, phase, attempt.Settings.PromptTemplates, attempt.Settings.Pin.ExecutablePath),
 	}
+	return applyLaunchPin(ctx, attempt.Settings.Pin)
 }
 
 func flowPhaseContainsLaunch(phase flowstore.FlowPhase, launchID string) bool {

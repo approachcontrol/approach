@@ -29,6 +29,27 @@ from `web/`). Only run it when you change files under `web/`; see
 - Pull latest from main before starting changes, unless a different base is given.
 - Never commit or push directly to main; branch first.
 - Run `make fmt-check`, `make test`, and `make build` before shipping.
+- **A development build has its own artifact root.** `make build` stamps
+  `version=dev`, and any binary whose version is not a published release tag
+  (`vX.Y.Z`) defaults to `$XDG_STATE_HOME/approach-dev/sessions/v1` (or
+  `~/.local/state/approach-dev/sessions/v1`) instead of the release-owned
+  `.../approach/sessions/v1`. Only the *default* changes: `--state-root`, the
+  `APPROACH_*_STATE_ROOT` variables, and `[sessions].root` are untouched, so
+  Flow-launched agents — which always receive an explicit root — are unaffected.
+  - The blast radius is wider than Flows. The same default backs the session
+    store and the plan store, so a development build gets its own session
+    history and plan list too. That is the intended outcome — development state
+    is isolated as a unit rather than split across two roots — but the first run
+    of a dev build shows empty Flow, plan, *and* session lists.
+  - Existing development state under the release root is **not** migrated or
+    copied. Operators who want it keep passing an explicit `--state-root`.
+  - A development build additionally refuses to advance the database schema of
+    the release default root, naming `--allow-dev-live-migration` (or
+    `APPROACH_ALLOW_DEV_LIVE_MIGRATION=1`) as the acknowledgement. Reading an
+    already-current release database is unaffected. This is the guard for the
+    incident that motivated it: a dev build migrated the live root to a newer
+    schema, and the released `approach` agents resolved from `PATH` could no
+    longer open it, so successful phase work could not be persisted at all.
 
 ## Beads Task Tracking
 

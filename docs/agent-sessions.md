@@ -21,7 +21,8 @@ phase-untracked: hook ingestion persists the session record but cannot attach it
 to any phase's launch or session history. Its retained embedded terminal is the
 Flow's in-process owner and cannot be detached; it remains occupancy after the
 agent exits until the slot is dismissed. `U` autofix is a separate prompted
-intent whose headless/tmux routing remains unchanged.
+intent whose prompt comes from `[flow_prompts].autofix`; its headless/tmux
+routing remains unchanged.
 
 All Flow-associated launches enter the Model's one Flow launch lifecycle before
 any reservation, Flow write, or process start. That boundary changes no storage
@@ -109,7 +110,9 @@ provider-native `raw.jsonl` alongside normalized transcript events.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/approach/sessions/v1`, or
-`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. Sessions,
+`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. A build
+whose version is not a published release tag substitutes `approach-dev` for
+`approach` in that path (see `docs/config.md`). Sessions,
 plans, and Flows share this artifact root; the full precedence chain
 (`--state-root`, `APPROACH_*_STATE_ROOT` variables, `[sessions].root`) is in
 `docs/config.md`.

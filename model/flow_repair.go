@@ -197,7 +197,7 @@ func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flows
 	ctx.PlanID = record.PlanID
 	ctx.PlanPath = planPath
 	ctx.Headless = record.Headless
-	ctx.InitialPrompt = flowRepairPrompt(record, obstruction)
+	ctx.InitialPrompt = flowRepairPrompt(record, obstruction, ctx.Executable)
 	return ctx
 }
 
@@ -230,11 +230,12 @@ func flowRepairDirectoryUsable(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-func flowRepairPrompt(record flowstore.FlowRecord, obstruction flowRepairObstruction) string {
+func flowRepairPrompt(record flowstore.FlowRecord, obstruction flowRepairObstruction, binary string) string {
 	autoMode := "off"
 	if record.AutoMode {
 		autoMode = "on"
 	}
+	bin := flowPromptBinary(binary)
 	phaseContext := ""
 	if obstruction.HasPhase {
 		phaseContext = fmt.Sprintf("\nRelevant phase: %s (%q), status %s", obstruction.Phase.PhaseID, obstruction.Phase.Title, flowPhaseStatusDetail(obstruction.Phase))
@@ -243,8 +244,8 @@ func flowRepairPrompt(record flowstore.FlowRecord, obstruction flowRepairObstruc
 Obstruction: %s%s
 
 First read the persisted record with:
-approach flow read --flow-id "$APPROACH_FLOW_ID" --state-root "$APPROACH_FLOW_STATE_ROOT"
+%s flow read --flow-id "$APPROACH_FLOW_ID" --state-root "$APPROACH_FLOW_STATE_ROOT"
 
-Diagnose the persisted Flow and use only structured approach flow commands such as phase reset, phase restart, phase complete/phase set, plan set, pr set, or the corresponding high-level actions. Never edit Flow artifact JSON directly, fabricate success, or weaken honest phase semantics. Use phase reset only for an eligible stale launch. Restart a blocked or needs_attention phase only if you can do that phase's work and report its terminal result honestly in this same session; never leave an untracked repair stranded as running. If safe repair is impossible, leave a truthful blocked or needs_attention state and explain why. Do not launch the next phase yourself; Approach owns that handoff.`,
-		record.FlowID, autoMode, obstruction.Description, phaseContext)
+Diagnose the persisted Flow and use only structured %s flow commands such as phase reset, phase restart, phase complete/phase set, plan set, pr set, or the corresponding high-level actions. Never edit Flow artifact JSON directly, fabricate success, or weaken honest phase semantics. Use phase reset only for an eligible stale launch. Restart a blocked or needs_attention phase only if you can do that phase's work and report its terminal result honestly in this same session; never leave an untracked repair stranded as running. If safe repair is impossible, leave a truthful blocked or needs_attention state and explain why. Do not launch the next phase yourself; Approach owns that handoff.`,
+		record.FlowID, autoMode, obstruction.Description, phaseContext, bin, bin)
 }

@@ -355,6 +355,13 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		event := msg
 		event.Stage = flowLaunchStagePrepared
 		event.From = flowLaunchStatePreparing
+		// Ahead of the reservation. A repair agent is the one that runs `flow
+		// phase` commands against a Flow already in trouble, so it is the last
+		// launch kind that should be allowed to run an unverified build.
+		if refusal := refuseUnverifiedLaunchPin(settings.Pin); refusal != "" {
+			event.Err = refusal
+			return event
+		}
 		current, release, err := reserve(msg.FlowID)
 		if err != nil {
 			event.Err = "Reserve persisted Flow for repair: " + err.Error()
@@ -403,7 +410,7 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", resolved.Command)
 			return event
 		}
-		ctx := actions.AgentLaunchContext{
+		ctx := applyLaunchPin(actions.AgentLaunchContext{
 			Command: resolved.Command,
 			// The admission token, never a fresh ID: every LaunchID-keyed fence
 			// downstream is on it.
@@ -418,7 +425,7 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			Embedded:         true,
 			Model:            resolved.Model,
 			ReasoningEffort:  resolved.ReasoningEffort,
-		}
+		}, settings.Pin)
 		// FlowPhaseID stays empty and FlowLaunchTracked stays false. The empty
 		// phase ID is what makes flowLaunchFailureUpdate refuse, which is what
 		// keeps a failed repair from ever mutating a phase.

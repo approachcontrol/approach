@@ -63,6 +63,32 @@ func TestAutofixPromptForPRIsTheBeadsLiteralText(t *testing.T) {
 	}
 }
 
+func TestAutofixPromptUsesCustomTemplate(t *testing.T) {
+	record := autofixFlowRecord()
+	got := autofixPrompt(record, FlowPromptTemplates{
+		Autofix: "Fix {pr_url} in {worktree_path}; keep {unknown}",
+	}, "")
+	want := "Fix https://github.com/approachcontrol/approach/pull/116 in /dev/alpha/worktrees/flow-1; keep {unknown}"
+	if got != want {
+		t.Fatalf("templated autofix prompt = %q, want %q", got, want)
+	}
+}
+
+func TestAutofixPromptBlankTemplateFallsBackToBuiltIn(t *testing.T) {
+	record := autofixFlowRecord()
+	if got := autofixPrompt(record, FlowPromptTemplates{Autofix: "   "}, ""); got != "autofix pr #116" {
+		t.Fatalf("blank autofix template = %q, want the built-in prompt", got)
+	}
+}
+
+func TestAutofixPromptDoesNotAppendPhaseDoneInstruction(t *testing.T) {
+	record := autofixFlowRecord()
+	got := autofixPrompt(record, FlowPromptTemplates{Autofix: "autofix pr #{pr_number}"}, "")
+	if strings.Contains(got, flowPhaseDoneInstruction) {
+		t.Fatalf("autofix prompt must not append the phase-done instruction:\n%s", got)
+	}
+}
+
 func TestAutofixUsesItsOwnLifecycleIntentKind(t *testing.T) {
 	record := autofixFlowRecord()
 	h := newManualLaunchHarness(t, record)
@@ -77,6 +103,54 @@ func TestAutofixUsesItsOwnLifecycleIntentKind(t *testing.T) {
 	}
 	if attempt.Kind != flowLaunchKindAutofix {
 		t.Fatalf("U intent kind = %v, want autofix", attempt.Kind)
+	}
+}
+
+func TestAutofixLaunchUsesConfiguredPromptTemplate(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	opts := h.options()
+	opts.FlowPromptTemplates = FlowPromptTemplates{Autofix: "Fix CI on {pr_url}"}
+	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+
+	h.autofix(m)
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
+	}
+	want := "Fix CI on https://github.com/approachcontrol/approach/pull/116"
+	ctx := h.launchContexts[0]
+	if ctx.InitialPrompt != want {
+		t.Fatalf("interactive prompt = %q, want the rendered template", ctx.InitialPrompt)
+	}
+	if ctx.Headless || !ctx.Embedded {
+		t.Fatalf("interactive autofix should prefill the dock, got headless=%v embedded=%v", ctx.Headless, ctx.Embedded)
+	}
+	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		t.Fatal("interactive autofix must prefill the configured prompt")
+	}
+}
+
+func TestAutofixHeadlessLaunchUsesConfiguredPromptTemplate(t *testing.T) {
+	record := autofixFlowRecord()
+	record.Headless = true
+	h := newManualLaunchHarness(t, record)
+	opts := h.options()
+	opts.FlowPromptTemplates = FlowPromptTemplates{Autofix: "Fix CI on PR #{pr_number}"}
+	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+
+	h.autofix(m)
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
+	}
+	ctx := h.launchContexts[0]
+	if !ctx.Headless {
+		t.Fatal("a headless Flow must launch its autofix agent headless")
+	}
+	if got := ctx.InitialPrompt; got != "Fix CI on PR #116" {
+		t.Fatalf("headless prompt = %q, want the rendered template", got)
+	}
+	if actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		t.Fatal("headless autofix must send the configured prompt on argv, not prefill")
 	}
 }
 

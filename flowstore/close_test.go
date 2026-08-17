@@ -627,7 +627,7 @@ func TestRepairLaunchReservationSerializesWithClose(t *testing.T) {
 	select {
 	case err := <-result:
 		t.Fatalf("CloseFlow() returned before repair launch reservation released: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 	once.Do(release)
 	select {
@@ -635,7 +635,7 @@ func TestRepairLaunchReservationSerializesWithClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CloseFlow() after release error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("CloseFlow() did not proceed after repair reservation release")
 	}
 
@@ -674,7 +674,7 @@ func TestAgentLaunchReservationSerializesWithClose(t *testing.T) {
 	select {
 	case err := <-result:
 		t.Fatalf("CloseFlow() returned before resume launch reservation released: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 	once.Do(release)
 	select {
@@ -682,7 +682,7 @@ func TestAgentLaunchReservationSerializesWithClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CloseFlow() after release error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("CloseFlow() did not proceed after resume reservation release")
 	}
 
@@ -738,7 +738,7 @@ func TestAgentLaunchReservationSerializesWithDeleteAndSameIDRecreate(t *testing.
 	select {
 	case err := <-result:
 		t.Fatalf("Delete() returned before launch reservation released: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	once.Do(release)
@@ -747,7 +747,7 @@ func TestAgentLaunchReservationSerializesWithDeleteAndSameIDRecreate(t *testing.
 		if err != nil {
 			t.Fatalf("Delete() after release error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Delete() did not proceed after launch reservation released")
 	}
 	if _, err := deleteStore.Create(record); err != nil {

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
@@ -51,6 +53,15 @@ type startProgramOptions struct {
 	Config         config.Config
 	ScanRepos      func() ([]scanner.Repo, error)
 	RepoCreateRoot string
+	// AllowDevLiveMigration acknowledges that this development build may advance
+	// the schema of the database a released build owns. It is off by default and
+	// has no effect on a release build or on any root but the release default.
+	AllowDevLiveMigration bool
+	// LaunchSource is the running binary, hashed before the repository scan so
+	// an upgrade during that scan cannot make the pin name a different build. A
+	// zero value means "capture it now", which is what a test constructing this
+	// struct directly gets.
+	LaunchSource controlplane.SourceIdentity
 }
 
 func run(args []string, deps runDeps) error {
@@ -82,6 +93,8 @@ func run(args []string, deps runDeps) error {
 	flags.SetOutput(io.Discard)
 	versionFlag := flags.Bool("version", false, "print version and exit")
 	flags.BoolVar(versionFlag, "v", false, "print version and exit")
+	allowDevLiveMigration := flags.Bool("allow-dev-live-migration", false,
+		"let this development build migrate the release artifact root")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -108,6 +121,18 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error resolving scan root: %w", err)
 	}
 
+	// Before the scan, deliberately. Resolve used to hash the running binary
+	// once the state root was known, which put a full repository walk inside the
+	// window where a `brew upgrade` could replace the file the pin then named —
+	// and the pin would still carry THIS process's version and schema, so the
+	// mismatch would be silent. Hashing needs no root, so it does not have to
+	// wait for one. The copy is materialized later, in startProgram, after the
+	// Flow store's dev-root guard has had its say about that root.
+	launchSource, err := controlplane.CaptureSource()
+	if err != nil {
+		return err
+	}
+
 	repos, err := deps.scan(scanner.ScanOptions{
 		Root:     root,
 		MaxDepth: cfg.Scan.MaxDepth,
@@ -121,8 +146,10 @@ func run(args []string, deps runDeps) error {
 		MaxDepth: cfg.Scan.MaxDepth,
 	}
 	if err := deps.startProgramWithOptions(repos, startProgramOptions{
-		Config:         cfg,
-		RepoCreateRoot: repoCreateRoot,
+		Config:                cfg,
+		RepoCreateRoot:        repoCreateRoot,
+		LaunchSource:          launchSource,
+		AllowDevLiveMigration: *allowDevLiveMigration || truthyEnv(deps.getenv("APPROACH_ALLOW_DEV_LIVE_MIGRATION")),
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return deps.scan(scanOptions)
 		},
@@ -130,6 +157,18 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
+}
+
+// truthyEnv accepts the spellings a shell script is likely to use for an
+// acknowledgement that must be given deliberately. Anything else, including an
+// unset variable, means "not acknowledged".
+func truthyEnv(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func isHelpArg(arg string) bool {
@@ -153,6 +192,11 @@ Commands:
 Flags:
   --version, -v  Print version and exit.
   --help, -h     Print this help and exit.
+  --allow-dev-live-migration
+                 Let this development build migrate the release artifact root
+                 (also APPROACH_ALLOW_DEV_LIVE_MIGRATION=1). A development build
+                 otherwise defaults to its own root and refuses to advance the
+                 schema of the database a released approach owns.
 
 Examples:
   approach
@@ -315,6 +359,27 @@ func runSessionHook(args []string, deps runDeps) error {
 			"APPROACH_SESSION_STATE_ROOT": deps.getenv("APPROACH_SESSION_STATE_ROOT"),
 		},
 	})
+	// Keep-alive, never release. This hook is the only signal a detached agent
+	// emits — the TUI releases claims in FinalizeAgentSession but deliberately
+	// skips that for detached launches — but "a hook fired" does not mean "the
+	// agent is done", and releasing on a hook that is not end-of-life would
+	// unpin a live agent still bound to the path baked into its argv. Codex
+	// wires Stop, which fires once per TURN. Claude wires SessionEnd, which also
+	// fires on /clear while the process keeps running. Neither is a reliable
+	// death certificate, and a provider added later would be one more guess.
+	//
+	// So what the hook actually attests is "this launch was alive just now",
+	// which is exactly what a claim's freshness should track: it restamps the
+	// claim, and retirement is left to FinalizeAgentSession or to expiry. The
+	// cost is that a detached launch holds its digest until pinClaimMaxAge after
+	// its last sign of life; that is bounded disk, against the unbounded
+	// alternative of evicting a binary a running agent still has to exec.
+	//
+	// Best effort and after ingest: the session record is what this command
+	// exists to write, and retention hygiene may never cost one.
+	if launchID := deps.getenv("APPROACH_LAUNCH_ID"); launchID != "" && root != "" {
+		_ = controlplane.RefreshPin(root, launchID)
+	}
 	return err
 }
 
@@ -332,7 +397,11 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
-	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root(), Presets: cfg.Flow.Presets})
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:                  sessionStore.Root(),
+		Presets:               cfg.Flow.Presets,
+		AllowDevLiveMigration: opts.AllowDevLiveMigration,
+	})
 	if err != nil {
 		return err
 	}
@@ -348,8 +417,40 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// exit-time WAL checkpoint on a process that is exiting anyway, and the WAL is
 	// durable and recovered on the next open. Genuinely fixing the last-write
 	// window means draining in-flight mutations before returning, not closing.
+	// Materialize the pin only now, after the Flow store opened. The binary cache
+	// lives in this root and writing it is a mutation of it, so an unacknowledged
+	// development build pointed at the release default has to fail on the store's
+	// dev-root guard BEFORE it copies a dev binary in and runs cache retention
+	// there — a command that reports it refused to touch the release database
+	// must not have left a dev executable behind on the way to saying so.
+	//
+	// The binary's identity was captured back in run(), before the repository
+	// scan, precisely so this ordering costs nothing: os.Executable returns a
+	// mutable pathname, and hashing late would put every step above inside the
+	// window where an upgrade could swap the file the pin names. Nothing can make
+	// that check atomic with process start — Go offers no portable handle on the
+	// running image — so the capture happens as early as possible and the copy as
+	// late as it is safe to.
+	//
+	// A cache problem degrades to the running binary and says so through the
+	// notice below. A mid-startup replacement is not a cache problem: the
+	// captured digest no longer describes the file at the source path, so a
+	// degraded pin would fail every Verify. Restart is the only consistent pin.
+	launchSource := opts.LaunchSource
+	if strings.TrimSpace(launchSource.Path) == "" {
+		if launchSource, err = controlplane.CaptureSource(); err != nil {
+			return err
+		}
+	}
+	pin := controlplane.Materialize(sessionStore.Root(), launchSource, flowstore.DatabaseSchemaVersion())
+	if pin.SourceChanged {
+		return fmt.Errorf("%s", pin.Notice)
+	}
+
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
+	modelOpts.LaunchPin = pin
+	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
 	// Bubble Tea normally exits immediately on SIGINT/SIGTERM without waiting
 	// for command goroutines. Let the model defer those messages while its
 	// private tmux helper still carries an authoritative Flow reservation.
@@ -359,6 +460,7 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 		tea.WithFilter(model.DeferQuitDuringFlowLaunch),
 	)
 	_, err = p.Run()
+	_ = controlplane.ReleaseProcessPin(sessionStore.Root())
 	return err
 }
 
@@ -383,6 +485,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 			Autoreview:     cfg.FlowPrompts.Autoreview,
 			Merge:          cfg.FlowPrompts.Merge,
 			Generic:        cfg.FlowPrompts.Generic,
+			Autofix:        cfg.FlowPrompts.Autofix,
 		},
 		ScanRepos:        scanRepos,
 		SessionStateRoot: sessionStore.Root(),
@@ -408,6 +511,10 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		LaunchBackend: cfg.Launch.Backend,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			endedAt := time.Now().UTC()
+			// The launch is over, so its claim on a cached binary is too. Best
+			// effort: an orphaned claim only costs one retained copy, while
+			// failing finalization over it would lose the session record.
+			_ = controlplane.ReleasePin(sessionStore.Root(), ctx.LaunchID)
 			if err := sessionStore.MarkLaunchEnded(ctx.LaunchID, endedAt); err != nil {
 				return err
 			}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/internal/testgit"
 )
 
 var errFakeCommand = errors.New("fake command failed")
@@ -32,6 +33,10 @@ func (r *fakeCommandRunner) Run(name string, args ...string) ([]byte, []byte, er
 
 func mustRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	if len(args) > 0 && args[0] == "git" {
+		testgit.Run(t, dir, args[1:]...)
+		return
+	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()

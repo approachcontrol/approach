@@ -117,7 +117,17 @@ func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps) (
 	if root == "" {
 		root = cfg.Sessions.Root
 	}
-	return flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: cfg.Flow.Presets})
+	// The env spelling only, deliberately: the dev-live-migration refusal names
+	// both --allow-dev-live-migration and APPROACH_ALLOW_DEV_LIVE_MIGRATION=1,
+	// and a refusal an operator cannot act on is worse than no refusal. The flag
+	// belongs to the TUI's own flag set; threading it through every `flow`
+	// subcommand would add a flag to two dozen usage strings for an
+	// acknowledgement that is meant to be rare and deliberate.
+	return flowstore.NewStore(flowstore.StoreOptions{
+		Root:                  root,
+		Presets:               cfg.Flow.Presets,
+		AllowDevLiveMigration: truthyEnv(deps.getenv("APPROACH_ALLOW_DEV_LIVE_MIGRATION")),
+	})
 }
 
 func runFlowCreate(args []string, deps runDeps) error {

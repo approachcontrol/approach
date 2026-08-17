@@ -11,6 +11,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -124,6 +125,12 @@ type flowLaunchPreparation struct {
 	// InspectWorktreeDirectory validates a non-empty recorded worktree path.
 	// Nil means "use the real filesystem inspector", never "skip validation".
 	InspectWorktreeDirectory func(string) error
+	// Pin is the approach binary this launch's agent must invoke. A zero Pin
+	// means the launch was not pinned and leaves the agent on ambient PATH.
+	Pin controlplane.Pin
+	// VerifyPin is Pin.Verify, injectable so a test can fail the check without
+	// having to corrupt a real cached binary.
+	VerifyPin func(controlplane.Pin) error
 }
 
 func (m Model) flowLaunchPreparation() flowLaunchPreparation {
@@ -144,7 +151,21 @@ func (m Model) flowLaunchPreparation() flowLaunchPreparation {
 		PromptTemplates:          m.flowPromptTemplates,
 		EnsureWorktree:           m.launchSeams.EnsureWorktree,
 		InspectWorktreeDirectory: m.launchSeams.inspectWorktreeDirectory,
+		Pin:                      m.launchPin,
 	}
+}
+
+// verifyPin re-checks the pinned binary. An unpinned launch verifies nothing:
+// there is no claim to check, and refusing would break every caller that never
+// had a pin.
+func (l flowLaunchPreparation) verifyPin() error {
+	if strings.TrimSpace(l.Pin.ExecutablePath) == "" {
+		return nil
+	}
+	if l.VerifyPin != nil {
+		return l.VerifyPin(l.Pin)
+	}
+	return verifyLaunchPin(l.Pin)
 }
 
 func (l flowLaunchPreparation) preflight(req flowPhaseLaunchRequest) (flowPhaseLaunchPreparedRequest, error) {
@@ -186,6 +207,22 @@ func (l flowLaunchPreparation) preflight(req flowPhaseLaunchRequest) (flowPhaseL
 	}
 	if flowstore.SemanticKind(req.Phase) == flowstore.KindPlanReview && req.Record.PlanID == "" {
 		return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{Message: "Plan Review needs a linked plan before launch"}
+	}
+	// The pin check runs here, before prepare marks the phase running and before
+	// any worktree work: a launch refused for an unusable binary must leave the
+	// phase exactly as it found it.
+	//
+	// What this can actually catch is narrower than it looks. The pin is a copy
+	// of the running binary, and that binary already opened the store, so
+	// "can the launcher write this schema" is a tautology in the normal path —
+	// the launched binary is by construction the one that can write. The live
+	// failure modes are a digest mismatch or a deleted cache (state root wiped
+	// or tampered with mid-session) and the degraded fallback, where the pin is
+	// the source path and an upgrade can replace it underneath a long-lived TUI.
+	if err := l.verifyPin(); err != nil {
+		return flowPhaseLaunchPreparedRequest{}, flowPhaseLaunchValidationError{
+			Message: flowPhaseLaunchPinRefusal(l.Pin, err),
+		}
 	}
 	generateLaunchID := l.NewLaunchID
 	if generateLaunchID == nil {
@@ -339,8 +376,9 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 		FlowPhaseID:      launchPhase.PhaseID,
 		FlowPhaseKind:    flowstore.SemanticKind(launchPhase),
 		FlowAutoLaunch:   req.AutoLaunch,
-		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
+		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates, l.Pin.ExecutablePath),
 	}
+	ctx = applyLaunchPin(ctx, l.Pin)
 	route := flowPhaseLaunchEmbedded
 	fallbackNote := ""
 	ctx.FlowLaunchTracked = true
