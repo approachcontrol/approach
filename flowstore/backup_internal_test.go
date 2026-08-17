@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,7 +44,9 @@ func TestAMigrationWritesAVerifiedBackup(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("backups = %v, want exactly one", names)
 	}
-	if !strings.HasPrefix(names[0], databaseFilename+"-v5-") {
+	// The root fingerprint sits between the two, so this is a prefix plus a
+	// contains rather than one prefix.
+	if !strings.HasPrefix(names[0], databaseFilename+"-") || !strings.Contains(names[0], "-v5-") {
 		t.Fatalf("backup %q does not name the migrated file and its schema", names[0])
 	}
 	// The very first migration of a pre-sidecar root has no generation to draw
@@ -189,7 +192,7 @@ func TestRetentionKeepsEightBackupsPerMigratedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := pruneBackups(backupDir, databaseFilename); err != nil {
+	if err := pruneBackups(backupDir, databaseFilename, ""); err != nil {
 		t.Fatal(err)
 	}
 	names := backupNames(t, backupDir)
@@ -222,7 +225,231 @@ func TestTheStageResumeBackupNamesTheStagedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := backupNames(t, filepath.Join(root, backupDirName))
-	if len(names) != 1 || !strings.HasPrefix(names[0], stageFilename+"-v5-") {
+	if len(names) != 1 || !strings.HasPrefix(names[0], stageFilename+"-") || !strings.Contains(names[0], "-v5-") {
 		t.Fatalf("backups = %v, want one named for %s", names, stageFilename)
+	}
+}
+
+// A shared --backup-dir is an explicit operator choice, and two roots migrating
+// the same schema in the same second used to collide on one filename: the
+// second VACUUM INTO failed because its target already existed.
+func TestASharedBackupDirKeepsRootsApart(t *testing.T) {
+	backupDir := t.TempDir()
+	var names []string
+	for range 2 {
+		root := schemaFiveRoot(t)
+		store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator, BackupDir: backupDir})
+		if err != nil {
+			t.Fatalf("migrate into a shared backup dir: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names = backupNames(t, backupDir)
+	if len(names) != 2 {
+		t.Fatalf("backups = %v, want one per root", names)
+	}
+	if names[0] == names[1] {
+		t.Fatalf("both roots wrote %q", names[0])
+	}
+}
+
+// Retention groups on the stem, so a stem that was only the basename let one
+// root's ninth migration delete another root's sole pre-migration copy.
+func TestRetentionInASharedBackupDirNeverEvictsAnotherRoot(t *testing.T) {
+	backupDir := t.TempDir()
+	stamp := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
+	mine := backupStem(filepath.Join("/state/mine", databaseFilename), "/state/mine")
+	theirs := backupFilename(backupStem(filepath.Join("/state/theirs", databaseFilename), "/state/theirs"),
+		5, stamp, "nogen")
+	if err := os.WriteFile(filepath.Join(backupDir, theirs), []byte("x"), artifacts.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+	for i := range backupRetention + 1 {
+		name := backupFilename(mine, 5, stamp.Add(time.Duration(i)*time.Minute), "nogen")
+		if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), artifacts.FilePerm); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := pruneBackups(backupDir, mine, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, theirs)); err != nil {
+		t.Fatalf("pruning one root's backups removed another root's: %v", err)
+	}
+	if names := backupNames(t, backupDir); len(names) != backupRetention+1 {
+		t.Fatalf("kept %d entries (%v), want %d plus the other root's", len(names), names, backupRetention)
+	}
+}
+
+// Retention sorts lexically over an embedded wall-clock timestamp. A clock that
+// stepped backwards, or one stale entry stamped in the future, makes the copy
+// just written sort oldest — and pruning it would leave the migration running
+// with no backup of the state it is about to change.
+func TestRetentionNeverPrunesTheBackupJustWritten(t *testing.T) {
+	backupDir := t.TempDir()
+	stamp := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
+	// The new backup carries the EARLIEST timestamp, so every existing entry
+	// sorts after it and a naive prune takes it first.
+	fresh := backupFilename(databaseFilename, 5, stamp, "nogen")
+	if err := os.WriteFile(filepath.Join(backupDir, fresh), []byte("x"), artifacts.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= backupRetention+2; i++ {
+		name := backupFilename(databaseFilename, 5, stamp.Add(time.Duration(i)*time.Hour), "nogen")
+		if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), artifacts.FilePerm); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := pruneBackups(backupDir, databaseFilename, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, fresh)); err != nil {
+		t.Fatalf("retention deleted the backup the migration is about to rely on: %v", err)
+	}
+	// The exempt copy counts against the budget rather than raising it.
+	if names := backupNames(t, backupDir); len(names) != backupRetention {
+		t.Fatalf("kept %d entries (%v), want %d", len(names), names, backupRetention)
+	}
+}
+
+// VACUUM INTO creates its output with SQLite's default mode reduced by the
+// umask, so a custom --backup-dir outside the 0700 state root must not be left
+// holding a world-readable copy of every Flow record.
+func TestABackupInACustomDirectoryIsNeverWorldReadable(t *testing.T) {
+	previous := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(previous) })
+
+	root := schemaFiveRoot(t)
+	backupDir := filepath.Join(t.TempDir(), "shared")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator, BackupDir: backupDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	names := backupNames(t, backupDir)
+	if len(names) != 1 {
+		t.Fatalf("backups = %v, want exactly one", names)
+	}
+	// Nothing but the backup: the staging directory the copy is built in must be
+	// cleaned up rather than left behind holding a second copy.
+	info, err := os.Stat(filepath.Join(backupDir, names[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != artifacts.FilePerm {
+		t.Fatalf("backup mode = %04o, want %04o", info.Mode().Perm(), artifacts.FilePerm)
+	}
+}
+
+// VACUUM INTO cannot run inside a transaction, so the copy reads its own
+// snapshot and releases. A build too old to honour the bootstrap lease can
+// commit either while that copy is being taken or in the gap before the
+// migration's write lock; both leave the published backup describing a state
+// that is not the one migrated, and neither the row count nor an in-place
+// UPDATE would reveal it.
+func TestAWriteBetweenTheBackupAndTheMigrationAbortsIt(t *testing.T) {
+	for name, window := range map[string]string{
+		"during the copy":   "backup",
+		"before the commit": "migration",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			seed := createParentReleaseV5Database(t, root)
+			insertV5Flow(t, seed, FlowRecord{
+				SchemaVersion: schemaVersion, FlowID: "race", Title: "Race", Instructions: "Test.",
+				Status: StatusPending, RepoPath: filepath.Join(root, "repo"),
+			})
+			if err := seed.Close(); err != nil {
+				t.Fatal(err)
+			}
+			databasePath := filepath.Join(root, databaseFilename)
+
+			// Stand in for that older build: a second connection committing in
+			// whichever window this case covers.
+			commit := func() {
+				other, err := sql.Open("sqlite", sqliteDSN(databasePath, map[string][]string{"mode": {"rw"}}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = other.Close() }()
+				result, err := other.Exec("UPDATE flows SET updated_at = updated_at || 'x'")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+					t.Fatalf("the racing write changed nothing (%d rows, %v); the case proves nothing", affected, err)
+				}
+			}
+			originalBackup, originalMigration := backupRaceProbe, migrationRaceProbe
+			t.Cleanup(func() { backupRaceProbe, migrationRaceProbe = originalBackup, originalMigration })
+			if window == "backup" {
+				backupRaceProbe = commit
+			} else {
+				migrationRaceProbe = commit
+			}
+
+			_, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+			if err == nil {
+				t.Fatal("the migration proceeded with a backup that no longer matched the database")
+			}
+			if !strings.Contains(err.Error(), "another process wrote to the flow database") {
+				t.Fatalf("error %q does not name the race", err)
+			}
+			// Nothing migrated: the refusal lands before any schema statement runs.
+			if version, err := readUserVersionRO(databasePath); err != nil || version != 5 {
+				t.Fatalf("user_version = %d (err %v), want an unchanged 5", version, err)
+			}
+		})
+	}
+}
+
+// --backup-dir is an arbitrary path and MkdirAll may create several levels. A
+// directory is only an entry in ITS parent, so syncing the backup directory
+// alone leaves the pathname chain to the copy unpersisted: a power loss after
+// the migration commits would lose the route to the backup while keeping the
+// migrated database.
+func TestANestedBackupDirectorySyncsEveryCreatedAncestor(t *testing.T) {
+	base := t.TempDir()
+	nested := filepath.Join(base, "new", "a", "backups")
+
+	// Every level below base is missing, and base itself is not this
+	// migration's to guarantee.
+	missing := missingAncestors(nested)
+	want := []string{nested, filepath.Join(base, "new", "a"), filepath.Join(base, "new")}
+	if len(missing) != len(want) {
+		t.Fatalf("missing = %v, want %v", missing, want)
+	}
+	for i, dir := range want {
+		if missing[i] != dir {
+			t.Fatalf("missing[%d] = %q, want %q", i, missing[i], dir)
+		}
+	}
+
+	root := schemaFiveRoot(t)
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator, BackupDir: nested})
+	if err != nil {
+		t.Fatalf("migrate into a nested backup dir: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if names := backupNames(t, nested); len(names) != 1 {
+		t.Fatalf("backups = %v, want exactly one", names)
+	}
+
+	// An existing directory contributes nothing to sync: its entry is already
+	// as durable as whoever created it made it.
+	if missing := missingAncestors(base); len(missing) != 0 {
+		t.Fatalf("missingAncestors of an existing directory = %v, want none", missing)
 	}
 }

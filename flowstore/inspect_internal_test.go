@@ -3,6 +3,7 @@ package flowstore
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -402,5 +403,113 @@ func TestInspectReportCarriesTheDocumentedJSONKeys(t *testing.T) {
 	}
 	if _, ok := decoded["warnings"].([]any); !ok {
 		t.Fatalf("warnings must be an array, not null: %s", data)
+	}
+}
+
+// Reading PRAGMAs proves the file is a database, not that it is a flow store.
+// NewStore validates the schema shape too, so `db inspect` calling a
+// current-version database with no flows table "open" is the diagnostic
+// contradicting the thing it exists to diagnose.
+func TestInspectReportsACurrentVersionDatabaseWithTheWrongShapeAsMalformed(t *testing.T) {
+	root := currentRoot(t)
+	path := filepath.Join(root, databaseFilename)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rw"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A shape NewStore rejects, on a database whose user_version says current.
+	if _, err := db.Exec("DROP TABLE flows"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report := inspectOrFail(t, root)
+	assertUnreadable(t, report, TierMalformed)
+	if report.UserVersion == nil || *report.UserVersion != databaseSchemaVersion {
+		t.Fatalf("user_version = %v, want the version that was actually read", report.UserVersion)
+	}
+	if !strings.Contains(*report.NextAction, backupDirName) {
+		t.Fatalf("next_action = %q, want the backup directory", *report.NextAction)
+	}
+
+	// And the store agrees: inspect must not disagree with the real open.
+	if _, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator}); err == nil {
+		t.Fatal("NewStore accepted a database inspect called malformed")
+	}
+}
+
+// A predecessor is legitimately not in the current shape, and a database from a
+// newer build is a shape this binary cannot assert. Neither may be reported as
+// malformed by a check aimed at the current generation.
+func TestInspectDoesNotShapeCheckOtherSchemaGenerations(t *testing.T) {
+	for name, version := range map[string]int64{
+		"predecessor": databaseSchemaVersion - 1,
+		"newer build": databaseSchemaVersion + 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := currentRoot(t)
+			path := filepath.Join(root, databaseFilename)
+			for _, suffix := range []string{"-wal", "-shm"} {
+				if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			}
+			db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rw"}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			report := inspectOrFail(t, root)
+			if report.Tier != TierOpen {
+				t.Fatalf("tier = %q, want %q for schema %d", report.Tier, TierOpen, version)
+			}
+		})
+	}
+}
+
+// PRAGMA user_version and journal_mode are answered out of the file header, so
+// a database whose schema pages are damaged reads them fine and is only caught
+// when validation queries sqlite_master. Suppressing SQLite-coded errors there
+// as "transient" would report it as open while NewStore rejects it.
+func TestInspectDoesNotSuppressCorruptionFromSchemaValidation(t *testing.T) {
+	for name, code := range map[string]int{
+		"no sqlite code": 0,
+		"corrupt":        sqliteCorrupt,
+		"not a database": sqliteNotADatabase,
+		"corrupt index":  sqliteCorrupt | (2 << 8),
+		"readonly:1544":  sqliteReadonlyDirectory,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if isTransientSQLiteCode(code) {
+				t.Fatalf("%s (%d) was treated as transient, so it would be reported as open", name, code)
+			}
+		})
+	}
+	for name, code := range map[string]int{
+		"busy":      sqliteBusy,
+		"locked":    sqliteLocked,
+		"io error":  sqliteIOErr,
+		"cant open": sqliteCantOpen,
+		// Extended codes carry the primary code in their low byte.
+		"busy snapshot": sqliteBusy | (2 << 8),
+		"io error read": sqliteIOErr | (1 << 8),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !isTransientSQLiteCode(code) {
+				t.Fatalf("%s (%d) would be misreported as a malformed database", name, code)
+			}
+		})
 	}
 }

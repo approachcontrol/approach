@@ -579,3 +579,38 @@ func TestReaderDiagnosticsAreCleanOnASecuredRoot(t *testing.T) {
 		t.Fatalf("warnings = %v, want none", diagnostics.Warnings)
 	}
 }
+
+// The version probe can fail for reasons that have nothing to do with the
+// database's shape — another process holding it past the probe's busy timeout
+// is the obvious one. Falling through to the migration helper on that error
+// would let a `flow list`, `serve`, or session hook that merely lost a race
+// migrate a predecessor database, which is the mixed-build incident this unit
+// exists to prevent. The helper has no role check of its own, so the refusal
+// has to hold here.
+func TestANonMigratorNeverMigratesWhenTheVersionProbeFails(t *testing.T) {
+	for _, role := range []Role{RoleReader, RoleWriter} {
+		t.Run(role.String(), func(t *testing.T) {
+			root := schemaFiveRoot(t)
+			databasePath := filepath.Join(root, databaseFilename)
+
+			// Stand in for a probe that could not answer. The role gate treats an
+			// unreadable version as "nothing proved", and the question is what it
+			// does next.
+			original := readUserVersion
+			readUserVersion = func(string) (int64, error) {
+				return 0, errors.New("database is locked")
+			}
+			t.Cleanup(func() { readUserVersion = original })
+
+			if _, err := NewStore(StoreOptions{Root: root, Role: role}); err == nil {
+				t.Fatalf("%s opened a predecessor database whose version could not be read", role)
+			}
+			if version, err := readUserVersionRO(databasePath); err != nil || version != 5 {
+				t.Fatalf("%s advanced user_version to %d (%v), want it left at 5", role, version, err)
+			}
+			if names := backupNames(t, filepath.Join(root, backupDirName)); len(names) != 0 {
+				t.Fatalf("%s entered the migration helper and wrote backups: %v", role, names)
+			}
+		})
+	}
+}

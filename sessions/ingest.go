@@ -275,7 +275,11 @@ func attachFlowSession(record SessionRecord, opts IngestOptions, warnings *[]str
 		return
 	}
 	defer func() { _ = store.Close() }()
-	_, _ = store.AttachSession(flowstore.SessionAttachUpdate{
+	// The attach itself gets the same channel as the open. Opening the store is
+	// only the first way this can fail — an absent Flow or phase, a rejected
+	// update, or a SQLite error during the write all leave the session
+	// unattached, and discarding those is the silent failure this reports.
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{
 		FlowID:  record.FlowID,
 		PhaseID: record.FlowPhaseID,
 		Session: flowstore.Session{
@@ -287,7 +291,10 @@ func attachFlowSession(record SessionRecord, opts IngestOptions, warnings *[]str
 			EndedAt:        record.EndedAt,
 			TranscriptPath: record.TranscriptPath,
 		},
-	})
+	}); err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not attach this session to Flow %s phase %s: %v",
+			record.FlowID, record.FlowPhaseID, err))
+	}
 }
 
 // flowLaunchStaleResolver returns the resolver and a release func the caller

@@ -124,7 +124,10 @@ func TestRunDBMigrateAdvancesTheSchemaAndWritesABackupAndSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--backup-dir was not honoured: %v", err)
 	}
-	if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "approach.db-v5-") {
+	// The source-root fingerprint that keeps a shared --backup-dir's roots apart
+	// sits between the migrated file and its schema, so this is not one prefix.
+	if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "approach.db-") ||
+		!strings.Contains(entries[0].Name(), "-v5-") {
 		names := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			names = append(names, entry.Name())

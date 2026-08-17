@@ -35,6 +35,9 @@ const (
 // SQLite result codes this classification keys on, measured against
 // modernc.org/sqlite v1.56.0 with this package's DSN construction.
 const (
+	sqliteBusy              = 5    // the database file is locked
+	sqliteLocked            = 6    // a table in the database is locked
+	sqliteIOErr             = 10   // some kind of disk I/O error occurred
 	sqliteCantOpen          = 14   // unable to open database file
 	sqliteCorrupt           = 11   // database disk image is malformed
 	sqliteNotADatabase      = 26   // file is not a database
@@ -217,17 +220,32 @@ func classifyDatabase(report *InspectReport, root, path string) {
 
 	userVersion, journalMode, openErr := readInspectableDatabase(path)
 	if openErr == nil {
-		report.Tier = TierOpen
-		report.Readable = true
 		report.UserVersion = &userVersion
 		report.JournalMode = &journalMode
-		// sidecar_stale is a COMPARISON, so it is true or false only where
-		// user_version is known and null everywhere else.
+		// Reading PRAGMAs proves the FILE is a database, not that it is a flow
+		// store. NewStore also runs validateAuthoritativeDatabase, so a
+		// current-version database missing the flows table or an index is
+		// rejected there while this command called it `open` — the diagnostic
+		// contradicting the thing it exists to diagnose. Reported as malformed
+		// because that is what it is to approach, and because backups/ is the
+		// same right answer as for a corrupt page.
+		//
+		// Ahead of sidecar_stale on purpose: a shape this build rejects is not a
+		// database to draw a provenance conclusion about.
+		if shapeErr := inspectSchemaShape(path, userVersion); shapeErr != nil {
+			unreadable(report, TierMalformed, shapeErr.Error(),
+				"restore from "+filepath.Join(filepath.Dir(path), backupDirName)+"/")
+			return
+		}
+		// sidecar_stale is a COMPARISON, so it is true or false only on a
+		// database this build would actually open, and null everywhere else.
 		stale := report.MinWriterGeneration != nil && *report.MinWriterGeneration != userVersion
 		if sidecar, ok := readSidecar(root); ok {
 			stale = sidecar.PhysicalVersion != userVersion
 		}
 		report.SidecarStale = &stale
+		report.Tier = TierOpen
+		report.Readable = true
 		return
 	}
 	classifyOpenFailure(report, path, openErr)
@@ -338,6 +356,75 @@ const inspectBusyTimeout = time.Second
 // the file is a usable flow database. Schema-object and record-shape validation
 // are deliberately skipped: a future schema must report cleanly here, which is
 // the whole of "usable against a future schema".
+// inspectSchemaShape validates the object shape of a database whose stored
+// version is the one THIS build defines. Only that version, deliberately: a
+// predecessor is legitimately not in the current shape and inspect must keep
+// reporting it as readable-but-unmigrated, and a version from a newer build is
+// a shape this binary has no definition of, so asserting the current one would
+// report every future database as malformed. Both are already classified by
+// user_version alone.
+//
+// A second open rather than threading a handle out of readInspectableDatabase:
+// this is a one-shot diagnostic command, and the alternative is leaking an open
+// *sql.DB through a classifier whose other branches never hold one.
+func inspectSchemaShape(path string, userVersion int64) error {
+	if userVersion != databaseSchemaVersion {
+		return nil
+	}
+	millis, err := sqliteBusyTimeoutMillis(inspectBusyTimeout)
+	if err != nil {
+		return nil
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{
+		"mode":    {"ro"},
+		"_pragma": {fmt.Sprintf("busy_timeout(%d)", millis), "query_only(1)"},
+	}))
+	if err != nil {
+		// The open above already succeeded once. A failure here is not evidence
+		// of a malformed database, so it must not be reported as one.
+		return nil
+	}
+	defer func() { _ = db.Close() }()
+	err = validateSQLiteSchema(db)
+	if isTransientSQLiteError(err) {
+		// The database would not answer — BUSY from the migration this command is
+		// explicitly meant to stay usable during, CANTOPEN, an I/O error. That is
+		// not evidence of a bad shape, and the tier it would otherwise land in
+		// tells the operator to restore from a backup.
+		return nil
+	}
+	// Everything else propagates, CORRUPT and NOTADB especially. PRAGMA
+	// user_version and journal_mode are answered out of the file header, so a
+	// database whose sqlite_master or another schema page is damaged reads them
+	// fine and is only caught here. Suppressing that would report it as `open`
+	// while NewStore rejects it — the misclassification this check exists to end.
+	return err
+}
+
+// isTransientSQLiteError reports an error that says "not now" rather than
+// "not a flow database".
+func isTransientSQLiteError(err error) bool {
+	return isTransientSQLiteCode(sqliteResultCode(err))
+}
+
+// isTransientSQLiteCode is split out because modernc's Error has unexported
+// fields and no constructor, so the classification is only testable on the code.
+// The primary code is masked out of the extended one: the driver reports
+// extended codes (SQLITE_READONLY_DIRECTORY is 1544), and BUSY and IOERR each
+// have a family of them. Zero means the error carried no SQLite code at all —
+// a plain shape mismatch — which is emphatically not transient.
+func isTransientSQLiteCode(code int) bool {
+	if code == 0 {
+		return false
+	}
+	switch code & 0xff {
+	case sqliteBusy, sqliteLocked, sqliteIOErr, sqliteCantOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 func readInspectableDatabase(path string) (int64, string, error) {
 	millis, err := sqliteBusyTimeoutMillis(inspectBusyTimeout)
 	if err != nil {

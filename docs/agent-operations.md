@@ -86,11 +86,12 @@ non-test `NewStore` omits one:
 Three consequences worth knowing:
 
 - `flow list` and `approach serve` **no longer tighten a loose state root to
-  `0700`**. They report the mode instead — through `Store.OpenDiagnostics()` and
-  `db inspect`'s `directory_mode` — because repairing it would erase the very
-  state the diagnostic exists to show. A first `approach serve` against a `0755`
-  root therefore leaves a `0600` database inside a `0755` directory; the file
-  mode is the one that matters and is unchanged.
+  `0700`**. They report the mode instead — printed to stderr on every reader
+  open, and available through `Store.OpenDiagnostics()` and `db inspect`'s
+  `directory_mode` — because repairing it would erase the very state the
+  diagnostic exists to show. A first `approach serve` against a `0755` root
+  therefore leaves a `0600` database inside a `0755` directory; the file mode is
+  the one that matters and is unchanged.
 - **The TUI's lazy fallback store cannot migrate.** It is a `RoleWriter`, so a
   TUI that reaches it against a predecessor-schema root refuses and points at
   `approach db migrate` — from inside the alt screen, where that is awkward to
@@ -98,17 +99,28 @@ Three consequences worth knowing:
   unusable the fix is a TUI-level prompt, not a silently re-widened fallback.
 - **Every real migration writes a verified backup** to `<root>/backups/`
   (`VACUUM INTO`, then integrity, schema-stamp, and row-count checks), keeping
-  the 8 most recent per migrated file. That roughly doubles peak disk, so an
-  upgrade on a full disk now fails at the backup with `user_version` unchanged
-  rather than migrating. `--backup-dir` is the escape hatch; there is no skip
-  flag.
+  the 8 most recent per migrated file per state root. That roughly doubles peak
+  disk, so an upgrade on a full disk now fails at the backup with `user_version`
+  unchanged rather than migrating. `--backup-dir` is the escape hatch; there is
+  no skip flag. Backup names carry a fingerprint of the root they came from, so
+  one `--backup-dir` shared by several state roots neither collides nor lets one
+  root's migration prune another's copies. The copy is built in a `0700` staging
+  directory and renamed into place, so a custom backup directory never holds a
+  world-readable copy mid-write. If another process commits between the backup
+  and the migration's write lock — an older build, which does not honour the
+  migration lease — the migration aborts with nothing changed rather than
+  publishing a backup that does not match what it migrated.
 
 `approach db inspect` never refuses. It never constructs a store, never takes
 the bootstrap lock, and never repairs anything, so it still answers while a
 migration is running, against a database from a newer build, and against a root
 whose directory is read-only. Its `tier` is one of `missing`, `open`,
 `not_writable`, `malformed`, `not_a_database`, or `header`, and `reason` and
-`next_action` are non-null exactly when `readable` is false.
+`next_action` are non-null exactly when `readable` is false. `open` means the
+store really opens: a database stamped at this build's schema is also checked
+for the shape `NewStore` requires, so one missing its `flows` table or an index
+reports `malformed` rather than contradicting the open that then fails. A
+predecessor or newer-build schema is classified by `user_version` alone.
 
 ## Beads Task Tracking
 

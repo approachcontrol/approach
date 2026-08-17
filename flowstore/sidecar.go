@@ -24,6 +24,11 @@ const sidecarFilename = "approach.db.meta.json"
 // database schema it describes.
 const sidecarSchemaVersion = 1
 
+// generationIDBytes is the width of a generation ID before hex encoding. It is
+// named because validSidecar checks the encoded length against it, and the
+// timestamp fallback in newGenerationID has to keep matching.
+const generationIDBytes = 8
+
 const (
 	sidecarProvenanceMigrated = "migrated"
 	// sidecarProvenanceReconstructed marks a sidecar rebuilt from user_version
@@ -72,7 +77,40 @@ func readSidecar(root string) (databaseSidecar, bool) {
 	if err := json.Unmarshal(data, &sidecar); err != nil {
 		return databaseSidecar{}, false
 	}
+	// Parsing as JSON is not the same as being a sidecar. Absent is the safe
+	// reading of anything this build cannot interpret, and it is what the doc
+	// above promises — without this, "malformed is reported as absent" covered
+	// only syntax.
+	if !validSidecar(sidecar) {
+		return databaseSidecar{}, false
+	}
 	return sidecar, true
+}
+
+// validSidecar rejects a sidecar whose fields this build cannot use.
+//
+// The generation ID is the load-bearing one: sidecarGenerationOrNoGen puts it
+// straight into a backup FILENAME, so a value carrying a separator makes every
+// later migration build a destination under a directory that does not exist and
+// fail at the rename — reported as a backup failure suggesting the disk is
+// full. That is a hand-edited or externally damaged sidecar permanently
+// blocking the upgrade of a perfectly healthy database, which is precisely
+// backwards for a file the package documents as a cache that is never believed.
+//
+// newGenerationID emits exactly 16 lowercase hex characters, so that is the
+// whole grammar. Empty is allowed: callers already treat it as "no generation".
+func validSidecar(sidecar databaseSidecar) bool {
+	if sidecar.SchemaVersion != sidecarSchemaVersion {
+		return false
+	}
+	if sidecar.GenerationID == "" {
+		return true
+	}
+	if len(sidecar.GenerationID) != 2*generationIDBytes {
+		return false
+	}
+	_, err := hex.DecodeString(sidecar.GenerationID)
+	return err == nil
 }
 
 // sidecarDisagrees reports a sidecar whose physical version is not the one
@@ -141,7 +179,7 @@ func writeSidecar(root string, storedVersion int64, provenance, generation strin
 // CSPRNG is not worth failing a migration over — the ID names backup files and
 // is never a security boundary — so it degrades to a timestamp.
 func newGenerationID() string {
-	var raw [8]byte
+	var raw [generationIDBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return fmt.Sprintf("%016x", time.Now().UTC().UnixNano())
 	}

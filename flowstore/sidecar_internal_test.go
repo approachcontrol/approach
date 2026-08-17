@@ -210,3 +210,123 @@ func TestSidecarGenerationFallsBackToNoGen(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A predecessor stage that the resume path advances is a real migration — it
+// even writes a backup — but it promotes through completeCutover rather than
+// the authoritative-database branch that normally stamps provenance. Without an
+// explicit reconcile it gets no sidecar at all, and a later open reads that
+// absence as the legitimate never-migrated state and leaves it forever.
+func TestAResumedPredecessorStageStampsProvenance(t *testing.T) {
+	root := t.TempDir()
+	db := createParentReleaseV5DatabaseAt(t, filepath.Join(root, stageFilename))
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatalf("stage resume: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	sidecar, ok := readSidecar(root)
+	if !ok {
+		t.Fatal("a resumed predecessor stage wrote no provenance sidecar")
+	}
+	if sidecar.Provenance != sidecarProvenanceMigrated {
+		t.Fatalf("provenance = %q, want %q", sidecar.Provenance, sidecarProvenanceMigrated)
+	}
+	if sidecar.PhysicalVersion != databaseSchemaVersion {
+		t.Fatalf("physical_version = %d, want %d", sidecar.PhysicalVersion, databaseSchemaVersion)
+	}
+	if sidecar.GenerationID == "" {
+		t.Fatal("the sidecar carries no generation id to trace its backup to")
+	}
+}
+
+// The other half: a stage the previous run had already built at this build's
+// schema is resumed CREATION, not migration. Stamping it would claim a
+// migration that never happened.
+func TestAResumedCurrentStageStampsNoProvenance(t *testing.T) {
+	root := t.TempDir()
+	built, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := built.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Recreate the interrupted-cutover shape: a current-schema stage and no
+	// authoritative database.
+	if err := os.Rename(filepath.Join(root, databaseFilename), filepath.Join(root, stageFilename)); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(filepath.Join(root, databaseFilename) + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatalf("stage resume: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readSidecar(root); ok {
+		t.Fatal("a resumed current-schema stage claimed a migration that never happened")
+	}
+}
+
+// The sidecar's generation ID goes straight into a backup FILENAME, so a value
+// carrying a path separator makes every later migration fail at the rename —
+// reported as a backup failure suggesting the disk is full. A hand-edited or
+// externally damaged sidecar must not be able to permanently block the upgrade
+// of a healthy database.
+func TestAnInvalidSidecarIsTreatedAsAbsentAndDoesNotBlockMigration(t *testing.T) {
+	for name, body := range map[string]string{
+		"separator in generation": `{"schema_version":1,"generation_id":"bad/name","physical_version":5}`,
+		"non-hex generation":      `{"schema_version":1,"generation_id":"zzzzzzzzzzzzzzzz","physical_version":5}`,
+		"short generation":        `{"schema_version":1,"generation_id":"abc","physical_version":5}`,
+		"unknown schema version":  `{"schema_version":99,"generation_id":"feedfacefeedface","physical_version":5}`,
+		"not an object":           `[]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := schemaFiveRoot(t)
+			if err := os.WriteFile(sidecarPath(root), []byte(body), artifacts.FilePerm); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := readSidecar(root); ok {
+				t.Fatal("an uninterpretable sidecar was accepted as provenance")
+			}
+
+			store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+			if err != nil {
+				t.Fatalf("a damaged sidecar blocked the migration: %v", err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			// The migration ran and replaced the unusable provenance with real
+			// provenance, rather than preserving the bad generation id.
+			sidecar, ok := readSidecar(root)
+			if !ok {
+				t.Fatal("the migration left no usable sidecar behind")
+			}
+			if sidecar.Provenance != sidecarProvenanceMigrated {
+				t.Fatalf("provenance = %q, want %q", sidecar.Provenance, sidecarProvenanceMigrated)
+			}
+			if len(sidecar.GenerationID) != 2*generationIDBytes {
+				t.Fatalf("generation_id = %q, want a freshly generated one", sidecar.GenerationID)
+			}
+			// And the backup it wrote is named with the nogen fallback, since the
+			// unusable generation was correctly not carried into a filename.
+			names := backupNames(t, filepath.Join(root, backupDirName))
+			if len(names) != 1 || !strings.HasSuffix(names[0], "-nogen.db") {
+				t.Fatalf("backups = %v, want one falling back to nogen", names)
+			}
+		})
+	}
+}

@@ -2848,3 +2848,47 @@ PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}
 }
+
+// A reader deliberately no longer tightens a loose state root, and the docs say
+// it reports the mode instead. A diagnostic that nothing prints is a deletion
+// with extra steps, so the reader CLI paths have to surface it.
+func TestRunFlowListReportsALooseStateRoot(t *testing.T) {
+	root := t.TempDir()
+	seed, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The condition the reader now reports rather than repairs.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	deps := runDeps{
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	}
+	if err := run([]string{"approach", "flow", "list", "--json", "--state-root", root},
+		noScanDeps(t, deps)); err != nil {
+		t.Fatalf("flow list: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "has permissions 0755") {
+		t.Fatalf("stderr = %q, want the loose root reported", stderr.String())
+	}
+	// The report goes to stderr so piping the JSON stays clean.
+	if strings.Contains(stdout.String(), "permissions") {
+		t.Fatalf("the diagnostic leaked into stdout: %q", stdout.String())
+	}
+	// And it really was not repaired.
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("root mode = %04o, want an unrepaired 0755", info.Mode().Perm())
+	}
+}

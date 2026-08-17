@@ -62,6 +62,12 @@ var isDevelopmentBuild = version.IsDevelopment
 // acknowledgement.
 var errDevLiveMigrationRefused = errors.New("development build refused to migrate the release artifact root")
 
+// readUserVersion is the role gate's probe. A var so a test can stand in for a
+// probe that could not answer — the interesting case is not a corrupt file but
+// a database another process is holding, which is what makes the gate's
+// behaviour on versionErr a safety property rather than a formality.
+var readUserVersion = readUserVersionRO
+
 func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 	canonicalRoot, err := prepareStoreRoot(opts)
 	if err != nil {
@@ -94,12 +100,29 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 		// to acknowledge a migration it would refuse anyway. It returns ahead of
 		// the describeUnusableDatabase wraps below on purpose: an unmigrated
 		// database must never collect "move approach.db aside" advice.
-		storedVersion, versionErr := readUserVersionRO(databasePath)
+		storedVersion, versionErr := readUserVersion(databasePath)
 		if err := refuseUnmigratedForRole(storedVersion, versionErr, opts.role); err != nil {
 			return nil, err
 		}
-		if err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.backupDir, opts.allowDevLiveMigration); err != nil {
-			return nil, describeUnusableDatabase(canonicalRoot, err)
+		// A non-migrator that got past the gate with a READABLE user_version has
+		// already been proved current: the gate refuses anything older and anything
+		// newer, so databaseSchemaVersion is the only value left. Calling the
+		// migration helper for it would open approach.db with mode=rw and ping it
+		// purely to rediscover that, on every `flow list`, `serve`, and hook open.
+		//
+		// A non-migrator never enters the helper at all, INCLUDING when the probe
+		// failed. Falling through on versionErr would be the incident this unit
+		// exists to prevent: the probe can fail merely because another process
+		// held the database past its busy timeout, and the helper — which has no
+		// role check of its own — retries under the caller's longer lockTimeout,
+		// so a `flow list` or session hook that lost one race would migrate a
+		// predecessor database. An unreadable version instead falls to the
+		// read-only validateAuthoritativeDatabase below, which reaches the same
+		// describeUnusableDatabase classification without a write-capable open.
+		if opts.role == RoleMigrator {
+			if err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.backupDir, opts.allowDevLiveMigration); err != nil {
+				return nil, describeUnusableDatabase(canonicalRoot, err)
+			}
 		}
 		if err := validateAuthoritativeDatabase(databasePath); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
@@ -248,6 +271,12 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 	if err != nil {
 		return fmt.Errorf("open authoritative flow database for migration: %w", err)
 	}
+	// One connection for the whole migration. PRAGMA data_version is a
+	// PER-CONNECTION signal — it moves only when some OTHER connection commits —
+	// so the check across the backup boundary below is only meaningful if the
+	// backup, the probe, and the migration transaction all sit on the same
+	// connection. A pool would hand them out independently and silently.
+	db.SetMaxOpenConns(1)
 	closeDB := true
 	defer func() {
 		if closeDB {
@@ -307,9 +336,28 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 	//
 	// Autocommit, deliberately: SQLite answers `cannot VACUUM from within a
 	// transaction`, so this must stay above db.Begin.
+	// Sampled BEFORE the copy, not after. VACUUM INTO cannot run inside a
+	// transaction, so it reads its own snapshot and then releases; in WAL mode
+	// another connection can commit while it is still copying, which lands after
+	// the snapshot the backup captured. Sampling afterwards would record that
+	// commit as the baseline and compare it against itself, so the check would
+	// pass on exactly the backup it exists to catch. Taking the baseline here
+	// covers the copy itself as well as the gap before the write lock.
+	//
+	// The bootstrap lease does not close that window: it serializes this build's
+	// opens, and the writer that matters is a build that predates the lease
+	// entirely — an older release still holding the v5 database open is the
+	// mixed-build situation this unit exists for. A commit in that window would
+	// be migrated but absent from the backup, and neither the row count nor an
+	// in-place UPDATE would reveal it.
+	dataVersion, err := readDataVersion(db)
+	if err != nil {
+		return err
+	}
 	if err := backupBeforeMigration(db, path, canonicalRoot, backupDir, version); err != nil {
 		return err
 	}
+	migrationRaceProbe()
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin flow database schema migration: %w", err)
@@ -319,6 +367,15 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 			return fmt.Errorf("%w; rollback flow database schema migration: %v", cause, rollbackErr)
 		}
 		return cause
+	}
+	// Now that the write lock is held, nothing else can commit. Re-reading here
+	// closes the window: a change means the backup is already stale, and the
+	// migration has not touched anything yet, so refusing is free and the
+	// operator can close the other process and re-run. Detect-and-abort rather
+	// than copy-again, because a writer that raced once will race again and a
+	// retry loop would be the wrong shape for a one-shot command.
+	if err := verifyDataVersion(tx, dataVersion); err != nil {
+		return rollback(err)
 	}
 	statements := make([]string, 0, 10)
 	if !stampOnly {
@@ -742,6 +799,13 @@ func completeCutover(opts backendOptions, state cutoverState, presets map[string
 		// already covers this branch: the stage is renamed onto approach.db in
 		// this root, so the migration guard is correct here on its own terms and
 		// keeping it wired means a later reordering cannot quietly disarm both.
+		// Probed before the migration, because afterwards the stage is at this
+		// build's schema and there is nothing left to tell a resumed CREATION
+		// (a stage the previous run had already built current, which stamps no
+		// provenance) from a resumed MIGRATION (a predecessor stage this call
+		// advances, which must). Only a RoleMigrator reaches this branch, so
+		// reconciling below is role-correct.
+		stageVersion, stageVersionErr := readUserVersion(stagePath)
 		err := migrateAuthoritativeDatabase(stagePath, lockTimeout, root, opts.backupDir, allowDevLiveMigration)
 		if err == nil {
 			err = settleStagedSQLiteFile(stagePath)
@@ -756,6 +820,17 @@ func completeCutover(opts backendOptions, state cutoverState, presets map[string
 			}
 			if err := syncDirectory(root); err != nil {
 				return fmt.Errorf("sync promoted flow database directory: %w", err)
+			}
+			// A predecessor stage that this call advanced is a real migration —
+			// it even wrote a backup — but it promotes through here rather than
+			// through the authoritative-database branch that normally reconciles
+			// provenance. Without this the sidecar is never written at all, and a
+			// later open reads the absence as the legitimate never-migrated state
+			// and leaves it that way forever.
+			if stageVersionErr == nil && stageVersion < databaseSchemaVersion {
+				if err := reconcileSidecar(root, databaseSchemaVersion, true); err != nil {
+					return err
+				}
 			}
 			reportResumedCutover(root, legacyPath, databasePath, state.legacy)
 			return nil

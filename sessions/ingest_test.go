@@ -1067,3 +1067,40 @@ func TestIngestHookWithWarningsReportsAFlowStoreCompatibilityFailure(t *testing.
 		t.Fatalf("the persisted session record grew a warnings field: %s", stored)
 	}
 }
+
+// Opening the store is only the first way the attachment can fail. An absent
+// Flow, a rejected update, or a SQLite error during the write leave the session
+// unattached too, and discarding those errors made the hook exit 0 with nothing
+// to show for it — the silent failure this channel exists to end.
+func TestIngestHookWithWarningsReportsAFailedFlowAttachment(t *testing.T) {
+	root := t.TempDir()
+	seed, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleMigrator})
+	if err != nil {
+		t.Fatalf("seed flow store: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"session_id":"codex-orphan","cwd":"/repo/worktree"}`
+	result, err := sessions.IngestHookWithWarnings(sessions.ProviderCodex, strings.NewReader(payload), sessions.IngestOptions{
+		StateRoot: root,
+		Env: map[string]string{
+			// A healthy, current store that simply holds no such Flow.
+			"APPROACH_FLOW_ID":       "20260607T120000Z-absent",
+			"APPROACH_FLOW_PHASE_ID": "implementation",
+		},
+	})
+	if err != nil {
+		t.Fatalf("the session record itself must still be written: %v", err)
+	}
+	if result.Record.SessionID != "codex-orphan" {
+		t.Fatalf("record = %+v", result.Record)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want the failed attachment reported exactly once", result.Warnings)
+	}
+	if !strings.Contains(result.Warnings[0], "could not attach this session to Flow 20260607T120000Z-absent") {
+		t.Fatalf("warning %q does not name the failed attachment", result.Warnings[0])
+	}
+}

@@ -129,13 +129,26 @@ func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps, r
 	// belongs to the TUI's own flag set; threading it through every `flow`
 	// subcommand would add a flag to two dozen usage strings for an
 	// acknowledgement that is meant to be rare and deliberate.
-	return flowstore.NewStore(flowstore.StoreOptions{
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
 		Root:                  root,
 		RootExplicit:          explicit,
 		Role:                  role,
 		Presets:               cfg.Flow.Presets,
 		AllowDevLiveMigration: truthyEnv(deps.getenv("APPROACH_ALLOW_DEV_LIVE_MIGRATION")),
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Reported here rather than at each call site, because the checks a reader
+	// drops — the 0700 root assertion and the journal_mode=WAL write — are
+	// substituted by this channel, not deleted, and a diagnostic nothing prints
+	// is a deletion with extra steps. `db migrate` opens its own store and
+	// prints these itself, so centralizing here does not double up. stderr, so
+	// piping `flow list` stays clean.
+	for _, warning := range store.OpenDiagnostics().Warnings {
+		fmt.Fprintf(deps.stderr, "approach: %s\n", warning)
+	}
+	return store, nil
 }
 
 func runFlowCreate(args []string, deps runDeps) error {

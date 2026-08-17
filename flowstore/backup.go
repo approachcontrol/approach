@@ -1,7 +1,9 @@
 package flowstore
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,8 +18,9 @@ import (
 // root so a backup travels with the database it came from.
 const backupDirName = "backups"
 
-// backupRetention keeps this many backups PER migrated file. Per-stem, so a
-// run of staged-file backups can never evict the approach.db ones.
+// backupRetention keeps this many backups PER migrated file PER source root.
+// Per-stem, so a run of staged-file backups can never evict the approach.db
+// ones, and a shared --backup-dir can never evict another root's.
 const backupRetention = 8
 
 // backupBeforeMigration copies the database about to be migrated and proves the
@@ -41,28 +44,133 @@ func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fr
 	if err := db.QueryRow("SELECT count(*) FROM flows").Scan(&sourceRows); err != nil {
 		return backupFailure(backupDir, fmt.Errorf("count source rows: %w", err))
 	}
+	// Recorded BEFORE the create, because afterwards there is no way to tell
+	// which levels MkdirAll had to make. --backup-dir is an arbitrary path and
+	// may be missing several.
+	created := missingAncestors(backupDir)
 	if err := os.MkdirAll(backupDir, artifacts.DirPerm); err != nil {
 		return backupFailure(backupDir, err)
 	}
-	stem := filepath.Base(path)
+	stem := backupStem(path, canonicalRoot)
 	destination := filepath.Join(backupDir, backupFilename(stem, fromVersion,
 		time.Now().UTC(), sidecarGenerationOrNoGen(canonicalRoot)))
+	// The copy is built inside a 0700 staging directory and renamed into place,
+	// never written at the destination name directly. Two reasons, both about
+	// --backup-dir: VACUUM INTO creates its output with SQLite's default mode
+	// reduced by the umask, so under the usual 0022 a custom backup directory
+	// would hold a world-readable copy of every Flow record for the whole
+	// duration of the copy, and chmod'ing afterwards closes the window far too
+	// late. The default <root>/backups/ is shielded by the 0700 state root; the
+	// documented escape hatch is not. Staging also means a half-written or
+	// unverified copy never appears under a name an operator could restore from.
+	//
+	// A staging directory rather than an O_EXCL pre-created file because
+	// VACUUM INTO refuses to write to a path that already exists.
+	staging, err := os.MkdirTemp(backupDir, ".backup-")
+	if err != nil {
+		return backupFailure(backupDir, err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	staged := filepath.Join(staging, filepath.Base(destination))
 	// Out of space surfaces here rather than through a pre-flight probe: there
 	// is no free-space helper in the tree, Statfs' field widths differ per
 	// platform, and a probe would be racy against the copy it precedes and
 	// untestable besides. The wrap names the escape hatch.
-	if _, err := db.Exec("VACUUM INTO " + sqliteStringLiteral(destination)); err != nil {
+	backupRaceProbe()
+	if _, err := db.Exec("VACUUM INTO " + sqliteStringLiteral(staged)); err != nil {
 		return backupFailure(destination, err)
 	}
-	if err := os.Chmod(destination, artifacts.FilePerm); err != nil {
+	if err := os.Chmod(staged, artifacts.FilePerm); err != nil {
 		return backupFailure(destination, err)
 	}
-	if err := verifyBackup(destination, fromVersion, sourceRows); err != nil {
+	if err := verifyBackup(staged, fromVersion, sourceRows); err != nil {
+		return backupFailure(destination, err)
+	}
+	// VACUUM INTO's own refusal to overwrite is what kept two migrations from
+	// clobbering one backup, and the rename below would not inherit it. Keep the
+	// property explicitly rather than lose it to the staging step.
+	if _, err := os.Lstat(destination); err == nil {
+		return backupFailure(destination, fmt.Errorf("a backup by that name already exists"))
+	} else if !os.IsNotExist(err) {
+		return backupFailure(destination, err)
+	}
+	if err := os.Rename(staged, destination); err != nil {
+		return backupFailure(destination, err)
+	}
+	// VACUUM INTO syncs the backup's CONTENTS; nothing has synced the directory
+	// entry that names it, nor any directory MkdirAll just created. The whole
+	// promise of this file is that a crash during the migration below leaves a
+	// recoverable copy, and after a power loss an unsynced entry can be gone
+	// while the migrated database — committed and synced afterwards — is not.
+	// Syncing the backup directory alone is not enough: a directory is only an
+	// entry in ITS parent, so a brand-new /mnt/new/a/backups needs the whole
+	// created chain persisted or the pathname to the copy is lost.
+	if err := syncBackupPath(backupDir, created); err != nil {
 		return backupFailure(destination, err)
 	}
 	// Only after a successful verify, never before: pruning first would trade a
 	// proven backup for an unproven one.
-	return pruneBackups(backupDir, stem)
+	return pruneBackups(backupDir, stem, filepath.Base(destination))
+}
+
+// missingAncestors lists the directories MkdirAll will have to create, deepest
+// first. It stops at the first path that already exists: that one's own entry
+// is already as durable as whoever created it made it, and is not this
+// migration's to guarantee.
+func missingAncestors(dir string) []string {
+	var missing []string
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			return missing
+		}
+		missing = append(missing, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached the filesystem root without finding anything that exists.
+			// MkdirAll will fail; returning what we have keeps this total.
+			return missing
+		}
+		dir = parent
+	}
+}
+
+// syncBackupPath persists the backup's directory entry and the entry of every
+// directory this migration had to create to reach it.
+func syncBackupPath(backupDir string, created []string) error {
+	if err := syncDirectory(backupDir); err != nil {
+		return fmt.Errorf("sync backup directory: %w", err)
+	}
+	for _, dir := range created {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			continue
+		}
+		if err := syncDirectory(parent); err != nil {
+			return fmt.Errorf("sync backup directory ancestor %q: %w", parent, err)
+		}
+	}
+	return nil
+}
+
+// backupStem names the file being migrated AND the root it came from.
+//
+// The basename alone is not an identity. --backup-dir is an explicit path, so
+// two state roots can legitimately share one directory, and every first
+// migration of a v5 root produces the same `approach.db-v5-<second>-nogen`
+// name: the second root's VACUUM INTO fails outright because the target
+// already exists. Worse, pruneBackups groups on this stem, so once a shared
+// directory holds more than backupRetention `approach.db-v*` entries, migrating
+// one root deletes another root's only pre-migration copy — the exact recovery
+// path this file exists to guarantee.
+//
+// A hash rather than the root's basename, because roots are conventionally
+// named for their schema generation (`.../sessions/v1`) and their basenames
+// collide far more often than the roots do. Truncated to 4 bytes: this
+// disambiguates a handful of roots in one directory, it is not a security
+// boundary, and a full digest would bury the readable part of the name.
+func backupStem(path, canonicalRoot string) string {
+	sum := sha256.Sum256([]byte(canonicalRoot))
+	return fmt.Sprintf("%s-%s", filepath.Base(path), hex.EncodeToString(sum[:4]))
 }
 
 // backupFilename keys on the file being migrated, not on approach.db: the
@@ -124,7 +232,14 @@ func verifyBackup(path string, fromVersion, sourceRows int64) error {
 // pruneBackups keeps the newest backupRetention entries for one stem. Pruning
 // failures are reported: a backup directory that cannot be read is worth
 // knowing about before the migration commits, not after it fills the disk.
-func pruneBackups(backupDir, stem string) error {
+//
+// keep names the backup the caller just wrote and verified, which is exempt
+// whatever the sort says. Ordering is lexical over an embedded wall-clock
+// timestamp, so a clock that stepped backwards — or one stale entry stamped in
+// the future — makes the newest copy sort oldest, and pruning it would leave
+// the migration below running with no backup of the state it is about to
+// change. Empty when no new backup is in play, as on the retention-only path.
+func pruneBackups(backupDir, stem, keep string) error {
 	entries, err := os.ReadDir(backupDir)
 	if err != nil {
 		return fmt.Errorf("read backup directory %q: %w", backupDir, err)
@@ -135,18 +250,66 @@ func pruneBackups(backupDir, stem string) error {
 		if entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) || !strings.HasSuffix(entry.Name(), ".db") {
 			continue
 		}
+		if entry.Name() == keep {
+			continue
+		}
 		names = append(names, entry.Name())
 	}
-	if len(names) <= backupRetention {
+	// The exempt backup still counts against the budget, so retention holds at
+	// backupRetention rather than quietly becoming one more.
+	budget := backupRetention
+	if keep != "" {
+		budget--
+	}
+	if len(names) <= budget {
 		return nil
 	}
 	// The timestamp sits at a fixed position in a fixed format, so lexical
 	// order is chronological order for one stem.
 	sort.Strings(names)
-	for _, name := range names[:len(names)-backupRetention] {
+	for _, name := range names[:len(names)-budget] {
 		if err := os.Remove(filepath.Join(backupDir, name)); err != nil {
 			return fmt.Errorf("prune backup %q: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// backupRaceProbe and migrationRaceProbe are no-op seams marking the two
+// windows a concurrent commit can land in: during the copy itself, and between
+// the copy and the migration's write lock. Neither can be hit deterministically
+// from a test otherwise, and an untested consistency check is not one worth
+// trusting. They are separate so a test can prove the baseline is sampled
+// before the copy rather than after it.
+var (
+	backupRaceProbe    = func() {}
+	migrationRaceProbe = func() {}
+)
+
+// readDataVersion samples SQLite's cross-connection commit counter. It is
+// explicitly NOT affected by this connection's own writes, which is what makes
+// it the right signal: the question is whether anyone ELSE committed.
+func readDataVersion(db *sql.DB) (int64, error) {
+	var dataVersion int64
+	if err := db.QueryRow("PRAGMA data_version").Scan(&dataVersion); err != nil {
+		return 0, fmt.Errorf("read flow database data version: %w", err)
+	}
+	return dataVersion, nil
+}
+
+// verifyDataVersion proves nothing committed between the backup and the write
+// lock. The message names the actual remedy: this is what a build too old to
+// honour the bootstrap lease looks like from in here.
+func verifyDataVersion(tx *sql.Tx, expected int64) error {
+	var current int64
+	if err := tx.QueryRow("PRAGMA data_version").Scan(&current); err != nil {
+		return fmt.Errorf("re-read flow database data version: %w", err)
+	}
+	if current != expected {
+		return fmt.Errorf("another process wrote to the flow database while its pre-migration backup" +
+			" was being taken, so the backup no longer matches the database this migration would change;" +
+			" nothing has been migrated. Close any other approach process using this state root" +
+			" — including an older build, which does not honour the migration lease — and re-run")
 	}
 	return nil
 }
