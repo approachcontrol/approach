@@ -470,6 +470,78 @@ func TestRepoTmuxTrackedLaunchRejectsSelfExecutableResolutionFailure(t *testing.
 	}
 }
 
+// TestRepoTmuxTrackedLaunchPrefersPinnedExecutable is the upgrade-safety
+// contract for the private lease helpers. os.Executable names the mutable
+// installation path; after brew/cask replace that file, a long-lived TUI still
+// holds a verified pin in ctx.Executable. Both __flow-tmux-spawn and
+// __flow-lease-run must exec that pin, or a protocol-incompatible replacement
+// build can hang the handoff.
+func TestRepoTmuxTrackedLaunchPrefersPinnedExecutable(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	ctx.Executable = "/state/approach/sessions/v1/bin/approach-abc123"
+	fallbackCalled := false
+	spec, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		fallbackCalled = true
+		return "/opt/homebrew/bin/approach", nil
+	})
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunchWithExecutable returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+	if fallbackCalled {
+		t.Fatal("pinned launch must not resolve os.Executable")
+	}
+	requireTrackedLeaseHelpersUseExecutable(t, spec, ctx.Executable)
+}
+
+func TestRepoTmuxTrackedLaunchFallsBackToRunningBinaryWhenUnpinned(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	const running = "/tmp/approach-running-unpinned"
+	spec, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		return running, nil
+	})
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunchWithExecutable returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+	requireTrackedLeaseHelpersUseExecutable(t, spec, running)
+}
+
+func TestRepoTmuxTrackedLaunchRejectsRelativePinnedExecutable(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	ctx.Executable = "approach-abc123"
+	_, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		t.Fatal("relative pin must not fall back to os.Executable")
+		return "/opt/homebrew/bin/approach", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "pinned Approach executable path must be absolute") {
+		t.Fatalf("launch error = %v, want absolute pinned-path rejection", err)
+	}
+}
+
+func requireTrackedLeaseHelpersUseExecutable(t *testing.T, spec RepoTmuxAgentSpec, want string) {
+	t.Helper()
+	args := spec.Launch.Cmd.Args
+	if len(args) < 2 || args[0] != want || args[1] != flowlease.TmuxSpawnCommand {
+		t.Fatalf("spawn argv = %#v, want %s %s ...", args, want, flowlease.TmuxSpawnCommand)
+	}
+	scriptPath := privateArgValue(t, args, "--script")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read lease-run script: %v", err)
+	}
+	wantLease := shellQuote(want) + " " + shellQuote(flowlease.LeaseRunCommand)
+	if !strings.Contains(string(script), wantLease) {
+		t.Fatalf("lease-run script missing %q:\n%s", wantLease, script)
+	}
+}
+
 // TestRepoTmuxWindowNameNeverEmpty pins the fallback chain. tmux names an
 // unnamed window after its command, so an empty -n would silently rename the
 // window to the launch script's path.

@@ -275,12 +275,9 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 		if err != nil {
 			return RepoTmuxAgentSpec{}, fmt.Errorf("prepare tracked Flow lease: %w", err)
 		}
-		executablePath, err := executable()
+		executablePath, err := resolveTrackedTmuxExecutable(ctx.Executable, executable)
 		if err != nil {
-			return RepoTmuxAgentSpec{}, fmt.Errorf("resolve current Approach executable: %w", err)
-		}
-		if !filepath.IsAbs(executablePath) {
-			return RepoTmuxAgentSpec{}, errors.New("current Approach executable path must be absolute")
+			return RepoTmuxAgentSpec{}, err
 		}
 		handoffSuffix, err := randomHex(8)
 		if err != nil {
@@ -417,6 +414,29 @@ func randomHex(byteCount int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(data), nil
+}
+
+// resolveTrackedTmuxExecutable picks the binary both private lease helpers
+// exec. A launch that already carries a verified pin must use that path:
+// os.Executable still names the mutable installation even after an upgrade
+// replaces it, and a replacement whose hidden handoff protocol differs would
+// hang the tracked tmux launch. An empty pin keeps the previous running-binary
+// behaviour for genuinely unpinned callers.
+func resolveTrackedTmuxExecutable(pinned string, fallback func() (string, error)) (string, error) {
+	if path := strings.TrimSpace(pinned); path != "" {
+		if !filepath.IsAbs(path) {
+			return "", errors.New("pinned Approach executable path must be absolute")
+		}
+		return path, nil
+	}
+	path, err := fallback()
+	if err != nil {
+		return "", fmt.Errorf("resolve current Approach executable: %w", err)
+	}
+	if !filepath.IsAbs(path) {
+		return "", errors.New("current Approach executable path must be absolute")
+	}
+	return path, nil
 }
 
 // repoTmuxStderrLimit bounds what a failed tmux invocation can push into a
