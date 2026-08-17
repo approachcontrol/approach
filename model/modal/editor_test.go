@@ -164,7 +164,7 @@ func TestEditorHomeAndEndAreLineAware(t *testing.T) {
 
 func TestEditorAltEnterStillInsertsNewline(t *testing.T) {
 	m := newEditor("ab", modal.EditorSpec{Original: "ab", Cursor: 2}, nil)
-	next, out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}, Alt: true})
+	next, out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 	if out != modal.Consumed {
 		t.Fatalf("outcome = %v, want Consumed", out)
 	}
