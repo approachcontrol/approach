@@ -190,6 +190,11 @@ func epicProgressionSuccessTerminal(flow flowstore.FlowRecord) bool {
 	}
 }
 
+// epicProgressionFailureTerminal covers abandoned for completeness only: no
+// code path writes that status, so it is reachable only by hand-editing a
+// record. Such a Flow is already refused by rejectEpicProgressionCandidate and
+// by Store.CloseFlow, both predating this edge, so halting on it replaces a
+// silent permanent stall with a named one rather than creating a new trap.
 func epicProgressionFailureTerminal(flow flowstore.FlowRecord) bool {
 	switch epicProgressionResolvedStatus(flow) {
 	case flowstore.StatusBlocked, flowstore.StatusNeedsAttention, flowstore.StatusClosed, flowstore.StatusAbandoned:
