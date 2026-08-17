@@ -360,10 +360,17 @@ func (m Model) haltEpicProgressionCmd(request epicProgressionHaltRequest, observ
 	return func() tea.Msg {
 		key := flowstore.EpicProgressionKey{RepoPath: repoPath, EpicID: epicID}
 		halt := flowstore.EpicProgressionHalt{ChildBeadID: childID, Status: haltStatus, Message: message}
-		_, err := haltProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
+		persisted, err := haltProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
 		if err == nil {
+			// Halt is sticky, so an already-halted row keeps its first cause and
+			// this attempt's tuple is discarded. Announce what the store retained,
+			// never what this poll observed.
+			cause := halt
+			if persisted.Halt != nil {
+				cause = *persisted.Halt
+			}
 			return result(epicProgressionHaltPersisted,
-				fmt.Sprintf("Auto-progression halted for epic %s: child %s is %s", epicID, childID, haltStatus))
+				fmt.Sprintf("Auto-progression halted for epic %s: child %s is %s", epicID, cause.ChildBeadID, cause.Status))
 		}
 		authoritative, found, readErr := readProgression(key)
 		if readErr != nil {

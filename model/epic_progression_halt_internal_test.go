@@ -613,3 +613,38 @@ func TestEnableEpicProgressionAfterHaltResumesFromTheNextReadyChild(t *testing.T
 		}
 	})
 }
+
+// TestEpicProgressionHaltAnnouncesTheRetainedCause pins the first-cause
+// guarantee at the surface: HaltEpicProgression is sticky, so when another
+// process already halted the epic for a different child, the notification must
+// report the tuple the store retained rather than this attempt's observation.
+func TestEpicProgressionHaltAnnouncesTheRetainedCause(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	blocked := cloneFlowRecord(source)
+	blocked.Status = flowstore.StatusBlocked
+	retained := flowstore.EpicProgressionHalt{
+		ChildBeadID: "epic.z",
+		Status:      flowstore.StatusClosed,
+		Message:     "child Flow flow-z halted auto-progression",
+	}
+	m := Model{
+		autoAdvanceInFlight:      1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
+			first := retained
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &first}, nil
+		},
+	}
+	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{blocked}, Request: 1})
+	result := epicProgressionHaltMessage(t, cmd)
+	if result.disposition != epicProgressionHaltPersisted {
+		t.Fatalf("disposition = %v, want persisted", result.disposition)
+	}
+	next, _ = updateFlowRefreshTest(next, result)
+	want := "Auto-progression halted for epic epic: child epic.z is " + flowstore.StatusClosed
+	if next.status.Text != want {
+		t.Fatalf("status = %q, want %q", next.status.Text, want)
+	}
+}
