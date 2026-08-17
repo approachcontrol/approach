@@ -268,7 +268,10 @@ func (m Model) handlePromptTemplateResetFailed(msg PromptTemplateResetFailedMsg)
 	}
 	note := promptNote{Text: errText, Kind: modal.NoteError}
 	if msg.Origin == ResetFromEditor {
-		return m.openPromptTemplateEditor(target, msg.Draft, m.promptTemplateValue(target), len([]rune(msg.Draft)), note)
+		// Cursor is the pre-submit position stamped on the way out; a
+		// picker-origin reset never reaches this branch, so an untagged zero
+		// value cannot strand a cursor here.
+		return m.openPromptTemplateEditor(target, msg.Draft, m.promptTemplateValue(target), msg.Cursor, note)
 	}
 	return m.openPromptTemplatePicker(promptTemplateTargetIndex(target), note)
 }

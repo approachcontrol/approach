@@ -4021,6 +4021,35 @@ func TestModel_PromptTemplateEditorOriginResetFailureReconstructsTheEditor(t *te
 	}
 }
 
+func TestModel_PromptTemplateEditorOriginResetFailureKeepsTheCursor(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{
+		PlanPromptTemplate:  "custom plan",
+		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("   ")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	if got := m.InputCursor(); got != 0 {
+		t.Fatalf("cursor before submit = %d, want 0", got)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("expected a reset command from a whitespace-only save")
+	}
+	m, _ = update(m, cmd())
+
+	// A failed write keeps the draft and cursor, so a retry resumes where the
+	// user left off instead of jumping to the end of the buffer.
+	if got := m.InputCursor(); got != 0 {
+		t.Fatalf("cursor after a failed editor-origin reset = %d, want the pre-submit 0", got)
+	}
+}
+
 func TestModel_PromptTemplateSaveRetryAfterFailureSucceeds(t *testing.T) {
 	attempts := 0
 	var savedValue string

@@ -211,17 +211,22 @@ func isPromptTemplateEditor(view modal.View) bool {
 	return view.Kind == modal.Input && view.Editor.Enabled
 }
 
-// tagPromptTemplateCursor stamps the pre-submit cursor onto a failed save. The
+// tagPromptTemplateCursor stamps the pre-submit cursor onto a failed write. The
 // submit closure cannot supply it: it receives only the string, and by the
-// time it runs the modal has already been zeroed.
+// time it runs the modal has already been zeroed. Both failure messages are
+// tagged because a whitespace-only submit fails as a reset, not a save.
 func tagPromptTemplateCursor(cmd tea.Cmd, cursor int) tea.Cmd {
 	return func() tea.Msg {
-		msg := cmd()
-		if failed, ok := msg.(PromptTemplateSaveFailedMsg); ok {
+		switch failed := cmd().(type) {
+		case PromptTemplateSaveFailedMsg:
 			failed.Cursor = cursor
 			return failed
+		case PromptTemplateResetFailedMsg:
+			failed.Cursor = cursor
+			return failed
+		default:
+			return failed
 		}
-		return msg
 	}
 }
 

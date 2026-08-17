@@ -182,6 +182,7 @@ type PromptTemplateResetFailedMsg struct {
 	Key     string
 	Origin  PromptTemplateResetOrigin
 	Draft   string
+	Cursor  int
 	Err     string
 }
 
