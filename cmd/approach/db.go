@@ -59,16 +59,32 @@ Examples:
   approach db migrate --backup-dir /var/backups/approach
 `
 
+// parseDBLeafFlags parses one `db` subcommand's flags and refuses anything
+// left over. Both halves matter before the store opens: `help` as a bare word
+// reaches Parse as a positional rather than flag.ErrHelp, and Go stops flag
+// processing at the FIRST non-flag token, so `db migrate oops --state-root X`
+// would otherwise migrate the default root instead of X.
+func parseDBLeafFlags(flags *flag.FlagSet, args []string, deps runDeps) (handled bool, err error) {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printDBHelp(deps.stdout)
+		return true, nil
+	}
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		return help, err
+	}
+	if flags.NArg() > 0 {
+		return false, fmt.Errorf("unexpected argument %q\n\n%s", flags.Arg(0), dbHelpText)
+	}
+	return false, nil
+}
+
 func runDBInspect(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("db inspect", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printDBHelp(deps.stdout) }
 	asJSON := flags.Bool("json", false, "emit JSON output")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if help, err := parseCommandFlags(flags, args); help || err != nil {
-		if help {
-			return nil
-		}
+	if handled, err := parseDBLeafFlags(flags, args, deps); handled || err != nil {
 		return err
 	}
 	root, _, err := resolveDBStateRoot(*stateRoot, deps)
@@ -132,10 +148,7 @@ func runDBMigrate(args []string, deps runDeps) error {
 	flags.Usage = func() { printDBHelp(deps.stdout) }
 	backupDir := flags.String("backup-dir", "", "directory for the pre-migration backup")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if help, err := parseCommandFlags(flags, args); help || err != nil {
-		if help {
-			return nil
-		}
+	if handled, err := parseDBLeafFlags(flags, args, deps); handled || err != nil {
 		return err
 	}
 	root, explicit, err := resolveDBStateRoot(*stateRoot, deps)

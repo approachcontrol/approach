@@ -181,6 +181,43 @@ func TestRunDBMigrateHonorsTheDevLiveAcknowledgement(t *testing.T) {
 	}
 }
 
+// A positional token must never reach the store open. `db migrate` holds
+// RoleMigrator, and Go stops flag processing at the first non-flag argument, so
+// `approach db migrate help --state-root <scratch>` would otherwise migrate the
+// DEFAULT root while the operator was asking for help about a scratch one.
+func TestRunDBRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	defaultRoot := filepath.Join(stateHome, "approach", "sessions", "v1")
+
+	for _, command := range []string{"inspect", "migrate"} {
+		t.Run(command+" help", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if err := run([]string{"approach", "db", command, "help"},
+				dbDeps(t, &stdout, &stderr, nil)); err != nil {
+				t.Fatalf("db %s help returned an error: %v", command, err)
+			}
+			if !strings.Contains(stdout.String(), "approach db <inspect|migrate>") {
+				t.Fatalf("db %s help = %s", command, stdout.String())
+			}
+		})
+
+		t.Run(command+" stray argument", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run([]string{"approach", "db", command, "oops", "--state-root", t.TempDir()},
+				dbDeps(t, &stdout, &stderr, nil))
+			if err == nil || !strings.Contains(err.Error(), `unexpected argument "oops"`) {
+				t.Fatalf("db %s error = %v, want the unexpected-argument refusal", command, err)
+			}
+		})
+	}
+
+	// Neither spelling may have created — let alone migrated — the default root.
+	if _, err := os.Stat(defaultRoot); !os.IsNotExist(err) {
+		t.Fatalf("db touched the default root %q: stat err = %v", defaultRoot, err)
+	}
+}
+
 func TestDBIsRegisteredInTheDispatchAndHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if err := run([]string{"approach", "--help"}, dbDeps(t, &stdout, &stderr, nil)); err != nil {

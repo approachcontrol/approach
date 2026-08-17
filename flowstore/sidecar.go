@@ -167,11 +167,63 @@ func writeSidecar(root string, storedVersion int64, provenance, generation strin
 	if err != nil {
 		return fmt.Errorf("encode flow database sidecar: %w", err)
 	}
-	// Atomic: temp file, fsync, rename. A torn sidecar would read as absent,
-	// which is safe, but a rename keeps even that from being observable.
-	if err := artifacts.WriteFileAtomic(sidecarPath(root), append(data, '\n')); err != nil {
+	// Atomic AND durable: temp file, fsync, rename, fsync the directory. A torn
+	// sidecar would read as absent, which is safe, but a rename keeps even that
+	// from being observable.
+	if err := writeSidecarDurably(root, append(data, '\n')); err != nil {
 		return fmt.Errorf("write flow database sidecar: %w", err)
 	}
+	return nil
+}
+
+// sidecarDurabilityProbe is a no-op seam naming each durability step as it
+// completes. fsync has no effect a test can read back — the loss it prevents
+// only appears after a power cut — and an unverified durability claim is
+// exactly what this file used to make.
+var sidecarDurabilityProbe = func(step string) {}
+
+// writeSidecarDurably replaces the sidecar so that, once it returns, both the
+// contents and the directory entry naming them have reached the disk.
+//
+// Deliberately not artifacts.WriteFileAtomic: that closes and renames without
+// syncing either, so after a power loss the migrated database — committed and
+// synced by SQLite — can survive while its provenance does not. A missing
+// sidecar is read as the legitimate never-migrated state, so nothing later
+// reconstructs it, and the migration record is gone for good.
+func writeSidecarDurably(root string, data []byte) error {
+	path := sidecarPath(root)
+	temp, err := os.CreateTemp(root, ".approach.db.meta-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer func() { _ = os.Remove(tempName) }()
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Chmod(artifacts.FilePerm); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	sidecarDurabilityProbe("file-sync")
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempName, path); err != nil {
+		return err
+	}
+	sidecarDurabilityProbe("rename")
+	// After the rename, never before: syncing the directory first would persist
+	// an entry that does not exist yet and leave the one that matters unsynced.
+	if err := syncDirectory(root); err != nil {
+		return err
+	}
+	sidecarDurabilityProbe("dir-sync")
 	return nil
 }
 

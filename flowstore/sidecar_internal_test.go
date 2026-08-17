@@ -2,6 +2,7 @@ package flowstore
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -328,5 +329,94 @@ func TestAnInvalidSidecarIsTreatedAsAbsentAndDoesNotBlockMigration(t *testing.T)
 				t.Fatalf("backups = %v, want one falling back to nogen", names)
 			}
 		})
+	}
+}
+
+// The sidecar is the only record that a migration happened, and a missing one
+// reads as the legitimate never-migrated state, so no later open reconstructs
+// it. Its contents and its directory entry must therefore both be durable
+// before the migration reports success: a commit that survives a power loss
+// while its provenance does not is a permanent loss of the record.
+//
+// fsync has no effect a test can read back, so the seam records the order of
+// the durability steps instead. Ordering is the substance: syncing the
+// directory before the rename would persist an entry that does not exist yet.
+func TestTheSidecarIsMadeDurableBeforeItIsVisible(t *testing.T) {
+	root := t.TempDir()
+	var steps []string
+	original := sidecarDurabilityProbe
+	sidecarDurabilityProbe = func(step string) { steps = append(steps, step) }
+	t.Cleanup(func() { sidecarDurabilityProbe = original })
+
+	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, newGenerationID()); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	want := []string{"file-sync", "rename", "dir-sync"}
+	if len(steps) != len(want) {
+		t.Fatalf("durability steps = %v, want %v", steps, want)
+	}
+	for i, step := range want {
+		if steps[i] != step {
+			t.Fatalf("durability steps = %v, want %v", steps, want)
+		}
+	}
+
+	// And the file it made durable is the one a later open reads back.
+	sidecar, ok := readSidecar(root)
+	if !ok || sidecar.PhysicalVersion != databaseSchemaVersion {
+		t.Fatalf("sidecar = %+v ok = %t", sidecar, ok)
+	}
+	info, err := os.Stat(sidecarPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != artifacts.FilePerm {
+		t.Fatalf("sidecar mode = %v, want %v", info.Mode().Perm(), artifacts.FilePerm)
+	}
+}
+
+// The provenance must record what the migration ACTUALLY did, not what the
+// earlier probe predicted it would do. The probe can fail for reasons that have
+// nothing to do with the schema — another process holding the database past the
+// probe's busy timeout is the obvious one — and the migration helper then
+// retries under the caller's longer lock timeout and succeeds. Inferring the
+// outcome from the failed probe stamps no provenance at all, and because a
+// missing sidecar reads as the legitimate never-migrated state, that migration
+// record is lost permanently.
+func TestAMigrationAfterAFailedVersionProbeStillStampsProvenance(t *testing.T) {
+	root := schemaFiveRoot(t)
+
+	original := readUserVersion
+	probes := 0
+	readUserVersion = func(path string) (int64, error) {
+		probes++
+		if probes == 1 {
+			return 0, errors.New("database is locked")
+		}
+		return original(path)
+	}
+	t.Cleanup(func() { readUserVersion = original })
+
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatalf("open after a failed probe: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The migration ran: the schema advanced and a pre-migration backup exists.
+	if version, err := readUserVersionRO(filepath.Join(root, databaseFilename)); err != nil || version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d (%v), want %d", version, err, databaseSchemaVersion)
+	}
+	sidecar, ok := readSidecar(root)
+	if !ok {
+		t.Fatal("a successful migration left no provenance behind")
+	}
+	if sidecar.Provenance != sidecarProvenanceMigrated {
+		t.Fatalf("provenance = %q, want %q", sidecar.Provenance, sidecarProvenanceMigrated)
+	}
+	if sidecar.PhysicalVersion != databaseSchemaVersion || sidecar.GenerationID == "" {
+		t.Fatalf("sidecar = %+v", sidecar)
 	}
 }

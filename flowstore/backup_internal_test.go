@@ -453,3 +453,60 @@ func TestANestedBackupDirectorySyncsEveryCreatedAncestor(t *testing.T) {
 		t.Fatalf("missingAncestors of an existing directory = %v, want none", missing)
 	}
 }
+
+// Retention is chronological, and the filename is not: the -v<version>-
+// component sits ahead of the timestamp, so sorting the whole name sorts by
+// schema version first. Two cases fall out of that, and both prune the newest
+// pre-migration recovery copies rather than the oldest — the exact copies an
+// operator reaches for when a migration goes wrong.
+func TestRetentionPrunesByTimestampAcrossSchemaVersions(t *testing.T) {
+	stamp := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
+
+	t.Run("a newer low-version backup outlives older high-version ones", func(t *testing.T) {
+		backupDir := t.TempDir()
+		// An operator restored an old database and re-migrated it, so the newest
+		// backup carries the LOWEST version in the directory.
+		for i := range backupRetention {
+			writeBackupFile(t, backupDir,
+				backupFilename(databaseFilename, 5, stamp.Add(time.Duration(i)*time.Minute), "nogen"))
+		}
+		newest := backupFilename(databaseFilename, 4, stamp.Add(time.Hour), "nogen")
+		writeBackupFile(t, backupDir, newest)
+
+		if err := pruneBackups(backupDir, databaseFilename, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(backupDir, newest)); err != nil {
+			t.Fatalf("retention pruned the newest backup %q: %v", newest, err)
+		}
+	})
+
+	t.Run("two-digit versions do not sort before single-digit ones", func(t *testing.T) {
+		backupDir := t.TempDir()
+		oldest := backupFilename(databaseFilename, 9, stamp, "nogen")
+		writeBackupFile(t, backupDir, oldest)
+		// Lexically "v10" precedes "v9", so every one of these sorts oldest.
+		var newest string
+		for i := range backupRetention {
+			newest = backupFilename(databaseFilename, 10, stamp.Add(time.Duration(i+1)*time.Minute), "nogen")
+			writeBackupFile(t, backupDir, newest)
+		}
+
+		if err := pruneBackups(backupDir, databaseFilename, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(backupDir, newest)); err != nil {
+			t.Fatalf("retention pruned the newest backup %q (v10 sorted before v9): %v", newest, err)
+		}
+		if _, err := os.Stat(filepath.Join(backupDir, oldest)); !os.IsNotExist(err) {
+			t.Fatalf("retention kept the oldest backup %q: %v", oldest, err)
+		}
+	})
+}
+
+func writeBackupFile(t *testing.T, backupDir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), artifacts.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+}

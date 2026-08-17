@@ -177,7 +177,39 @@ func backupStem(path, canonicalRoot string) string {
 // stage-resume call migrates approach.db.migrating, and a backup that lied
 // about its source would be worse than none.
 func backupFilename(stem string, fromVersion int64, at time.Time, generation string) string {
-	return fmt.Sprintf("%s-v%d-%s-%s.db", stem, fromVersion, at.Format("20060102T150405Z"), generation)
+	return fmt.Sprintf("%s-v%d-%s-%s.db", stem, fromVersion, at.Format(backupTimestampLayout), generation)
+}
+
+// backupTimestampLayout is the stamp backupFilename writes. Named so the
+// parser and the writer cannot drift apart.
+const backupTimestampLayout = "20060102T150405Z"
+
+// backupTimestamp recovers when a backup was taken from its name, which is the
+// only chronology available: the mtime of a restored or rsynced copy says when
+// it was last written, not when it captured the database.
+//
+// Reported as (time, ok) rather than an error because a name this build did not
+// write is not a failure — pruning classifies it and moves on.
+func backupTimestamp(stem, name string) (time.Time, bool) {
+	rest, ok := strings.CutPrefix(name, stem+"-v")
+	if !ok {
+		return time.Time{}, false
+	}
+	// Past the version, which is variable-width and is exactly why the whole
+	// name cannot be sorted directly.
+	_, rest, ok = strings.Cut(rest, "-")
+	if !ok {
+		return time.Time{}, false
+	}
+	stamp, _, ok := strings.Cut(rest, "-")
+	if !ok {
+		return time.Time{}, false
+	}
+	at, err := time.ParseInLocation(backupTimestampLayout, stamp, time.UTC)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
 }
 
 func backupFailure(destination string, cause error) error {
@@ -234,11 +266,11 @@ func verifyBackup(path string, fromVersion, sourceRows int64) error {
 // knowing about before the migration commits, not after it fills the disk.
 //
 // keep names the backup the caller just wrote and verified, which is exempt
-// whatever the sort says. Ordering is lexical over an embedded wall-clock
-// timestamp, so a clock that stepped backwards — or one stale entry stamped in
-// the future — makes the newest copy sort oldest, and pruning it would leave
-// the migration below running with no backup of the state it is about to
-// change. Empty when no new backup is in play, as on the retention-only path.
+// whatever the sort says. Ordering is over an embedded wall-clock timestamp, so
+// a clock that stepped backwards — or one stale entry stamped in the future —
+// makes the newest copy sort oldest, and pruning it would leave the migration
+// below running with no backup of the state it is about to change. Empty when
+// no new backup is in play, as on the retention-only path.
 func pruneBackups(backupDir, stem, keep string) error {
 	entries, err := os.ReadDir(backupDir)
 	if err != nil {
@@ -264,9 +296,28 @@ func pruneBackups(backupDir, stem, keep string) error {
 	if len(names) <= budget {
 		return nil
 	}
-	// The timestamp sits at a fixed position in a fixed format, so lexical
-	// order is chronological order for one stem.
-	sort.Strings(names)
+	// Sorted on the PARSED timestamp, not the filename. The name carries
+	// `-v<version>-` ahead of the stamp, so lexical order is version order
+	// first: a re-migrated restore writes a newer backup under a lower version
+	// and sorts oldest, and once versions reach two digits `v10` precedes `v9`
+	// outright. Either way retention prunes the newest recovery copies, which
+	// is precisely backwards for the file it exists to preserve.
+	//
+	// The name breaks the tie so one second holding several backups still
+	// prunes deterministically, and an unparseable entry sorts oldest: it is
+	// not a name this build writes, and preferring it over a copy whose
+	// provenance is legible would be the wrong way to be cautious.
+	sort.Slice(names, func(i, j int) bool {
+		left, leftOK := backupTimestamp(stem, names[i])
+		right, rightOK := backupTimestamp(stem, names[j])
+		if leftOK != rightOK {
+			return rightOK
+		}
+		if leftOK && !left.Equal(right) {
+			return left.Before(right)
+		}
+		return names[i] < names[j]
+	})
 	for _, name := range names[:len(names)-budget] {
 		if err := os.Remove(filepath.Join(backupDir, name)); err != nil {
 			return fmt.Errorf("prune backup %q: %w", name, err)
