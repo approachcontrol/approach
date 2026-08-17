@@ -63,12 +63,7 @@ func tmuxRouteEligible(ctx actions.AgentLaunchContext) bool {
 	if ctx.Headless || ctx.FlowRepair {
 		return false
 	}
-	switch agent.Normalize(ctx.Command) {
-	case agent.CommandCodex, agent.CommandClaude, agent.CommandCursor:
-		return true
-	default:
-		return false
-	}
+	return agent.Supported(ctx.Command)
 }
 
 // tmuxLaunchRouteFor is the one implementation of the routing rule. It reports

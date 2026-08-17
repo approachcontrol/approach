@@ -230,8 +230,7 @@ func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmu
 	if !commandExists("tmux", lookPath) {
 		return RepoTmuxAgentSpec{}, ErrRepoTmuxUnavailable
 	}
-	command := agent.Normalize(ctx.Command)
-	if command != agent.CommandCodex && command != agent.CommandClaude {
+	if !agent.Supported(ctx.Command) {
 		return RepoTmuxAgentSpec{}, errors.New("tmux launch mode supports only CLI agents")
 	}
 	// The window is not an embedded slot: there is no dock to prefill, so the
