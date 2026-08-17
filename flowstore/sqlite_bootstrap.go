@@ -772,24 +772,13 @@ func completeCutover(opts backendOptions, state cutoverState, presets map[string
 			tombstonePath, shellQuote(tombstonePath), shellQuote(legacyPath))
 	}
 
-	// Every path out of this function that does not return an error publishes a
-	// current-schema approach.db in root — by promoting the stage below, or by
-	// building a fresh database further down. refuseDevLiveMigration cannot see
-	// either one: the first is a stage that may already be at this build's
-	// schema, in which case migrateAuthoritativeDatabase returns before the
-	// guard ever runs, and the second has no stored version to compare at all.
-	// So the creation guard belongs here, ahead of every branch, rather than
-	// only in front of the build. Checked before anything is renamed or removed
-	// so a refusal leaves the root byte-identical.
-	if err := refuseDevLiveCreation(root, allowDevLiveMigration); err != nil {
-		return err
-	}
-
-	// The Stage C role gate sits beside the dev-live one rather than replacing
-	// it: they ask different questions ("which build" versus "which role") and
-	// they are deliberately not the same shape. Creation from empty stays open
-	// to every role; importing a legacy corpus and resuming an interrupted
-	// cutover are migrations wearing a different hat, and they are not.
+	// Role first, then dev-live — the same order as the authoritative-database
+	// path above, and for the same reason. Importing a legacy corpus and
+	// resuming an interrupted cutover are RoleMigrator-only; a non-migrator
+	// that saw refuseDevLiveCreation first would be told to set
+	// APPROACH_ALLOW_DEV_LIVE_MIGRATION=1 and retry `flow` or `serve`, which
+	// still cannot import or resume. Creation from empty stays open to every
+	// role, so that path falls through this gate to the creation guard.
 	if opts.role != RoleMigrator {
 		if state.stage {
 			return refuseRoleStageResume(stagePath, opts.role)
@@ -797,6 +786,19 @@ func completeCutover(opts backendOptions, state cutoverState, presets map[string
 		if state.legacy {
 			return refuseRoleLegacyImport(legacyPath, opts.role)
 		}
+	}
+
+	// Every path out of this function that does not return an error publishes a
+	// current-schema approach.db in root — by promoting the stage below, or by
+	// building a fresh database further down. refuseDevLiveMigration cannot see
+	// either one: the first is a stage that may already be at this build's
+	// schema, in which case migrateAuthoritativeDatabase returns before the
+	// guard ever runs, and the second has no stored version to compare at all.
+	// So the creation guard belongs here, ahead of every mutating branch,
+	// rather than only in front of the build. Checked before anything is
+	// renamed or removed so a refusal leaves the root byte-identical.
+	if err := refuseDevLiveCreation(root, allowDevLiveMigration); err != nil {
+		return err
 	}
 
 	if state.stage {

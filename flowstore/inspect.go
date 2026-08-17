@@ -254,14 +254,23 @@ func classifyDatabase(report *InspectReport, root, path string) {
 func reportMissing(report *InspectReport, root string) {
 	// The next action depends on what else is in the root: reporting "no flow
 	// database" over a legacy corpus would be actively misleading now that
-	// importing one is migrator-only.
+	// importing one is migrator-only. A flows.legacy tombstone without a
+	// stage is an incomplete older cutover: migrate refuses it and asks for
+	// `mv flows.legacy flows` first, so that case must not share the
+	// "not yet imported / run db migrate" branch.
 	if present, err := inspectReservedDirectory(filepath.Join(root, "flows")); err == nil && present {
 		unreadable(report, TierMissing, "legacy flow corpus not yet imported", "run 'approach db migrate'")
 		return
 	}
 	if present, err := inspectReservedDirectory(filepath.Join(root, "flows.legacy")); err == nil && present {
-		unreadable(report, TierMissing, "legacy flow corpus not yet imported", "run 'approach db migrate'")
-		return
+		if _, err := os.Lstat(filepath.Join(root, stageFilename)); err != nil {
+			tombstonePath := filepath.Join(root, "flows.legacy")
+			legacyPath := filepath.Join(root, "flows")
+			unreadable(report, TierMissing, "incomplete older cutover",
+				fmt.Sprintf("run `mv %s %s` and start approach again",
+					shellQuote(tombstonePath), shellQuote(legacyPath)))
+			return
+		}
 	}
 	if _, err := os.Lstat(filepath.Join(root, stageFilename)); err == nil {
 		unreadable(report, TierMissing, "interrupted cutover", "run 'approach db migrate'")

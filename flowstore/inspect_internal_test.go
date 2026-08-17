@@ -108,6 +108,28 @@ func TestInspectDistinguishesALegacyCorpusFromAnInterruptedCutover(t *testing.T)
 	}
 }
 
+func TestInspectReportsATombstoneOnlyRootAsAnIncompleteOlderCutover(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "flows.legacy"), artifacts.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	report := inspectOrFail(t, root)
+	assertUnreadable(t, report, TierMissing)
+	if *report.Reason != "incomplete older cutover" {
+		t.Fatalf("reason = %q", *report.Reason)
+	}
+	tombstonePath := filepath.Join(filepath.Dir(report.Path), "flows.legacy")
+	legacyPath := filepath.Join(filepath.Dir(report.Path), "flows")
+	wantAction := fmt.Sprintf("run `mv %s %s` and start approach again",
+		shellQuote(tombstonePath), shellQuote(legacyPath))
+	if *report.NextAction != wantAction {
+		t.Fatalf("next_action = %q, want %q", *report.NextAction, wantAction)
+	}
+	if strings.Contains(*report.NextAction, "db migrate") {
+		t.Fatal("tombstone-only next_action named db migrate, which refuses this root")
+	}
+}
+
 func TestInspectReportsANonRegularDatabasePath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, databaseFilename), artifacts.DirPerm); err != nil {

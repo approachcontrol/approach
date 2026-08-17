@@ -457,6 +457,75 @@ func TestNonMigratorRolesRefuseAnInterruptedCutover(t *testing.T) {
 	}
 }
 
+// The cutover path used to invert the steady-state order: refuseDevLiveCreation
+// ran before the role gate, so a writer or reader against a release-owned root
+// that still had flows/ or a stage got the acknowledgeable development-live
+// refusal. Setting the variable and retrying still hit the role refusal.
+func TestNonMigratorRolesRefuseCutoverAheadOfDevLiveOnTheReleaseRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, string)
+		want  func(string, Role) string
+	}{
+		{
+			name: "legacy corpus",
+			setup: func(t *testing.T, root string) {
+				if err := os.MkdirAll(filepath.Join(root, "flows"), artifacts.DirPerm); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(root string, role Role) string {
+				return "legacy flow corpus at " + filepath.Join(root, "flows") +
+					" must be imported by 'approach db migrate' (this process opened the store as " +
+					role.String() + " and will not migrate)"
+			},
+		},
+		{
+			name: "interrupted cutover",
+			setup: func(t *testing.T, root string) {
+				if err := os.WriteFile(filepath.Join(root, stageFilename), []byte("staged"), artifacts.FilePerm); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(root string, role Role) string {
+				return "interrupted flow database cutover at " + filepath.Join(root, stageFilename) +
+					" must be resumed by 'approach db migrate' (this process opened the store as " +
+					role.String() + " and will not migrate)"
+			},
+		},
+	} {
+		for _, role := range []Role{RoleReader, RoleWriter} {
+			t.Run(tc.name+"/"+role.String(), func(t *testing.T) {
+				stateHome := t.TempDir()
+				t.Setenv("XDG_STATE_HOME", stateHome)
+				root := filepath.Join(stateHome, "approach", "sessions", "v1")
+				if err := os.MkdirAll(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				tc.setup(t, root)
+				stubDevelopmentBuild(t, true)
+				_, err := NewStore(StoreOptions{Root: root, Role: role})
+				if err == nil {
+					t.Fatal("expected a refusal")
+				}
+				if errors.Is(err, errDevLiveMigrationRefused) {
+					t.Fatalf("got the acknowledgeable development-live refusal: %v", err)
+				}
+				if !errors.Is(err, errRoleRefusedMigration) {
+					t.Fatalf("refusal is not errRoleRefusedMigration: %v", err)
+				}
+				want := tc.want(canonical(t, root), role)
+				if err.Error() != want {
+					t.Fatalf("refusal = %q, want %q", err.Error(), want)
+				}
+				if strings.Contains(err.Error(), "APPROACH_ALLOW_DEV_LIVE_MIGRATION") {
+					t.Fatalf("role refusal named the acknowledgement a non-migrator cannot use: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestAReaderStoreRefusesWritesInGo(t *testing.T) {
 	root := t.TempDir()
 	seed, err := NewStore(StoreOptions{Root: root, Role: RoleWriter})
