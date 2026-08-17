@@ -70,16 +70,20 @@ func TestRendererSurfacesNonJSONFailures(t *testing.T) {
 }
 
 func TestRendererClosesStreamedTextBeforeToolCall(t *testing.T) {
-	got := renderAll(t, `{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"I'll read"}]}}
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{name: "open line", text: "I'll read"},
+		{name: "line already closed", text: "I'll read\\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderAll(t, `{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"`+tc.text+`"}]}}
 {"type":"tool_call","subtype":"started","message":{"content":[{"name":"ReadFile"}]}}
 `)
-	if strings.Contains(got, "I'll read⏺") || strings.Contains(got, "I'll read⏺ ReadFile") {
-		t.Fatalf("streamed text merged into the tool line:\n%q", got)
-	}
-	if !strings.Contains(got, "I'll read\r\n") {
-		t.Fatalf("expected streamed text on its own line, got:\n%q", got)
-	}
-	if !strings.Contains(got, "⏺ ReadFile\r\n") {
-		t.Fatalf("expected tool marker on its own line, got:\n%q", got)
+			if want := "I'll read\r\n⏺ ReadFile\r\n"; got != want {
+				t.Fatalf("rendered output = %q, want %q", got, want)
+			}
+		})
 	}
 }
