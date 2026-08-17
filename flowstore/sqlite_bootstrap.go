@@ -94,14 +94,31 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 		// to acknowledge a migration it would refuse anyway. It returns ahead of
 		// the describeUnusableDatabase wraps below on purpose: an unmigrated
 		// database must never collect "move approach.db aside" advice.
-		if err := refuseUnmigratedForRole(databasePath, opts.role); err != nil {
+		storedVersion, versionErr := readUserVersionRO(databasePath)
+		if err := refuseUnmigratedForRole(storedVersion, versionErr, opts.role); err != nil {
 			return nil, err
 		}
-		if err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.allowDevLiveMigration); err != nil {
+		if err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.backupDir, opts.allowDevLiveMigration); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
 		}
 		if err := validateAuthoritativeDatabase(databasePath); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
+		}
+		// Still under the bootstrap lease. One call covers both the fresh
+		// provenance entry and the repair of a sidecar that drifted from
+		// user_version — the second is unreachable from inside
+		// migrateAuthoritativeDatabase, whose early return fires first.
+		//
+		// The staleness is reported as OBSERVED, by every role including the
+		// one that then repairs it. OpenDiagnostics answers "what did this open
+		// find", and a migrator that reported a clean sidecar because it had
+		// just rewritten one would hide the drift entirely.
+		sidecarStale := sidecarDisagrees(canonicalRoot, databaseSchemaVersion)
+		if opts.role == RoleMigrator {
+			migrated := versionErr == nil && storedVersion < databaseSchemaVersion
+			if err := reconcileSidecar(canonicalRoot, databaseSchemaVersion, migrated); err != nil {
+				return nil, err
+			}
 		}
 		// A stage left behind by a crash that still managed to promote is
 		// obsolete the moment approach.db exists. Drop it here: leaving it would
@@ -118,6 +135,7 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 		if err != nil {
 			return nil, err
 		}
+		backend.diagnostics.SidecarStale = sidecarStale
 		if _, err := presetRegistry(opts.presets); err != nil {
 			_ = backend.db.Close()
 			return nil, err
@@ -196,9 +214,8 @@ func prepareStoreRoot(opts backendOptions) (string, error) {
 // corrupt or garbage approach.db has no version to compare, and returning the
 // raw error here would replace describeUnusableDatabase's classification of
 // those files. Inspect is where a corrupt database gets a better answer.
-func refuseUnmigratedForRole(databasePath string, role Role) error {
-	storedVersion, err := readUserVersionRO(databasePath)
-	if err != nil {
+func refuseUnmigratedForRole(storedVersion int64, readErr error, role Role) error {
+	if readErr != nil {
 		return nil
 	}
 	switch {
@@ -218,7 +235,7 @@ func refuseUnmigratedForRole(databasePath string, role Role) error {
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
 // It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
 // authoritative read-only validation and before the WAL runtime handle opens.
-func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canonicalRoot string, allowDevLiveMigration bool) error {
+func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canonicalRoot, backupDir string, allowDevLiveMigration bool) error {
 	millis, err := sqliteBusyTimeoutMillis(lockTimeout)
 	if err != nil {
 		return err
@@ -282,6 +299,16 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		}
 	} else if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
 		return fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
+	}
+	// Placement is exact. Everything above can still refuse — the dev-live
+	// guard, the unsupported-predecessor check, and the already-current early
+	// return — and a backup written any higher would mean every refused open
+	// and every TUI startup first paid for a full copy of the database.
+	//
+	// Autocommit, deliberately: SQLite answers `cannot VACUUM from within a
+	// transaction`, so this must stay above db.Begin.
+	if err := backupBeforeMigration(db, path, canonicalRoot, backupDir, version); err != nil {
+		return err
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -715,7 +742,7 @@ func completeCutover(opts backendOptions, state cutoverState, presets map[string
 		// already covers this branch: the stage is renamed onto approach.db in
 		// this root, so the migration guard is correct here on its own terms and
 		// keeping it wired means a later reordering cannot quietly disarm both.
-		err := migrateAuthoritativeDatabase(stagePath, lockTimeout, root, allowDevLiveMigration)
+		err := migrateAuthoritativeDatabase(stagePath, lockTimeout, root, opts.backupDir, allowDevLiveMigration)
 		if err == nil {
 			err = settleStagedSQLiteFile(stagePath)
 		}

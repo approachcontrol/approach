@@ -211,6 +211,8 @@ type backendOptions struct {
 	// root is created, never which root helper the role uses.
 	rootExplicit          bool
 	allowDevLiveMigration bool
+	// backupDir overrides <root>/backups/ for the pre-migration copy.
+	backupDir string
 }
 
 // requireWriter refuses a mutation on a read-only handle.

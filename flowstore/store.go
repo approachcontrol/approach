@@ -215,6 +215,9 @@ type StoreOptions struct {
 	// decides only whether a RoleReader creates a missing root or reports the
 	// typo. The zero value keeps today's create-if-absent behaviour.
 	RootExplicit bool
+	// BackupDir is where a migration writes its pre-migration copy. Empty means
+	// <root>/backups/. Surfaced as `approach db migrate --backup-dir`.
+	BackupDir string
 }
 
 // IsNotFound reports whether err means the requested Flow record does not exist.
@@ -719,6 +722,7 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		presets:               opts.Presets,
 		role:                  opts.Role,
 		rootExplicit:          opts.RootExplicit,
+		backupDir:             opts.BackupDir,
 		allowDevLiveMigration: opts.AllowDevLiveMigration,
 	})
 	if err != nil {

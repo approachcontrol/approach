@@ -1,0 +1,228 @@
+package flowstore
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/version"
+)
+
+func backupNames(t *testing.T, backupDir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func TestAMigrationWritesAVerifiedBackup(t *testing.T) {
+	root := schemaFiveRoot(t)
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	backupDir := filepath.Join(root, backupDirName)
+	names := backupNames(t, backupDir)
+	if len(names) != 1 {
+		t.Fatalf("backups = %v, want exactly one", names)
+	}
+	if !strings.HasPrefix(names[0], databaseFilename+"-v5-") {
+		t.Fatalf("backup %q does not name the migrated file and its schema", names[0])
+	}
+	// The very first migration of a pre-sidecar root has no generation to draw
+	// on, which is the ordinary case rather than an edge one.
+	if !strings.HasSuffix(names[0], "-nogen.db") {
+		t.Fatalf("backup %q should have fallen back to nogen", names[0])
+	}
+	backupPath := filepath.Join(backupDir, names[0])
+	db, err := sql.Open("sqlite", sqliteDSN(backupPath, map[string][]string{"mode": {"ro"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var result string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&result); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(result, "ok") {
+		t.Fatalf("integrity_check = %q", result)
+	}
+	var version int64
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 5 {
+		t.Fatalf("backup user_version = %d, want the pre-migration 5", version)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != artifacts.FilePerm {
+		t.Fatalf("backup mode = %04o, want %04o", info.Mode().Perm(), artifacts.FilePerm)
+	}
+}
+
+func TestAnUnwritableBackupTargetAbortsTheMigration(t *testing.T) {
+	root := schemaFiveRoot(t)
+	// A regular file where the backup directory must go: MkdirAll fails, so the
+	// migration aborts before it can touch user_version.
+	backupDir := filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(backupDir, []byte("not a directory"), artifacts.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator, BackupDir: backupDir})
+	if err == nil {
+		t.Fatal("expected the migration to abort")
+	}
+	if !strings.Contains(err.Error(), "migration backup to") ||
+		!strings.Contains(err.Error(), "'approach db migrate --backup-dir <path>'") {
+		t.Fatalf("error %q does not name the escape hatch", err)
+	}
+	if version, err := readUserVersionRO(filepath.Join(root, databaseFilename)); err != nil || version != 5 {
+		t.Fatalf("user_version = %d (err %v), want an unchanged 5", version, err)
+	}
+}
+
+func TestAnAlreadyCurrentDatabaseWritesNoBackup(t *testing.T) {
+	root := t.TempDir()
+	created, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := created.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Every TUI startup takes this path. A copy of the database on each one
+	// would be a real cost for no benefit.
+	reopened, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if names := backupNames(t, filepath.Join(root, backupDirName)); len(names) != 0 {
+		t.Fatalf("backups = %v, want none", names)
+	}
+}
+
+// The gate-ordering regression: everything that can still refuse sits above the
+// backup, so a refused open never pays for a full copy first.
+func TestARefusedMigrationWritesNoBackup(t *testing.T) {
+	t.Run("dev live refusal", func(t *testing.T) {
+		stateHome := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateHome)
+		releaseRoot, err := artifacts.ReleaseDefaultRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(releaseRoot, artifacts.DirPerm); err != nil {
+			t.Fatal(err)
+		}
+		db := createParentReleaseV5Database(t, releaseRoot)
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		isDevelopmentBuild = func() bool { return true }
+		t.Cleanup(func() { isDevelopmentBuild = version.IsDevelopment })
+
+		if _, err := NewStore(StoreOptions{Root: releaseRoot, Role: RoleMigrator}); err == nil {
+			t.Fatal("expected the dev-live refusal")
+		}
+		if names := backupNames(t, filepath.Join(releaseRoot, backupDirName)); len(names) != 0 {
+			t.Fatalf("a refused open wrote backups: %v", names)
+		}
+	})
+
+	t.Run("unsupported predecessor", func(t *testing.T) {
+		root := t.TempDir()
+		db := createParentReleaseV5Database(t, root)
+		if _, err := db.Exec("PRAGMA user_version = 42"); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator}); err == nil {
+			t.Fatal("expected an unsupported-predecessor error")
+		}
+		if names := backupNames(t, filepath.Join(root, backupDirName)); len(names) != 0 {
+			t.Fatalf("a refused open wrote backups: %v", names)
+		}
+	})
+}
+
+func TestRetentionKeepsEightBackupsPerMigratedFile(t *testing.T) {
+	backupDir := t.TempDir()
+	stamp := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
+	var oldest string
+	for i := range 9 {
+		name := backupFilename(databaseFilename, 5, stamp.Add(time.Duration(i)*time.Minute), "nogen")
+		if i == 0 {
+			oldest = name
+		}
+		if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), artifacts.FilePerm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A staged-file backup must never be able to evict the approach.db ones.
+	stageBackup := backupFilename(stageFilename, 4, stamp, "nogen")
+	if err := os.WriteFile(filepath.Join(backupDir, stageBackup), []byte("x"), artifacts.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pruneBackups(backupDir, databaseFilename); err != nil {
+		t.Fatal(err)
+	}
+	names := backupNames(t, backupDir)
+	if len(names) != backupRetention+1 {
+		t.Fatalf("kept %d entries (%v), want %d plus the staged one", len(names), names, backupRetention)
+	}
+	for _, name := range names {
+		if name == oldest {
+			t.Fatalf("retention kept the oldest backup %q", oldest)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, stageBackup)); err != nil {
+		t.Fatalf("pruning approach.db backups removed a staged-file backup: %v", err)
+	}
+}
+
+// The stage-resume call site migrates approach.db.migrating, so its backup must
+// name that file rather than approach.db.
+func TestTheStageResumeBackupNamesTheStagedFile(t *testing.T) {
+	root := t.TempDir()
+	db := createParentReleaseV5DatabaseAt(t, filepath.Join(root, stageFilename))
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatalf("stage resume: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	names := backupNames(t, filepath.Join(root, backupDirName))
+	if len(names) != 1 || !strings.HasPrefix(names[0], stageFilename+"-v5-") {
+		t.Fatalf("backups = %v, want one named for %s", names, stageFilename)
+	}
+}
