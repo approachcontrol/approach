@@ -390,6 +390,26 @@ and Flow records are stored under `<root>/sessions/...`,
 plans or flows config in v1. **Moving or cleaning the sessions root therefore
 also moves or removes saved plans and Flow records.**
 
+Three more files live beside the database, all created by `approach db migrate`
+or a TUI start and none of them configurable in v1:
+`<root>/approach.db.meta.json` records which build migrated the database and
+when, `<root>/backups/` holds the verified pre-migration copies (8 per migrated
+file; `approach db migrate --backup-dir PATH` writes them elsewhere), and
+`<root>/.approach.db.bootstrap.lock` is the migration lease.
+
+**Migration is not automatic.** After a release that bumps the flow database
+schema, `approach flow`, `approach serve`, and the session hook refuse the root
+and name `approach db migrate`; run that, or start the TUI. `approach db inspect
+[--json]` reports what is in a root without opening a store, taking that lock, or
+repairing anything, so it still answers while a migration is running.
+
+One consequence for a root whose permissions are looser than `0700`: `approach
+flow list` and `approach serve` used to tighten it as a side effect of opening
+it. They no longer do — they report the mode and warn, because repairing it
+would erase the state `approach db inspect` exists to show. A first `approach
+serve` against a `0755` root therefore leaves a `0600` database inside a `0755`
+directory. Mutating commands and the TUI still tighten the root to `0700`.
+
 ## Saved Plans
 
 Agents persist plans explicitly through the `approach plan` subcommands; plans are

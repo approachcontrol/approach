@@ -456,8 +456,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		if flowStore != nil {
 			return flowStore, nil
 		}
+		// RoleWriter, not RoleMigrator: the process-wide store built at startup
+		// holds the one migrator role. This lazy fallback exists for when that
+		// store is nil, so against a predecessor-schema root it refuses and
+		// points at `approach db migrate` rather than migrating from inside the
+		// alt screen.
 		store, err := flowstore.NewStore(flowstore.StoreOptions{
 			Root:    opts.SessionStateRoot,
+			Role:    flowstore.RoleWriter,
 			Presets: opts.FlowPresets,
 		})
 		if err != nil {

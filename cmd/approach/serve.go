@@ -71,7 +71,10 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 	// Presets must reach the store: they are consulted on the read path to
 	// restore missing depends_on edges, so a store built without them would
 	// report different dependsOn, status, and currentPhase than the CLI.
-	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps)
+	// Read-only by role as well as by construction: serve only ever calls List
+	// and ReadEpicProgression, and it must not migrate, discard a staged
+	// database, or tighten the mode of a state root it merely reads.
+	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps, flowstore.RoleReader)
 	if err != nil {
 		return fmt.Errorf("error opening flow store: %w", err)
 	}

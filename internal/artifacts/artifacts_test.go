@@ -325,3 +325,59 @@ func TestReleaseDefaultRootFallsBackToHomeWithoutXDGStateHome(t *testing.T) {
 		t.Fatalf("ReleaseDefaultRoot() = %q, want %q", release, want)
 	}
 }
+
+// ResolveCanonicalRoot is the read-only half of SecureCanonicalRoot. The pair of
+// assertions that matter are that it resolves symlinks like its sibling and that
+// it leaves a loose directory exactly as it found it — a reader that repaired
+// the mode would erase the state a diagnostic exists to report.
+func TestResolveCanonicalRootReportsWithoutRepairing(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	canonical, err := artifacts.ResolveCanonicalRoot(link, "flow store root")
+	if err != nil {
+		t.Fatalf("ResolveCanonicalRoot() error = %v", err)
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+	if canonical != resolvedTarget {
+		t.Fatalf("canonical = %q, want %q", canonical, resolvedTarget)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("mode = %04o, want 0755 (ResolveCanonicalRoot must not chmod)", info.Mode().Perm())
+	}
+}
+
+func TestResolveCanonicalRootDoesNotCreateAMissingRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "absent")
+	if _, err := artifacts.ResolveCanonicalRoot(root, "flow store root"); err == nil {
+		t.Fatal("ResolveCanonicalRoot() on a missing root returned no error")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("ResolveCanonicalRoot created the root: %v", err)
+	}
+}
+
+func TestResolveCanonicalRootRejectsANonDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := artifacts.ResolveCanonicalRoot(path, "flow store root")
+	if err == nil || !strings.Contains(err.Error(), "must resolve to a directory") {
+		t.Fatalf("error = %v, want a not-a-directory failure", err)
+	}
+}

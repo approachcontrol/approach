@@ -49,6 +49,10 @@ WORKTREE_ROOT=~/projects ./bin/approach
 
 # Serve the read-only GraphQL API on 127.0.0.1:8787
 ./bin/approach serve
+
+# Report what is in the artifact root, and migrate it after a release bump
+./bin/approach db inspect --json
+./bin/approach db migrate
 ```
 
 `approach serve` exposes repos and Flows over `POST /graphql` for external
@@ -253,6 +257,10 @@ started outside Approach, configure Claude Code or Codex hooks to call:
 approach session-hook --provider claude
 approach session-hook --provider codex
 ```
+
+The hook writes a warning to stderr and still exits zero when it captures the
+session but cannot attach it to a Flow — a schema-compatibility notice is not a
+persistence failure. Run `approach db migrate` when you see one.
 
 Transcripts are stored under the user state directory with restrictive
 permissions, never inside repositories. Storage layout, security details, and
