@@ -2128,6 +2128,27 @@ func TestRunFlowCreateFallsBackToPlanThenSessionRoot(t *testing.T) {
 	}
 }
 
+// migrateLegacyCorpusForCLITest imports a legacy flows/ tree the way
+// `approach db migrate` does. After Stage C the `flow` and `serve` commands
+// open as a reader or a writer and refuse a legacy corpus outright, so a test
+// that wants to exercise the read path has to migrate first — with the same
+// presets the config supplies, because edge recovery runs only during the
+// migration.
+func migrateLegacyCorpusForCLITest(t *testing.T, root string, presets []flowstore.Preset) {
+	t.Helper()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:    root,
+		Role:    flowstore.RoleMigrator,
+		Presets: presets,
+	})
+	if err != nil {
+		t.Fatalf("migrate legacy corpus: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunFlowReadEnvRootLoadsConfigPresetsForRecovery(t *testing.T) {
 	root := t.TempDir()
 	flowID := "20260607T120000Z-env-preset-recovery"
@@ -2154,6 +2175,7 @@ func TestRunFlowReadEnvRootLoadsConfigPresetsForRecovery(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	migrateLegacyCorpusForCLITest(t, root, []flowstore.Preset{researchPresetForCLITest()})
 
 	var stdout bytes.Buffer
 	err := run([]string{"approach", "flow", "read", "--flow-id", flowID},
@@ -2211,6 +2233,7 @@ func TestRunFlowReadExplicitStateRootLoadsConfigPresetsForRecovery(t *testing.T)
 	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	migrateLegacyCorpusForCLITest(t, root, []flowstore.Preset{researchPresetForCLITest()})
 
 	var stdout bytes.Buffer
 	err := run([]string{"approach", "flow", "read", "--flow-id", flowID, "--state-root", root},
@@ -2233,6 +2256,44 @@ func TestRunFlowReadExplicitStateRootLoadsConfigPresetsForRecovery(t *testing.T)
 	}
 	if got := phaseByID(record, "draft").DependsOn; !slices.Equal(got, []string{"research"}) {
 		t.Fatalf("draft DependsOn = %#v, want [research]", got)
+	}
+}
+
+// A typo'd state root should say so. `flow list` opens as a reader, and the
+// launch env sets APPROACH_FLOW_STATE_ROOT, so an env root is exactly where a
+// wrong path is most likely — it gets the same answer as a wrong --state-root
+// rather than silently materialising an empty tree.
+func TestRunFlowListRejectsAnAbsentExplicitStateRoot(t *testing.T) {
+	absent := filepath.Join(t.TempDir(), "typo")
+	for name, deps := range map[string]runDeps{
+		"env": {getenv: func(key string) string {
+			if key == "APPROACH_FLOW_STATE_ROOT" {
+				return absent
+			}
+			return ""
+		}},
+		"flag": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := []string{"approach", "flow", "list", "--json"}
+			if name == "flag" {
+				args = append(args, "--state-root", absent)
+			}
+			var stdout bytes.Buffer
+			base := deps
+			base.loadConfig = func() (config.Config, error) { return config.Config{}, nil }
+			base.stdout = &stdout
+			err := run(args, noScanDeps(t, base))
+			if err == nil {
+				t.Fatal("flow list created or accepted an absent explicit state root")
+			}
+			if err.Error() != "state root "+absent+" does not exist" {
+				t.Fatalf("error = %q", err)
+			}
+			if _, statErr := os.Stat(absent); !os.IsNotExist(statErr) {
+				t.Fatalf("the absent root was created: %v", statErr)
+			}
+		})
 	}
 }
 
@@ -2724,11 +2785,12 @@ func TestRunFlowCreateRejectsInvalidAgentConfig(t *testing.T) {
 	}
 }
 
-// The dev-live-migration refusal names an environment variable as the way to
-// acknowledge it from the CLI, because --allow-dev-live-migration belongs to the
-// TUI's flag set. Advice a surface cannot act on is worse than no advice, so the
-// store opener shared by `flow` and `serve` has to read it.
-func TestNewFlowStoreHonorsTheDevLiveMigrationAcknowledgement(t *testing.T) {
+// The CLI store opener no longer migrates at all. `flow` and `serve` open as a
+// reader or a writer, so a predecessor-schema root returns the ROLE refusal —
+// which names `approach db migrate` and, unlike the dev-live refusal it now
+// precedes, is not acknowledgeable. That is the actual new contract, and the
+// acknowledgement's own coverage moves to `db migrate`, which owns migration.
+func TestTheCLIStoreOpenerRefusesAPredecessorSchemaRootForEveryRole(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	root := filepath.Join(stateHome, "approach", "sessions", "v1")
@@ -2741,27 +2803,24 @@ func TestNewFlowStoreHonorsTheDevLiveMigrationAcknowledgement(t *testing.T) {
 	deps := runDeps{getenv: func(key string) string { return env[key] }}
 	cfg := config.Config{}
 
-	if _, err := newFlowStoreWithConfig(root, cfg, deps); err == nil {
-		t.Fatal("the CLI store opener migrated the release-owned root without acknowledgement")
-	} else if !strings.Contains(err.Error(), "APPROACH_ALLOW_DEV_LIVE_MIGRATION") {
-		t.Fatalf("refusal %q does not name the environment acknowledgement", err)
-	}
-
-	// With the acknowledgement the guard no longer fires. This fixture's schema
-	// is deliberately minimal, so the migration still fails further in on schema
-	// validation — the assertion is that the failure is no longer the *refusal*,
-	// which is the only thing the env plumbing controls. flowstore's own tests
-	// own the end-to-end migration against a full predecessor fixture.
-	env["APPROACH_ALLOW_DEV_LIVE_MIGRATION"] = "1"
-	store, err := newFlowStoreWithConfig(root, cfg, deps)
-	if err == nil {
-		if err := store.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	if strings.Contains(err.Error(), "APPROACH_ALLOW_DEV_LIVE_MIGRATION") {
-		t.Fatalf("acknowledged open still hit the dev-live-migration refusal: %v", err)
+	for _, role := range []flowstore.Role{flowstore.RoleReader, flowstore.RoleWriter} {
+		t.Run(role.String(), func(t *testing.T) {
+			for _, acknowledged := range []bool{false, true} {
+				env["APPROACH_ALLOW_DEV_LIVE_MIGRATION"] = ""
+				if acknowledged {
+					env["APPROACH_ALLOW_DEV_LIVE_MIGRATION"] = "1"
+				}
+				_, err := newFlowStoreWithConfig(root, cfg, deps, role)
+				if err == nil {
+					t.Fatalf("the CLI store opener migrated a predecessor-schema root as %s", role)
+				}
+				want := "flow database schema 4 needs migration to 6; run 'approach db migrate'" +
+					" (this process opened the store as " + role.String() + " and will not migrate)"
+				if err.Error() != want {
+					t.Fatalf("acknowledged=%v refusal = %q, want %q", acknowledged, err, want)
+				}
+			}
+		})
 	}
 }
 
@@ -2787,5 +2846,49 @@ CREATE TABLE flows (
 );
 PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A reader deliberately no longer tightens a loose state root, and the docs say
+// it reports the mode instead. A diagnostic that nothing prints is a deletion
+// with extra steps, so the reader CLI paths have to surface it.
+func TestRunFlowListReportsALooseStateRoot(t *testing.T) {
+	root := t.TempDir()
+	seed, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The condition the reader now reports rather than repairs.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	deps := runDeps{
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	}
+	if err := run([]string{"approach", "flow", "list", "--json", "--state-root", root},
+		noScanDeps(t, deps)); err != nil {
+		t.Fatalf("flow list: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "has permissions 0755") {
+		t.Fatalf("stderr = %q, want the loose root reported", stderr.String())
+	}
+	// The report goes to stderr so piping the JSON stays clean.
+	if strings.Contains(stdout.String(), "permissions") {
+		t.Fatalf("the diagnostic leaked into stdout: %q", stdout.String())
+	}
+	// And it really was not repaired.
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("root mode = %04o, want an unrepaired 0755", info.Mode().Perm())
 	}
 }

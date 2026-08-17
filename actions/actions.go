@@ -1608,7 +1608,19 @@ func newTerminalCommandWithStatus(dir string, env []string, argv []string, sessi
 }
 
 func newTerminalCommandWithStatusPath(dir string, env []string, argv []string, session, statusPath string) (*terminalCommand, error) {
-	scriptPath, err := writeTerminalCommandScript(dir, env, argv, statusPath)
+	return newTerminalCommandWithArgvBuilder(dir, env, session, statusPath, func(string) ([]string, error) {
+		return argv, nil
+	})
+}
+
+func newTerminalCommandWithArgvBuilder(
+	dir string,
+	env []string,
+	session string,
+	statusPath string,
+	buildArgv func(scriptPath string) ([]string, error),
+) (*terminalCommand, error) {
+	scriptPath, err := writeTerminalCommandScriptWithArgvBuilder(dir, env, statusPath, buildArgv)
 	if err != nil {
 		if statusPath != "" {
 			_ = os.Remove(statusPath)
@@ -1635,9 +1647,17 @@ func (c *terminalCommand) cleanup() {
 }
 
 func writeTerminalCommandScript(dir string, env []string, argv []string, statusPath string) (string, error) {
-	if len(argv) == 0 {
-		return "", fmt.Errorf("agent command has no argv")
-	}
+	return writeTerminalCommandScriptWithArgvBuilder(dir, env, statusPath, func(string) ([]string, error) {
+		return argv, nil
+	})
+}
+
+func writeTerminalCommandScriptWithArgvBuilder(
+	dir string,
+	env []string,
+	statusPath string,
+	buildArgv func(scriptPath string) ([]string, error),
+) (string, error) {
 
 	file, err := os.CreateTemp("", "approach-agent-*.sh")
 	if err != nil {
@@ -1647,6 +1667,15 @@ func writeTerminalCommandScript(dir string, env []string, argv []string, statusP
 	cleanup := func() {
 		_ = file.Close()
 		_ = os.Remove(path)
+	}
+	argv, err := buildArgv(path)
+	if err != nil {
+		cleanup()
+		return "", err
+	}
+	if len(argv) == 0 {
+		cleanup()
+		return "", fmt.Errorf("agent command has no argv")
 	}
 
 	var b strings.Builder

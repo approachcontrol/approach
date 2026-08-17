@@ -7,6 +7,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -188,7 +189,9 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *testing.T) {
 	record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseBlocked})
 	newModel := func(mode ui.Mode) Model {
-		m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}, Options{}), mode)
+		m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}, Options{
+			InspectFlowLease: func(string, string) (flowlease.LeaseState, error) { return flowlease.Free, nil },
+		}), mode)
 		m.activePane = 1
 		if mode == ui.ModeActiveFlows {
 			m.activeFlows = m.activeFlows.SetItems([]flowstore.FlowRecord{record})

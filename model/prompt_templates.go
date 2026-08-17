@@ -12,12 +12,17 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-const promptTemplateEditorVisibleLines = 16
-
 type promptTemplateTarget struct {
 	Section string
 	Key     string
 	Title   string
+}
+
+// promptNote is one piece of modal feedback: text plus severity. Its zero
+// value renders no note at all.
+type promptNote struct {
+	Text string
+	Kind modal.NoteKind
 }
 
 var promptTemplateTargets = []promptTemplateTarget{
@@ -34,19 +39,25 @@ var promptTemplateTargets = []promptTemplateTarget{
 }
 
 func (m Model) handlePromptTemplates() (tea.Model, tea.Cmd) {
-	return m.openPromptTemplatePicker(0), nil
+	return m.openPromptTemplatePicker(0, promptNote{}), nil
 }
 
-func (m Model) openPromptTemplatePicker(selected int) Model {
+// openPromptTemplatePicker rebuilds the picker from scratch, which is why the
+// note is a parameter rather than something applied at each call site.
+func (m Model) openPromptTemplatePicker(selected int, note promptNote) Model {
 	m.modal = modal.OpenSelectWithLayout(
 		ui.PromptTemplateSelectPrompt,
 		m.promptTemplateSelectItems(),
 		selected,
-		modal.Layout{Width: 42, Height: len(promptTemplateTargets) + 3, Placement: modal.PlacementCenter},
+		modal.Layout{
+			Width:     ui.PromptPickerWidth,
+			Height:    len(promptTemplateTargets) + 3 + ui.PromptPickerNoteRows,
+			Placement: modal.PlacementCenter,
+		},
 		func(value string) tea.Cmd {
 			return func() tea.Msg { return promptTemplateEditRequestedMsg{Value: value} }
 		},
-	)
+	).SetSelectNote(note.Text, note.Kind)
 	return m
 }
 
@@ -61,17 +72,47 @@ func (m Model) handlePromptTemplateModalKey(msg tea.KeyMsg) (Model, tea.Cmd, boo
 		if !ok {
 			return m, nil, true
 		}
-		return m, m.resetPromptTemplateCommand(target), true
+		index := promptTemplateTargetIndex(target)
+		if strings.TrimSpace(m.promptTemplateValue(target)) == "" {
+			return m.openPromptTemplatePicker(index, promptNote{
+				Text: target.Title + " is already default",
+				Kind: modal.NoteNeutral,
+			}), nil, true
+		}
+		reset := m
+		m.modal = modal.OpenConfirm(
+			"Reset "+target.Title+" to its built-in default?",
+			func() tea.Cmd { return reset.resetPromptTemplateCommand(target, ResetFromPicker, "") },
+		).WithCancel(func(modal.View) tea.Cmd {
+			return promptTemplatePickerReturn(target, promptNote{
+				Text: target.Title + " unchanged",
+				Kind: modal.NoteNeutral,
+			})
+		})
+		return m, nil, true
 	case "v":
 		target, ok := selectedPromptTemplateTarget(view)
 		if !ok {
 			return m, nil, true
 		}
-		m.modal = modal.OpenText(m.builtInPromptTemplatePreview(target))
+		m.modal = modal.OpenText(m.builtInPromptTemplatePreview(target)).
+			WithCancel(func(modal.View) tea.Cmd {
+				return promptTemplatePickerReturn(target, promptNote{})
+			})
 		return m, nil, true
 	default:
 		return m, nil, false
 	}
+}
+
+func promptTemplatePickerReturn(target promptTemplateTarget, note promptNote) tea.Cmd {
+	return func() tea.Msg {
+		return promptTemplatePickerReturnMsg{Target: target, Note: note}
+	}
+}
+
+func (m Model) handlePromptTemplatePickerReturn(msg promptTemplatePickerReturnMsg) Model {
+	return m.openPromptTemplatePicker(promptTemplateTargetIndex(msg.Target), msg.Note)
 }
 
 func selectedPromptTemplateTarget(view modal.View) (promptTemplateTarget, bool) {
@@ -86,19 +127,60 @@ func (m Model) handlePromptTemplateEditRequested(msg promptTemplateEditRequested
 	if !ok {
 		return m.setStatus(statusOther, "Prompt template is unavailable")
 	}
+	value := m.promptTemplateValue(target)
+	return m.openPromptTemplateEditor(target, value, value, len([]rune(value)), promptNote{})
+}
+
+// openPromptTemplateEditor builds the editor for a target. draft is what the
+// user sees and original is the persisted value it is compared against; they
+// differ only when an editor is reconstructed after a failed write, which is
+// exactly when it must open already dirty.
+func (m Model) openPromptTemplateEditor(target promptTemplateTarget, draft, original string, cursor int, note promptNote) Model {
+	submitModel := m
 	m.modal = modal.OpenRawMultiLineInput(
 		"Edit "+target.Title,
 		"prompt template",
-		m.promptTemplateValue(target),
+		draft,
 		nil,
 		func(input string) tea.Cmd {
+			// A blank or whitespace-only save keeps its existing meaning:
+			// reset to the built-in default.
 			if strings.TrimSpace(input) == "" {
-				return m.resetPromptTemplateCommand(target)
+				return submitModel.resetPromptTemplateCommand(target, ResetFromEditor, input)
 			}
-			return m.savePromptTemplateCommand(target, input)
+			return submitModel.savePromptTemplateCommand(target, input)
 		},
-	).WithInputHeight(promptTemplateEditorVisibleLines)
+	).AsEditor(modal.EditorSpec{
+		Title:    target.Title,
+		Identity: promptTemplateIdentity(target, original),
+		Original: original,
+		Cursor:   cursor,
+		Note:     note.Text,
+		NoteKind: note.Kind,
+	}).WithCancel(func(view modal.View) tea.Cmd {
+		if view.Editor.Dirty {
+			return promptTemplatePickerReturn(target, promptNote{
+				Text: "Discarded changes to " + target.Title,
+				Kind: modal.NoteWarning,
+			})
+		}
+		return promptTemplatePickerReturn(target, promptNote{
+			Text: "No changes to " + target.Title,
+			Kind: modal.NoteNeutral,
+		})
+	})
 	return m
+}
+
+func promptTemplateIdentity(target promptTemplateTarget, value string) string {
+	return promptTemplateTargetValue(target) + "  " + promptTemplateState(value)
+}
+
+func promptTemplateState(value string) string {
+	if strings.TrimSpace(value) != "" {
+		return "custom"
+	}
+	return "default"
 }
 
 func (m Model) savePromptTemplateCommand(target promptTemplateTarget, value string) tea.Cmd {
@@ -110,12 +192,18 @@ func (m Model) savePromptTemplateCommand(target promptTemplateTarget, value stri
 	}
 }
 
-func (m Model) resetPromptTemplateCommand(target promptTemplateTarget) tea.Cmd {
+func (m Model) resetPromptTemplateCommand(target promptTemplateTarget, origin PromptTemplateResetOrigin, draft string) tea.Cmd {
 	return func() tea.Msg {
 		if err := m.resetPromptTemplate(target.Section, target.Key); err != nil {
-			return PromptTemplateResetFailedMsg{Section: target.Section, Key: target.Key, Err: err.Error()}
+			return PromptTemplateResetFailedMsg{
+				Section: target.Section,
+				Key:     target.Key,
+				Origin:  origin,
+				Draft:   draft,
+				Err:     err.Error(),
+			}
 		}
-		return PromptTemplateResetMsg{Section: target.Section, Key: target.Key}
+		return PromptTemplateResetMsg{Section: target.Section, Key: target.Key, Origin: origin}
 	}
 }
 
@@ -126,19 +214,30 @@ func (m Model) handlePromptTemplateSaved(msg PromptTemplateSavedMsg) Model {
 	}
 	m = m.withPromptTemplateValue(target, msg.Value)
 	m = m.clearStatus(statusOther)
-	return m.openPromptTemplatePicker(promptTemplateTargetIndex(target))
+	return m.openPromptTemplatePicker(promptTemplateTargetIndex(target), promptNote{
+		Text: "Saved " + target.Title,
+		Kind: modal.NoteSuccess,
+	})
 }
 
+// handlePromptTemplateSaveFailed reconstructs the editor with the user's draft
+// and cursor so the write can be retried with ctrl+s or abandoned with esc. It
+// never reports failed persistence as success.
 func (m Model) handlePromptTemplateSaveFailed(msg PromptTemplateSaveFailedMsg) Model {
-	target, ok := promptTemplateTargetBySectionKey(msg.Section, msg.Key)
-	if ok {
-		m = m.openPromptTemplatePicker(promptTemplateTargetIndex(target))
-	}
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to persist prompt template"
 	}
-	return m.setStatus(statusOther, errText)
+	target, ok := promptTemplateTargetBySectionKey(msg.Section, msg.Key)
+	if !ok {
+		return m.setStatus(statusOther, errText)
+	}
+	// Failure never mutates the in-memory value, so the original re-derived
+	// here still differs from the draft and the editor opens dirty.
+	return m.openPromptTemplateEditor(target, msg.Value, m.promptTemplateValue(target), msg.Cursor, promptNote{
+		Text: errText,
+		Kind: modal.NoteError,
+	})
 }
 
 func (m Model) handlePromptTemplateReset(msg PromptTemplateResetMsg) Model {
@@ -148,7 +247,14 @@ func (m Model) handlePromptTemplateReset(msg PromptTemplateResetMsg) Model {
 	}
 	m = m.withPromptTemplateValue(target, "")
 	m = m.clearStatus(statusOther)
-	return m.openPromptTemplatePicker(promptTemplateTargetIndex(target))
+	note := "Restored " + target.Title + " to default"
+	if msg.Origin == ResetFromEditor {
+		note = target.Title + " reset to default"
+	}
+	return m.openPromptTemplatePicker(promptTemplateTargetIndex(target), promptNote{
+		Text: note,
+		Kind: modal.NoteSuccess,
+	})
 }
 
 func (m Model) handlePromptTemplateResetFailed(msg PromptTemplateResetFailedMsg) Model {
@@ -156,18 +262,25 @@ func (m Model) handlePromptTemplateResetFailed(msg PromptTemplateResetFailedMsg)
 	if errText == "" {
 		errText = "Unable to reset prompt template"
 	}
-	return m.setStatus(statusOther, errText)
+	target, ok := promptTemplateTargetBySectionKey(msg.Section, msg.Key)
+	if !ok {
+		return m.setStatus(statusOther, errText)
+	}
+	note := promptNote{Text: errText, Kind: modal.NoteError}
+	if msg.Origin == ResetFromEditor {
+		// Cursor is the pre-submit position stamped on the way out; a
+		// picker-origin reset never reaches this branch, so an untagged zero
+		// value cannot strand a cursor here.
+		return m.openPromptTemplateEditor(target, msg.Draft, m.promptTemplateValue(target), msg.Cursor, note)
+	}
+	return m.openPromptTemplatePicker(promptTemplateTargetIndex(target), note)
 }
 
 func (m Model) promptTemplateSelectItems() []modal.SelectItem {
 	items := make([]modal.SelectItem, 0, len(promptTemplateTargets))
 	for _, target := range promptTemplateTargets {
-		status := "default"
-		if strings.TrimSpace(m.promptTemplateValue(target)) != "" {
-			status = "custom"
-		}
 		items = append(items, modal.SelectItem{
-			Label: fmt.Sprintf("%-16s %s", target.Title, status),
+			Label: fmt.Sprintf("%-16s %s", target.Title, promptTemplateState(m.promptTemplateValue(target))),
 			Value: promptTemplateTargetValue(target),
 		})
 	}

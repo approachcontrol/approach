@@ -49,6 +49,10 @@ WORKTREE_ROOT=~/projects ./bin/approach
 
 # Serve the read-only GraphQL API on 127.0.0.1:8787
 ./bin/approach serve
+
+# Report what is in the artifact root, and migrate it after a release bump
+./bin/approach db inspect --json
+./bin/approach db migrate
 ```
 
 `approach serve` exposes repos and Flows over `POST /graphql` for external
@@ -226,6 +230,9 @@ become windows in it — visible to your own `tmux ls`, reattachable with `T` or
 plan launch performed during Flow creation keep their embedded routes, and
 Approach falls back to the embedded terminal when tmux is not installed. See
 [docs/config.md](docs/config.md) and [docs/tui-guide.md](docs/tui-guide.md).
+Tracked Flow phase windows retain Flow occupancy with a kernel lease until the
+agent process exits, even if the phase is already completed and even across TUI
+restarts. Successor launches and AutoMode defer without polling tmux.
 
 Agents persist plans and Flow progress through the `approach plan` and
 `approach flow` CLIs. The canonical agent instructions are the bundled skills
@@ -254,6 +261,10 @@ started outside Approach, configure Claude Code or Codex hooks to call:
 approach session-hook --provider claude
 approach session-hook --provider codex
 ```
+
+The hook writes a warning to stderr and still exits zero when it captures the
+session but cannot attach it to a Flow — a schema-compatibility notice is not a
+persistence failure. Run `approach db migrate` when you see one.
 
 Transcripts are stored under the user state directory with restrictive
 permissions, never inside repositories. Storage layout, security details, and

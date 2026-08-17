@@ -97,6 +97,15 @@ func (m Model) flowLaunchAttemptOccupied(flowID string) bool {
 	return ok
 }
 
+func (m Model) flowLaunchHandoffPending() bool {
+	for _, attempt := range m.flowLaunchAttempts {
+		if attempt.State == flowLaunchStateHandoffPending {
+			return true
+		}
+	}
+	return false
+}
+
 // flowLaunchAttemptKind names what is holding this Flow, for the callers that
 // have to tell launch sources apart rather than just detect occupancy: an
 // admission that refuses one competing kind, and the headless toggle, which

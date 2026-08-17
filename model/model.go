@@ -22,6 +22,7 @@ import (
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/model/pane"
 	"github.com/approachcontrol/approach/planstore"
@@ -221,6 +222,8 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
+	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected      bool
 	tmuxAttachHint            bool
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
@@ -254,10 +257,12 @@ type Model struct {
 	// It needs no expiry: the probe asks whether those windows are still live,
 	// so closed ones re-enable the shortcut on their own, and the slice is
 	// bounded by how many times one Flow was launched in one TUI session.
-	flowAutofixTmuxLaunches map[string][]string
-	flowLaunchAttempts      map[string]flowLaunchAttempt
-	flowLaunchSessionOwners map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
-	launchSeams             flowLaunchSeams
+	flowAutofixTmuxLaunches  map[string][]string
+	flowLaunchAttempts       map[string]flowLaunchAttempt
+	flowLaunchSessionOwners  map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
+	quitAfterFlowLaunch      bool
+	interruptAfterFlowLaunch bool
+	launchSeams              flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
 	flowRefreshTickGen      uint64
@@ -385,9 +390,12 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
-	StartEmbeddedTerminal    EmbeddedTerminalStarter
-	FinalizeAgentSession     func(actions.AgentLaunchContext) error
-	SessionStateRoot         string
+	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
+	// manual admission, and AutoMode. It must never invoke tmux or fork.
+	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
+	StartEmbeddedTerminal EmbeddedTerminalStarter
+	FinalizeAgentSession  func(actions.AgentLaunchContext) error
+	SessionStateRoot      string
 	// FlowStore is the process's already-open Flow store. When set, the fallback
 	// mutators below reuse it instead of opening a second one against the same
 	// approach.db: two pools would bootstrap twice and then contend for SQLite's
@@ -449,8 +457,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		if flowStore != nil {
 			return flowStore, nil
 		}
+		// RoleWriter, not RoleMigrator: the process-wide store built at startup
+		// holds the one migrator role. This lazy fallback exists for when that
+		// store is nil, so against a predecessor-schema root it refuses and
+		// points at `approach db migrate` rather than migrating from inside the
+		// alt screen.
 		store, err := flowstore.NewStore(flowstore.StoreOptions{
 			Root:    opts.SessionStateRoot,
+			Role:    flowstore.RoleWriter,
 			Presets: opts.FlowPresets,
 		})
 		if err != nil {
@@ -836,6 +850,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	leaseInspectInjected := opts.InspectFlowLease != nil
+	inspectFlowLease := opts.InspectFlowLease
+	if inspectFlowLease == nil {
+		inspectFlowLease = flowlease.Inspect
+	}
 	startEmbeddedTerminal := opts.StartEmbeddedTerminal
 	if startEmbeddedTerminal == nil {
 		startEmbeddedTerminal = defaultEmbeddedTerminalStarter
@@ -1017,6 +1036,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		inspectFlowLease:          inspectFlowLease,
+		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
 		startEmbeddedTerminal:     startEmbeddedTerminal,
 		finalizeAgentSession:      finalizeAgentSession,
@@ -1445,6 +1466,7 @@ func (m Model) View() string {
 		InputMode:                      uiInputMode(modalView.InputMode),
 		InputHeight:                    modalView.InputHeight,
 		InputCursor:                    modalView.InputCursor,
+		Editor:                         uiEditorParams(modalView.Editor),
 		WorktreeInputPrompt:            modalView.Prompt,
 		WorktreeInputPlaceholder:       modalView.Placeholder,
 		WorktreeInput:                  modalView.Input,
@@ -1454,6 +1476,8 @@ func (m Model) View() string {
 		SelectSelected:                 modalView.SelectIndex,
 		SelectWidth:                    modalView.SelectLayout.Width,
 		SelectHeight:                   modalView.SelectLayout.Height,
+		SelectNote:                     modalView.SelectNote,
+		SelectNoteKind:                 uiNoteKind(modalView.SelectNoteKind),
 		SelectPlacement:                uiSelectPlacement(modalView.SelectLayout.Placement),
 		Form:                           uiFormView(modalView.Form),
 		BranchScroll:                   branchScroll,
@@ -1801,6 +1825,33 @@ func uiInputMode(mode modal.InputMode) ui.InputMode {
 	return ui.InputSingleLine
 }
 
+// uiEditorParams and uiNoteKind are the single conversion point between the
+// canonical modal enums and ui's parallel declarations.
+func uiEditorParams(editor modal.EditorView) ui.EditorParams {
+	return ui.EditorParams{
+		Enabled:      editor.Enabled,
+		Title:        editor.Title,
+		Identity:     editor.Identity,
+		Note:         editor.Note,
+		NoteKind:     uiNoteKind(editor.NoteKind),
+		Dirty:        editor.Dirty,
+		EmptyWarning: editor.EmptyWarning,
+	}
+}
+
+func uiNoteKind(kind modal.NoteKind) ui.NoteKind {
+	switch kind {
+	case modal.NoteSuccess:
+		return ui.NoteSuccess
+	case modal.NoteWarning:
+		return ui.NoteWarning
+	case modal.NoteError:
+		return ui.NoteError
+	default:
+		return ui.NoteNeutral
+	}
+}
+
 func uiSelectPlacement(placement modal.Placement) ui.SelectPlacement {
 	switch placement {
 	case modal.PlacementTopCenter:
@@ -1897,11 +1948,22 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
+		if modelNext.quitAfterFlowLaunch && len(modelNext.flowLaunchAttempts) == 0 {
+			shutdownCmd := tea.Quit
+			if modelNext.interruptAfterFlowLaunch {
+				shutdownCmd = func() tea.Msg { return tea.Interrupt() }
+			}
+			cmd = batchNonNil(cmd, shutdownCmd)
+		}
 		next = modelNext
 	}()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case flowLaunchQuitRequestedMsg:
+		m.quitAfterFlowLaunch = true
+		m.interruptAfterFlowLaunch = msg.Interrupt
+		return m.setStatus(statusOther, flowLaunchQuitPendingStatus), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -2209,6 +2271,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowPhaseAgentSettingsSetFailed(msg), nil
 	case promptTemplateEditRequestedMsg:
 		return m.handlePromptTemplateEditRequested(msg), nil
+	case promptTemplatePickerReturnMsg:
+		return m.handlePromptTemplatePickerReturn(msg), nil
 	case PromptTemplateSavedMsg:
 		return m.handlePromptTemplateSaved(msg), nil
 	case PromptTemplateSaveFailedMsg:
@@ -2296,10 +2360,16 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	// through this handler with no attempt and must reach main's behaviour
 	// below unchanged.
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
+		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
 			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+	} else if msg.FlowLaunchRelease != nil {
+		// A stale or duplicate lifecycle result is fenced completely: it cannot
+		// release a reservation now owned by a newer attempt, persist failure, or
+		// fall through to generic detached-launch status handling.
+		return m, nil
 	}
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)

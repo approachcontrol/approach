@@ -13,6 +13,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -236,6 +237,45 @@ func TestGenericWorktreeAgentRejectsLiveAutofixTmuxOccupancyAtBothBoundaries(t *
 			}
 			if len(h.tmuxWindowProbes) != 1 || len(h.tmuxWindowProbes[0]) != 1 || h.tmuxWindowProbes[0][0] != "autofix-live" {
 				t.Fatalf("tmux probes = %#v, want the exact autofix launch", h.tmuxWindowProbes)
+			}
+			if protected && (h.launchReservations != 1 || h.launchReleases != 1) {
+				t.Fatalf("reservation/release = %d/%d", h.launchReservations, h.launchReleases)
+			}
+		})
+	}
+}
+
+func TestGenericWorktreeAgentRejectsTrackedFlowLeaseAtBothBoundaries(t *testing.T) {
+	for _, protected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "admission", true: "protected install"}[protected], func(t *testing.T) {
+			record := genericFlowAgentRecord(t)
+			h := newManualLaunchHarness(t, record)
+			m := h.model()
+
+			if protected {
+				next, readCmd := m.handleStartSelectedFlowWorktreeAgent()
+				m = next.(Model)
+				readMsg, _ := runCommandWithoutWaiting(readCmd)
+				next, prepareCmd := m.Update(readMsg)
+				m = next.(Model)
+				h.leaseState = flowlease.Held
+				preparedMsg, _ := runCommandWithoutWaiting(prepareCmd)
+				next, _ = m.Update(preparedMsg)
+				m = next.(Model)
+			} else {
+				h.leaseState = flowlease.Held
+				next, cmd := m.handleStartSelectedFlowWorktreeAgent()
+				m = next.(Model)
+				if cmd != nil {
+					t.Fatal("held tracked lease reached the authoritative read")
+				}
+			}
+
+			if m.status.Text != flowLeaseOccupiedStatus || len(h.launchContexts) != 0 {
+				t.Fatalf("lease refusal = %q, launches=%#v", m.status.Text, h.launchContexts)
+			}
+			if m.flowLaunchAttemptOccupied(record.FlowID) {
+				t.Fatal("lease refusal retained the generic lifecycle attempt")
 			}
 			if protected && (h.launchReservations != 1 || h.launchReleases != 1) {
 				t.Fatalf("reservation/release = %d/%d", h.launchReservations, h.launchReleases)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -59,6 +60,78 @@ func (h *manualLaunchHarness) repair(m Model) Model {
 	h.t.Helper()
 	next, cmd := m.handleRepairSelectedFlow()
 	return h.drain(next.(Model), cmd, 0)
+}
+
+func TestFlowRepairPrepareRechecksLeaseUnderReservation(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	m := h.repairModel()
+	next, readCmd := m.handleRepairSelectedFlow()
+	m = next.(Model)
+	if readCmd == nil {
+		t.Fatal("an admitted repair must return the read command")
+	}
+	readMsg, ok := runCommandWithoutWaiting(readCmd)
+	if !ok {
+		t.Fatal("repair read did not settle")
+	}
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
+	if prepareCmd == nil {
+		t.Fatal("a successful repair read must return the prepare command")
+	}
+	h.leaseState = flowlease.Held
+
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("repair prepare did not settle")
+	}
+	m = h.drainMsg(m, preparedMsg, 0)
+
+	if len(h.launchContexts) != 0 {
+		t.Fatalf("late lease started repair: %#v", h.launchContexts)
+	}
+	if h.repairReservations != 1 || h.repairReleases != 1 {
+		t.Fatalf("repair reservations=%d releases=%d, want protected refusal and release", h.repairReservations, h.repairReleases)
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
+	}
+}
+
+func TestFlowRepairAdmissionReportsHeldLease(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	h.leaseState = flowlease.Held
+	m := h.repairModel()
+
+	next, cmd := m.handleRepairSelectedFlow()
+	m = next.(Model)
+
+	if cmd != nil {
+		t.Fatal("held lease must refuse repair before starting a command")
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
+	}
+}
+
+func TestFlowRepairAdmissionReportsLeaseInspectionError(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	h.leaseErr = errors.New("unsafe flow-leases directory")
+	m := h.repairModel()
+
+	next, cmd := m.handleRepairSelectedFlow()
+	m = next.(Model)
+
+	if cmd != nil {
+		t.Fatal("lease inspection error must refuse repair before starting a command")
+	}
+	want := flowLeaseSetupErrorStatus(h.leaseErr)
+	if m.status.Text != want {
+		t.Fatalf("status = %q, want %q", m.status.Text, want)
+	}
 }
 
 func liveRepairSessionRecord(flowID, launchID string) sessions.SessionRecord {

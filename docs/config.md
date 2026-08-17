@@ -276,9 +276,10 @@ value immediately, creating the config file if needed.
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
-Press `f2` in normal TUI views to open the prompt-template editor. The editor
-can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
-preview the built-in prompt.
+Press `f2` in normal TUI views to open the prompt-template picker. From it you
+can edit `[agent].plan_prompt` (`enter`, then `ctrl+s` to save — `enter` inserts
+a newline), reset it to the built-in default (`r`, then confirm), or preview the
+built-in prompt (`v`). See `docs/tui-guide.md` for the full key map.
 
 In the flows pane, `M` opens a provider-specific model picker and persists the
 corresponding key for the selected CLI agent. `E` opens the reasoning-effort
@@ -303,8 +304,9 @@ configured phase templates unless the template already ends with that exact
 standalone instruction. The `autofix` key is not a phase prompt and never
 receives that suffix.
 
-The `f2` prompt-template editor also manages these Flow prompt keys. Saving a
-blank template resets that key by removing the config override.
+The `f2` prompt-template picker also manages these Flow prompt keys. Saving a
+blank or whitespace-only template with `ctrl+s` resets that key by removing the
+config override, the same as a confirmed `r` from the picker.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -387,6 +389,26 @@ and Flow records are stored under `<root>/sessions/...`,
 `<root>/plans/<plan-id>/`, and `<root>/approach.db`. There is no separate
 plans or flows config in v1. **Moving or cleaning the sessions root therefore
 also moves or removes saved plans and Flow records.**
+
+Three more files live beside the database, all created by `approach db migrate`
+or a TUI start and none of them configurable in v1:
+`<root>/approach.db.meta.json` records which build migrated the database and
+when, `<root>/backups/` holds the verified pre-migration copies (8 per migrated
+file; `approach db migrate --backup-dir PATH` writes them elsewhere), and
+`<root>/.approach.db.bootstrap.lock` is the migration lease.
+
+**Migration is not automatic.** After a release that bumps the flow database
+schema, `approach flow`, `approach serve`, and the session hook refuse the root
+and name `approach db migrate`; run that, or start the TUI. `approach db inspect
+[--json]` reports what is in a root without opening a store, taking that lock, or
+repairing anything, so it still answers while a migration is running.
+
+One consequence for a root whose permissions are looser than `0700`: `approach
+flow list` and `approach serve` used to tighten it as a side effect of opening
+it. They no longer do — they report the mode and warn, because repairing it
+would erase the state `approach db inspect` exists to show. A first `approach
+serve` against a `0755` root therefore leaves a `0600` database inside a `0755`
+directory. Mutating commands and the TUI still tighten the root to `0700`.
 
 ## Saved Plans
 

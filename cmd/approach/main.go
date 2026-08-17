@@ -17,6 +17,7 @@ import (
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
@@ -26,6 +27,10 @@ import (
 
 func main() {
 	if err := run(os.Args, runDeps{}); err != nil {
+		var processExit flowlease.ProcessExitError
+		if errors.As(err, &processExit) {
+			os.Exit(processExit.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -61,6 +66,12 @@ type startProgramOptions struct {
 
 func run(args []string, deps runDeps) error {
 	deps = fillRunDeps(deps)
+	if len(args) > 1 && args[1] == flowlease.TmuxSpawnCommand {
+		return flowlease.RunTmuxSpawn(args[2:], deps.stderr)
+	}
+	if len(args) > 1 && args[1] == flowlease.LeaseRunCommand {
+		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr)
+	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)
 		return nil
@@ -77,6 +88,9 @@ func run(args []string, deps runDeps) error {
 	if len(args) > 1 && args[1] == "serve" {
 		return runServe(args, deps)
 	}
+	if len(args) > 1 && args[1] == "db" {
+		return runDB(args, deps)
+	}
 
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -88,7 +102,7 @@ func run(args []string, deps runDeps) error {
 		return err
 	}
 	if flags.NArg() > 0 {
-		return unknownCommandError(flags.Arg(0), []string{"plan", "flow", "serve", "session-hook"}, mainHelpText)
+		return unknownCommandError(flags.Arg(0), []string{"plan", "flow", "serve", "db", "session-hook"}, mainHelpText)
 	}
 
 	if *versionFlag {
@@ -176,6 +190,7 @@ Commands:
   plan          Save, list, read, and update saved plans.
   flow          Create, inspect, and update Flow records.
   serve         Serve the read-only GraphQL API over HTTP.
+  db            Inspect and migrate the flow database.
   session-hook  Capture Claude or Codex session hook payloads.
 
 Flags:
@@ -192,6 +207,7 @@ Examples:
   approach plan --help
   approach flow --help
   approach serve --help
+  approach db inspect --json
   approach session-hook --provider codex
 `
 
@@ -320,14 +336,18 @@ func runSessionHook(args []string, deps runDeps) error {
 		return fmt.Errorf("error loading config: %w", err)
 	}
 	root := *stateRoot
+	explicitRoot := root != ""
 	if root == "" {
-		root = deps.getenv("APPROACH_SESSION_STATE_ROOT")
+		if envRoot := deps.getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
+			root, explicitRoot = envRoot, true
+		}
 	}
 	if root == "" {
 		root = cfg.Sessions.Root
 	}
-	_, err = sessions.IngestHook(provider, deps.stdin, sessions.IngestOptions{
+	result, err := sessions.IngestHookWithWarnings(provider, deps.stdin, sessions.IngestOptions{
 		StateRoot:          root,
+		StateRootExplicit:  explicitRoot,
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
 		FlowPresets:        cfg.Flow.Presets,
 		Env: map[string]string{
@@ -369,6 +389,13 @@ func runSessionHook(args []string, deps runDeps) error {
 	if launchID := deps.getenv("APPROACH_LAUNCH_ID"); launchID != "" && root != "" {
 		_ = controlplane.RefreshPin(root, launchID)
 	}
+	// Warnings on stderr, exit code unchanged. agent-skills/approach-flow tells
+	// every agent that a non-zero exit from an `approach` command is a
+	// persistence failure, and a schema-compatibility notice is not one — the
+	// session record this command exists to write was still captured.
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(deps.stderr, "approach: %s\n", warning)
+	}
 	return err
 }
 
@@ -386,8 +413,11 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
+	// The one migrator in the process. TUI startup and `approach db migrate`
+	// are the only surfaces that may advance the schema.
 	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{
 		Root:                  sessionStore.Root(),
+		Role:                  flowstore.RoleMigrator,
 		Presets:               cfg.Flow.Presets,
 		AllowDevLiveMigration: opts.AllowDevLiveMigration,
 	})
@@ -440,7 +470,14 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
 	modelOpts.LaunchPin = pin
 	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
-	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
+	// Bubble Tea normally exits immediately on SIGINT/SIGTERM without waiting
+	// for command goroutines. Let the model defer those messages while its
+	// private tmux helper still carries an authoritative Flow reservation.
+	p := tea.NewProgram(
+		model.NewWithOptions(repos, modelOpts),
+		tea.WithAltScreen(),
+		tea.WithFilter(model.DeferQuitDuringFlowLaunch),
+	)
 	_, err = p.Run()
 	_ = controlplane.ReleaseProcessPin(sessionStore.Root())
 	return err

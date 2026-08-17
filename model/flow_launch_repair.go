@@ -155,7 +155,14 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	flowID := strings.TrimSpace(record.FlowID)
 	intent.FlowID = flowID
-	if m.flowLaunchAdmissionOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
+	leaseOccupied, leaseErr := m.trackedFlowLeaseOccupied(flowID)
+	if leaseErr != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(leaseErr)), nil, false
+	}
+	if leaseOccupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
+	if m.flowLaunchRuntimeOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
 		return m.setStatus(statusOther, m.flowRepairOccupancyRefusal(flowID)), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -370,6 +377,16 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// Handed over before the revalidation below can refuse, so the handler
 		// drops the advisory launch/close lock on every path out of here.
 		event.Release = release
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		}
 		if strings.TrimSpace(current.FlowID) != msg.FlowID {
 			// The reservation is supposed to return the Flow it locked. A seam
 			// that returns a zero or foreign record would otherwise reach

@@ -3,12 +3,17 @@ package model
 import (
 	"testing"
 
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 )
 
 func attemptTestModel() Model {
-	return New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
+	return NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
+		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
+		},
+	})
 }
 
 func TestFlowLaunchAttemptReservationIsExclusivePerFlow(t *testing.T) {

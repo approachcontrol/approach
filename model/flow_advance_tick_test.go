@@ -12,6 +12,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -58,6 +59,11 @@ func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
 	autoAdvanceTestFlowsMu.Lock()
 	clear(autoAdvanceTestFlows)
 	autoAdvanceTestFlowsMu.Unlock()
+	if opts.InspectFlowLease == nil {
+		opts.InspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
+		}
+	}
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = autoAdvanceTestReadFlow
 	}
