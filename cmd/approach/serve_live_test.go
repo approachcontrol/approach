@@ -179,12 +179,16 @@ func TestServeSurfacesBeadLinkAndEpicProgression(t *testing.T) {
 	}
 }
 
-// TestServePassesPresetsToStore proves cfg.Flow.Presets reaches the store.
-// Presets are consulted during migrate-on-open to restore depends_on edges
-// missing from legacy records, so a store built without them reports
-// different dependsOn — and therefore different derived status and
-// currentPhase — than one built with them.
-func TestServePassesPresetsToStore(t *testing.T) {
+// TestServeReportsPresetRecoveredEdges proves serve reads what the migration
+// recovered. Presets are consulted during the legacy import to restore
+// depends_on edges missing from legacy records, so a root migrated without them
+// reports different dependsOn — and therefore different derived status and
+// currentPhase — than one migrated with them.
+//
+// serve itself opens as a RoleReader and will not import a legacy corpus at
+// all, so the migration is done up front by the migrator, which is what
+// `approach db migrate` now owns.
+func TestServeReportsPresetRecoveredEdges(t *testing.T) {
 	preset := twoStepPresetForServeTest()
 	flowID := "20260607T120000Z-serve-preset-recovery"
 
@@ -211,6 +215,7 @@ func TestServePassesPresetsToStore(t *testing.T) {
 		Sessions: config.SessionsConfig{Root: root},
 		Flow:     config.FlowConfig{Presets: []flowstore.Preset{preset}},
 	}
+	migrateLegacyCorpusForCLITest(t, root, []flowstore.Preset{preset})
 	wantDependsOn := []string{"build"}
 
 	deps := serveDeps(t, root, nil)

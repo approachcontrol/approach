@@ -183,9 +183,47 @@ type sqliteBackend struct {
 	db *sql.DB
 	// root is the canonical, symlink-resolved store root. Kept because it is the
 	// evidence that secureCanonicalRoot's resolution reached the backend.
-	root          string
+	root string
+	// role is carried on the concrete backend rather than in a decorator: the
+	// package reaches past the backend interface four times in
+	// epic_progression.go (two type assertions to *sqliteBackend and two to
+	// epicProgressionBackend), and a wrapper would break all four — including
+	// the ReadEpicProgression read `approach serve` depends on.
+	role          Role
+	diagnostics   OpenDiagnostics
 	beginTx       func(context.Context) (sqliteTransaction, error)
 	queryListRows func(string, ...any) (flowListRows, error)
+}
+
+// backendOptions carries what an open needs. It replaces a positional parameter
+// list that had already reached four and would have reached seven: every later
+// change here is a field, not a signature.
+type backendOptions struct {
+	root        string
+	lockTimeout time.Duration
+	presets     []Preset
+	// allowDevLiveMigration acknowledges a development build advancing the
+	// schema of the database a released build owns. It is a separate gate from
+	// role: that one asks "which build", this one asks "which role".
+	role Role
+	// rootExplicit reports that the caller named this root rather than falling
+	// back to config or the built-in default. It decides only whether a missing
+	// root is created, never which root helper the role uses.
+	rootExplicit          bool
+	allowDevLiveMigration bool
+}
+
+// requireWriter refuses a mutation on a read-only handle.
+//
+// It is called from exactly two places — the beginTx closure and delete — which
+// is a pair rather than an enumeration: every write in this package is either
+// inside a transaction or is delete's single direct Exec. A write added later
+// either begins a transaction or does not, and both are covered.
+func (b *sqliteBackend) requireWriter() error {
+	if b.role == RoleReader {
+		return errReaderWrite
+	}
+	return nil
 }
 
 type flowListRows interface {
@@ -202,9 +240,10 @@ type sqliteTransaction interface {
 	Rollback() error
 }
 
-func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, error) {
+func openSQLiteBackend(opts backendOptions) (*sqliteBackend, error) {
+	root := opts.root
 	path := filepath.Join(root, databaseFilename)
-	millis, err := sqliteBusyTimeoutMillis(lockTimeout)
+	millis, err := sqliteBusyTimeoutMillis(opts.lockTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +252,15 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 		"_pragma": {fmt.Sprintf("busy_timeout(%d)", millis)},
 		"_txlock": {"immediate"},
 	})
+	if opts.role == RoleReader {
+		// No _txlock=immediate: a reader must not open every transaction with
+		// BEGIN IMMEDIATE. query_only is the SQLite-level backstop under
+		// requireWriter, so even a path that reached the driver cannot write.
+		dsn = sqliteDSN(path, map[string][]string{
+			"mode":    {"ro"},
+			"_pragma": {fmt.Sprintf("busy_timeout(%d)", millis), "query_only(1)"},
+		})
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open flow database: %w", err)
@@ -226,24 +274,45 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("open flow database: %w", err)
 	}
-	// Secure the main file BEFORE switching to WAL: SQLite copies the database
-	// file's mode onto the -wal and -shm it creates, and those sidecars hold
-	// recently written Flow records. Chmod'ing afterwards would leave a database
-	// that arrived with a loose mode (a tarball restored under a default umask)
-	// with world-readable sidecars while the main file looked correctly locked
-	// down. The 0700 root is still the real boundary; this is defence in depth.
-	if err := os.Chmod(path, artifacts.FilePerm); err != nil {
-		return nil, fmt.Errorf("secure flow database: %w", err)
-	}
-	var journalMode string
-	if err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
-		return nil, fmt.Errorf("enable flow database WAL: %w", err)
-	}
-	if !strings.EqualFold(journalMode, "wal") {
-		return nil, fmt.Errorf("enable flow database WAL: SQLite reported %q", journalMode)
-	}
-	if err := secureExistingSidecars(path); err != nil {
+	diagnostics, err := inspectOpenRoot(root)
+	if err != nil {
 		return nil, err
+	}
+	if opts.role == RoleReader {
+		// A reader mutates nothing on the open path: no chmod of the database,
+		// no journal_mode write, no sidecar tightening. That drops the assertion
+		// that the database really is in WAL mode, so read the pragma instead
+		// and report a DELETE-mode database rather than silently accepting it.
+		var journalMode string
+		if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+			return nil, fmt.Errorf("read flow database journal mode: %w", err)
+		}
+		diagnostics.JournalMode = strings.ToLower(journalMode)
+		if !strings.EqualFold(journalMode, "wal") {
+			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf(
+				"flow database %q is in %q journal mode, not WAL", path, diagnostics.JournalMode))
+		}
+	} else {
+		// Secure the main file BEFORE switching to WAL: SQLite copies the database
+		// file's mode onto the -wal and -shm it creates, and those sidecars hold
+		// recently written Flow records. Chmod'ing afterwards would leave a database
+		// that arrived with a loose mode (a tarball restored under a default umask)
+		// with world-readable sidecars while the main file looked correctly locked
+		// down. The 0700 root is still the real boundary; this is defence in depth.
+		if err := os.Chmod(path, artifacts.FilePerm); err != nil {
+			return nil, fmt.Errorf("secure flow database: %w", err)
+		}
+		var journalMode string
+		if err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
+			return nil, fmt.Errorf("enable flow database WAL: %w", err)
+		}
+		if !strings.EqualFold(journalMode, "wal") {
+			return nil, fmt.Errorf("enable flow database WAL: SQLite reported %q", journalMode)
+		}
+		diagnostics.JournalMode = strings.ToLower(journalMode)
+		if err := secureExistingSidecars(path); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateSQLiteSchema(db); err != nil {
 		return nil, err
@@ -276,14 +345,61 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 	// in BEGIN IMMEDIATE, plus a small reader pool.
 	db.SetMaxOpenConns(64)
 	closeOnError = false
-	backend := &sqliteBackend{db: db, root: root}
+	backend := &sqliteBackend{db: db, root: root, role: opts.role, diagnostics: diagnostics}
 	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
+		if err := backend.requireWriter(); err != nil {
+			return nil, err
+		}
 		return db.BeginTx(ctx, nil)
 	}
 	backend.queryListRows = func(query string, args ...any) (flowListRows, error) {
 		return db.Query(query, args...)
 	}
 	return backend, nil
+}
+
+// inspectOpenRoot records the root's mode as found. For a writer or a migrator
+// SecureCanonicalRoot has already forced 0700, so this is a restatement; for a
+// reader it is the substitute for the 0700 assertion that open no longer makes.
+func inspectOpenRoot(root string) (OpenDiagnostics, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return OpenDiagnostics{}, fmt.Errorf("inspect flow store root: %w", err)
+	}
+	diagnostics := OpenDiagnostics{DirectoryMode: info.Mode().Perm()}
+	if diagnostics.DirectoryMode != artifacts.DirPerm {
+		diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf(
+			"flow store root %q has permissions %04o, not %04o", root,
+			diagnostics.DirectoryMode, artifacts.DirPerm))
+	}
+	return diagnostics, nil
+}
+
+// readUserVersionRO reads PRAGMA user_version without writing anything.
+//
+// The only other pre-validation open in the tree is inside
+// migrateAuthoritativeDatabase, and it is mode=rw + _txlock=immediate — which a
+// reader must not use and which fails on the read-only directory `db inspect`
+// exists to report, turning a clean refusal into a write error. The open error
+// is returned unwrapped so the store and Inspect agree on the error shape.
+func readUserVersionRO(path string) (int64, error) {
+	millis, err := sqliteBusyTimeoutMillis(defaultLockTimeout)
+	if err != nil {
+		return 0, err
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{
+		"mode":    {"ro"},
+		"_pragma": {fmt.Sprintf("busy_timeout(%d)", millis), "query_only(1)"},
+	}))
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = db.Close() }()
+	var userVersion int64
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		return 0, err
+	}
+	return userVersion, nil
 }
 
 // secureExistingSidecars tightens WAL/SHM files that a previous process may have
@@ -832,6 +948,9 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 }
 
 func (b *sqliteBackend) delete(flowID string) error {
+	if err := b.requireWriter(); err != nil {
+		return err
+	}
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}

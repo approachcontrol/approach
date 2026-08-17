@@ -15,7 +15,12 @@ import (
 )
 
 type IngestOptions struct {
-	StateRoot          string
+	StateRoot string
+	// StateRootExplicit reports that StateRoot was named by --state-root or by
+	// APPROACH_SESSION_STATE_ROOT rather than falling back to config. The
+	// caller has already flattened those three sources into one string, so the
+	// distinction cannot be recovered here.
+	StateRootExplicit  bool
 	CopyRawTranscripts bool
 	FlowPresets        []flowstore.Preset
 	Env                map[string]string
@@ -226,8 +231,13 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 	if record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.SessionID) == "" {
 		return
 	}
-	root := flowStateRoot(opts)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: opts.FlowPresets})
+	root, explicit := flowStateRoot(opts)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:         root,
+		RootExplicit: explicit,
+		Role:         flowstore.RoleWriter,
+		Presets:      opts.FlowPresets,
+	})
 	if err != nil {
 		return
 	}
@@ -255,7 +265,13 @@ func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) (launchSt
 	if record.FlowID == "" || record.FlowPhaseID == "" {
 		return nil, noRelease
 	}
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: flowStateRoot(opts), Presets: opts.FlowPresets})
+	root, explicit := flowStateRoot(opts)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:         root,
+		RootExplicit: explicit,
+		Role:         flowstore.RoleReader,
+		Presets:      opts.FlowPresets,
+	})
 	if err != nil {
 		return nil, noRelease
 	}
@@ -302,17 +318,27 @@ func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) (launchSt
 	}, release
 }
 
-func flowStateRoot(opts IngestOptions) string {
+// flowStateRoot returns the Flow store root and whether it was named
+// explicitly. It derives the explicitness of its own two environment reads
+// internally, because it consults them ahead of opts.StateRoot and
+// opts.StateRootExplicit cannot speak for them.
+//
+// The trailing APPROACH_SESSION_STATE_ROOT read is deliberately NOT explicit:
+// the command has already folded that variable into opts.StateRoot alongside
+// the flag and the config fallback, so opts.StateRootExplicit speaks for it,
+// and this read is only reached when sessions was constructed by something
+// other than that command.
+func flowStateRoot(opts IngestOptions) (string, bool) {
 	if root := opts.Env["APPROACH_FLOW_STATE_ROOT"]; root != "" {
-		return root
+		return root, true
 	}
 	if root := opts.Env["APPROACH_PLAN_STATE_ROOT"]; root != "" {
-		return root
+		return root, true
 	}
 	if opts.StateRoot != "" {
-		return opts.StateRoot
+		return opts.StateRoot, opts.StateRootExplicit
 	}
-	return opts.Env["APPROACH_SESSION_STATE_ROOT"]
+	return opts.Env["APPROACH_SESSION_STATE_ROOT"], false
 }
 
 func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {

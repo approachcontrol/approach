@@ -320,14 +320,18 @@ func runSessionHook(args []string, deps runDeps) error {
 		return fmt.Errorf("error loading config: %w", err)
 	}
 	root := *stateRoot
+	explicitRoot := root != ""
 	if root == "" {
-		root = deps.getenv("APPROACH_SESSION_STATE_ROOT")
+		if envRoot := deps.getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
+			root, explicitRoot = envRoot, true
+		}
 	}
 	if root == "" {
 		root = cfg.Sessions.Root
 	}
 	_, err = sessions.IngestHook(provider, deps.stdin, sessions.IngestOptions{
 		StateRoot:          root,
+		StateRootExplicit:  explicitRoot,
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
 		FlowPresets:        cfg.Flow.Presets,
 		Env: map[string]string{
@@ -386,8 +390,11 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
+	// The one migrator in the process. TUI startup and `approach db migrate`
+	// are the only surfaces that may advance the schema.
 	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{
 		Root:                  sessionStore.Root(),
+		Role:                  flowstore.RoleMigrator,
 		Presets:               cfg.Flow.Presets,
 		AllowDevLiveMigration: opts.AllowDevLiveMigration,
 	})

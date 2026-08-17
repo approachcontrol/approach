@@ -190,6 +190,7 @@ type Store struct {
 	lockTimeout               time.Duration
 	now                       func() time.Time
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
+	diagnostics               OpenDiagnostics
 }
 
 // StoreOptions configures a Store.
@@ -205,6 +206,15 @@ type StoreOptions struct {
 	// Surfaced as --allow-dev-live-migration and
 	// APPROACH_ALLOW_DEV_LIVE_MIGRATION=1.
 	AllowDevLiveMigration bool
+	// Role names what this open is allowed to do. The zero value, RoleMigrator,
+	// is today's behaviour; every non-test caller names one explicitly and a
+	// call-site test enforces that.
+	Role Role
+	// RootExplicit reports that Root was named by a flag or an environment
+	// variable rather than falling back to config or the built-in default. It
+	// decides only whether a RoleReader creates a missing root or reports the
+	// typo. The zero value keeps today's create-if-absent behaviour.
+	RootExplicit bool
 }
 
 // IsNotFound reports whether err means the requested Flow record does not exist.
@@ -703,7 +713,14 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	store, err := newSQLiteStoreBackend(root, lockTimeout, opts.Presets, opts.AllowDevLiveMigration)
+	store, err := newSQLiteStoreBackend(backendOptions{
+		root:                  root,
+		lockTimeout:           lockTimeout,
+		presets:               opts.Presets,
+		role:                  opts.Role,
+		rootExplicit:          opts.RootExplicit,
+		allowDevLiveMigration: opts.AllowDevLiveMigration,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -719,7 +736,16 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		canonicalRoot: store.root,
 		lockTimeout:   lockTimeout,
 		now:           now,
+		diagnostics:   store.diagnostics,
 	}, nil
+}
+
+// OpenDiagnostics reports what this open observed about the root and the
+// database. It is populated for every role and is the surface that makes a
+// RoleReader's skipped checks — the root's 0700 assertion and the WAL assertion
+// — observable rather than simply absent.
+func (s *Store) OpenDiagnostics() OpenDiagnostics {
+	return s.diagnostics
 }
 
 // Close releases the Store's database handles. A Store holds a pooled

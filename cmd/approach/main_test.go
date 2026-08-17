@@ -1070,6 +1070,8 @@ func TestRunSessionHookPassesFlowPresetsForRecovery(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
+	migrateLegacyCorpusForCLITest(t, root, []flowstore.Preset{researchPresetForCLITest()})
+
 	err := run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{

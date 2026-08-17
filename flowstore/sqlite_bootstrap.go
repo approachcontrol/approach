@@ -62,11 +62,17 @@ var isDevelopmentBuild = version.IsDevelopment
 // acknowledgement.
 var errDevLiveMigrationRefused = errors.New("development build refused to migrate the release artifact root")
 
-func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPresets []Preset, allowDevLiveMigration bool) (*sqliteBackend, error) {
-	canonicalRoot, err := secureCanonicalRoot(root)
+func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
+	canonicalRoot, err := prepareStoreRoot(opts)
 	if err != nil {
 		return nil, err
 	}
+	opts.root = canonicalRoot
+	// The lock is taken for every role, deliberately: a reader must not observe
+	// a half-promoted cutover. Note that acquiring it CREATES, chmods, and
+	// writes the lock file, so even a reader writes this one path and a reader
+	// against a genuinely read-only mount fails outright. Inspect is the
+	// lock-free diagnostic for that case.
 	release, err := artifacts.AcquireFileLockNoFollow(
 		filepath.Join(canonicalRoot, bootstrapLockFilename),
 		"flow database bootstrap lock (another approach process may be migrating this state root)",
@@ -82,42 +88,131 @@ func newSQLiteStoreBackend(root string, lockTimeout time.Duration, configuredPre
 		return nil, err
 	}
 	if state.database {
-		if err := migrateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename), lockTimeout, canonicalRoot, allowDevLiveMigration); err != nil {
+		databasePath := filepath.Join(canonicalRoot, databaseFilename)
+		// Role first, then dev-live. The role check is cheaper and
+		// build-independent, and a non-migrator has no business being told how
+		// to acknowledge a migration it would refuse anyway. It returns ahead of
+		// the describeUnusableDatabase wraps below on purpose: an unmigrated
+		// database must never collect "move approach.db aside" advice.
+		if err := refuseUnmigratedForRole(databasePath, opts.role); err != nil {
+			return nil, err
+		}
+		if err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.allowDevLiveMigration); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
 		}
-		if err := validateAuthoritativeDatabase(filepath.Join(canonicalRoot, databaseFilename)); err != nil {
+		if err := validateAuthoritativeDatabase(databasePath); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
 		}
 		// A stage left behind by a crash that still managed to promote is
 		// obsolete the moment approach.db exists. Drop it here: leaving it would
 		// resurrect a stale corpus as the "interrupted" stage if the user ever
-		// removed approach.db to start over.
-		if err := discardObsoleteStage(canonicalRoot); err != nil {
-			return nil, err
+		// removed approach.db to start over. A reader skips it — this is a
+		// destructive filesystem mutation, and `flow list` must not delete a
+		// staged database.
+		if opts.role != RoleReader {
+			if err := discardObsoleteStage(canonicalRoot); err != nil {
+				return nil, err
+			}
 		}
-		backend, err := openSQLiteBackend(canonicalRoot, lockTimeout)
+		backend, err := openSQLiteBackend(opts)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := presetRegistry(configuredPresets); err != nil {
+		if _, err := presetRegistry(opts.presets); err != nil {
 			_ = backend.db.Close()
 			return nil, err
 		}
 		return backend, nil
 	}
 
-	presets, err := presetRegistry(configuredPresets)
+	presets, err := presetRegistry(opts.presets)
 	if err != nil {
 		return nil, err
 	}
-	if err := completeCutover(canonicalRoot, state, presets, lockTimeout, allowDevLiveMigration); err != nil {
+	if err := completeCutover(opts, state, presets); err != nil {
 		return nil, err
 	}
-	backend, err := openSQLiteBackend(canonicalRoot, lockTimeout)
+	// Creation is not migration, so it stays available to every role — but the
+	// creation path produces a DELETE-mode database (buildStagedDatabase and
+	// settleStagedSQLiteFile both assert DELETE) and WAL comes only from a
+	// writer-privileged open. A reader that opened it directly would be left
+	// holding a DELETE-mode database, so the post-creation open always runs as a
+	// writer and a reader then reopens read-only. Two opens on the create path
+	// only, never on the steady-state path.
+	creationOpts := opts
+	if creationOpts.role == RoleReader {
+		creationOpts.role = RoleWriter
+	}
+	backend, err := openSQLiteBackend(creationOpts)
 	if err != nil {
 		return nil, err
+	}
+	if opts.role == RoleReader {
+		if err := backend.db.Close(); err != nil {
+			return nil, fmt.Errorf("close flow database creation handle: %w", err)
+		}
+		return openSQLiteBackend(opts)
 	}
 	return backend, nil
+}
+
+// prepareStoreRoot resolves the root the way opts.role is allowed to.
+//
+// The rule is unconditional: a RoleReader calls ResolveCanonicalRoot and never
+// SecureCanonicalRoot, whatever rootExplicit says. SecureCanonicalRoot's chmods
+// succeed on a user-owned 0755 or 0500 directory, so a reader that used it
+// would repair the very state OpenDiagnostics and `db inspect` exist to report —
+// and `approach serve` would tighten a 0755 root when its root came from config
+// while merely warning when the same directory was passed with --state-root.
+// What rootExplicit varies is only whether a MISSING root is created.
+func prepareStoreRoot(opts backendOptions) (string, error) {
+	if opts.role != RoleReader {
+		return secureCanonicalRoot(opts.root)
+	}
+	if _, err := os.Stat(opts.root); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect flow store root: %w", err)
+		}
+		if opts.rootExplicit {
+			// A typo'd root should say so rather than silently materialise an
+			// empty tree under it.
+			return "", fmt.Errorf("state root %s does not exist", opts.root)
+		}
+		if err := os.MkdirAll(opts.root, artifacts.DirPerm); err != nil {
+			return "", fmt.Errorf("create flow store root: %w", err)
+		}
+	}
+	return artifacts.ResolveCanonicalRoot(opts.root, "flow store root")
+}
+
+// refuseUnmigratedForRole is the role gate on the steady-state open path.
+//
+// It runs before migrateAuthoritativeDatabase and before any schema validation,
+// so a non-migrator on a predecessor-schema root gets a refusal naming
+// `approach db migrate` rather than validateSQLiteSchema's "requires bootstrap
+// migration to 6", which names migration but not the role and offers no command.
+//
+// A user_version that cannot be READ falls through to today's path unchanged: a
+// corrupt or garbage approach.db has no version to compare, and returning the
+// raw error here would replace describeUnusableDatabase's classification of
+// those files. Inspect is where a corrupt database gets a better answer.
+func refuseUnmigratedForRole(databasePath string, role Role) error {
+	storedVersion, err := readUserVersionRO(databasePath)
+	if err != nil {
+		return nil
+	}
+	switch {
+	case storedVersion > databaseSchemaVersion:
+		// The required generation would come from the sidecar's
+		// min_reader_generation / min_writer_generation; until that reader
+		// exists, user_version is the only source, and a sidecar that disagrees
+		// with it never drives a compatibility decision anyway.
+		return refuseIncompatibleBuild(storedVersion, storedVersion)
+	case storedVersion < databaseSchemaVersion && role != RoleMigrator:
+		return refuseRoleMigration(storedVersion, role)
+	default:
+		return nil
+	}
 }
 
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
@@ -150,8 +245,11 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		return err
 	}
 	if version > databaseSchemaVersion {
-		return fmt.Errorf("%w (database schema %d, this build supports %d); upgrade approach",
-			errDatabaseFromNewerBuild, version, databaseSchemaVersion)
+		// Same helper as the steady-state role gate, so exactly one
+		// compatibility refusal string exists in the tree rather than two that
+		// can drift apart. Reached here only on the stage-resume call site,
+		// where the gate above has no database to have read.
+		return refuseIncompatibleBuild(version, version)
 	}
 	if version == databaseSchemaVersion {
 		if err := db.Close(); err != nil {
@@ -322,7 +420,15 @@ func describeUnusableDatabase(root string, cause error) error {
 	// recovery paragraph would talk an operator into moving a perfectly good
 	// release database aside over a check whose own message already says to pass
 	// an acknowledgement or use a scratch root.
-	if errors.Is(cause, errDatabaseFromNewerBuild) || errors.Is(cause, errDevLiveMigrationRefused) {
+	//
+	// The role refusal is the same shape again, and its entry here is
+	// deliberate belt-and-braces rather than dead code: the steady-state gate
+	// returns ahead of the wraps in newSQLiteStoreBackend, so this allowlist is
+	// what stops a LATER caller that does wrap it — the stage-resume route is
+	// the obvious candidate — from reintroducing rebuild advice on a database
+	// that is merely unmigrated.
+	if errors.Is(cause, errDatabaseFromNewerBuild) || errors.Is(cause, errDevLiveMigrationRefused) ||
+		errors.Is(cause, errRoleRefusedMigration) {
 		return cause
 	}
 	databasePath := filepath.Join(root, databaseFilename)
@@ -401,12 +507,17 @@ func refuseDevLiveMigration(canonicalRoot string, storedVersion int64, allowed b
 	if !isReleaseOwnedRoot(canonicalRoot, allowed) {
 		return nil
 	}
+	// The acknowledgement is named for the surfaces that can still act on it.
+	// This guard only fires when the stored schema is behind, and on that input
+	// `approach flow` and `approach serve` now return the ROLE refusal first,
+	// which no environment variable acknowledges. Naming them here would offer
+	// an acknowledgement that cannot help and omit the one command that can.
 	return fmt.Errorf(
 		"%w %s from schema %d to %d: this is a development build (%s), "+
 			"and a released approach would then be unable to open its own state. "+
 			"Use a scratch --state-root, or pass --allow-dev-live-migration on the TUI "+
-			"(or set APPROACH_ALLOW_DEV_LIVE_MIGRATION=1, which the `approach flow` and "+
-			"`approach serve` commands read too) to acknowledge it",
+			"(or set APPROACH_ALLOW_DEV_LIVE_MIGRATION=1, which `approach db migrate` "+
+			"reads too) to acknowledge it",
 		errDevLiveMigrationRefused, canonicalRoot, storedVersion, databaseSchemaVersion, version.Version())
 }
 
@@ -541,7 +652,10 @@ func inspectReservedDirectory(path string) (bool, error) {
 	return true, nil
 }
 
-func completeCutover(root string, state cutoverState, presets map[string]Preset, lockTimeout time.Duration, allowDevLiveMigration bool) error {
+func completeCutover(opts backendOptions, state cutoverState, presets map[string]Preset) error {
+	root := opts.root
+	lockTimeout := opts.lockTimeout
+	allowDevLiveMigration := opts.allowDevLiveMigration
 	stagePath := filepath.Join(root, stageFilename)
 	legacyPath := filepath.Join(root, "flows")
 	tombstonePath := filepath.Join(root, "flows.legacy")
@@ -570,6 +684,20 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset,
 	// so a refusal leaves the root byte-identical.
 	if err := refuseDevLiveCreation(root, allowDevLiveMigration); err != nil {
 		return err
+	}
+
+	// The Stage C role gate sits beside the dev-live one rather than replacing
+	// it: they ask different questions ("which build" versus "which role") and
+	// they are deliberately not the same shape. Creation from empty stays open
+	// to every role; importing a legacy corpus and resuming an interrupted
+	// cutover are migrations wearing a different hat, and they are not.
+	if opts.role != RoleMigrator {
+		if state.stage {
+			return refuseRoleStageResume(stagePath, opts.role)
+		}
+		if state.legacy {
+			return refuseRoleLegacyImport(legacyPath, opts.role)
+		}
 	}
 
 	if state.stage {

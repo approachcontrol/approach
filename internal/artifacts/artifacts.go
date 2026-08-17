@@ -116,6 +116,30 @@ func SecureCanonicalRoot(root, label string) (string, error) {
 	return canonical, nil
 }
 
+// ResolveCanonicalRoot resolves root through symlinks and returns the canonical
+// path without creating, chmod'ing, or asserting anything about it.
+//
+// It exists for read-only opens. SecureCanonicalRoot's two chmods succeed on a
+// user-owned 0755 or 0500 directory, so calling it from a reader would silently
+// tighten the root to 0700 — repairing the very directory state a diagnostic is
+// supposed to report, and giving `approach serve` a different effect on the same
+// directory depending on how its root was spelled. A reader reports the mode it
+// found; only a writer or a migrator repairs it.
+func ResolveCanonicalRoot(root, label string) (string, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s must resolve to a directory", label)
+	}
+	return canonical, nil
+}
+
 // RequireAbsoluteRoot returns the same root when it is absolute.
 func RequireAbsoluteRoot(root, storeName string) (string, error) {
 	if !filepath.IsAbs(root) {
