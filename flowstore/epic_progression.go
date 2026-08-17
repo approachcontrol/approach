@@ -715,6 +715,11 @@ func (b *sqliteBackend) haltEpicProgression(update EpicProgressionHaltUpdate, no
 		}
 		return current, nil
 	}
+	// This checks that progression is active, not that it is the same activation
+	// whose tracked child produced update.Halt: another process that disabled and
+	// re-enabled the epic can still be halted by a stale observation. The advance
+	// edge carries the identical exposure and predates this one, so fencing needs
+	// a shared activation generation across both — tracked in approach-d93.
 	if !current.Enabled || current.Done {
 		state := "off"
 		if current.Done {
