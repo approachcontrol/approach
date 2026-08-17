@@ -50,6 +50,65 @@ from `web/`). Only run it when you change files under `web/`; see
     incident that motivated it: a dev build migrated the live root to a newer
     schema, and the released `approach` agents resolved from `PATH` could no
     longer open it, so successful phase work could not be persisted at all.
+    Since role separation the acknowledgement's reach is narrower: it governs
+    *creation* on every command, but it no longer lets `approach flow` or
+    `approach serve` migrate a predecessor-schema root, because those return the
+    role refusal first. `approach db migrate` and the TUI are the two surfaces
+    that migrate, and both read it.
+
+## Migrating the Flow Database
+
+**Migration is not automatic.** After a release that bumps the flow database
+schema, `approach flow`, `approach serve`, and the `SessionEnd` session hook all
+refuse the root until it is migrated:
+
+```bash
+approach db inspect --json            # what is in this root, and can approach open it
+approach db migrate                   # advance the schema (the only CLI entry point)
+approach db migrate --backup-dir DIR  # write the pre-migration backup somewhere else
+```
+
+Both accept `--state-root PATH`. A TUI start also migrates; nothing else does.
+
+What each open is allowed to do is named at the call site as a
+`flowstore.StoreOptions.Role`, and a call-site test fails the build if a
+non-test `NewStore` omits one:
+
+- `RoleMigrator` — TUI startup and `approach db migrate`. The only role that
+  advances the schema, imports a legacy `flows/` corpus, resumes an interrupted
+  cutover, or writes the `approach.db.meta.json` provenance sidecar.
+- `RoleWriter` — every mutating `flow` leaf, the hook's session attachment, and
+  the TUI's lazy fallback store.
+- `RoleReader` — `flow list`, `flow read`, `approach serve`, and the hook's
+  launch-staleness resolver. Opens `mode=ro`, refuses writes in Go before SQLite
+  sees them, and mutates nothing on the open path.
+
+Three consequences worth knowing:
+
+- `flow list` and `approach serve` **no longer tighten a loose state root to
+  `0700`**. They report the mode instead — through `Store.OpenDiagnostics()` and
+  `db inspect`'s `directory_mode` — because repairing it would erase the very
+  state the diagnostic exists to show. A first `approach serve` against a `0755`
+  root therefore leaves a `0600` database inside a `0755` directory; the file
+  mode is the one that matters and is unchanged.
+- **The TUI's lazy fallback store cannot migrate.** It is a `RoleWriter`, so a
+  TUI that reaches it against a predecessor-schema root refuses and points at
+  `approach db migrate` — from inside the alt screen, where that is awkward to
+  act on. One migrator per process is the intended answer; if the refusal proves
+  unusable the fix is a TUI-level prompt, not a silently re-widened fallback.
+- **Every real migration writes a verified backup** to `<root>/backups/`
+  (`VACUUM INTO`, then integrity, schema-stamp, and row-count checks), keeping
+  the 8 most recent per migrated file. That roughly doubles peak disk, so an
+  upgrade on a full disk now fails at the backup with `user_version` unchanged
+  rather than migrating. `--backup-dir` is the escape hatch; there is no skip
+  flag.
+
+`approach db inspect` never refuses. It never constructs a store, never takes
+the bootstrap lock, and never repairs anything, so it still answers while a
+migration is running, against a database from a newer build, and against a root
+whose directory is read-only. Its `tier` is one of `missing`, `open`,
+`not_writable`, `malformed`, `not_a_database`, or `header`, and `reason` and
+`next_action` are non-null exactly when `readable` is false.
 
 ## Beads Task Tracking
 
