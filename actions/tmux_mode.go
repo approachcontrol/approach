@@ -240,7 +240,7 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 		return RepoTmuxAgentSpec{}, ErrRepoTmuxUnavailable
 	}
 	command := agent.Normalize(ctx.Command)
-	if command != agent.CommandCodex && command != agent.CommandClaude {
+	if command != agent.CommandCodex && command != agent.CommandClaude && command != agent.CommandCursor {
 		return RepoTmuxAgentSpec{}, errors.New("tmux launch mode supports only CLI agents")
 	}
 	if ctx.FlowLaunchTracked {

@@ -140,6 +140,29 @@ func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	}
 }
 
+func TestRepoTmuxAgentLaunchSupportsCursor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	putAgentOnPath(t, "cursor-agent")
+	ctx := tmuxModeContext(t)
+	ctx.Command = "cursor-agent"
+	ctx.WorktreePath = t.TempDir()
+	ctx.FlowLaunchTracked = false
+
+	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunch returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+
+	script, err := os.ReadFile(launchScriptPathFromArgs(t, spec.Launch.Cmd.Args))
+	if err != nil {
+		t.Fatalf("read launch script: %v", err)
+	}
+	if !strings.Contains(string(script), "cursor-agent") {
+		t.Fatalf("launch script does not run cursor-agent:\n%s", script)
+	}
+}
+
 // tmuxStub puts a fake tmux on PATH that records every invocation and fails the
 // subcommands named in fail. It lets the launch script's branching be tested for
 // what it does rather than for what its source text contains.
