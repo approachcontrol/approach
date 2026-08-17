@@ -2,7 +2,9 @@ package model_test
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -386,6 +389,86 @@ func TestSliceEpic_RefusesWithoutConfiguredAgentAndKeepsAdvertising(t *testing.T
 	}
 	if claimed != 0 {
 		t.Fatalf("agent refusal performed %d tracker writes, want 0", claimed)
+	}
+}
+
+// sliceEpicPin writes a real binary and returns the pin that verifies against
+// it, so a test can invalidate the pin afterwards by replacing the file.
+func sliceEpicPin(t *testing.T) (string, controlplane.Pin) {
+	t.Helper()
+	pinned := filepath.Join(t.TempDir(), "approach")
+	if err := os.WriteFile(pinned, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write pin: %v", err)
+	}
+	digest, err := controlplane.FileDigest(pinned)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	return pinned, controlplane.Pin{
+		ExecutablePath: pinned,
+		Digest:         digest,
+		Version:        "v0.10.3",
+		SchemaVersion:  6,
+	}
+}
+
+// The launched agent runs `bd` and `approach` through the provider session hook,
+// so S has to bake in the launching build like every other launch kind rather
+// than letting the agent resolve `approach` off an ambient PATH.
+func TestSliceEpic_LaunchContextCarriesTheLaunchingBuild(t *testing.T) {
+	pinned, pin := sliceEpicPin(t)
+	var got actions.AgentLaunchContext
+	m := newSliceEpicModel(t, model.Options{
+		AgentCommand: "codex",
+		LaunchPin:    pin,
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	}, sliceEpicBeads())
+
+	m, cmd := captureSliceLaunch(t, m)
+	applyTestCommand(m, cmd)
+
+	if got.Executable != pinned {
+		t.Fatalf("launch Executable = %q, want the pinned binary %q", got.Executable, pinned)
+	}
+	if got.BuildVersion != "v0.10.3" || got.DBSchemaVersion != 6 {
+		t.Fatalf("launch build stamp = %q/%d, want v0.10.3/6", got.BuildVersion, got.DBSchemaVersion)
+	}
+}
+
+// An upgrade can replace the pinned binary underneath a long-lived TUI. S must
+// refuse before it reserves the shared preparation, so the refusal leaves the
+// fence exactly as it found it and a later press can still launch.
+func TestSliceEpic_RefusesAnUnverifiedPinWithoutHoldingTheFence(t *testing.T) {
+	pinned, pin := sliceEpicPin(t)
+	launches := 0
+	m := newSliceEpicModel(t, model.Options{
+		AgentCommand: "codex",
+		LaunchPin:    pin,
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launches++
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	}, sliceEpicBeads())
+
+	if err := os.WriteFile(pinned, []byte("#!/bin/sh\n# replaced\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("replace pin: %v", err)
+	}
+
+	m, _ = pressSliceEpic(m)
+	if launches != 0 {
+		t.Fatalf("S launched %d agents on a replaced pin, want 0", launches)
+	}
+	if !strings.Contains(m.TransientError(), "Launch refused") {
+		t.Fatalf("status %q does not refuse the replaced pin", m.TransientError())
+	}
+	if model.FlowPreparationAdmissionForTest(m) || model.SliceEpicLaunchInFlightForTest(m) {
+		t.Fatal("the pin refusal left a preparation admission or launch record behind")
+	}
+	if !sliceEpicHintShown(m) {
+		t.Fatal("the pin refusal stopped the shortcut being advertised")
 	}
 }
 
