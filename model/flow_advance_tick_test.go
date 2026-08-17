@@ -161,7 +161,7 @@ func runAutoAdvanceResultForTest(t *testing.T, m Model, flows []flowstore.FlowRe
 // disarms the drain, and the read event is what re-arms, drops, or announces.
 func applyAutoFlowLaunchReads(m Model, cmd tea.Cmd) (Model, []tea.Cmd) {
 	var produced []tea.Cmd
-	for _, msg := range immediateFlowRefreshMessages(cmd) {
+	for _, msg := range immediateFlowRefreshMessagesWithin(cmd, testStoreCommandSettleTimeout) {
 		event, ok := msg.(flowLaunchEventMsg)
 		if !ok || event.Stage != flowLaunchStageRead {
 			continue
@@ -187,7 +187,7 @@ func preparedAutoFlowLaunches(m Model, cmd tea.Cmd) (Model, []flowLaunchEventMsg
 	m, produced := applyAutoFlowLaunchReads(m, cmd)
 	var prepared []flowLaunchEventMsg
 	for _, next := range produced {
-		for _, msg := range immediateFlowRefreshMessages(next) {
+		for _, msg := range immediateFlowRefreshMessagesWithin(next, testStoreCommandSettleTimeout) {
 			if event, ok := msg.(flowLaunchEventMsg); ok && event.Stage == flowLaunchStagePrepared {
 				prepared = append(prepared, event)
 			}

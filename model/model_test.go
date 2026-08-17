@@ -38,7 +38,9 @@ func testStashes() []gitquery.Stash {
 
 // The test record registries mirror Flow and session records fed into panes so
 // authoritative read seams can answer with the same records the surfaces show.
-// They are mutex-guarded so a later t.Parallel() cannot race shared IDs.
+// The mutex only prevents concurrent-map panics. Tests still reuse IDs like
+// "flow-1", so they must not call t.Parallel() — Parallel would clobber those
+// records even with the lock held.
 var (
 	testRecordsMu      sync.RWMutex
 	testFlowRecords    = map[string]flowstore.FlowRecord{}

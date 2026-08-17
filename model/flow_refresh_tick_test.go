@@ -12,9 +12,14 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-// testCommandSettleTimeout is long enough for real SQLite writes on a loaded
-// CI runner. The previous 20ms window dropped those results and flaked.
-const testCommandSettleTimeout = 2 * time.Second
+const (
+	// testCommandSettleTimeout is the default for in-memory refresh helpers.
+	// Keep it short so tea.Tick batch children do not wait seconds each.
+	testCommandSettleTimeout = 20 * time.Millisecond
+	// testStoreCommandSettleTimeout is only for AutoMode prepare/read hops
+	// that hit a real SQLite store on a loaded CI runner.
+	testStoreCommandSettleTimeout = 2 * time.Second
+)
 
 func flowRefreshTestRepos() []scanner.Repo {
 	return []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}
@@ -43,6 +48,10 @@ func flowResultFromCommand(t *testing.T, cmd tea.Cmd) FlowResultMsg {
 }
 
 func immediateFlowRefreshMessages(cmd tea.Cmd) []tea.Msg {
+	return immediateFlowRefreshMessagesWithin(cmd, testCommandSettleTimeout)
+}
+
+func immediateFlowRefreshMessagesWithin(cmd tea.Cmd, timeout time.Duration) []tea.Msg {
 	if cmd == nil {
 		return nil
 	}
@@ -53,12 +62,12 @@ func immediateFlowRefreshMessages(cmd tea.Cmd) []tea.Msg {
 		if batch, ok := msg.(tea.BatchMsg); ok {
 			var messages []tea.Msg
 			for _, child := range batch {
-				messages = append(messages, immediateFlowRefreshMessages(child)...)
+				messages = append(messages, immediateFlowRefreshMessagesWithin(child, timeout)...)
 			}
 			return messages
 		}
 		return []tea.Msg{msg}
-	case <-time.After(testCommandSettleTimeout):
+	case <-time.After(timeout):
 		return nil
 	}
 }
