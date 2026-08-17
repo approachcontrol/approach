@@ -138,7 +138,9 @@ saved plans remain ordinary restrictive files.
 Hook transcript paths must resolve to regular files inside the provider-owned
 transcript root. Codex uses `$CODEX_HOME/sessions` (default
 `$HOME/.codex/sessions`); Claude uses `$CLAUDE_CONFIG_DIR/projects` (default
-`$HOME/.claude/projects`); Cursor CLI uses `$HOME/.cursor/chats`. Set those
+`$HOME/.claude/projects`); Cursor CLI accepts `$HOME/.cursor/chats` or
+`$HOME/.cursor/projects` (Cursor `stop` hooks typically name
+`$HOME/.cursor/projects/<project>/agent-transcripts/...`). Set those
 existing provider environment variables when the provider itself uses a custom
 home or config directory. Relative
 paths, paths outside the expected root, and symlink escapes are rejected

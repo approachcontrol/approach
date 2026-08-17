@@ -558,6 +558,36 @@ func TestIngestHookCursorUsesEnvTranscriptPath(t *testing.T) {
 	}
 }
 
+func TestIngestHookCursorAcceptsProjectsAgentTranscript(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	transcriptPath := filepath.Join(home, ".cursor", "projects", "repo", "agent-transcripts", "chat.db")
+	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o700); err != nil {
+		t.Fatalf("create cursor projects transcript: %v", err)
+	}
+	if err := os.WriteFile(transcriptPath, []byte("opaque"), 0o600); err != nil {
+		t.Fatalf("write cursor transcript: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(transcriptPath)
+	if err != nil {
+		t.Fatalf("canonicalize transcript: %v", err)
+	}
+
+	record, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{
+		"conversation_id": "cursor-projects-1",
+		"transcript_path": `+quoteJSON(transcriptPath)+`
+	}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env:       map[string]string{"HOME": home},
+	})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.TranscriptPath != canonical {
+		t.Fatalf("TranscriptPath = %q, want projects path %q", record.TranscriptPath, canonical)
+	}
+}
+
 func TestIngestHookCursorRejectsOutOfRootTranscript(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
