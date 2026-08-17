@@ -137,6 +137,13 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 		if !sameRepoPath(baseline.RepoPath, observed.RepoPath) || baseline.Bead != observed.Bead {
 			continue
 		}
+		// Both edges are level-triggered on the observed record, never latched:
+		// neither branch refreshes the baseline, so an edge that loses the
+		// single-flight admission simply refires on the next poll while the
+		// condition holds. An edge whose child recovered before admission freed
+		// is meant to be forgotten — latching it would halt a healthy child with
+		// a stale cause, which is strictly worse than the transient-halt cost
+		// this design already accepts.
 		switch {
 		case epicProgressionSuccessTerminal(observed):
 			if epicProgressionSuccessTerminal(baseline) {
