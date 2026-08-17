@@ -57,9 +57,9 @@ func activeFlowResultFromCommand(t *testing.T, cmd tea.Cmd) model.ActiveFlowResu
 	return model.ActiveFlowResultMsg{}
 }
 
-// testCommandSettleTimeout is long enough for real SQLite writes on a loaded
-// CI runner. The previous 20ms window dropped those results and flaked.
-const testCommandSettleTimeout = 2 * time.Second
+// testCommandSettleTimeout stays short so settleModelCommands does not
+// consume status-fade timers (1s+) and clear the error under test.
+const testCommandSettleTimeout = 20 * time.Millisecond
 
 func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) model.Model {
 	t.Helper()

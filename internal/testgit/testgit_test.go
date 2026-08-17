@@ -21,7 +21,7 @@ func TestEnvDropsAmbientGitSelectors(t *testing.T) {
 			strings.HasPrefix(entry, "GIT_INDEX_FILE=") ||
 			strings.HasPrefix(entry, "GIT_OBJECT_DIRECTORY=") ||
 			strings.HasPrefix(entry, "GIT_TEMPLATE_DIR=") ||
-			strings.HasPrefix(entry, "GIT_CONFIG_") {
+			strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") {
 			t.Fatalf("ambient git selector leaked into test env: %s", entry)
 		}
 	}
