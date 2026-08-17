@@ -587,6 +587,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleReadyBeadFlowCreate(readyBeadFlowCreateAndStart)
 		}
 		return m.handlePull()
+	case "S":
+		// S has no other binding in any pane, so the handler's own ownership
+		// gate is the whole rule and an unconditional case is correct.
+		return m.handleSliceSelectedEpic()
 	case "t":
 		return m.handleOpenTerminal()
 	case "T":
@@ -3163,6 +3167,11 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 }
 
 func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText string) (Model, tea.Cmd) {
+	// A slice-epic launch holds its admission across the spawn. A spawn that
+	// fails before handoff produces no AgentResultMsg, so the result-side
+	// release never runs and the admission would wedge. The release is keyed on
+	// this launch's own ID, so every other caller is unaffected.
+	m = m.releaseSliceEpicLaunch(ctx.LaunchID)
 	return m.startFlowLaunchFailureWithReadyAdmission(ctx, errText, false)
 }
 

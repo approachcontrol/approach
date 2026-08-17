@@ -672,6 +672,41 @@ func TestRender_BeadsOpenShortcutsAdvertiseArrowAndSubviewNavigation(t *testing.
 	}
 }
 
+func TestRender_BeadsReadySliceEpicShortcutFollowsAvailability(t *testing.T) {
+	base := RenderParams{
+		Repos:                  []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:               0,
+		Height:                 20,
+		Mode:                   ModeBeadsReady,
+		ActivePane:             PaneTop,
+		BeadsOpen:              []beadsquery.Bead{{ID: "bd-1", Title: "One", IssueType: "epic"}},
+		BeadSliceEpicAvailable: true,
+	}
+
+	base.Width = 80
+	if footer := ansi.Strip(Render(base)); !strings.Contains(footer, "S: slice epic") {
+		t.Fatalf("Ready footer missing the slice shortcut:\n%s", footer)
+	}
+
+	base.Width = 140
+	if pane := ansi.Strip(shortcutPaneText(Render(base))); !strings.Contains(pane, "S      slice epic") {
+		t.Fatalf("Ready shortcut pane missing the slice shortcut:\n%s", pane)
+	}
+
+	unavailable := base
+	unavailable.BeadSliceEpicAvailable = false
+	if view := ansi.Strip(Render(unavailable)); strings.Contains(view, "slice epic") {
+		t.Fatalf("unavailable slice shortcut was still advertised:\n%s", view)
+	}
+
+	// The hint is Ready-only; other Beads subviews never show it.
+	other := base
+	other.Mode = ModeBeadsOpen
+	if view := ansi.Strip(Render(other)); strings.Contains(view, "slice epic") {
+		t.Fatalf("slice shortcut leaked into the Open subview:\n%s", view)
+	}
+}
+
 func TestRender_BeadsReadyFlowShortcutsUseIndependentAvailabilitySnapshots(t *testing.T) {
 	base := RenderParams{
 		Repos:                        []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},

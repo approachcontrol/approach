@@ -134,6 +134,7 @@ type Model struct {
 	flowPreparationAdmission    bool
 	flowPreparationSeq          uint64
 	flowPreparationOwner        flowPreparationOwner
+	sliceEpicLaunch             sliceEpicLaunchRecord
 
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
@@ -1524,6 +1525,7 @@ func (m Model) View() string {
 		ReadyBeadFlowCreateAvailable:   m.canCreateReadyBeadFlow(),
 		ReadyBeadFlowStartAvailable:    m.canStartReadyBeadFlow(),
 		ReadyBeadFlowKeysOwned:         m.readyBeadFlowKeysOwned(),
+		BeadSliceEpicAvailable:         m.canSliceSelectedEpic(),
 		EpicAutoOnAvailable:            m.canEnableEpicProgression(),
 		EpicAutoOffAvailable:           m.canDisableEpicProgression(),
 		EpicAutoKeyOwned:               m.epicProgressionKeysOwned(),
@@ -2347,6 +2349,13 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		}
 	}
 	ctx := msg.LaunchContext
+	// A slice-epic launch holds its preparation admission across the spawn, and
+	// its own result is what ends the hold. The exact LaunchID match is what
+	// stops a stale result — from a launch made before a repository or
+	// selection change — from releasing a newer fence or reporting against a
+	// different epic.
+	sliceRecord, slicedLaunch := m.sliceEpicLaunchFor(ctx.LaunchID)
+	m = m.releaseSliceEpicLaunch(ctx.LaunchID)
 	// Only a lifecycle handoff releases here; every other source funnels
 	// through this handler with no attempt and must reach main's behaviour
 	// below unchanged.
@@ -2370,7 +2379,14 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		// user's session ends rather than when it starts.
 		status := msg.LaunchedStatus
 		if strings.TrimSpace(status) == "" {
-			status = agentLaunchedStatus(msg.LaunchContext.Command)
+			// A carried status is load-bearing on the tmux route (it is how the
+			// user learns the attach command) and on the tmux-unavailable
+			// fallback, so the slice status replaces only this fallback.
+			if slicedLaunch {
+				status = sliceEpicLaunchedStatus(ctx.Command, sliceRecord.EpicID)
+			} else {
+				status = agentLaunchedStatus(ctx.Command)
+			}
 		}
 		m = m.setStatus(statusOther, status)
 	}

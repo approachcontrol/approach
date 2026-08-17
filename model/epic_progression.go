@@ -41,6 +41,9 @@ const (
 	flowPreparationReadyBead
 	flowPreparationEpicToggle
 	flowPreparationEpicAdvance
+	// flowPreparationSliceEpic holds across a whole agent spawn rather than a
+	// store round trip, so it is the longest-lived sharer of this admission.
+	flowPreparationSliceEpic
 )
 
 type flowPreparationOwner struct {

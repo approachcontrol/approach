@@ -81,6 +81,7 @@ right. The essentials:
 | `/` | Fuzzy filter the active pane |
 | `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
 | `F` | In a settled Beads Ready pane, create the selected Bead's Flow and start its first actionable phase; pull in eligible Git contexts and elsewhere outside that Ready selection |
+| `S` | In a settled Beads Ready pane with an epic selected, launch one configured agent at the repository root to slice that epic into child Beads with the `slice-issues` skill |
 | `f5` | Rescan repositories and refresh both stored content panes; the visible takeover refreshes independently too |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent; on a selected epic, toggle its auto-progression; on a Flow, toggle phase auto mode |
@@ -100,6 +101,9 @@ group at its last-used subview, defaulting to Ready on first entry.
 All Beads queries and detail reads are read-only. The only tracker mutation is
 the explicit claim performed when epic auto-progression prepares a new child
 Flow; ordinary browsing and manual Ready Flow creation never mutate Beads.
+`S` on a Ready epic is no exception: it only hands a launched agent the epic ID
+and the slicing contract, and the approved child Beads are created by that
+agent, never by the TUI.
 Pressing `2` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
 Closed, and `←`/`→` step and wrap through those five subviews. The letters
