@@ -284,10 +284,13 @@ func TestEpicProgressionHaltPersistenceFailureUsesAuthoritativeState(t *testing.
 			wantDisposition: epicProgressionHaltInactive,
 		},
 		{
+			// A halted row is a halt whatever the write reported, so this
+			// announces the retained cause rather than the inactive line. The
+			// dedicated durable-halt test pins that message.
 			name:            "already halted",
 			found:           true,
 			progression:     flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &flowstore.EpicProgressionHalt{ChildBeadID: "epic.a", Status: flowstore.StatusBlocked, Message: "halted"}},
-			wantDisposition: epicProgressionHaltInactive,
+			wantDisposition: epicProgressionHaltPersisted,
 		},
 		{
 			name:            "done",
@@ -643,6 +646,47 @@ func TestEpicProgressionHaltAnnouncesTheRetainedCause(t *testing.T) {
 		t.Fatalf("disposition = %v, want persisted", result.disposition)
 	}
 	next, _ = updateFlowRefreshTest(next, result)
+	want := "Auto-progression halted for epic epic: child epic.z is " + flowstore.StatusClosed
+	if next.status.Text != want {
+		t.Fatalf("status = %q, want %q", next.status.Text, want)
+	}
+}
+
+// TestEpicProgressionHaltWriteErrorReportsADurableHalt covers the write that
+// reports an error after the row became durable. The authoritative read is the
+// tiebreaker, and a halted row must announce its retained cause rather than the
+// generic inactive line, exactly as the successful write does.
+func TestEpicProgressionHaltWriteErrorReportsADurableHalt(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	observed := cloneFlowRecord(source)
+	observed.Status = flowstore.StatusBlocked
+	durable := flowstore.EpicProgressionHalt{
+		ChildBeadID: "epic.z",
+		Status:      flowstore.StatusClosed,
+		Message:     "child Flow flow-z halted auto-progression",
+	}
+	m := Model{
+		autoAdvanceInFlight:      1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
+			return flowstore.EpicProgression{}, errors.New("commit failed")
+		},
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			halt := durable
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &halt}, true, nil
+		},
+	}
+	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{observed}, Request: 1})
+	result := epicProgressionHaltMessage(t, cmd)
+	if result.disposition != epicProgressionHaltPersisted {
+		t.Fatalf("disposition = %v, want persisted", result.disposition)
+	}
+	next, _ = updateFlowRefreshTest(next, result)
+	if _, present := next.epicProgressionBaselines[key]; present {
+		t.Fatalf("durable halt retained the baseline: %#v", next.epicProgressionBaselines)
+	}
 	want := "Auto-progression halted for epic epic: child epic.z is " + flowstore.StatusClosed
 	if next.status.Text != want {
 		t.Fatalf("status = %q, want %q", next.status.Text, want)

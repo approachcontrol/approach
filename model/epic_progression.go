@@ -369,14 +369,19 @@ func (m Model) haltEpicProgressionCmd(request epicProgressionHaltRequest, observ
 			if persisted.Halt != nil {
 				cause = *persisted.Halt
 			}
-			return result(epicProgressionHaltPersisted,
-				fmt.Sprintf("Auto-progression halted for epic %s: child %s is %s", epicID, cause.ChildBeadID, cause.Status))
+			return result(epicProgressionHaltPersisted, epicProgressionHaltStatus(epicID, cause))
 		}
 		authoritative, found, readErr := readProgression(key)
 		if readErr != nil {
 			return result(epicProgressionHaltRetryable, fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", epicID, readErr))
 		}
-		if found && authoritative.Enabled && !authoritative.Done && authoritative.Halt == nil {
+		if found && authoritative.Halt != nil {
+			// A write can report an error after the row became durable. The read
+			// is the tiebreaker: a halted row is a halt, announced from its own
+			// tuple rather than the generic inactive line.
+			return result(epicProgressionHaltPersisted, epicProgressionHaltStatus(epicID, *authoritative.Halt))
+		}
+		if found && authoritative.Enabled && !authoritative.Done {
 			return result(epicProgressionHaltRetryable, fmt.Sprintf("Could not halt auto-progression for epic %s: %v", epicID, err))
 		}
 		return result(epicProgressionHaltInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
@@ -1035,4 +1040,11 @@ func (m Model) readEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
 
 func epicProgressionBaselineKey(repoPath, epicID string) string {
 	return filepath.Clean(repoPath) + "\x00" + strings.TrimSpace(epicID)
+}
+
+// epicProgressionHaltStatus formats the one halt notification, always from the
+// tuple the store owns, so every path reports the cause that is actually
+// durable.
+func epicProgressionHaltStatus(epicID string, cause flowstore.EpicProgressionHalt) string {
+	return fmt.Sprintf("Auto-progression halted for epic %s: child %s is %s", epicID, cause.ChildBeadID, cause.Status)
 }
