@@ -81,6 +81,7 @@ func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchAcceptsCursorAgent(t *testing.T) {
 	putAgentOnPath(t, "cursor-agent")
+	t.Setenv("HOME", t.TempDir())
 	ctx := tmuxModeContext()
 	ctx.Command = "cursor-agent"
 	ctx.WorktreePath = t.TempDir()
