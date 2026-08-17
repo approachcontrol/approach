@@ -15,13 +15,45 @@ import (
 )
 
 type IngestOptions struct {
-	StateRoot          string
+	StateRoot string
+	// StateRootExplicit reports that StateRoot was named by --state-root or by
+	// APPROACH_SESSION_STATE_ROOT rather than falling back to config. The
+	// caller has already flattened those three sources into one string, so the
+	// distinction cannot be recovered here.
+	StateRootExplicit  bool
 	CopyRawTranscripts bool
 	FlowPresets        []flowstore.Preset
 	Env                map[string]string
 }
 
+// HookResult is what a hook run produced. It is deliberately NOT persisted:
+// SessionRecord's JSON is written to disk by store.upsert, and hanging warnings
+// off it would change the on-disk session schema for a message whose whole
+// lifetime is one command invocation.
+type HookResult struct {
+	Record   SessionRecord
+	Warnings []string
+}
+
+// IngestHook keeps the signature the 23 existing call sites use. The warnings
+// channel is a separate entry point rather than a signature change: 13 of those
+// call sites bind and dereference the record, and churning them buys nothing.
 func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (SessionRecord, error) {
+	result, err := IngestHookWithWarnings(provider, input, opts)
+	return result.Record, err
+}
+
+// IngestHookWithWarnings reports the Flow-store failures the hook used to
+// swallow. After role separation a post-bump session attachment fails on every
+// hook run until someone migrates, and the whole point of the hook is that
+// nobody is watching it — so it has to say so.
+func IngestHookWithWarnings(provider Provider, input io.Reader, opts IngestOptions) (HookResult, error) {
+	var warnings []string
+	record, err := ingestHook(provider, input, opts, &warnings)
+	return HookResult{Record: record, Warnings: warnings}, err
+}
+
+func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings *[]string) (SessionRecord, error) {
 	var payload hookPayload
 	if err := json.NewDecoder(input).Decode(&payload); err != nil {
 		return SessionRecord{}, fmt.Errorf("parse hook payload: %w", err)
@@ -81,7 +113,7 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	if err != nil {
 		return SessionRecord{}, err
 	}
-	launchStale, releaseLaunchStale := flowLaunchStaleResolver(record, opts)
+	launchStale, releaseLaunchStale := flowLaunchStaleResolver(record, opts, warnings)
 	store.launchStale = launchStale
 	// The release is idempotent, so it runs inline below AND deferred: a panic in
 	// upsert would otherwise leak the Flow store's pooled handle, which is the
@@ -104,7 +136,7 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	releaseResolver()
 	// Upsert releases the per-session lock before Flow attachment. Keeping that
 	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
-	attachFlowSession(record, opts)
+	attachFlowSession(record, opts, warnings)
 	return record, nil
 }
 
@@ -229,17 +261,32 @@ func resolveGitMetadata(record *SessionRecord) {
 	}
 }
 
-func attachFlowSession(record SessionRecord, opts IngestOptions) {
+// attachFlowSession takes the warning channel as an out-param rather than a
+// return value: it is called for its side effect, and a returned error would
+// have to be discarded by a caller that has already succeeded at the thing the
+// hook exists to do.
+func attachFlowSession(record SessionRecord, opts IngestOptions, warnings *[]string) {
 	if record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.SessionID) == "" {
 		return
 	}
-	root := flowStateRoot(opts)
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: opts.FlowPresets})
+	root, explicit := flowStateRoot(opts)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:         root,
+		RootExplicit: explicit,
+		Role:         flowstore.RoleWriter,
+		Presets:      opts.FlowPresets,
+	})
 	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not attach this session to Flow %s phase %s: %v",
+			record.FlowID, record.FlowPhaseID, err))
 		return
 	}
 	defer func() { _ = store.Close() }()
-	_, _ = store.AttachSession(flowstore.SessionAttachUpdate{
+	// The attach itself gets the same channel as the open. Opening the store is
+	// only the first way this can fail — an absent Flow or phase, a rejected
+	// update, or a SQLite error during the write all leave the session
+	// unattached, and discarding those is the silent failure this reports.
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{
 		FlowID:  record.FlowID,
 		PhaseID: record.FlowPhaseID,
 		Session: flowstore.Session{
@@ -251,19 +298,33 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 			EndedAt:        record.EndedAt,
 			TranscriptPath: record.TranscriptPath,
 		},
-	})
+	}); err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not attach this session to Flow %s phase %s: %v",
+			record.FlowID, record.FlowPhaseID, err))
+	}
 }
 
 // flowLaunchStaleResolver returns the resolver and a release func the caller
 // must run once the resolver is done. The Flow store holds a pooled SQLite
 // handle now, so an unclosed one leaks descriptors for the life of the hook.
-func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) (launchStaleFunc, func()) {
+func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions, warnings *[]string) (launchStaleFunc, func()) {
 	noRelease := func() {}
 	if record.FlowID == "" || record.FlowPhaseID == "" {
 		return nil, noRelease
 	}
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: flowStateRoot(opts), Presets: opts.FlowPresets})
+	root, explicit := flowStateRoot(opts)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:         root,
+		RootExplicit: explicit,
+		Role:         flowstore.RoleReader,
+		Presets:      opts.FlowPresets,
+	})
 	if err != nil {
+		// The reader role is precisely the one that starts refusing after a
+		// release bump, so reporting only attachFlowSession's failure would
+		// leave half of this channel's own premise unaddressed.
+		appendWarning(warnings, fmt.Sprintf("could not read Flow %s to order this session against"+
+			" earlier launches: %v", record.FlowID, err))
 		return nil, noRelease
 	}
 	// The caller also clears launchStale after releasing. That is future-proofing,
@@ -309,17 +370,36 @@ func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) (launchSt
 	}, release
 }
 
-func flowStateRoot(opts IngestOptions) string {
+// appendWarning collects an operator notice. A nil channel is a legitimate
+// caller — the compatibility wrapper does not want them — so it is not an error.
+func appendWarning(warnings *[]string, message string) {
+	if warnings == nil {
+		return
+	}
+	*warnings = append(*warnings, message)
+}
+
+// flowStateRoot returns the Flow store root and whether it was named
+// explicitly. It derives the explicitness of its own two environment reads
+// internally, because it consults them ahead of opts.StateRoot and
+// opts.StateRootExplicit cannot speak for them.
+//
+// The trailing APPROACH_SESSION_STATE_ROOT read is deliberately NOT explicit:
+// the command has already folded that variable into opts.StateRoot alongside
+// the flag and the config fallback, so opts.StateRootExplicit speaks for it,
+// and this read is only reached when sessions was constructed by something
+// other than that command.
+func flowStateRoot(opts IngestOptions) (string, bool) {
 	if root := opts.Env["APPROACH_FLOW_STATE_ROOT"]; root != "" {
-		return root
+		return root, true
 	}
 	if root := opts.Env["APPROACH_PLAN_STATE_ROOT"]; root != "" {
-		return root
+		return root, true
 	}
 	if opts.StateRoot != "" {
-		return opts.StateRoot
+		return opts.StateRoot, opts.StateRootExplicit
 	}
-	return opts.Env["APPROACH_SESSION_STATE_ROOT"]
+	return opts.Env["APPROACH_SESSION_STATE_ROOT"], false
 }
 
 func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {

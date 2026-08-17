@@ -122,7 +122,15 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	if flowID == "" {
 		return m, nil, false
 	}
-	if m.flowLaunchAdmissionOccupied(flowID) {
+	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
+	} else if occupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
+	// The typed lease check above owns the occupied/setup diagnostic. Repeating
+	// it through flowLaunchAdmissionOccupied could turn a peer race into a silent
+	// refusal before the reservation-protected recheck reports the real cause.
+	if m.flowLaunchRuntimeOccupied(flowID) {
 		// The two predicates overlap rather than nest: the broad one requires a
 		// non-nil Terminal and ignores FlowRepair, the repair one requires
 		// FlowRepair and ignores Terminal. A repair terminal satisfies both
@@ -162,16 +170,19 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
-// previewPhaseResume is the footer's half of D1, and it is deliberately
-// narrower than flowLaunchAdmissionOccupied: a competing lifecycle attempt and
-// an open repair terminal both refuse a resume silently by design, and
-// withdrawing the key for them would be a behavior change this bead does not
-// make. It gates on the retained-slot conjunction only, which is the case
-// resume newly refuses out loud.
+// previewPhaseResume is the footer's half of D1. A tracked lease is included
+// fail-closed so the footer never advertises a resume that admission will
+// immediately defer. The remaining predicate is deliberately narrower than
+// flowLaunchAdmissionOccupied: a competing lifecycle attempt and an open repair
+// terminal both refuse a resume silently by design, and withdrawing the key for
+// them would be a behavior change this bead does not make.
 func (m Model) previewPhaseResume(flowID string) bool {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {
 		return true
+	}
+	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil || occupied {
+		return false
 	}
 	return !m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
 }
@@ -313,6 +324,16 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		// launch, close, repair, or resume on this Flow would block until the
 		// lock timed out, in this process and in peers.
 		event.Release = release
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		}
 		updated, err := addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   msg.FlowID,
 			PhaseID:  msg.PhaseID,

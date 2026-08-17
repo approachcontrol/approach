@@ -11,6 +11,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -26,7 +27,10 @@ type tmuxResumeSpy struct {
 
 func (s *tmuxResumeSpy) model(backend string, tmuxAvailable bool) Model {
 	return NewWithOptions(nil, Options{
-		AgentCommand:        "codex",
+		AgentCommand: "codex",
+		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
+		},
 		LaunchBackend:       backend,
 		TmuxLaunchAvailable: func() bool { return tmuxAvailable },
 		LaunchRepoTmuxAgent: func(ctx actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error) {

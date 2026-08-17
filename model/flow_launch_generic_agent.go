@@ -98,6 +98,11 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	if err := m.launchSeams.inspectWorktreeDirectory(record.WorktreePath); err != nil {
 		return m.setStatus(statusOther, flowWorktreeAgentPathStatus), nil, false
 	}
+	if occupied, err := m.trackedFlowLeaseOccupied(intent.FlowID); err != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
+	} else if occupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
 	if m.flowLaunchAttemptOccupied(intent.FlowID) {
 		return m.setStatus(statusOther, flowWorktreeAgentPendingStatus), nil, false
 	}
@@ -237,6 +242,16 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 			return event
 		}
 		event.Release = release
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		}
 		if record.FlowID != msg.FlowID || !genericWorktreeAgentFlowEligible(record) {
 			event.Err = flowWorktreeAgentStaleStatus
 			return event

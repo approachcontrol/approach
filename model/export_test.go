@@ -173,3 +173,19 @@ func FlowPlanPromptForTest(record flowstore.FlowRecord, templates FlowPromptTemp
 func FlowPhasePromptForTest(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
 	return flowPhasePrompt(record, phase, planPath, planBody, templates, "")
 }
+
+func FlowPreparationAdmissionForTest(m Model) bool {
+	return m.flowPreparationAdmission
+}
+
+func SliceEpicLaunchInFlightForTest(m Model) bool {
+	return m.sliceEpicLaunchInFlight()
+}
+
+func FlowLaunchContextRequiresLifecycleForTest(ctx actions.AgentLaunchContext) bool {
+	return flowLaunchContextRequiresLifecycle(ctx)
+}
+
+func ModalOpenForTest(m Model) bool {
+	return m.modal.IsOpen()
+}

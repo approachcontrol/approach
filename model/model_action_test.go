@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 
@@ -3563,7 +3564,8 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 		t.Fatalf("editor initial input = %q, want raw template", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	// enter now inserts a newline in the editor; ctrl+s is the save key.
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if cmd == nil {
 		t.Fatal("expected save prompt template command")
 	}
@@ -3575,12 +3577,142 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want picker reopened", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "Plan launch") || !strings.Contains(m.View(), "custom") {
-		t.Fatalf("expected refreshed picker with custom status:\n%s", m.View())
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Plan launch") || !strings.Contains(view, "custom") {
+		t.Fatalf("expected refreshed picker with custom status:\n%s", view)
+	}
+	if !strings.Contains(view, "Saved Plan launch") {
+		t.Fatalf("expected the picker to report which template was saved:\n%s", view)
 	}
 }
 
-func TestModel_PromptTemplateEditUsesTallEditor(t *testing.T) {
+func TestModel_PromptTemplateEditorEnterInsertsNewlineInsteadOfSaving(t *testing.T) {
+	saves := 0
+	m := newTestModel(testRepos(), model.Options{
+		PlanPromptTemplate: "one",
+		SavePromptTemplate: func(string, string, string) error {
+			saves++
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("editor enter returned cmd %T, want nil", cmd)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("two")})
+	if got := m.WorktreeInput(); got != "one\ntwo" {
+		t.Fatalf("editor buffer = %q, want a newline inserted by enter", got)
+	}
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("overlay = %v, want the editor still open", m.Overlay())
+	}
+	if saves != 0 {
+		t.Fatalf("enter saved %d times, want 0", saves)
+	}
+}
+
+func TestModel_PromptTemplateEditorCancelReturnsToPickerWithFeedback(t *testing.T) {
+	cases := []struct {
+		name     string
+		mutate   func(model.Model) model.Model
+		wantNote string
+	}{
+		{"clean cancel", func(m model.Model) model.Model { return m }, "No changes to Plan launch"},
+		{"dirty cancel", func(m model.Model) model.Model {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+			return m
+		}, "Discarded changes to Plan launch"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			saves := 0
+			m := newTestModel(testRepos(), model.Options{
+				PlanPromptTemplate: "custom plan",
+				SavePromptTemplate: func(string, string, string) error {
+					saves++
+					return nil
+				},
+			})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, _ = update(m, cmd())
+			m = tc.mutate(m)
+
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+			if cmd == nil {
+				t.Fatal("expected a picker return command from cancel")
+			}
+			m, _ = update(m, cmd())
+
+			if m.Overlay() != ui.OverlaySelect {
+				t.Fatalf("overlay = %v, want the picker reopened", m.Overlay())
+			}
+			view := ansi.Strip(m.View())
+			if !strings.Contains(view, tc.wantNote) {
+				t.Fatalf("expected %q in the picker note:\n%s", tc.wantNote, view)
+			}
+			if !strings.Contains(view, "> Plan launch") {
+				t.Fatalf("expected the same picker selection retained:\n%s", view)
+			}
+			if saves != 0 {
+				t.Fatalf("cancel persisted the draft %d times, want 0", saves)
+			}
+			if !strings.Contains(view, "Plan launch      custom") {
+				t.Fatalf("cancel must leave the custom template in place:\n%s", view)
+			}
+
+			// The note is transient: the next picker keystroke clears it.
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+			if strings.Contains(ansi.Strip(m.View()), tc.wantNote) {
+				t.Fatalf("picker note survived a navigation keystroke:\n%s", m.View())
+			}
+		})
+	}
+}
+
+func TestModel_PromptTemplateBlankSaveResetsAndReportsThatOutcome(t *testing.T) {
+	resets := 0
+	m := newTestModel(testRepos(), model.Options{
+		PlanPromptTemplate: "custom plan",
+		ResetPromptTemplate: func(string, string) error {
+			resets++
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	if !strings.Contains(ansi.Strip(m.View()), "empty: saving restores the built-in default") {
+		t.Fatalf("expected the empty-buffer warning while the buffer is blank:\n%s", m.View())
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("expected a reset command from a blank save")
+	}
+	m, _ = update(m, cmd())
+
+	if resets != 1 {
+		t.Fatalf("resets = %d, want 1", resets)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Plan launch reset to default") {
+		t.Fatalf("expected the editor-origin reset wording:\n%s", view)
+	}
+	if !strings.Contains(view, "Plan launch      default") {
+		t.Fatalf("expected the template reset to its built-in default:\n%s", view)
+	}
+}
+
+func TestModel_PromptTemplateEditUsesFixedEditorViewport(t *testing.T) {
 	template := strings.Join([]string{
 		"line 01",
 		"line 02",
@@ -3609,9 +3741,44 @@ func TestModel_PromptTemplateEditUsesTallEditor(t *testing.T) {
 	view := ansi.Strip(m.View())
 	for _, want := range []string{"line 01", "line 12█"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("prompt template editor should show %q with tall editor:\n%s", want, view)
+			t.Fatalf("prompt template editor should show %q in its fixed viewport:\n%s", want, view)
 		}
 	}
+
+	// The panel's outer bounds are the same for a 12-line template and a
+	// single-line one.
+	tallBounds := promptEditorPanelBounds(t, view)
+
+	short := newTestModel(testRepos(), model.Options{PlanPromptTemplate: "one line"})
+	short, _ = update(short, tea.WindowSizeMsg{Width: 100, Height: 24})
+	short, _ = update(short, tea.KeyMsg{Type: tea.KeyF2})
+	short, cmd = update(short, tea.KeyMsg{Type: tea.KeyEnter})
+	short, _ = update(short, cmd())
+	if shortBounds := promptEditorPanelBounds(t, ansi.Strip(short.View())); shortBounds != tallBounds {
+		t.Fatalf("editor panel = %v for a short template, want the fixed %v", shortBounds, tallBounds)
+	}
+}
+
+// promptEditorPanelBounds reports the rendered editor panel's outer width and
+// row count.
+func promptEditorPanelBounds(t *testing.T, strippedView string) [2]int {
+	t.Helper()
+	rows, width := 0, 0
+	for _, line := range strings.Split(strippedView, "\n") {
+		trimmed := strings.TrimRight(line, " ")
+		idx := strings.IndexAny(trimmed, "┌│└")
+		if idx < 0 {
+			continue
+		}
+		rows++
+		if w := lipgloss.Width(trimmed[idx:]); w > width {
+			width = w
+		}
+	}
+	if rows == 0 {
+		t.Fatalf("no editor panel found in:\n%s", strippedView)
+	}
+	return [2]int{width, rows}
 }
 
 func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.T) {
@@ -3630,21 +3797,29 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 	m, _ = update(m, cmd())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("new {title}")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if cmd == nil {
 		t.Fatal("expected save prompt template command")
 	}
 	m, _ = update(m, cmd())
 
-	view := m.View()
+	// Failure preserves the draft in a reconstructed editor rather than
+	// dropping the user back into the picker.
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("overlay = %v, want the editor retained after a failed save", m.Overlay())
+	}
+	if got := m.WorktreeInput(); got != "new {title}" {
+		t.Fatalf("editor draft after failure = %q, want the unsaved draft", got)
+	}
+	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "read-only config") {
-		t.Fatalf("expected save failure status in view:\n%s", view)
+		t.Fatalf("expected the persistence error inside the editor:\n%s", view)
 	}
-	if !strings.Contains(view, "Plan launch      custom") {
-		t.Fatalf("expected failed save to keep old custom picker status:\n%s", view)
+	if !strings.Contains(view, "agent.plan_prompt  custom") {
+		t.Fatalf("failed save should still describe the persisted template as custom:\n%s", view)
 	}
-	if strings.Contains(view, "Plan launch      default") {
-		t.Fatalf("failed save should not mark existing custom template as default:\n%s", view)
+	if !strings.Contains(view, "modified") {
+		t.Fatalf("expected the reconstructed editor to open dirty:\n%s", view)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = inRightPane(m)
@@ -3685,7 +3860,23 @@ func TestModel_PromptTemplateResetClearsCustomValueAndReopensPicker(t *testing.T
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	// Reset is protected from an accidental single keypress.
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("r returned cmd %T, want a confirmation instead", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("overlay = %v, want a reset confirmation", m.Overlay())
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "Reset Flow plan to its built-in default?") {
+		t.Fatalf("expected the reset confirmation prompt:\n%s", m.View())
+	}
+	if resetSection != "" || resetKey != "" {
+		t.Fatal("opening the confirmation must not reset anything")
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Fatal("expected reset prompt template command")
 	}
@@ -3697,12 +3888,233 @@ func TestModel_PromptTemplateResetClearsCustomValueAndReopensPicker(t *testing.T
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want picker reopened", m.Overlay())
 	}
-	view := m.View()
+	view := ansi.Strip(m.View())
 	if strings.Contains(view, "Flow plan        custom") {
 		t.Fatalf("expected Flow plan reset to default:\n%s", view)
 	}
 	if !strings.Contains(view, "Flow plan") || !strings.Contains(view, "default") {
 		t.Fatalf("expected refreshed picker with default status:\n%s", view)
+	}
+	if !strings.Contains(view, "Restored Flow plan to default") {
+		t.Fatalf("expected the picker to report which template was restored:\n%s", view)
+	}
+	if !strings.Contains(view, "> Flow plan") {
+		t.Fatalf("expected the same picker selection retained:\n%s", view)
+	}
+}
+
+func TestModel_PromptTemplateResetCancellationLeavesTheCustomValueIntact(t *testing.T) {
+	resets := 0
+	m := newTestModel(testRepos(), model.Options{
+		FlowPromptTemplates: model.FlowPromptTemplates{Plan: "custom flow plan"},
+		ResetPromptTemplate: func(string, string) error {
+			resets++
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("expected a picker return command from a cancelled reset")
+	}
+	m, _ = update(m, cmd())
+
+	if resets != 0 {
+		t.Fatalf("cancelled reset ran %d times, want 0", resets)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Flow plan        custom") {
+		t.Fatalf("cancelled reset must leave the custom value intact:\n%s", view)
+	}
+	if !strings.Contains(view, "Flow plan unchanged") {
+		t.Fatalf("expected the cancelled-reset note:\n%s", view)
+	}
+	if !strings.Contains(view, "> Flow plan") {
+		t.Fatalf("expected the same picker selection retained:\n%s", view)
+	}
+}
+
+func TestModel_PromptTemplateResetOnDefaultTemplateIsANoOpNote(t *testing.T) {
+	resets := 0
+	m := newTestModel(testRepos(), model.Options{
+		ResetPromptTemplate: func(string, string) error {
+			resets++
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if cmd != nil {
+		t.Fatalf("r on a default template returned cmd %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want the picker retained", m.Overlay())
+	}
+	if resets != 0 {
+		t.Fatalf("reset ran %d times on an already-default template, want 0", resets)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "Plan launch is already default") {
+		t.Fatalf("expected the informational note:\n%s", m.View())
+	}
+}
+
+func TestModel_PromptTemplateResetFailureKeepsPickerSelectionAndShowsTheError(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{
+		FlowPromptTemplates: model.FlowPromptTemplates{Plan: "custom flow plan"},
+		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("expected reset prompt template command")
+	}
+	m, _ = update(m, cmd())
+
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want the picker", m.Overlay())
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "read-only config") {
+		t.Fatalf("expected the reset error in the picker note row:\n%s", view)
+	}
+	if !strings.Contains(view, "> Flow plan") {
+		t.Fatalf("expected the same picker selection retained:\n%s", view)
+	}
+	if !strings.Contains(view, "Flow plan        custom") {
+		t.Fatalf("failed reset must not present itself as success:\n%s", view)
+	}
+}
+
+func TestModel_PromptTemplateEditorOriginResetFailureReconstructsTheEditor(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{
+		PlanPromptTemplate:  "custom plan",
+		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("expected a reset command from a whitespace-only save")
+	}
+	m, _ = update(m, cmd())
+
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("overlay = %v, want the editor reconstructed", m.Overlay())
+	}
+	if got := m.WorktreeInput(); got != " " {
+		t.Fatalf("editor draft after a failed editor-origin reset = %q, want the whitespace draft", got)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "read-only config") {
+		t.Fatalf("expected the reset error inside the editor:\n%s", m.View())
+	}
+}
+
+func TestModel_PromptTemplateEditorOriginResetFailureKeepsTheCursor(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{
+		PlanPromptTemplate:  "custom plan",
+		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("   ")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	if got := m.InputCursor(); got != 0 {
+		t.Fatalf("cursor before submit = %d, want 0", got)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("expected a reset command from a whitespace-only save")
+	}
+	m, _ = update(m, cmd())
+
+	// A failed write keeps the draft and cursor, so a retry resumes where the
+	// user left off instead of jumping to the end of the buffer.
+	if got := m.InputCursor(); got != 0 {
+		t.Fatalf("cursor after a failed editor-origin reset = %d, want the pre-submit 0", got)
+	}
+}
+
+func TestModel_PromptTemplateSaveRetryAfterFailureSucceeds(t *testing.T) {
+	attempts := 0
+	var savedValue string
+	m := newTestModel(testRepos(), model.Options{
+		PlanPromptTemplate: "old",
+		SavePromptTemplate: func(_, _, value string) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("read-only config")
+			}
+			savedValue = value
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("er")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = update(m, cmd())
+
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("overlay = %v, want the editor retained for retry", m.Overlay())
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("expected a retry save command")
+	}
+	m, _ = update(m, cmd())
+
+	if savedValue != "older" {
+		t.Fatalf("retried save value = %q, want %q", savedValue, "older")
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want the picker after a successful retry", m.Overlay())
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "Saved Plan launch") {
+		t.Fatalf("expected the success note after a retry:\n%s", m.View())
+	}
+}
+
+func TestModel_PromptTemplatePreviewReturnsToPickerSelection(t *testing.T) {
+	m := newTestModel(testRepos(), model.Options{})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	if m.Overlay() != ui.OverlayPlanText {
+		t.Fatalf("overlay = %v, want the preview", m.Overlay())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("expected a picker return command when the preview closes")
+	}
+	m, _ = update(m, cmd())
+
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want the picker reopened", m.Overlay())
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "> Flow plan") {
+		t.Fatalf("expected the preview to return to the same selection:\n%s", m.View())
 	}
 }
 

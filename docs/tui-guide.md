@@ -31,9 +31,10 @@ focus. Focus still moves through both stored panes and swaps which one is
 visible. Active Flows and PR Babysitter are separate takeovers that always span
 the combined content height and restore both stored panes exactly when closed.
 
-Press `f2` from normal TUI views to open the prompt-template editor for the
+Press `f2` from normal TUI views to open the prompt-template picker for the
 `[agent].plan_prompt` and `[flow_prompts]` templates; embedded terminal input
-focus passes F2 through to the embedded agent.
+focus passes F2 through to the embedded agent. See
+[Prompt Templates](#prompt-templates) for the picker and editor workflow.
 
 Empty panes explain why they are empty: no data for the selected repo, no
 fuzzy filter matches, or a load failure with details in the status bar. Beads
@@ -69,7 +70,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `enter` | Collapse the repos pane and focus the top content pane |
 | `tab` | Focus the top content pane without collapsing the repos pane |
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only) |
-| `f2` | Edit prompt templates |
+| `f2` | Open the prompt-template picker |
 | `q`/`esc` | Quit |
 
 **Content panes**
@@ -121,8 +122,58 @@ title, and assignee; repo filtering remains available from the left pane.
 | `ctrl+t` | Hide or show the shared embedded terminal dock (outside search and terminal input); when input is focused, use `ctrl+] t` |
 | `tab` | Cycle focus forward through repos, top, bottom, and an eligible terminal; collapsed repos are skipped |
 | `bksp` | Cycle focus in reverse (outside search or embedded-terminal input focus) |
-| `f2` | Edit prompt templates |
+| `f2` | Open the prompt-template picker |
 | `q`/`esc` | Close a prompt/dialog or quit |
+
+## Prompt Templates
+
+`f2` opens the prompt-template picker: a fixed 42-column panel listing every
+`[agent].plan_prompt` and `[flow_prompts]` template with its `default` or
+`custom` state, plus one reserved row at the bottom for feedback. The feedback
+row reports what just happened (saved, discarded, reset, or the error that
+stopped it) and clears on the next keystroke, so key hints stay in the status
+bar.
+
+| Key | Action |
+|-----|--------|
+| `up`/`down` | Move the selection |
+| `enter` | Open the selected template in the editor |
+| `r` | Reset the selected template to its built-in default, after a `y`/`n` confirmation |
+| `v` | Preview the built-in template with its placeholders literal |
+| `esc` | Close the picker |
+
+`r` on a template that is already the built-in default is a no-op with an
+informational note. Cancelling the confirmation returns to the same selection
+with the custom value untouched, and closing a preview returns there too.
+
+**The editor.** The editor is a fixed 72x21 panel: a title, the
+`section.key` identity with its `default`/`custom` and `modified` state, a
+separately framed 12-line text viewport, a two-row feedback block, and a hint
+row. It stays that size no matter how long the template, the draft, or the
+error is, and clamps cleanly — shedding the second note row, then the hint row,
+then the identity row, then the remaining note, then the viewport frame, then
+the viewport to the cursor line — on terminals too small for the full panel.
+
+| Key | Action |
+|-----|--------|
+| `ctrl+s` | Save the template exactly as typed |
+| `enter` / `alt+enter` | Insert a newline |
+| `esc` | Cancel without persisting anything |
+| `home`/`end`, `ctrl+a`/`ctrl+e` | Move to the start or end of the current line |
+| `arrows`, `bksp`, `del` | Move and edit |
+| `ctrl+u` | Clear the buffer |
+
+Text is stored raw: blank lines, leading and trailing whitespace, repeated
+spaces, and Unicode are preserved verbatim. Long templates scroll inside the
+viewport, which keeps the cursor visible and shows overflow arrows and a
+logical `line L/N` indicator on its frame rather than resizing the modal.
+
+Saving a blank or whitespace-only template still means reset-to-default; while
+the buffer is blank over a custom template the note block says so. Cancelling
+returns to the picker and distinguishes a clean cancel from discarded unsaved
+changes. A failed write keeps the draft and cursor in the editor with the error
+in the note block, so the save can be retried with `ctrl+s` or abandoned with
+`esc`; it is never reported as success.
 
 ## View Switching and the Header
 
@@ -401,11 +452,22 @@ Lifecycle and ownership:
 - Sessions are named `approach-<repo-dir>-<hash>` and are visible to your own
   `tmux ls`. Approach creates one on the first launch for a repo and reuses it
   after that.
-- Quitting Approach does not prompt about, terminate, or otherwise touch these
-  sessions — persisting past the TUI is the point. Reattach with `T` or
-  `tmux attach`.
+- Quitting Approach does not prompt about, terminate, or otherwise touch an
+  established session — persisting past the TUI is the point. While a tracked
+  Flow's private tmux start handshake is still pending, keyboard quit is
+  temporarily blocked and SIGINT/SIGTERM shutdown is deferred so the TUI cannot
+  drop its launch reservation before the runner owns the Flow lease. Reattach
+  established sessions with `T` or `tmux attach`.
 - A window closes when its agent exits. The session ends with its last window
   and the next launch recreates it.
+- A tracked Flow phase window owns a Flow-scoped kernel lease for as long as
+  its agent process remains alive. Finishing the phase does not release that
+  ownership: `g`, tracked `r`, and AutoMode defer the successor even after a
+  completed phase reaches its CLI prompt. The same lease is visible after a TUI
+  restart and to other Approach processes sharing the artifact root.
+- Exiting the agent or killing its window releases the lease automatically.
+  Manual launch can retry immediately; AutoMode retries on a later one-second
+  poll. The stable unlocked `.lock` file is normal and does not occupy the Flow.
 - If `tmux` is missing, launches fall back to their default-backend route and
   the status line says `tmux unavailable`. The availability check never refuses
   a launch; a tmux launch that then fails to spawn fails like any other launch
@@ -423,7 +485,10 @@ Limitations:
 - Removing a worktree while a tmux window is still `cd`'d into it is not
   fenced. Worktree removal is already destructive-gated; close the window
   first.
-- **The live-agent guard is a probe, not a slot.** In the embedded dock, a running
+- **The reset/resume/repair live-agent guard is a probe, not a slot.** Flow
+  successor admission uses the cheap kernel lease above and never invokes tmux
+  from rendering or AutoMode. The older one-shot guard remains for `x`, repeat
+  `r`, `R`, and session release. In the embedded dock, a running
   slot is what stops `x` (reset), a repeat `r` (resume), and `R` (repair) from
   starting a second agent on a phase that already has one. Persisted session
   state cannot stand in for it — Claude records a session only when the agent
@@ -459,15 +524,14 @@ Limitations:
   recorded: `running` and awaiting session capture if none ever fired. The probe
   then finds no window, so `x` resets it normally; use repair (`R`) if it needs
   more than a reset.
-- **A finished phase's window does not hold the Flow.** An embedded terminal
-  occupies its Flow until the process exits, so the next phase cannot start
-  while the previous agent's terminal is open. A tmux window is not owned that
-  way: while a phase is `running` it occupies the Flow as usual, but once the
-  agent marks its own phase completed, `g` and AutoMode will start the next
-  phase even though that agent's CLI is still sitting at a prompt in its window.
-  Both agents are then in the same worktree, so if you go back and type into the
-  older window you have two agents editing at once. Close a window when you are
-  done with it.
+- Lease inspection fails closed. If the shared state root, lease directory, or
+  lock file is unsafe or unreadable, the footer withdraws launch eligibility,
+  manual launch reports the setup error, and AutoMode waits silently. Repair
+  the artifact-root permissions or unsafe node and retry.
+- Renaming a tracked phase window does not defeat successor admission: the
+  lease is tied to the supervising process, not the window name. Out-of-band
+  commands that replace the pane command or otherwise bypass Approach's private
+  runner are ordinary tmux activity and do not acquire a Flow lease.
 
 ## Plans View (bottom `2`)
 
@@ -580,7 +644,9 @@ selected process directory are owned by the query runner.
 In Ready only, `f` and `F` belong to a focused content pane whose query is
 settled and available and whose filtered visible selection has a non-empty Bead
 ID. Lowercase `f` is executable whenever no Ready Flow request is in flight;
-uppercase `F` additionally requires a configured launch agent. The footer and
+uppercase `F` also stops being offered without a configured launch agent. That
+is `F`'s own rule, not a uniform Ready-pane one — `S` below deliberately stays
+offered and refuses on press instead. The footer and
 shortcut pane advertise the actions separately as `f: new flow` and
 `F: new flow + start`. An owned Ready selection consumes `F` even when the agent
 is missing or either Ready action is busy, so it cannot fall through to pull;
@@ -616,6 +682,43 @@ for that persisted Flow while status, refresh, focus, and request clearing stay
 fenced to the current source token. Every post-creation error names the
 persisted Flow ID, and a visible Flow surface refreshes only for the current
 request.
+
+Also in Ready only, uppercase `S` (`S: slice epic`) belongs to the same focused,
+settled, non-empty selection, plus one extra condition: the selected Bead's
+issue type must be `epic` (case-insensitive). `S` has no other binding in any
+pane, so an owned Ready selection consumes it and every other context ignores
+it. The Active Flows and PR Babysitter takeovers, an open modal, an active
+search, a focused embedded-terminal input, the repo pane, the bottom pane, and
+any non-Ready Beads subview all leave it unowned — including when Ready is
+still live in the top pane while the bottom pane holds focus.
+
+Pressing `S` launches exactly one configured agent at the selected repository
+root through the ordinary agent path: the configured command, model, reasoning
+effort, and session state root, routed to a tmux window or the external
+terminal exactly like any other non-Flow launch. It creates no Flow, no
+worktree, and no plan, and it never invokes `bd` — the TUI performs no tracker
+mutation on this path. The whole contract lives in a built-in prompt (there is
+no config key for it) that names the repository and the epic ID and instructs
+the agent to use the `slice-issues` skill, read the epic with
+`bd show -- <id>`, propose tracer-bullet vertical slices, present each slice's
+HITL/AFK classification, blockers, acceptance criteria, and user stories, wait
+for approval, then create only the approved child Beads in dependency order
+without modifying or closing the parent epic.
+
+Unlike `F`, `S` stays advertised when no launch agent is configured and refuses
+on press with `Press A to choose codex or claude before launching an agent`, so
+the refusal names the fix instead of the hint silently disappearing.
+
+`S` shares the one preparation admission with `f`, `F`, and `a`, so while any of
+them is preparing the others are not offered, and vice versa. That produces one
+deliberate asymmetry: the `S` hint disappears whenever any preparation holds the
+admission, but a press in that window speaks only when the slice launch is the
+holder — `A slice epic launch is already in flight`. When an `f`/`F`/`a`
+preparation is the holder, `S` refuses silently, matching what those keys
+already do. The slice fence is held from the press until that launch's own
+result or its launch failure; a repository or selection change does not release
+it, and the launch keeps reporting against the epic it was pressed on rather
+than the current selection.
 
 Every Flow launch surface — Plan Now, Ready `F`, manual `g`, AutoMode, phase
 resume, saved-session resume, repair, worktree agent, and autofix — is admitted

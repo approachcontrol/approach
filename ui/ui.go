@@ -54,6 +54,37 @@ const (
 	SelectPlacementBottomCenter
 )
 
+// NoteKind classifies the severity of a modal feedback note. It mirrors
+// modal.NoteKind, which ui cannot import; the model converts between them.
+type NoteKind int
+
+const (
+	NoteNeutral NoteKind = iota
+	NoteSuccess
+	NoteWarning
+	NoteError
+)
+
+// EditorParams carries the prompt-template editor's presentation state. Its
+// zero value keeps every other input modal on the generic renderer.
+type EditorParams struct {
+	Enabled      bool
+	Title        string
+	Identity     string
+	Note         string
+	NoteKind     NoteKind
+	Dirty        bool
+	EmptyWarning bool
+}
+
+// PromptPickerWidth and PromptPickerNoteRows are the prompt-template picker's
+// fixed geometry. They are exported because the model owns the target list and
+// therefore computes the panel height; ui cannot see len(promptTemplateTargets).
+const (
+	PromptPickerWidth    = 42
+	PromptPickerNoteRows = 1
+)
+
 const BranchPrompt = "New branch"
 const FlowTitlePrompt = "New flow title"
 const FlowInstructionsPrompt = "New flow instructions"
@@ -389,6 +420,7 @@ type RenderParams struct {
 	InputMode                      InputMode
 	InputHeight                    int
 	InputCursor                    int
+	Editor                         EditorParams
 	WorktreeInputPrompt            string
 	WorktreeInputPlaceholder       string
 	WorktreeInput                  string
@@ -398,6 +430,8 @@ type RenderParams struct {
 	SelectSelected                 int
 	SelectWidth                    int
 	SelectHeight                   int
+	SelectNote                     string
+	SelectNoteKind                 NoteKind
 	SelectPlacement                SelectPlacement
 	Form                           FormView
 	BranchScroll                   int
@@ -445,6 +479,7 @@ type RenderParams struct {
 	ReadyBeadFlowCreateAvailable   bool
 	ReadyBeadFlowStartAvailable    bool
 	ReadyBeadFlowKeysOwned         bool
+	BeadSliceEpicAvailable         bool
 	EpicAutoOnAvailable            bool
 	EpicAutoOffAvailable           bool
 	EpicAutoKeyOwned               bool
@@ -730,6 +765,7 @@ func renderApplication(p RenderParams) string {
 		PRBabysitter:                 prBabysitter,
 		Overlay:                      p.Overlay,
 		InputMode:                    inputRenderParamsFrom(p).mode,
+		PromptEditor:                 p.Editor.Enabled,
 		FormHasMultiline:             formHasMultilineField(p.Form),
 		WorktreeInputPrompt:          p.WorktreeInputPrompt,
 		ActivePane:                   p.ActivePane,
@@ -794,6 +830,7 @@ func renderApplication(p RenderParams) string {
 		ReadyBeadFlowCreateAvailable: p.ReadyBeadFlowCreateAvailable,
 		ReadyBeadFlowStartAvailable:  p.ReadyBeadFlowStartAvailable,
 		ReadyBeadFlowKeysOwned:       p.ReadyBeadFlowKeysOwned,
+		BeadSliceEpicAvailable:       p.BeadSliceEpicAvailable,
 		EpicAutoOnAvailable:          p.EpicAutoOnAvailable,
 		EpicAutoOffAvailable:         p.EpicAutoOffAvailable,
 		EpicAutoKeyOwned:             p.EpicAutoKeyOwned,
@@ -1556,6 +1593,7 @@ type statusBarParams struct {
 	PRBabysitter                 bool
 	Overlay                      OverlayState
 	InputMode                    InputMode
+	PromptEditor                 bool
 	FormHasMultiline             bool
 	WorktreeInputPrompt          string
 	SelectPrompt                 string
@@ -1621,6 +1659,7 @@ type statusBarParams struct {
 	ReadyBeadFlowCreateAvailable bool
 	ReadyBeadFlowStartAvailable  bool
 	ReadyBeadFlowKeysOwned       bool
+	BeadSliceEpicAvailable       bool
 	EpicAutoOnAvailable          bool
 	EpicAutoOffAvailable         bool
 	EpicAutoKeyOwned             bool
@@ -1711,6 +1750,9 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	case overlay == OverlayConfirm:
 		return statusStyle.Width(width).Render("  y: confirm  n/esc: cancel")
 	case overlay == OverlayInput:
+		if sp.PromptEditor {
+			return renderStatusText(width, promptEditorStatusText(width))
+		}
 		if sp.InputMode == InputMultiLine {
 			return renderStatusText(width, "  enter: submit  alt+enter: newline  esc: cancel  bksp/del: edit")
 		}
@@ -1952,6 +1994,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowStartAvailable {
 		actions = append(actions, shortcutHint{Key: "F", Label: "new flow + start", Ungrouped: true})
+	}
+	if sp.Mode == ModeBeadsReady && sp.BeadSliceEpicAvailable {
+		actions = append(actions, shortcutHint{Key: "S", Label: "slice epic", Ungrouped: true})
 	}
 	if IsBeadsMode(sp.Mode) && sp.EpicAutoOnAvailable {
 		actions = append(actions, shortcutHint{Key: "a", Label: "auto on", Ungrouped: true})
@@ -4257,7 +4302,15 @@ func renderSelectOverlay(p RenderParams) string {
 	if panelWidth <= 0 || panelHeight <= 0 {
 		return joinBodyAndStatus(body, statusBar)
 	}
-	panel := renderSelectPanel(p.SelectPrompt, p.SelectItems, p.SelectSelected, panelWidth, panelHeight)
+	panel := renderSelectPanel(selectPanelSpec{
+		prompt:   p.SelectPrompt,
+		items:    p.SelectItems,
+		selected: p.SelectSelected,
+		note:     p.SelectNote,
+		noteKind: p.SelectNoteKind,
+		width:    panelWidth,
+		height:   panelHeight,
+	})
 	x, y := selectPanelPosition(p.Width, bodyHeight, panelWidth, panelHeight, p.SelectPlacement)
 	body = compositePanel(body, panel, x, y, p.Width)
 	return joinBodyAndStatus(body, statusBar)
@@ -4380,7 +4433,21 @@ func selectPanelPosition(terminalWidth, bodyHeight, panelWidth, panelHeight int,
 	return x, y
 }
 
-func renderSelectPanel(prompt string, items []SelectItem, selected, width, height int) []string {
+// selectPanelSpec groups the shared select renderer's inputs so the reserved
+// note row can be added without a seventh positional argument.
+type selectPanelSpec struct {
+	prompt   string
+	items    []SelectItem
+	selected int
+	note     string
+	noteKind NoteKind
+	width    int
+	height   int
+}
+
+func renderSelectPanel(spec selectPanelSpec) []string {
+	prompt, items, selected := spec.prompt, spec.items, spec.selected
+	width, height := spec.width, spec.height
 	if width <= 0 || height <= 0 {
 		return nil
 	}
@@ -4390,14 +4457,22 @@ func renderSelectPanel(prompt string, items []SelectItem, selected, width, heigh
 	if selected < 0 || selected >= len(items) {
 		selected = 0
 	}
+	// A note takes a row only when the panel already has a spare item slot.
+	// Designed picker height includes that spare; a clamped panel does not, so
+	// the note is dropped instead of hiding an item that would otherwise fit.
+	itemRows := height - 3
+	if itemRows < 0 {
+		itemRows = 0
+	}
+	noteRows := 0
+	if spec.note != "" && height > 3 && itemRows > len(items) {
+		noteRows = 1
+		itemRows--
+	}
 	lines := make([]string, 0, height)
 	lines = append(lines, selectPanelBorderLine("┌", "─", "┐", width))
 	if height > 1 {
 		lines = append(lines, selectPanelContentLine(activeModeStyle.Render(prompt), width))
-	}
-	itemRows := height - 3
-	if itemRows < 0 {
-		itemRows = 0
 	}
 	start := selectItemViewportStart(len(items), selected, itemRows)
 	for i := 0; i < itemRows; i++ {
@@ -4412,6 +4487,14 @@ func renderSelectPanel(prompt string, items []SelectItem, selected, width, heigh
 			line = selectedStyle.Render("> " + label)
 		}
 		lines = append(lines, selectPanelContentLine(line, width))
+	}
+	if noteRows == 1 {
+		noteWidth := width - 4
+		if noteWidth < 1 {
+			noteWidth = 1
+		}
+		note := noteStyle(spec.noteKind).Render(truncateWithEllipsis(spec.note, noteWidth))
+		lines = append(lines, selectPanelContentLine(note, width))
 	}
 	if height > 2 {
 		lines = append(lines, selectPanelBorderLine("└", "─", "┘", width))
@@ -4533,6 +4616,7 @@ func renderOverlay(p RenderParams) string {
 		Mode:                   p.Mode,
 		Overlay:                p.Overlay,
 		InputMode:              inputParams.mode,
+		PromptEditor:           p.Editor.Enabled,
 		FormHasMultiline:       formHasMultilineField(p.Form),
 		WorktreeInputPrompt:    inputParams.prompt,
 		SelectPrompt:           p.SelectPrompt,
@@ -4556,7 +4640,12 @@ func renderOverlay(p RenderParams) string {
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayInput {
-		lines := renderInputDialog(inputParams, p.Width, contentHeight)
+		var lines []string
+		if p.Editor.Enabled {
+			lines = renderPromptEditorDialog(p, p.Width, contentHeight)
+		} else {
+			lines = renderInputDialog(inputParams, p.Width, contentHeight)
+		}
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayForm {

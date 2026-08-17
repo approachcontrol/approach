@@ -2,13 +2,18 @@ package actions
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/internal/flowlease"
 )
 
 // repoTmuxSessionPrefix keeps tmux-mode sessions disjoint from the per-worktree
@@ -227,12 +232,21 @@ func RepoTmuxAgentLaunch(ctx AgentLaunchContext) (RepoTmuxAgentSpec, error) {
 }
 
 func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmuxAgentSpec, error) {
+	return repoTmuxAgentLaunchWithExecutable(ctx, lookPath, os.Executable)
+}
+
+func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPathFunc, executable func() (string, error)) (RepoTmuxAgentSpec, error) {
 	if !commandExists("tmux", lookPath) {
 		return RepoTmuxAgentSpec{}, ErrRepoTmuxUnavailable
 	}
 	command := agent.Normalize(ctx.Command)
 	if command != agent.CommandCodex && command != agent.CommandClaude {
 		return RepoTmuxAgentSpec{}, errors.New("tmux launch mode supports only CLI agents")
+	}
+	if ctx.FlowLaunchTracked {
+		if err := validateTrackedRepoTmuxRole(ctx); err != nil {
+			return RepoTmuxAgentSpec{}, err
+		}
 	}
 	// The window is not an embedded slot: there is no dock to prefill, so the
 	// initial prompt has to reach the agent as argv, and no stream-json
@@ -256,6 +270,91 @@ func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmu
 	sessionName := RepoAgentSessionName(sessionSource)
 	windowName := repoTmuxWindowName(ctx)
 	agentEnv := envWithoutKeys(cmd.Env, "TMUX", "ZELLIJ")
+	if ctx.FlowLaunchTracked {
+		canonicalRoot, err := flowlease.ResolveRoot(ctx.SessionStateRoot)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("prepare tracked Flow lease: %w", err)
+		}
+		executablePath, err := resolveTrackedTmuxExecutable(ctx.Executable, executable)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, err
+		}
+		handoffSuffix, err := randomHex(8)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("allocate Flow launch handoff suffix: %w", err)
+		}
+		nonce, err := randomHex(16)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("allocate Flow launch handoff nonce: %w", err)
+		}
+		handoffDir, err := flowlease.NewHandoffPath(canonicalRoot, ctx.LaunchID, handoffSuffix)
+		if err != nil {
+			return RepoTmuxAgentSpec{}, fmt.Errorf("prepare Flow launch handoff path: %w", err)
+		}
+		windowName = repoTmuxLeasedWindowName(ctx, handoffSuffix)
+		now := time.Now()
+		privateSpec := flowlease.PrivateSpec{
+			SessionName:      sessionName,
+			WindowName:       windowName,
+			CWD:              cmd.Dir,
+			Root:             canonicalRoot,
+			FlowID:           ctx.FlowID,
+			PhaseID:          ctx.FlowPhaseID,
+			LaunchID:         ctx.LaunchID,
+			HandoffDir:       handoffDir,
+			Nonce:            nonce,
+			DecisionDeadline: now.Add(10 * time.Second),
+			StartedDeadline:  now.Add(20 * time.Second),
+			CleanupDeadline:  now.Add(25 * time.Second),
+		}
+		termCommand, err := newTerminalCommandWithArgvBuilder(cmd.Dir, agentEnv, sessionName, "", func(scriptPath string) ([]string, error) {
+			privateSpec.ScriptPath = scriptPath
+			return flowlease.LeaseRunArgv(executablePath, privateSpec, argv)
+		})
+		if err != nil {
+			return RepoTmuxAgentSpec{}, err
+		}
+		spawnArgv, err := flowlease.SpawnArgv(executablePath, privateSpec)
+		if err != nil {
+			termCommand.cleanup()
+			return RepoTmuxAgentSpec{}, err
+		}
+		spawnCmd := exec.Command(spawnArgv[0], spawnArgv[1:]...)
+		spawnCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+		stderr := &boundedBuffer{limit: repoTmuxStderrLimit}
+		cleanupDiagnostic := &boundedBuffer{limit: repoTmuxStderrLimit}
+		spawnCmd.Stderr = stderr
+		spawnCmd.WaitDelay = repoTmuxStderrDrainDelay
+		cleanup := func() {
+			termCommand.cleanup()
+			if _, err := os.Lstat(privateSpec.HandoffDir); err == nil {
+				if cancelErr := flowlease.CancelExact(privateSpec); cancelErr != nil {
+					_, _ = fmt.Fprintf(cleanupDiagnostic, "cancel tracked Flow tmux launch: %v", cancelErr)
+				}
+			} else if !os.IsNotExist(err) {
+				_, _ = fmt.Fprintf(cleanupDiagnostic, "inspect tracked Flow tmux handoff before cancellation: %v", err)
+			}
+		}
+		errorDetail := func() string {
+			spawnDetail := stderr.String()
+			cleanupDetail := cleanupDiagnostic.String()
+			if spawnDetail == "" {
+				return cleanupDetail
+			}
+			if cleanupDetail == "" {
+				return spawnDetail
+			}
+			return spawnDetail + "\n" + cleanupDetail
+		}
+		return RepoTmuxAgentSpec{
+			SessionName: sessionName, WindowName: windowName,
+			AttachCommand: RepoTmuxAttachCommand(sessionName),
+			Launch: TerminalLaunchSpec{
+				Cmd: spawnCmd, Detached: true, Cleanup: cleanup,
+				ErrorDetail: errorDetail,
+			},
+		}, nil
+	}
 	// sessionName is passed for parity with the other transports' scripts; only
 	// terminalLaunchWithOptions reads it back, and this path never calls that.
 	termCommand, err := newTerminalCommand(cmd.Dir, agentEnv, argv, sessionName)
@@ -293,6 +392,53 @@ func repoTmuxAgentLaunch(ctx AgentLaunchContext, lookPath lookPathFunc) (RepoTmu
 	}, nil
 }
 
+func validateTrackedRepoTmuxRole(ctx AgentLaunchContext) error {
+	if !ctx.FlowLaunchTracked ||
+		strings.TrimSpace(ctx.FlowID) == "" ||
+		strings.TrimSpace(ctx.FlowPhaseID) == "" ||
+		ctx.FlowAutoLaunch ||
+		ctx.Headless ||
+		ctx.FlowRepair ||
+		ctx.FlowAgent ||
+		ctx.FlowSavedSessionResume ||
+		ctx.FlowAutofix ||
+		ctx.FlowAutofixPRNumber != 0 {
+		return errors.New("invalid tracked Flow tmux launch role")
+	}
+	return nil
+}
+
+func randomHex(byteCount int) (string, error) {
+	data := make([]byte, byteCount)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data), nil
+}
+
+// resolveTrackedTmuxExecutable picks the binary both private lease helpers
+// exec. A launch that already carries a verified pin must use that path:
+// os.Executable still names the mutable installation even after an upgrade
+// replaces it, and a replacement whose hidden handoff protocol differs would
+// hang the tracked tmux launch. An empty pin keeps the previous running-binary
+// behaviour for genuinely unpinned callers.
+func resolveTrackedTmuxExecutable(pinned string, fallback func() (string, error)) (string, error) {
+	if path := strings.TrimSpace(pinned); path != "" {
+		if !filepath.IsAbs(path) {
+			return "", errors.New("pinned Approach executable path must be absolute")
+		}
+		return path, nil
+	}
+	path, err := fallback()
+	if err != nil {
+		return "", fmt.Errorf("resolve current Approach executable: %w", err)
+	}
+	if !filepath.IsAbs(path) {
+		return "", errors.New("current Approach executable path must be absolute")
+	}
+	return path, nil
+}
+
 // repoTmuxStderrLimit bounds what a failed tmux invocation can push into a
 // status line and a Flow's persisted needs_attention note.
 const repoTmuxStderrLimit = 1024
@@ -301,9 +447,9 @@ const repoTmuxStderrLimit = 1024
 // pipe after the launch command itself has exited.
 const repoTmuxStderrDrainDelay = 2 * time.Second
 
-// boundedBuffer collects at most limit bytes and discards the rest. It is only
-// written by the child process and only read after Wait returns, so it needs no
-// synchronization of its own.
+// boundedBuffer collects at most limit bytes and discards the rest. Each
+// instance has one writer and is read only after that writer finishes, so it
+// needs no synchronization of its own.
 type boundedBuffer struct {
 	limit int
 	buf   []byte
@@ -335,6 +481,21 @@ func repoTmuxWindowName(ctx AgentLaunchContext) string {
 	if name == "" {
 		name = "agent"
 	}
+	if suffix := repoTmuxLaunchSuffix(ctx.LaunchID); suffix != "" {
+		name += "-" + suffix
+	}
+	return name
+}
+
+func repoTmuxLeasedWindowName(ctx AgentLaunchContext, handoffSuffix string) string {
+	name := sanitizeSessionSuffix(ctx.FlowPhaseKind)
+	if name == "" {
+		name = sanitizeSessionSuffix(agent.Normalize(ctx.Command))
+	}
+	if name == "" {
+		name = "agent"
+	}
+	name += "-" + strings.Trim(sanitizeSessionSuffix(handoffSuffix), ".-")
 	if suffix := repoTmuxLaunchSuffix(ctx.LaunchID); suffix != "" {
 		name += "-" + suffix
 	}

@@ -42,6 +42,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
+		} else if outcome == modal.Accepted && cmd != nil && isPromptTemplateEditor(view) {
+			cmd = tagPromptTemplateCursor(cmd, view.InputCursor)
 		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
 			if m.activeFlowCreate != 0 {
 				return m.setStatus(statusOther, flowCreateInProgressStatus), nil
@@ -203,6 +205,29 @@ func isWorktreeCreateInput(view modal.View) bool {
 		return false
 	}
 	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
+}
+
+func isPromptTemplateEditor(view modal.View) bool {
+	return view.Kind == modal.Input && view.Editor.Enabled
+}
+
+// tagPromptTemplateCursor stamps the pre-submit cursor onto a failed write. The
+// submit closure cannot supply it: it receives only the string, and by the
+// time it runs the modal has already been zeroed. Both failure messages are
+// tagged because a whitespace-only submit fails as a reset, not a save.
+func tagPromptTemplateCursor(cmd tea.Cmd, cursor int) tea.Cmd {
+	return func() tea.Msg {
+		switch failed := cmd().(type) {
+		case PromptTemplateSaveFailedMsg:
+			failed.Cursor = cursor
+			return failed
+		case PromptTemplateResetFailedMsg:
+			failed.Cursor = cursor
+			return failed
+		default:
+			return failed
+		}
+	}
 }
 
 func isRepoCreateForm(view modal.View) bool {
@@ -562,6 +587,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleReadyBeadFlowCreate(readyBeadFlowCreateAndStart)
 		}
 		return m.handlePull()
+	case "S":
+		// S has no other binding in any pane, so the handler's own ownership
+		// gate is the whole rule and an unconditional case is correct.
+		return m.handleSliceSelectedEpic()
 	case "t":
 		return m.handleOpenTerminal()
 	case "T":
@@ -3047,6 +3076,34 @@ func (m Model) runAgentLaunchWithStatus(ctx actions.AgentLaunchContext, launch a
 	}
 }
 
+// runFlowLifecycleTmuxLaunchWithStatus differs from the generic detached path
+// in one crucial way: the spawn command result carries the held Flow
+// reservation into Update instead of releasing it in the command goroutine.
+// This closes the message-queue interval between confirmed runner start and a
+// matching handoffPending attempt consuming that confirmation.
+func (m Model) runFlowLifecycleTmuxLaunchWithStatus(
+	ctx actions.AgentLaunchContext,
+	launch actions.TerminalLaunchSpec,
+	heldRelease func(),
+	launchedStatus string,
+) (Model, tea.Cmd) {
+	return m, func() tea.Msg {
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return AgentResultMsg{
+				LaunchContext: ctx, Err: launchErrorMessage(err, launch), Detached: true,
+				FlowLaunchRelease: heldRelease,
+			}
+		}
+		return AgentResultMsg{
+			LaunchContext: ctx, Detached: true, LaunchedStatus: launchedStatus,
+			FlowLaunchRelease: heldRelease,
+		}
+	}
+}
+
 // launchErrorMessage prefers a transport's captured diagnostic over the bare
 // exit status a wrapper script's failure otherwise reduces to. A Flow launch
 // persists this string into the phase's needs_attention note, so it is the only
@@ -3119,6 +3176,11 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 }
 
 func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText string) (Model, tea.Cmd) {
+	// A slice-epic launch holds its admission across the spawn. A spawn that
+	// fails before handoff produces no AgentResultMsg, so the result-side
+	// release never runs and the admission would wedge. The release is keyed on
+	// this launch's own ID, so every other caller is unaffected.
+	m = m.releaseSliceEpicLaunch(ctx.LaunchID)
 	return m.startFlowLaunchFailureWithReadyAdmission(ctx, errText, false)
 }
 

@@ -263,17 +263,20 @@ func TestTmuxBackedTerminalRealTmuxDetachLeavesSessionAlive(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
+	tmux := func(args ...string) *exec.Cmd {
+		return exec.Command("tmux", append([]string{"-f", "/dev/null", "-L", sessionName}, args...)...)
+	}
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+		_ = tmux("kill-session", "-t", sessionName).Run()
 	})
 
 	spec := actions.EmbeddedTmuxAgentSpec{
 		SessionName:        sessionName,
 		ScriptPath:         scriptPath,
-		HasSessionCommand:  exec.Command("tmux", "has-session", "-t", sessionName),
-		NewSessionCommand:  exec.Command("tmux", "new-session", "-d", "-s", sessionName, "-c", dir, "exec sh "+scriptPath),
-		AttachCommand:      exec.Command("tmux", "attach-session", "-t", sessionName),
-		KillSessionCommand: exec.Command("tmux", "kill-session", "-t", sessionName),
+		HasSessionCommand:  tmux("has-session", "-t", sessionName),
+		NewSessionCommand:  tmux("new-session", "-d", "-s", sessionName, "-c", dir, "exec sh "+scriptPath),
+		AttachCommand:      tmux("attach-session", "-t", sessionName),
+		KillSessionCommand: tmux("kill-session", "-t", sessionName),
 		Cleanup: func() {
 			_ = os.Remove(scriptPath)
 		},
@@ -283,10 +286,17 @@ func TestTmuxBackedTerminalRealTmuxDetachLeavesSessionAlive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTmuxBackedAgent returned error: %v", err)
 	}
-	if err := term.Detach(); err != nil {
-		t.Fatalf("Detach returned error: %v", err)
+	done := make(chan error, 1)
+	go func() { done <- term.Detach() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Detach returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Detach timed out; Close must not block on a contended emulator snapshot")
 	}
-	if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+	if err := tmux("has-session", "-t", sessionName).Run(); err != nil {
 		t.Fatalf("detached tmux session is not alive: %v", err)
 	}
 }
