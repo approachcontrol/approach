@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/approachcontrol/approach/internal/flowlease"
@@ -58,6 +59,69 @@ func TestLeaseHeldUntilOwnerCloses(t *testing.T) {
 		t.Fatalf("Lstat(stable lock) error = %v", err)
 	} else if !info.Mode().IsRegular() {
 		t.Fatalf("stable lock mode = %v, want regular", info.Mode())
+	}
+}
+
+func TestLeaseNormalizesPermissionsMaskedByUmask(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatalf("Chmod(root) error = %v", err)
+	}
+	previous := syscall.Umask(0o777)
+	t.Cleanup(func() { syscall.Umask(previous) })
+
+	lease, err := flowlease.Acquire(root, "flow-1")
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(root, "flow-leases"):                0o700,
+		filepath.Join(root, "flow-leases", "flow-1.lock"): 0o600,
+	} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("Lstat(%s) error = %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s permissions = %04o, want %04o", path, got, want)
+		}
+	}
+}
+
+func TestConcurrentLeaseCreationDoesNotExposeMaskedPermissions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatalf("Chmod(root) error = %v", err)
+	}
+	previous := syscall.Umask(0o777)
+	t.Cleanup(func() { syscall.Umask(previous) })
+
+	const callers = 16
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			state, err := flowlease.Inspect(root, "flow-1")
+			if err == nil && state != flowlease.Free {
+				err = errors.New("new lease unexpectedly reported held")
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Inspect() error = %v", err)
+		}
 	}
 }
 

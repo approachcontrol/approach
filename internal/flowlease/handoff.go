@@ -57,11 +57,20 @@ func createHandoff(attempt handoffAttempt) error {
 	if err != nil {
 		return err
 	}
-	if _, err := ensurePrivateCollection(canonical, handoffCollection); err != nil {
+	collection, err := ensurePrivateCollection(canonical, handoffCollection)
+	if err != nil {
 		return err
 	}
+	collectionLock, err := lockDirectory(collection, handoffCollection)
+	if err != nil {
+		return err
+	}
+	defer collectionLock.Close()
 	if err := os.Mkdir(attempt.HandoffDir, artifacts.DirPerm); err != nil {
 		return fmt.Errorf("create exclusive Flow launch handoff: %w", err)
+	}
+	if err := normalizeCreatedDirectory(attempt.HandoffDir, "Flow launch handoff"); err != nil {
+		return err
 	}
 	info, err := os.Lstat(attempt.HandoffDir)
 	if err != nil {
@@ -176,6 +185,9 @@ func publishHandoffRecordData(attempt handoffAttempt, kind, outcome, detail stri
 		_ = file.Close()
 		_ = os.Remove(stagedPath)
 	}()
+	if err := file.Chmod(artifacts.FilePerm); err != nil {
+		return fmt.Errorf("set staged Flow launch handoff %s permissions: %w", kind, err)
+	}
 	info, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("inspect staged Flow launch handoff %s: %w", kind, err)

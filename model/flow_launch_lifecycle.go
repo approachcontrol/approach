@@ -1198,7 +1198,7 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		if spec.Launch.Cleanup != nil {
 			spec.Launch.Cleanup()
 		}
-		return m, nil
+		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
 	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
 	var fetchCmd tea.Cmd

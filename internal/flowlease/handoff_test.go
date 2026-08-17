@@ -81,6 +81,40 @@ func TestHandoffRecordsAreImmutableAndIdentityBound(t *testing.T) {
 	}
 }
 
+func TestHandoffNormalizesPermissionsMaskedByUmask(t *testing.T) {
+	root := secureTempRoot(t)
+	attempt := handoffAttempt{
+		Root:       root,
+		FlowID:     "flow-1",
+		PhaseID:    "implementation",
+		LaunchID:   "launch-1",
+		Nonce:      "0123456789abcdef",
+		HandoffDir: filepath.Join(root, handoffCollection, "launch-1-deadbeef"),
+	}
+	previous := syscall.Umask(0o777)
+	t.Cleanup(func() { syscall.Umask(previous) })
+
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordReady, ""); err != nil {
+		t.Fatalf("publishHandoffRecord() error = %v", err)
+	}
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(root, handoffCollection):         0o700,
+		attempt.HandoffDir:                             0o700,
+		filepath.Join(attempt.HandoffDir, recordReady): 0o600,
+	} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("Lstat(%s) error = %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s permissions = %04o, want %04o", path, got, want)
+		}
+	}
+}
+
 func TestHandoffRecordIsInvisibleUntilVerifiedPublication(t *testing.T) {
 	root := secureTempRoot(t)
 	attempt := handoffAttempt{

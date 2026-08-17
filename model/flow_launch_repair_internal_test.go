@@ -99,6 +99,41 @@ func TestFlowRepairPrepareRechecksLeaseUnderReservation(t *testing.T) {
 	}
 }
 
+func TestFlowRepairAdmissionReportsHeldLease(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	h.leaseState = flowlease.Held
+	m := h.repairModel()
+
+	next, cmd := m.handleRepairSelectedFlow()
+	m = next.(Model)
+
+	if cmd != nil {
+		t.Fatal("held lease must refuse repair before starting a command")
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
+	}
+}
+
+func TestFlowRepairAdmissionReportsLeaseInspectionError(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	h.leaseErr = errors.New("unsafe flow-leases directory")
+	m := h.repairModel()
+
+	next, cmd := m.handleRepairSelectedFlow()
+	m = next.(Model)
+
+	if cmd != nil {
+		t.Fatal("lease inspection error must refuse repair before starting a command")
+	}
+	want := flowLeaseSetupErrorStatus(h.leaseErr)
+	if m.status.Text != want {
+		t.Fatalf("status = %q, want %q", m.status.Text, want)
+	}
+}
+
 func liveRepairSessionRecord(flowID, launchID string) sessions.SessionRecord {
 	return sessions.SessionRecord{
 		SessionID: "live-session",

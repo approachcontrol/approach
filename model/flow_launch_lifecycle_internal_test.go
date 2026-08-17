@@ -2828,6 +2828,46 @@ func TestTmuxHandoffCarriesReservationThroughResultDelivery(t *testing.T) {
 	}
 }
 
+func TestTmuxHandoffTransitionFailurePersistsTrackedPhaseFailure(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	m := h.model()
+	attempt := flowLaunchAttempt{
+		Token: "launch-transition-failure", Kind: flowLaunchKindManualPhase,
+		FlowID: h.record.FlowID, PhaseID: h.record.Phases[0].PhaseID,
+		MutatedPhase: true,
+	}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStateReserved)
+	if !ok {
+		t.Fatal("reserveFlowLaunchAttempt() failed")
+	}
+	attempt, _ = m.flowLaunchAttempt(attempt.FlowID)
+	releases := 0
+	msg := flowLaunchEventMsg{
+		Context: actions.AgentLaunchContext{
+			Command: "codex", LaunchID: attempt.Token, RepoPath: h.record.RepoPath,
+			FlowID: attempt.FlowID, FlowPhaseID: attempt.PhaseID, FlowLaunchTracked: true,
+		},
+		RepoPath: h.record.RepoPath,
+		Release:  func() { releases++ },
+	}
+
+	m, cmd := m.handoffFlowLaunchTmux(attempt, msg)
+	if releases != 1 {
+		t.Fatalf("reservation releases = %d, want 1", releases)
+	}
+	if cmd == nil {
+		t.Fatal("failed handoff transition must persist the tracked phase failure")
+	}
+	m = h.drain(m, cmd, 0)
+	if len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("phase updates = %#v, want one needs_attention update", h.phaseUpdates)
+	}
+	if m.flowLaunchAttemptOccupied(attempt.FlowID) {
+		t.Fatal("failed handoff transition must release the lifecycle attempt")
+	}
+}
+
 func TestStaleTmuxLifecycleResultCannotReleaseOrPersist(t *testing.T) {
 	h := newTmuxLaunchHarness(t, true)
 	m := h.model()

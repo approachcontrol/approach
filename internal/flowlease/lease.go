@@ -147,12 +147,27 @@ func openLeaseFile(root, flowID string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	collectionLock, err := lockDirectory(dir, collection)
+	if err != nil {
+		return nil, err
+	}
+	defer collectionLock.Close()
 	path := filepath.Join(dir, flowID+".lock")
-	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, uint32(artifacts.FilePerm))
+	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_EXCL|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, uint32(artifacts.FilePerm))
+	created := err == nil
+	if errors.Is(err, os.ErrExist) || errors.Is(err, syscall.EEXIST) {
+		fd, err = syscall.Open(path, syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open Flow lease file: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), path)
+	if created {
+		if err := file.Chmod(artifacts.FilePerm); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("set Flow lease file permissions: %w", err)
+		}
+	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
@@ -170,11 +185,24 @@ func openLeaseFile(root, flowID string) (*os.File, error) {
 }
 
 func ensurePrivateCollection(root, name string) (string, error) {
+	rootLock, err := lockDirectory(root, "flow lease artifact root")
+	if err != nil {
+		return "", err
+	}
+	defer rootLock.Close()
+
 	dir := filepath.Join(root, name)
 	info, err := os.Lstat(dir)
 	if os.IsNotExist(err) {
-		if mkdirErr := os.Mkdir(dir, artifacts.DirPerm); mkdirErr != nil && !os.IsExist(mkdirErr) {
+		mkdirErr := os.Mkdir(dir, artifacts.DirPerm)
+		created := mkdirErr == nil
+		if mkdirErr != nil && !os.IsExist(mkdirErr) {
 			return "", fmt.Errorf("create %s: %w", name, mkdirErr)
+		}
+		if created {
+			if err := normalizeCreatedDirectory(dir, name); err != nil {
+				return "", err
+			}
 		}
 		info, err = os.Lstat(dir)
 	}
@@ -188,6 +216,26 @@ func ensurePrivateCollection(root, name string) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+func normalizeCreatedDirectory(path, label string) error {
+	if err := os.Chmod(path, artifacts.DirPerm); err != nil {
+		return fmt.Errorf("set %s permissions: %w", label, err)
+	}
+	return nil
+}
+
+func lockDirectory(path, label string) (*os.File, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", label, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if err := syscall.Flock(fd, syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("lock %s: %w", label, err)
+	}
+	return file, nil
 }
 
 func requireOwnedPrivate(info os.FileInfo, want os.FileMode, label string) error {

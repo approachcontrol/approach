@@ -155,7 +155,14 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	flowID := strings.TrimSpace(record.FlowID)
 	intent.FlowID = flowID
-	if m.flowLaunchAdmissionOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
+	leaseOccupied, leaseErr := m.trackedFlowLeaseOccupied(flowID)
+	if leaseErr != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(leaseErr)), nil, false
+	}
+	if leaseOccupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
+	if m.flowLaunchRuntimeOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
 		return m.setStatus(statusOther, m.flowRepairOccupancyRefusal(flowID)), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
