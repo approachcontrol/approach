@@ -11,6 +11,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -99,6 +100,11 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 				return record, nil
 			}
 			return sessions.SessionRecord{}, fmt.Errorf("session %s/%s not found", provider, sessionID)
+		}
+	}
+	if opts.InspectFlowLease == nil {
+		opts.InspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
 		}
 	}
 	if opts.ReadFlow == nil {

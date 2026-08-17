@@ -7861,7 +7861,7 @@ func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *
 func TestModel_SkippedFlowPhaseWithEndedSessionAdvertisesResume(t *testing.T) {
 	flow := flowWithEndedRunningImplementation()
 	flow.Phases[2].Status = flowstore.PhaseSkipped
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{}), []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	view := ansi.Strip(m.View())
@@ -11908,6 +11908,10 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	sessionRoot := filepath.Join(root, "sessions")
+	if err := os.Mkdir(sessionRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	term := &fakeEmbeddedTerminal{lines: []string{"Codex ready", "agent output"}, state: "running"}
 	var started actions.AgentLaunchContext
@@ -11916,7 +11920,7 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		AgentCommand:         "codex",
 		CodexModel:           "gpt-5.6-sol",
 		CodexReasoningEffort: "high",
-		SessionStateRoot:     filepath.Join(root, "sessions"),
+		SessionStateRoot:     sessionRoot,
 		FlowStore:            store,
 		LaunchBackend:        "tmux",
 		TmuxLaunchAvailable:  func() bool { return true },

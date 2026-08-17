@@ -3038,6 +3038,34 @@ func (m Model) runAgentLaunchWithStatus(ctx actions.AgentLaunchContext, launch a
 	}
 }
 
+// runFlowLifecycleTmuxLaunchWithStatus differs from the generic detached path
+// in one crucial way: the spawn command result carries the held Flow
+// reservation into Update instead of releasing it in the command goroutine.
+// This closes the message-queue interval between confirmed runner start and a
+// matching handoffPending attempt consuming that confirmation.
+func (m Model) runFlowLifecycleTmuxLaunchWithStatus(
+	ctx actions.AgentLaunchContext,
+	launch actions.TerminalLaunchSpec,
+	heldRelease func(),
+	launchedStatus string,
+) (Model, tea.Cmd) {
+	return m, func() tea.Msg {
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return AgentResultMsg{
+				LaunchContext: ctx, Err: launchErrorMessage(err, launch), Detached: true,
+				FlowLaunchRelease: heldRelease,
+			}
+		}
+		return AgentResultMsg{
+			LaunchContext: ctx, Detached: true, LaunchedStatus: launchedStatus,
+			FlowLaunchRelease: heldRelease,
+		}
+	}
+}
+
 // launchErrorMessage prefers a transport's captured diagnostic over the bare
 // exit status a wrapper script's failure otherwise reduces to. A Flow launch
 // persists this string into the phase's needs_attention note, so it is the only

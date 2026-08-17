@@ -222,6 +222,9 @@ become windows in it — visible to your own `tmux ls`, reattachable with `T` or
 plan launch performed during Flow creation keep their embedded routes, and
 Approach falls back to the embedded terminal when tmux is not installed. See
 [docs/config.md](docs/config.md) and [docs/tui-guide.md](docs/tui-guide.md).
+Tracked Flow phase windows retain Flow occupancy with a kernel lease until the
+agent process exits, even if the phase is already completed and even across TUI
+restarts. Successor launches and AutoMode defer without polling tmux.
 
 Agents persist plans and Flow progress through the `approach plan` and
 `approach flow` CLIs. The canonical agent instructions are the bundled skills

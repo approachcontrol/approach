@@ -13,6 +13,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -168,18 +169,20 @@ type flowLaunchEventMsg struct {
 	// FlowMissing distinguishes the saved-session compatibility case from every
 	// other read failure: a saved session outlives a deleted Flow and resumes via
 	// its established non-Flow route instead of being stranded by stale linkage.
-	FlowMissing    bool
-	Err            string
-	Release        func()
-	Create         flowLaunchCreateRequest
-	StartupRoots   []flowstore.FlowPhase
-	Worktree       actions.FlowWorktreeCreateResult
-	Commit         string
-	Proof          flowLaunchCreateProof
-	GenerationLost bool
-	RecoveryErrs   []string
-	Settings       flowLaunchAgentSettingsSnapshot
-	ErrOp          string
+	FlowMissing     bool
+	Err             string
+	LeaseDeferred   bool
+	LeaseSetupError bool
+	Release         func()
+	Create          flowLaunchCreateRequest
+	StartupRoots    []flowstore.FlowPhase
+	Worktree        actions.FlowWorktreeCreateResult
+	Commit          string
+	Proof           flowLaunchCreateProof
+	GenerationLost  bool
+	RecoveryErrs    []string
+	Settings        flowLaunchAgentSettingsSnapshot
+	ErrOp           string
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -261,8 +264,17 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	if flowID == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
-	record, phase, ok := m.previewFlowLaunch(intent)
-	if !ok {
+	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
+	} else if occupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
+	// The typed lease check above owns the actionable cross-process result.
+	// Repeating it through previewFlowLaunch would collapse a peer race into the
+	// generic no-phase status; only in-process occupancy belongs in this second
+	// synchronous check. The launch reservation performs the next lease check.
+	record, phase, ok := m.cachedFlowLaunchTarget(intent)
+	if !ok || m.flowLaunchRuntimeOccupied(record.FlowID) {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -367,9 +379,57 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	if flowID == "" {
 		return false
 	}
+	leaseOccupied, leaseErr := m.trackedFlowLeaseOccupied(flowID)
+	return leaseErr != nil || leaseOccupied || m.flowLaunchRuntimeOccupied(flowID)
+}
+
+// flowLaunchRuntimeOccupied is the in-process ownership half of admission.
+// Creation-time Plan Now allocates a brand-new Flow and remains embedded and
+// unleased, so it uses this narrower check while all existing-Flow routes use
+// flowLaunchAdmissionOccupied and therefore respect a tracked tmux lease.
+func (m Model) flowLaunchRuntimeOccupied(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
 	return m.flowLaunchAttemptOccupied(flowID) ||
 		m.hasFlowEmbeddedTerminalForFlow(flowID) ||
 		m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
+}
+
+const flowLeaseOccupiedStatus = "Flow phase launch deferred because a tracked tmux phase agent still occupies this Flow"
+
+func flowLeaseSetupErrorStatus(err error) string {
+	return "Flow phase launch deferred because tracked tmux occupancy could not be inspected: " + err.Error()
+}
+
+func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false, nil
+	}
+	// An injected inspector owns its own root contract; tests and embedders may
+	// deliberately provide a root-independent implementation. The production
+	// inspector never receives a blank root, so tracked admission fails before
+	// mutation when shared launch state is unavailable.
+	if strings.TrimSpace(m.sessionStateRoot) == "" && !m.leaseInspectInjected {
+		return false, fmt.Errorf("Flow lease artifact root is unavailable")
+	}
+	if m.inspectFlowLease == nil {
+		return false, fmt.Errorf("Flow lease inspector is unavailable")
+	}
+	state, err := m.inspectFlowLease(m.sessionStateRoot, flowID)
+	if err != nil {
+		return false, err
+	}
+	switch state {
+	case flowlease.Free:
+		return false, nil
+	case flowlease.Held:
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid Flow lease state %d", state)
+	}
 }
 
 func (m Model) cachedFlowRecord(flowID string) (flowstore.FlowRecord, bool) {
@@ -711,6 +771,16 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			return event
 		}
 		event.Release = release
+		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			return event
+		} else if occupied {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		}
 		result, err := launcher.prepare(prepared)
 		if err != nil {
 			event.Err = err.Error()
@@ -814,6 +884,14 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		}
 		return m, m.flowLaunchPrepareCmd(msg, settings)
 	case flowLaunchStagePrepared:
+		if msg.LeaseDeferred {
+			releaseFlowLaunchReservation(msg.Release)
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+			if attempt.Kind == flowLaunchKindAutoPhase {
+				return m.armAutoAdvanceDrain(attempt.FlowID), nil
+			}
+			return m.setStatus(statusOther, msg.Err), nil
+		}
 		if msg.Skipped {
 			releaseFlowLaunchReservation(msg.Release)
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token), nil
@@ -1089,19 +1167,10 @@ func (m Model) failCreateFlowLaunchEmbedded(attempt flowLaunchAttempt, ctx actio
 	}
 }
 
-// handoffFlowLaunchTmux opens a window rather than an embedded slot, so the
-// attempt is released at handoff, the result is detached, and provider hooks
-// own completion.
-//
-// Releasing here means the window stops counting as Flow occupancy, which an
-// embedded slot would have provided until its process exited. What still covers
-// the agent's actual work is the persisted phase status: a `running` phase
-// occupies the Flow for both manual and automatic launches, so the gap opens
-// only after the agent has declared its own phase complete and its CLI happens
-// to stay at a prompt. Closing that too would mean polling tmux from the
-// auto-advance drain — a subprocess on a timer, which is exactly what the probe
-// rule forbids — or tracking window liveness in the background, which is the
-// ownership this route exists to give up. See docs/tui-guide.md.
+// handoffFlowLaunchTmux starts the private parent handshake. The attempt and
+// cross-process reservation remain held until a matching AgentResultMsg proves
+// the lease-owning runner started the agent; the runner's kernel lease then
+// supplies cheap Flow occupancy until that agent actually exits.
 func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	ctx := msg.Context
 	spec, err := m.buildRepoTmuxAgentLaunch(ctx)
@@ -1122,12 +1191,16 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {
 		m = next
 	} else {
-		// Same reasoning as the external handoff: the window is already being
-		// created, so there is nothing to undo, but no AgentResultMsg fence
-		// matches any other state and the attempt would be stranded.
-		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		// The command has not started yet. Without a handoffPending fence its
+		// result could never consume the carried cross-process reservation, so
+		// clean up the script and stop here.
+		releaseFlowLaunchReservation(msg.Release)
+		if spec.Launch.Cleanup != nil {
+			spec.Launch.Cleanup()
+		}
+		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
-	m, launchCmd := m.runAgentLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
+	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
 	var fetchCmd tea.Cmd
 	if ctx.FlowID != "" && m.flowSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()

@@ -17,6 +17,7 @@ import (
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
@@ -26,6 +27,10 @@ import (
 
 func main() {
 	if err := run(os.Args, runDeps{}); err != nil {
+		var processExit flowlease.ProcessExitError
+		if errors.As(err, &processExit) {
+			os.Exit(processExit.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -61,6 +66,12 @@ type startProgramOptions struct {
 
 func run(args []string, deps runDeps) error {
 	deps = fillRunDeps(deps)
+	if len(args) > 1 && args[1] == flowlease.TmuxSpawnCommand {
+		return flowlease.RunTmuxSpawn(args[2:], deps.stderr)
+	}
+	if len(args) > 1 && args[1] == flowlease.LeaseRunCommand {
+		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr)
+	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)
 		return nil
@@ -440,7 +451,14 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
 	modelOpts.LaunchPin = pin
 	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
-	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
+	// Bubble Tea normally exits immediately on SIGINT/SIGTERM without waiting
+	// for command goroutines. Let the model defer those messages while its
+	// private tmux helper still carries an authoritative Flow reservation.
+	p := tea.NewProgram(
+		model.NewWithOptions(repos, modelOpts),
+		tea.WithAltScreen(),
+		tea.WithFilter(model.DeferQuitDuringFlowLaunch),
+	)
 	_, err = p.Run()
 	_ = controlplane.ReleaseProcessPin(sessionStore.Root())
 	return err

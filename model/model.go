@@ -22,6 +22,7 @@ import (
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/model/pane"
 	"github.com/approachcontrol/approach/planstore"
@@ -220,6 +221,8 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
+	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected      bool
 	tmuxAttachHint            bool
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
@@ -253,10 +256,12 @@ type Model struct {
 	// It needs no expiry: the probe asks whether those windows are still live,
 	// so closed ones re-enable the shortcut on their own, and the slice is
 	// bounded by how many times one Flow was launched in one TUI session.
-	flowAutofixTmuxLaunches map[string][]string
-	flowLaunchAttempts      map[string]flowLaunchAttempt
-	flowLaunchSessionOwners map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
-	launchSeams             flowLaunchSeams
+	flowAutofixTmuxLaunches  map[string][]string
+	flowLaunchAttempts       map[string]flowLaunchAttempt
+	flowLaunchSessionOwners  map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
+	quitAfterFlowLaunch      bool
+	interruptAfterFlowLaunch bool
+	launchSeams              flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
 	flowRefreshTickGen      uint64
@@ -384,9 +389,12 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
-	StartEmbeddedTerminal    EmbeddedTerminalStarter
-	FinalizeAgentSession     func(actions.AgentLaunchContext) error
-	SessionStateRoot         string
+	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
+	// manual admission, and AutoMode. It must never invoke tmux or fork.
+	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
+	StartEmbeddedTerminal EmbeddedTerminalStarter
+	FinalizeAgentSession  func(actions.AgentLaunchContext) error
+	SessionStateRoot      string
 	// FlowStore is the process's already-open Flow store. When set, the fallback
 	// mutators below reuse it instead of opening a second one against the same
 	// approach.db: two pools would bootstrap twice and then contend for SQLite's
@@ -835,6 +843,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	leaseInspectInjected := opts.InspectFlowLease != nil
+	inspectFlowLease := opts.InspectFlowLease
+	if inspectFlowLease == nil {
+		inspectFlowLease = flowlease.Inspect
+	}
 	startEmbeddedTerminal := opts.StartEmbeddedTerminal
 	if startEmbeddedTerminal == nil {
 		startEmbeddedTerminal = defaultEmbeddedTerminalStarter
@@ -1016,6 +1029,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		inspectFlowLease:          inspectFlowLease,
+		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
 		startEmbeddedTerminal:     startEmbeddedTerminal,
 		finalizeAgentSession:      finalizeAgentSession,
@@ -1895,11 +1910,22 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
+		if modelNext.quitAfterFlowLaunch && len(modelNext.flowLaunchAttempts) == 0 {
+			shutdownCmd := tea.Quit
+			if modelNext.interruptAfterFlowLaunch {
+				shutdownCmd = func() tea.Msg { return tea.Interrupt() }
+			}
+			cmd = batchNonNil(cmd, shutdownCmd)
+		}
 		next = modelNext
 	}()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case flowLaunchQuitRequestedMsg:
+		m.quitAfterFlowLaunch = true
+		m.interruptAfterFlowLaunch = msg.Interrupt
+		return m.setStatus(statusOther, flowLaunchQuitPendingStatus), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -2287,10 +2313,16 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	// through this handler with no attempt and must reach main's behaviour
 	// below unchanged.
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
+		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
 			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+	} else if msg.FlowLaunchRelease != nil {
+		// A stale or duplicate lifecycle result is fenced completely: it cannot
+		// release a reservation now owned by a newer attempt, persist failure, or
+		// fall through to generic detached-launch status handling.
+		return m, nil
 	}
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)

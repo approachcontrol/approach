@@ -14,6 +14,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -366,6 +367,26 @@ func autofixOccupancyCases() []autofixOccupancyCase {
 				})
 			},
 			status: flowHeadlessWritePendingStatus,
+		},
+		{
+			name: "tracked tmux lease is held",
+			install: func(m Model, _ flowstore.FlowRecord) Model {
+				m.inspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+					return flowlease.Held, nil
+				}
+				return m
+			},
+			status: flowLeaseOccupiedStatus,
+		},
+		{
+			name: "tracked tmux lease cannot be inspected",
+			install: func(m Model, _ flowstore.FlowRecord) Model {
+				m.inspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+					return 0, errors.New("unsafe flow-leases directory")
+				}
+				return m
+			},
+			status: flowLeaseSetupErrorStatus(errors.New("unsafe flow-leases directory")),
 		},
 	}
 }
@@ -833,6 +854,29 @@ func (h *manualLaunchHarness) stageAutofixLaunch(m Model) (Model, tea.Cmd) {
 		h.t.Fatal("a successful read must return the prepare command")
 	}
 	return m, prepareCmd
+}
+
+func TestAutofixPrepareRechecksLeaseUnderReservation(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m, prepareCmd := h.stageAutofixLaunch(h.model())
+	h.leaseState = flowlease.Held
+
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("prepare did not settle")
+	}
+	m = h.drainMsg(m, preparedMsg, 0)
+
+	if len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatalf("late lease started autofix: embedded=%d tmux=%d", len(h.launchContexts), len(h.tmuxContexts))
+	}
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations=%d releases=%d, want protected refusal and release", h.launchReservations, h.launchReleases)
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
+	}
 }
 
 // TestAutofixPrepareResolvesHeadlessFromTheReservation pins the reason
