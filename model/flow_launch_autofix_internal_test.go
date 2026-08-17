@@ -368,6 +368,26 @@ func autofixOccupancyCases() []autofixOccupancyCase {
 			},
 			status: flowHeadlessWritePendingStatus,
 		},
+		{
+			name: "tracked tmux lease is held",
+			install: func(m Model, _ flowstore.FlowRecord) Model {
+				m.inspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+					return flowlease.Held, nil
+				}
+				return m
+			},
+			status: flowLeaseOccupiedStatus,
+		},
+		{
+			name: "tracked tmux lease cannot be inspected",
+			install: func(m Model, _ flowstore.FlowRecord) Model {
+				m.inspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+					return 0, errors.New("unsafe flow-leases directory")
+				}
+				return m
+			},
+			status: flowLeaseSetupErrorStatus(errors.New("unsafe flow-leases directory")),
+		},
 	}
 }
 

@@ -142,9 +142,17 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 	if !ok || !autofixFlowEligible(record) {
 		return m, nil, false
 	}
+	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
+	} else if occupied {
+		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	}
 	// Repair and phase resume are named before the generic in-flight refusal so
 	// the durable obstacle is the one reported. Both are lifecycle attempts now,
-	// so the kind is what tells them apart from any other attempt.
+	// so the kind is what tells them apart from any other attempt. The typed
+	// lease check above owns the occupied/setup diagnostic: repeating it through
+	// flowLaunchAdmissionOccupied would collapse a held or unreadable lease into
+	// the generic in-flight status.
 	if m.flowLaunchAttemptKind(flowID) == flowLaunchKindRepair {
 		return m.setStatus(statusOther, flowRepairPendingStatus), nil, false
 	}
@@ -154,7 +162,7 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 	if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
 		return m.setStatus(statusOther, flowAutofixTerminalStatus), nil, false
 	}
-	if m.flowLaunchAdmissionOccupied(flowID) {
+	if m.flowLaunchRuntimeOccupied(flowID) {
 		return m.setStatus(statusOther, flowAutofixInFlightStatus), nil, false
 	}
 	if m.flowHeadlessWritePending(flowID) {
