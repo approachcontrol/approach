@@ -68,3 +68,18 @@ func TestRendererSurfacesNonJSONFailures(t *testing.T) {
 		t.Errorf("non-JSON output should be surfaced, got:\n%s", got)
 	}
 }
+
+func TestRendererClosesStreamedTextBeforeToolCall(t *testing.T) {
+	got := renderAll(t, `{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"I'll read"}]}}
+{"type":"tool_call","subtype":"started","message":{"content":[{"name":"ReadFile"}]}}
+`)
+	if strings.Contains(got, "I'll read⏺") || strings.Contains(got, "I'll read⏺ ReadFile") {
+		t.Fatalf("streamed text merged into the tool line:\n%q", got)
+	}
+	if !strings.Contains(got, "I'll read\r\n") {
+		t.Fatalf("expected streamed text on its own line, got:\n%q", got)
+	}
+	if !strings.Contains(got, "⏺ ReadFile\r\n") {
+		t.Fatalf("expected tool marker on its own line, got:\n%q", got)
+	}
+}

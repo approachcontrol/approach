@@ -118,6 +118,11 @@ func (r *Renderer) renderEvent(ev streamEvent) []byte {
 		if name == "" {
 			name = "tool"
 		}
+		if r.textOpen {
+			out := crlf("")
+			r.textOpen = false
+			return append(out, crlf("⏺ "+name)...)
+		}
 		return crlf("⏺ " + name)
 	case "result":
 		if r.textOpen {
