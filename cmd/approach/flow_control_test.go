@@ -457,3 +457,32 @@ func shortSocketDir(t *testing.T) string {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
+
+// add-child names no phase of its own; the client stamps the launch's own
+// phase onto it, so the controller authorizes it for the launch that owns
+// the parent phase — the one the skill tells to run it.
+func TestProxiedAddChildIsAuthorizedForTheOwningLaunch(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlowReadyForImplementation(t, root, "Children", "flow/children")
+	recordLaunch(t, root, created.FlowID, "implementation", "launch-impl")
+	_, endpoint := controllerFor(t, root, created.FlowID, "implementation", "launch-impl")
+	var stdout, stderr bytes.Buffer
+	deps := noScanDeps(t, runDeps{
+		stdout: &stdout, stderr: &stderr,
+		getenv: controlEnv(root, endpoint.Path, endpoint.Token, "launch-impl", created.FlowID, "implementation"),
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig must not run for a proxied leaf")
+			return config.Config{}, nil
+		},
+	})
+	if err := run([]string{"approach", "flow", "phase", "add-child", "--flow-id", created.FlowID, "--parent-phase-id", "implementation", "--phase-id", "implementation-api", "--title", "API", "--order", "1"}, deps); err != nil {
+		t.Fatalf("proxied add-child: %v (%s)", err, stderr.String())
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("add-child output = %s (%v)", stdout.String(), err)
+	}
+	if child := phaseByID(record, "implementation-api"); child.PhaseID == "" || child.ParentPhaseID != "implementation" {
+		t.Fatalf("child not added: %#v", record.Phases)
+	}
+}
