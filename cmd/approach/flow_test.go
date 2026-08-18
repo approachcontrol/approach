@@ -565,8 +565,12 @@ func TestRunFlowCreatePrepareWorktreeReportsPersistedFlowOnBootstrapFailure(t *t
 	}
 	testgit.Run(t, repoPath, "add", ".")
 	testgit.Run(t, repoPath, "commit", "-m", "seed")
+	configuredRepoPath, err := filepath.EvalSymlinks(repoPath)
+	if err != nil {
+		t.Fatalf("resolve configured repo path: %v", err)
+	}
 
-	err := run([]string{
+	err = run([]string{
 		"approach", "flow", "create",
 		"--title", "Bootstrap Failure",
 		"--instructions", "preserve the flow",
@@ -577,7 +581,7 @@ func TestRunFlowCreatePrepareWorktreeReportsPersistedFlowOnBootstrapFailure(t *t
 	}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Bootstrap: config.BootstrapConfig{
-				Hooks: []config.BootstrapHookConfig{{RepoPath: repoPath, Script: ".approach/bootstrap"}},
+				Hooks: []config.BootstrapHookConfig{{RepoPath: configuredRepoPath, Script: ".approach/bootstrap"}},
 			}}, nil
 		},
 		stdout: &bytes.Buffer{},
@@ -1089,14 +1093,16 @@ func TestRunFlowPlanSavePreservesExistingPhaseProgress(t *testing.T) {
 	}
 }
 
-func TestFlowPlanLinkFailureReportsPersistedPlanForRecovery(t *testing.T) {
-	err := flowPlanLinkFailure("plan-1", "/state/plans/plan-1/plan.md", errors.New("database busy"))
-	requireContainsAll(t, err.Error(), []string{
-		`plan "plan-1" persisted`,
-		`/state/plans/plan-1/plan.md`,
-		"Flow link failed",
-		"database busy",
-	})
+func TestFlowPlanPersistenceFailureReportsPersistedPlanForRecovery(t *testing.T) {
+	for _, operation := range []string{"phase seeding", "plan readback", "Flow link"} {
+		err := flowPlanPersistenceFailure("plan-1", "/state/plans/plan-1/plan.md", operation, errors.New("database busy"))
+		requireContainsAll(t, err.Error(), []string{
+			`plan "plan-1" persisted`,
+			`/state/plans/plan-1/plan.md`,
+			operation + " failed",
+			"database busy",
+		})
+	}
 }
 
 func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {

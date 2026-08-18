@@ -45,6 +45,58 @@ func mustRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestMainWorktreePathHandlesQuotedPorcelainPaths(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main-\nrepo")
+	linkedPath := filepath.Join(root, "linked")
+	if err := os.MkdirAll(mainPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, mainPath, "init", "-b", "main")
+	testgit.ConfigureRepo(t, mainPath)
+	if err := os.WriteFile(filepath.Join(mainPath, "README.md"), []byte("seed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, mainPath, "add", "README.md")
+	testgit.Run(t, mainPath, "commit", "-m", "seed")
+	testgit.Run(t, mainPath, "worktree", "add", "-b", "linked", linkedPath, "main")
+
+	want, err := filepath.EvalSymlinks(mainPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := actions.MainWorktreePath(linkedPath)
+	if err != nil {
+		t.Fatalf("MainWorktreePath() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("MainWorktreePath() = %q, want %q", got, want)
+	}
+}
+
+func TestMainWorktreePathFallsBackWhenGitDoesNotSupportNULOutput(t *testing.T) {
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	script := `#!/bin/sh
+case " $* " in
+  *" -z "*) echo "error: unknown switch z" >&2; exit 129 ;;
+esac
+printf 'worktree /tmp/main-repo\nHEAD deadbeef\nbranch refs/heads/main\n\n'
+`
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := actions.MainWorktreePath("/tmp/linked-repo")
+	if err != nil {
+		t.Fatalf("MainWorktreePath() error = %v", err)
+	}
+	if got != "/tmp/main-repo" {
+		t.Fatalf("MainWorktreePath() = %q, want /tmp/main-repo", got)
+	}
+}
+
 func prependFakePath(t *testing.T, names ...string) string {
 	t.Helper()
 	dir := t.TempDir()

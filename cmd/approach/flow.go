@@ -1143,8 +1143,8 @@ type flowPlanSaveResult struct {
 	Linked   bool   `json:"linked"`
 }
 
-func flowPlanLinkFailure(planID, planPath string, err error) error {
-	return fmt.Errorf("plan %q persisted at %q, but Flow link failed: %w", planID, planPath, err)
+func flowPlanPersistenceFailure(planID, planPath, operation string, err error) error {
+	return fmt.Errorf("plan %q persisted at %q, but %s failed: %w", planID, planPath, operation, err)
 }
 
 func runFlowPlanSave(args []string, deps runDeps) error {
@@ -1183,7 +1183,11 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if *planID == "" {
 		*planID = flow.PlanID
 	}
-	planStore, err := newPlanStore(*stateRoot, deps)
+	root, err := resolvePlanRoot(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
 	if err != nil {
 		return err
 	}
@@ -1203,43 +1207,29 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	savedMetadata, err := planStore.ReadMetadata(savedID)
+	planPath, err := planstore.MarkdownPath(root, savedID)
 	if err != nil {
-		return err
-	}
-	existingPhases := make(map[string]bool, len(savedMetadata.Phases))
-	for _, phase := range savedMetadata.Phases {
-		existingPhases[normalizeFlowPhaseID(phase.PhaseID)] = true
+		expectedPath := filepath.Join(root, "plans", savedID, "plan.md")
+		return flowPlanPersistenceFailure(savedID, expectedPath, "plan path resolution", err)
 	}
 	for _, phase := range flow.Phases {
 		if flowstore.SemanticKind(phase) != flowstore.KindImplementation || phase.ParentPhaseID != "" {
 			continue
 		}
-		if existingPhases[normalizeFlowPhaseID(phase.PhaseID)] {
-			continue
-		}
-		if err := planStore.SetPhase(savedID, planstore.PlanPhase{
+		if err := planStore.SetPhaseIfMissing(savedID, planstore.PlanPhase{
 			PhaseID: phase.PhaseID,
 			Title:   phase.Title,
 			Status:  "pending",
 			Order:   phase.Order,
 		}); err != nil {
-			return err
+			return flowPlanPersistenceFailure(savedID, planPath, "phase seeding", err)
 		}
 	}
-	root, err := resolvePlanRoot(*stateRoot, deps)
-	if err != nil {
-		return err
-	}
-	planPath, err := planstore.MarkdownPath(root, savedID)
-	if err != nil {
-		return err
-	}
 	if _, err := planStore.ReadPlan(savedID); err != nil {
-		return err
+		return flowPlanPersistenceFailure(savedID, planPath, "plan readback", err)
 	}
 	if _, err := flowStore.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: *flowID, PlanID: savedID, PlanPath: planPath}); err != nil {
-		return flowPlanLinkFailure(savedID, planPath, err)
+		return flowPlanPersistenceFailure(savedID, planPath, "Flow link", err)
 	}
 	data, err := json.Marshal(flowPlanSaveResult{FlowID: *flowID, PlanID: savedID, PlanPath: planPath, Linked: true})
 	if err != nil {
