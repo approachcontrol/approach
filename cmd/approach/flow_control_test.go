@@ -223,3 +223,66 @@ func TestFlowCreateIgnoresEndpointAndOpensDirectly(t *testing.T) {
 		t.Fatalf("reset with endpoint: %v", err)
 	}
 }
+
+// Only a request a replay can apply may be spooled: replay rejects every
+// request of an unowned launch (repair, autofix, generic) as baseline_missing,
+// and gates an owned launch's requests on its own phase. Reporting those as
+// deferred success would promise an apply that never comes; they exit
+// non-zero like any other non-deferrable write and leave nothing pending.
+func TestSpoolRefusesRequestsNoReplayCanApply(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Spool Owner", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 999"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(t.TempDir(), "dead.sock")
+	cases := []struct {
+		name     string
+		phaseEnv string
+		args     []string
+	}{
+		{name: "unowned launch", phaseEnv: "", args: []string{"phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "later"}},
+		{name: "another phase", phaseEnv: "plan", args: []string{"phase", "set", "--flow-id", created.FlowID, "--phase-id", "implementation", "--status", "completed"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(append([]string{"approach", "flow"}, append(tc.args, "--state-root", root)...),
+				noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, tc.phaseEnv)}))
+			if err == nil || !strings.HasPrefix(err.Error(), "cannot be deferred: ") {
+				t.Fatalf("exit = %v, want a cannot-be-deferred error", err)
+			}
+			if stdout.Len() != 0 || strings.Contains(stderr.String(), "spooled:") {
+				t.Fatalf("stdout = %q stderr = %q, want neither JSON nor a spooled message", stdout.String(), stderr.String())
+			}
+		})
+	}
+	log, _ := launchcontrol.OpenLog(root, "launch-1")
+	if pending, _ := log.Pending(); len(pending) != 0 {
+		t.Fatalf("pending = %#v, want nothing spooled", pending)
+	}
+	// The launch's own phase and a Flow-level verb still spool.
+	for _, args := range [][]string{
+		{"phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "later"},
+		{"plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-9"},
+	} {
+		var stdout, stderr bytes.Buffer
+		err := run(append([]string{"approach", "flow"}, append(args, "--state-root", root)...),
+			noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+		if err != nil || !strings.Contains(stderr.String(), flowSpooledMessage) {
+			t.Fatalf("%v: exit = %v stderr = %q, want spooled", args, err, stderr.String())
+		}
+	}
+	if pending, _ := log.Pending(); len(pending) != 2 {
+		t.Fatalf("pending = %#v, want the two spooled requests", pending)
+	}
+}

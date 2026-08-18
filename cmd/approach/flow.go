@@ -15,6 +15,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
 
@@ -1288,7 +1289,12 @@ func (flowRequestSpooled) Error() string { return flowSpooledMessage }
 const (
 	flowSpooledMessage        = "spooled: control endpoint unreachable and this build cannot open the flow database; the request will be applied on the next approach start"
 	flowNotDeferrableTemplate = "cannot be deferred: %s is not replayable; control endpoint %s unreachable and the flow database could not be opened: %v"
-	flowReadFallbackTemplate  = "control endpoint %s unreachable; direct read failed: %v"
+	// A spooled request is applied by replay under the launch's own phase, so
+	// a launch that owns no phase, or a request for another phase, has no
+	// replay that could ever apply it.
+	flowNotDeferrableUnownedTemplate = "cannot be deferred: launch %s owns no phase, so a spooled %s could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
+	flowNotDeferrablePhaseTemplate   = "cannot be deferred: %s targets phase %s, not this launch's phase %s, so it could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
+	flowReadFallbackTemplate         = "control endpoint %s unreachable; direct read failed: %v"
 )
 
 // runFlowRequest dispatches req by verb class and by what the environment
@@ -1321,6 +1327,12 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	if !errors.Is(err, launchcontrol.ErrUnreachable) {
 		return launchcontrol.Response{}, err
 	}
+	// Unreachable can also mean "answered, but the answer was lost": the
+	// controller logs before it acknowledges, so it may already have applied
+	// this very request. The fallback below re-executes it under the same
+	// request ID. Same-status phase writes are idempotent no-ops in the store,
+	// so a replayable duplicate applies once semantically; request-ID
+	// idempotency for the non-replayable verbs is approach-0e9.3.1.
 	cfg, cfgErr := deps.loadConfig()
 	if cfgErr != nil {
 		return launchcontrol.Response{}, fmt.Errorf("error loading config: %w", cfgErr)
@@ -1375,6 +1387,15 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	}
 	if !flowstore.IsSchemaCompatibilityRefusal(openErr) || log == nil {
 		return launchcontrol.Response{}, openErr
+	}
+	// Spool only what a replay can apply. Replay rejects every request of an
+	// unowned launch and gates an owned launch's requests on its own phase, so
+	// anything else spooled here would be a deferred success that never lands.
+	if envelope.Unowned {
+		return launchcontrol.Response{}, fmt.Errorf(flowNotDeferrableUnownedTemplate, control.launchID, req.Verb, control.endpoint, openErr)
+	}
+	if !launchcontrol.FlowLevel(req.Verb) && artifacts.NormalizePhaseID(req.PhaseID) != artifacts.NormalizePhaseID(control.phaseID) {
+		return launchcontrol.Response{}, fmt.Errorf(flowNotDeferrablePhaseTemplate, req.Verb, req.PhaseID, control.phaseID, control.endpoint, openErr)
 	}
 	// Spool: this build must not touch the database, but the controller that
 	// launched this agent can, and will on its next start.

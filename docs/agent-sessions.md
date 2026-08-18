@@ -166,8 +166,12 @@ mutation log, and the two fail for different reasons. The files:
 - `rejected.json` — replay rejections with `reason` `phase_result_stale`,
   `request_invalid`, or `baseline_missing`, and the intended and observed
   statuses.
-- `exit.json` — written by the tmux lease runner after the agent's whole
-  process group is gone; the sweep's authoritative exit evidence.
+- `exit.json` — the sweep's authoritative exit evidence: written by the tmux
+  lease runner after the agent's whole process group is gone, and by the
+  TUI's reconciliation for an embedded or interactive terminal's exit before
+  it takes any lock or touches the store, so a reconciliation that fails
+  part-way is retried by the sweep rather than lost. `code_unknown` marks a
+  record whose writer saw the exit but not its status.
 - `FLOW-REPLAY-NOTICE.txt` — advisory, same shape as the migration notice.
 - `.seq.lock` — the per-launch flock every appender and replayer holds. Its
   owner line is rewritten on each acquisition, so retention ignores it.
@@ -186,7 +190,11 @@ non-zero (a read never exits 0 without data); `phase restart`, `add-child`,
 and `agent set` open the database or exit non-zero (`cannot be deferred`);
 and the replayable writes open the database under the same log discipline or,
 when this build must not touch that database at all, spool the request and
-exit 0 with a fixed `spooled:` message. A restarted TUI re-binds the same
+exit 0 with a fixed `spooled:` message — but only a request a replay can
+apply: one from a launch that owns a phase, for that phase or for the Flow.
+A launch without a phase (repair, autofix, generic) or a write to another
+phase exits non-zero (`cannot be deferred`) instead, because replay would
+reject it and the deferred success would never land. A restarted TUI re-binds the same
 socket path, reloads registrations from `launch.json`, replays every pending
 request exactly once — under the latest-launch gate, so a launch that no
 longer owns its phase never writes — and only then listens.

@@ -78,7 +78,10 @@ func (m Model) handleLaunchSweepDone(msg launchSweepDoneMsg) (Model, tea.Cmd) {
 // reconcileExitedFlowEmbeddedTerminals emits one reconciliation command per
 // Flow terminal that exited on its own — not one the user terminated — for a
 // launch that carries a Flow, phase, and launch ID. Each slot is reconciled
-// once; the controller decides whether the phase still needs attention.
+// once; the controller decides whether the phase still needs attention, and
+// it records the exit durably (exit.json) before anything that can fail, so a
+// reconciliation that does not finish is retried by the sweep, not by a slot
+// that has since been dismissed.
 func (m Model) reconcileExitedFlowEmbeddedTerminals() (Model, []tea.Cmd) {
 	if m.reconcileLaunchExit == nil {
 		return m, nil

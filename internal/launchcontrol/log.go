@@ -137,14 +137,18 @@ type RejectedLog struct {
 	Batches       []RejectedBatch `json:"batches"`
 }
 
-// ExitRecord is exit.json, written by the lease runner after the agent's
-// whole process group is gone. It is authoritative exit evidence.
+// ExitRecord is exit.json: authoritative exit evidence, written by the lease
+// runner after the agent's whole process group is gone and by Reconcile for
+// an embedded or interactive terminal's exit before it does anything that
+// can fail transiently. CodeUnknown marks a record whose writer saw the exit
+// but not its status; ExitCode is then meaningless rather than 0.
 type ExitRecord struct {
 	SchemaVersion int       `json:"schema_version"`
 	LaunchID      string    `json:"launch_id"`
 	FlowID        string    `json:"flow_id"`
 	PhaseID       string    `json:"phase_id,omitempty"`
 	ExitCode      int       `json:"exit_code"`
+	CodeUnknown   bool      `json:"code_unknown,omitempty"`
 	Signaled      bool      `json:"signaled,omitempty"`
 	EndedAt       time.Time `json:"ended_at"`
 	Source        string    `json:"source"`

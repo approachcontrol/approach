@@ -273,3 +273,77 @@ func TestRetainRemovesOnlyAppliedOldLaunchDirectories(t *testing.T) {
 		t.Fatalf("retired a held launch: %d", retired)
 	}
 }
+
+// Terminal exit is authoritative evidence, and it is durable before Reconcile
+// waits on anything that can fail transiently — the launch lock (which the
+// SessionEnd hook may hold), the store — so a reconciliation that does not
+// finish is retried by the sweep from exit.json rather than lost with the
+// dismissed terminal slot.
+func TestReconcileWritesTerminalExitEvidenceBeforeTakingTheLaunchLock(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Durable Exit")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	holder, _ := OpenLog(root, "launch-1")
+	unlock, err := holder.Lock(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newTestController(t, store, root, func(o *Options) { o.InspectLease = freeLease })
+	endedAt := time.Date(2026, 6, 6, 14, 0, 0, 0, time.UTC)
+	done := make(chan Outcome, 1)
+	go func() {
+		outcome, _ := c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{Source: SourceTerminalExit, EndedAt: endedAt})
+		done <- outcome
+	}()
+	// exit.json appears while the lock is still held.
+	deadline := time.Now().Add(3 * time.Second)
+	var exit ExitRecord
+	for {
+		record, ok, err := holder.Exit()
+		if err == nil && ok {
+			exit = record
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("exit.json was not written before the lock was taken")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if exit.Source != string(SourceTerminalExit) || !exit.CodeUnknown || exit.ExitCode != 0 || !exit.EndedAt.Equal(endedAt) || exit.FlowID != created.FlowID || exit.PhaseID != "plan" {
+		t.Fatalf("exit.json = %#v", exit)
+	}
+	select {
+	case <-done:
+		t.Fatal("reconcile did not wait for the lock holder")
+	case <-time.After(200 * time.Millisecond):
+	}
+	// The sweep, which is what runs when the reconciliation itself never
+	// finishes, demotes from that record with the code marked unknown.
+	unlock()
+	select {
+	case outcome := <-done:
+		if outcome.Action != ActionDemoted {
+			t.Fatalf("outcome = %#v", outcome)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconcile never finished")
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(phase.Notes, "exited (terminal_exit, exit code unknown)") {
+		t.Fatalf("phase = %#v", phase)
+	}
+	// And a sweep over a launch whose only evidence is such a record reads
+	// the unknown code back rather than reporting exit code 0.
+	other := createFlow(t, store, "Sweep From Exit")
+	launchWithBaseline(t, store, root, other.FlowID, "plan", "launch-2")
+	otherLog, _ := OpenLog(root, "launch-2")
+	if err := otherLog.WriteExit(ExitRecord{FlowID: other.FlowID, PhaseID: "plan", CodeUnknown: true, EndedAt: endedAt, Source: string(SourceTerminalExit)}); err != nil {
+		t.Fatal(err)
+	}
+	if report := c.Sweep(); report.Reconciled != 1 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	if phase := phaseOf(t, store, other.FlowID, "plan"); !strings.Contains(phase.Notes, "exited (periodic_sweep, exit code unknown)") {
+		t.Fatalf("swept phase = %#v", phase)
+	}
+}

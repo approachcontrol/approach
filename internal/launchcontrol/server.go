@@ -349,16 +349,17 @@ func (c *Controller) authorize(req Request) (registration, error) {
 	if req.Verb != VerbFlowList && strings.TrimSpace(req.FlowID) != entry.flowID {
 		return registration{}, errIdentityMismatch
 	}
-	if entry.phaseID != "" && !IsRead(req.Verb) && !flowLevelVerb(req.Verb) &&
+	if entry.phaseID != "" && !IsRead(req.Verb) && !FlowLevel(req.Verb) &&
 		artifacts.NormalizePhaseID(req.PhaseID) != entry.phaseID {
 		return registration{}, errIdentityMismatch
 	}
 	return entry, nil
 }
 
-// flowLevelVerb reports verbs whose target is the Flow, not a phase. They are
-// authorized on the Flow alone; the request's phase is the launch's own.
-func flowLevelVerb(verb Verb) bool {
+// FlowLevel reports verbs whose target is the Flow, not a phase. They are
+// authorized on the Flow alone; in the log their phase is the launch's own,
+// which is what replay gates on.
+func FlowLevel(verb Verb) bool {
 	switch verb {
 	case VerbPlanSet, VerbIssueSet, VerbPRSet, VerbMergeSet:
 		return true
@@ -388,7 +389,7 @@ func (c *Controller) handleRequest(req Request) Response {
 	// Flow-level verbs carry the launch's own phase in the log so replay has a
 	// phase to gate on.
 	phaseID := artifacts.NormalizePhaseID(req.PhaseID)
-	if flowLevelVerb(req.Verb) || phaseID == "" {
+	if FlowLevel(req.Verb) || phaseID == "" {
 		if entry.phaseID != "" {
 			phaseID = entry.phaseID
 		}

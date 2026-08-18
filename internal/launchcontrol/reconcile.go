@@ -77,12 +77,29 @@ func (c *Controller) Reconcile(flowID, phaseID, launchID string, ev ExitEvidence
 	if err != nil {
 		return Outcome{Action: ActionNone}, err
 	}
+	phaseID = artifacts.NormalizePhaseID(phaseID)
+	if ev.Source == SourceTerminalExit {
+		// Authoritative evidence is durable before anything that can fail
+		// transiently — the launch lock (which the SessionEnd hook may hold),
+		// the store — so a reconciliation that does not finish is retried by
+		// the sweep from exit.json rather than lost with the terminal slot.
+		endedAt := ev.EndedAt
+		if endedAt.IsZero() {
+			endedAt = c.now()
+		}
+		if err := log.WriteExit(ExitRecord{
+			FlowID: flowID, PhaseID: phaseID, ExitCode: ev.Code, CodeUnknown: !ev.CodeKnown,
+			EndedAt: endedAt.UTC(), Source: string(ev.Source),
+		}); err != nil {
+			return Outcome{Action: ActionNone}, err
+		}
+	}
 	unlock, err := log.Lock(LaunchLockTimeout)
 	if err != nil {
 		return Outcome{Action: ActionNone}, err
 	}
 	defer unlock()
-	return c.reconcileLocked(log, flowID, artifacts.NormalizePhaseID(phaseID), launchID, ev)
+	return c.reconcileLocked(log, flowID, phaseID, launchID, ev)
 }
 
 func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string, ev ExitEvidence) (Outcome, error) {
@@ -306,7 +323,7 @@ func (c *Controller) sweepLaunch(launchID string, source ExitSource) (notices []
 // exitEvidence applies the sweep's evidence rules in precedence order.
 func (c *Controller) exitEvidence(log *Log, launchID string, source ExitSource) (ExitEvidence, bool) {
 	if exit, ok, err := log.Exit(); err == nil && ok {
-		return ExitEvidence{Source: source, Code: exit.ExitCode, CodeKnown: true, EndedAt: exit.EndedAt,
+		return ExitEvidence{Source: source, Code: exit.ExitCode, CodeKnown: !exit.CodeUnknown, EndedAt: exit.EndedAt,
 			Detail: "exit.json from " + exit.Source}, true
 	}
 	if c.liveness == nil {
