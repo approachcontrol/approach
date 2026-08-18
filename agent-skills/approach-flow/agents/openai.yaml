@@ -1,0 +1,4 @@
+interface:
+  display_name: "Approach Flow"
+  short_description: "Persist Approach Flows and plans"
+  default_prompt: "Use $approach-flow to persist this Flow or plan through the Approach CLI."
