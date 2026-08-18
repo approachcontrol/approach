@@ -347,3 +347,29 @@ func TestReconcileWritesTerminalExitEvidenceBeforeTakingTheLaunchLock(t *testing
 		t.Fatalf("swept phase = %#v", phase)
 	}
 }
+
+// The liveness probe walks every session record, so the sweep asks it only
+// for a launch whose phase is still running under that launch — not for the
+// retained history of finished launches, every thirty seconds.
+func TestSweepProbesLivenessOnlyForRunningPhasesItOwns(t *testing.T) {
+	store, root := newTestStore(t)
+	done := createFlow(t, store, "Done")
+	launchWithBaseline(t, store, root, done.FlowID, "plan", "launch-done")
+	completePhase(t, store, done.FlowID, "plan", "")
+	superseded := createFlow(t, store, "Superseded")
+	launchWithBaseline(t, store, root, superseded.FlowID, "plan", "launch-old")
+	launchWithBaseline(t, store, root, superseded.FlowID, "plan", "launch-new")
+	var probed []string
+	c := newTestController(t, store, root, func(o *Options) {
+		o.Liveness = func(launchID string) (LaunchLiveness, error) {
+			probed = append(probed, launchID)
+			return LaunchLiveness{}, nil
+		}
+	})
+	if report := c.Sweep(); report.Reconciled != 0 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	if len(probed) != 1 || probed[0] != "launch-new" {
+		t.Fatalf("probed = %v, want only the launch that owns a running phase", probed)
+	}
+}

@@ -285,10 +285,10 @@ func (c *Controller) sweepLaunch(launchID string, source ExitSource) (notices []
 	if flowID == "" || phaseID == "" {
 		return notices, replayed, replay.Reconciled, nil
 	}
-	ev, ok := c.exitEvidence(log, launchID, source)
-	if !ok {
-		return notices, replayed, replay.Reconciled, nil
-	}
+	// The phase first, the evidence second: the liveness probe walks every
+	// session record, and the retained history of finished launches must not
+	// pay for it every tick. Only a phase still running under this launch
+	// can be demoted, so only that launch is worth probing.
 	record, err := c.store.Read(flowID)
 	if err != nil {
 		if flowstore.IsNotFound(err) {
@@ -298,6 +298,10 @@ func (c *Controller) sweepLaunch(launchID string, source ExitSource) (notices []
 	}
 	phase, ok := PhaseByID(record, phaseID)
 	if !ok || phase.Status != flowstore.PhaseRunning || flowstore.LatestPhaseLaunchID(phase) != launchID {
+		return notices, replayed, replay.Reconciled, nil
+	}
+	ev, ok := c.exitEvidence(log, launchID, source)
+	if !ok {
 		return notices, replayed, replay.Reconciled, nil
 	}
 	if state, err := c.inspectLease(c.root, flowID); err == nil && state == flowlease.Held {
