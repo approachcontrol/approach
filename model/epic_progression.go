@@ -262,6 +262,16 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 				break
 			}
 			if candidate.ChildID == "" {
+				// A child held by a Flow under another epic counts as exhausted
+				// rather than retryable, deliberately. Progression already
+				// terminates whenever no ready child is available to it — a
+				// blocked child reaches this branch the same way — and the
+				// alternative is an unbounded poll: the retryable arm sets no
+				// backoff, so a manual Flow left open on a child would keep
+				// this closure shelling out to `bd` every advance tick for as
+				// long as it lives. Termination is visible (the status below
+				// says so) and re-enabling auto-progression is one key away,
+				// whereas the poll has no exit the user can see.
 				status := fmt.Sprintf("Auto-progression complete for epic %s; no ready children remain", epicID)
 				if intersection > 0 && linked == intersection {
 					status = fmt.Sprintf("Auto-progression complete for epic %s; every ready child already has a Flow", epicID)
