@@ -1,6 +1,6 @@
 module github.com/approachcontrol/approach
 
-go 1.26.1
+go 1.26.6
 
 // `web/node_modules` lives inside the module tree and some npm packages ship
 // Go files. Filtering them out of `go list ./...` *output* is too late: a Go
