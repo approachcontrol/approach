@@ -309,6 +309,13 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			// exhausted path fires). Adopting the winner as the owned successor
 			// does NOT work — its EpicID would fail reconcile's exact struct
 			// equality and livelock instead.
+			//
+			// Only the readable refusal is named here. The unreadable one
+			// (flowstore.ErrBeadFlowUnreadable) is unreachable from this line
+			// in practice: List returns a *PartialListError for the same row,
+			// so the flowsErr arm above already retried and this closure never
+			// got to createFlow. Special-casing it here would look like a fix
+			// and change nothing. That loop is approach-2ab.
 			if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
 				return result(epicProgressionAdvanceRetryable, conflictStatus(existing, false))
 			}
