@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -389,4 +391,69 @@ func TestSpoolRefusesLaunchWithoutABaseline(t *testing.T) {
 	if pending, _ := log.Pending(); len(pending) != 0 {
 		t.Fatalf("pending = %#v, want nothing spooled", pending)
 	}
+}
+
+// An endpoint that takes the request and then closes without answering may
+// or may not have applied it. A replayable write falls back as for any
+// unreachable endpoint (its duplicate is a same-status no-op), but a
+// non-replayable one — phase restart, add-child, agent set — is not executed
+// again on a guess: the CLI exits non-zero saying the outcome is
+// indeterminate, so the agent verifies rather than retries.
+func TestNonReplayableWriteIsNotRetriedAfterALostResponse(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Lost", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseBlocked, flowstore.OutcomeBlocked, "", "waiting")
+	silent := filepath.Join(shortSocketDir(t), "silent.sock")
+	l, err := net.Listen("unix", silent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			// Read the whole request, then hang up without a response.
+			_, _ = io.ReadAll(c)
+			_ = c.Close()
+		}
+	}()
+	getenv := controlEnv(root, silent, "tok", "launch-1", created.FlowID, "plan")
+	var stdout, stderr bytes.Buffer
+	err = run([]string{"approach", "flow", "phase", "restart", "--flow-id", created.FlowID, "--phase-id", "plan", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv}))
+	if err == nil || !strings.Contains(err.Error(), "may already have applied") {
+		t.Fatalf("restart after a lost response = %v, want an indeterminate-outcome error", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no JSON", stdout.String())
+	}
+	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseBlocked {
+		t.Fatalf("restart was executed on a guess: %#v", phase)
+	}
+	// A replayable write still falls back to the logged direct path.
+	stdout.Reset()
+	if err := run([]string{"approach", "flow", "phase", "set", "--flow-id", created.FlowID, "--phase-id", "plan", "--status", "running", "--notes", "resumed", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv})); err != nil {
+		t.Fatalf("replayable write after a lost response = %v (%s)", err, stderr.String())
+	}
+	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("replayable write did not fall back: %#v", phase)
+	}
+}
+
+// shortSocketDir is a temp dir under /tmp: t.TempDir() paths on macOS exceed
+// the sockaddr limit, and a socket that cannot bind proves nothing.
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "approach-flow-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }

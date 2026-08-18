@@ -199,7 +199,10 @@ The endpoint serves exactly the launcher's root (the exported
 launcher's database and opens the root it named directly, as before.
 When the socket does not answer, reads open the database read-only or exit
 non-zero (a read never exits 0 without data); `phase restart`, `add-child`,
-and `agent set` open the database or exit non-zero (`cannot be deferred`);
+and `agent set` open the database or exit non-zero (`cannot be deferred`) —
+except when the request was sent and only the answer was lost, in which case
+they exit non-zero without running again, because the controller may already
+have applied a write that is not idempotent;
 and the replayable writes open the database under the same log discipline or,
 when this build must not touch that database at all, spool the request and
 exit 0 with a fixed `spooled:` message — but only a request a replay can

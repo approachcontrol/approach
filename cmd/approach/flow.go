@@ -1335,6 +1335,10 @@ const (
 	flowNotDeferrablePhaseTemplate    = "cannot be deferred: %s targets phase %s, not this launch's phase %s, so it could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
 	flowNotDeferrableBaselineTemplate = "cannot be deferred: launch %s has no readable baseline, so a spooled %s could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
 	flowReadFallbackTemplate          = "control endpoint %s unreachable; direct read failed: %v"
+	// A non-replayable write is not idempotent — a second restart is refused,
+	// a second add-child is a conflict — so once the request was sent and the
+	// answer lost it is not executed again on a guess.
+	flowIndeterminateTemplate = "%s was sent to control endpoint %s but no response arrived; the controller may already have applied it, so it was not run again — verify with flow read before retrying: %v"
 )
 
 // runFlowRequest dispatches req by verb class and by what the environment
@@ -1370,10 +1374,11 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	}
 	// Unreachable can also mean "answered, but the answer was lost": the
 	// controller logs before it acknowledges, so it may already have applied
-	// this very request. The fallback below re-executes it under the same
-	// request ID. Same-status phase writes are idempotent no-ops in the store,
-	// so a replayable duplicate applies once semantically; request-ID
-	// idempotency for the non-replayable verbs is approach-0e9.3.1.
+	// this very request. Reads and replayable writes fall back regardless —
+	// same-status phase writes are idempotent no-ops in the store, so a
+	// replayable duplicate applies once semantically. A non-replayable write
+	// is not run again on a guess (below); request-ID idempotency that could
+	// answer it exactly is approach-0e9.3.1.
 	cfg, cfgErr := deps.loadConfig()
 	if cfgErr != nil {
 		return launchcontrol.Response{}, fmt.Errorf("error loading config: %w", cfgErr)
@@ -1387,6 +1392,9 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		defer func() { _ = store.Close() }()
 		return launchcontrol.Execute(store, req)
 	case class == launchcontrol.ClassProxiedNonReplayable:
+		if errors.Is(err, launchcontrol.ErrResponseLost) {
+			return launchcontrol.Response{}, fmt.Errorf(flowIndeterminateTemplate, req.Verb, control.endpoint, err)
+		}
 		store, openErr := newFlowStoreWithConfig(stateRoot, cfg, deps, flowstore.RoleWriter)
 		if openErr != nil {
 			return launchcontrol.Response{}, fmt.Errorf(flowNotDeferrableTemplate, req.Verb, control.endpoint, openErr)

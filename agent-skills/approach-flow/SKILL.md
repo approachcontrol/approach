@@ -155,7 +155,11 @@ describe the phase as already advanced. Only `phase set`, `phase complete`,
 `phase block`, `phase needs-attention`, `plan set`, `issue set`, `pr set`, and
 `merge set` can be deferred; `phase restart`, `phase add-child`, and
 `phase agent set` cannot and exit non-zero instead, and `flow read` and
-`flow list` never spool — a read either returns data or exits non-zero.
+`flow list` never spool — a read either returns data or exits non-zero. One
+non-zero exit from those three is not a plain failure: `was sent to control
+endpoint ... but no response arrived; the controller may already have applied
+it` means the write may have landed and was deliberately not run twice. Run
+`flow read` and act on what the record shows rather than retrying blindly.
 
 The current Flow CLI exposes `create`, `list`, `read`, `phase complete`,
 `phase block`, `phase needs-attention`, `phase restart`, `phase reset`, `phase set`,

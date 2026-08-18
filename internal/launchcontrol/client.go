@@ -17,6 +17,13 @@ const ClientTimeout = 30 * time.Second
 // caller decides by verb class what to do next.
 var ErrUnreachable = errors.New("control endpoint unreachable")
 
+// ErrResponseLost is the ErrUnreachable case where the whole request was
+// written and the endpoint then closed, timed out, or dropped before a full
+// response: the controller may have logged and applied the request. It
+// wraps ErrUnreachable, so callers that only care about "no answer" see that;
+// callers of non-idempotent verbs can tell this case apart and not guess.
+var ErrResponseLost = fmt.Errorf("%w: response lost after the request was sent", ErrUnreachable)
+
 // Client is the agent side of the protocol. Identity fields are stamped onto
 // every request; the controller refuses a request whose identity does not
 // match the registration for its LaunchID.
@@ -67,9 +74,9 @@ func (c Client) Call(req Request) (Response, error) {
 	var resp Response
 	if err := readFrame(conn, &resp); err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return Response{}, fmt.Errorf("%w: connection closed before a response", ErrUnreachable)
+			return Response{}, fmt.Errorf("%w: connection closed before a response", ErrResponseLost)
 		}
-		return Response{}, fmt.Errorf("%w: %v", ErrUnreachable, err)
+		return Response{}, fmt.Errorf("%w: %v", ErrResponseLost, err)
 	}
 	return resp, nil
 }
