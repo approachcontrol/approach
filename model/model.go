@@ -23,6 +23,7 @@ import (
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/model/pane"
 	"github.com/approachcontrol/approach/planstore"
@@ -280,7 +281,16 @@ type Model struct {
 	finalizeAgentSession    func(actions.AgentLaunchContext) error
 	sessionStateRoot        string
 	// launchPin is the approach binary agents launched by this Model must run.
-	launchPin            controlplane.Pin
+	launchPin controlplane.Pin
+	// launchControl registers launches with the process's launch controller;
+	// nil leaves every launch on the direct path.
+	launchControl LaunchRegistrar
+	// reconcileLaunchExit reports an embedded terminal's exit for a tracked
+	// launch; the controller decides whether the phase needs attention.
+	reconcileLaunchExit func(flowID, phaseID, launchID string, ev launchcontrol.ExitEvidence) error
+	// sweepLaunches runs the controller's periodic sweep off the render path.
+	sweepLaunches        func()
+	launchSweepTickGen   uint64
 	bootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
@@ -420,6 +430,19 @@ type Options struct {
 	// `approach` on PATH that is a different build from the one launching
 	// agents. It is shown once at startup and changes nothing about routing.
 	LaunchPinNotice string
+	// LaunchControl registers every Flow-scoped launch with the process's
+	// launch controller, which hands the agent the socket endpoint and token
+	// its `approach flow` writes are proxied through. Nil means no controller:
+	// agents open the store directly, as before.
+	LaunchControl LaunchRegistrar
+	// ReconcileLaunchExit is called when an embedded tracked launch's terminal
+	// exits, with the exit evidence the model observed. The controller replays
+	// anything the launch left pending and demotes a still-running phase.
+	ReconcileLaunchExit func(flowID, phaseID, launchID string, ev launchcontrol.ExitEvidence) error
+	// SweepLaunches is the controller's periodic sweep, run every
+	// launchSweepInterval as a command so a detached agent that exits without
+	// a result is reconciled while the TUI is up. Nil disables the tick.
+	SweepLaunches func()
 }
 
 // New creates a Model from discovered repos.
@@ -785,6 +808,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return store.AddPhaseLaunchID(update)
 		}
 	}
+	// Decorated once, here, before the one resolved value is handed both to
+	// the launch seams and to the Model field: three callers publish launch IDs
+	// (create, resume, and the tracked phase path that bypasses the seams), and
+	// every one of them must leave baseline.json behind or replay has nothing
+	// to compare against. A blank root makes the decorator a pass-through.
+	addFlowPhaseLaunchID = launchcontrol.RecordBaseline(opts.SessionStateRoot, addFlowPhaseLaunchID)
 	resetFlowPhase := opts.ResetFlowPhase
 	if resetFlowPhase == nil {
 		resetFlowPhase = func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
@@ -1061,6 +1090,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		finalizeAgentSession:      finalizeAgentSession,
 		sessionStateRoot:          opts.SessionStateRoot,
 		launchPin:                 opts.LaunchPin,
+		launchControl:             opts.LaunchControl,
+		reconcileLaunchExit:       opts.ReconcileLaunchExit,
+		sweepLaunches:             opts.SweepLaunches,
 		bootstrapHookForRepo:      bootstrapHookForRepo,
 		runBootstrapHook:          runBootstrapHook,
 	}
@@ -1403,7 +1435,7 @@ func (m Model) withReasoningEffort(command, effort string) Model {
 func (m Model) RepoCreateRoot() string { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
-	return batchNonNil(m.fetchStoredModes(), autoAdvanceTickCmd())
+	return batchNonNil(m.fetchStoredModes(), autoAdvanceTickCmd(), m.launchSweepTickCmd())
 }
 
 func (m Model) View() string {
@@ -2044,9 +2076,14 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		if msg.Generation != m.embeddedTerminalTickGen {
 			return m, nil
 		}
+		// Before dismissal, because a dismissed slot is gone from the model
+		// and its exit would never be reported.
+		var cmds []tea.Cmd
+		var reconcileCmds []tea.Cmd
+		m, reconcileCmds = m.reconcileExitedFlowEmbeddedTerminals()
+		cmds = append(cmds, reconcileCmds...)
 		hadExitedFlowTerminals := m.hasExitedFlowEmbeddedTerminalAutoClose()
 		m = m.dismissExitedFlowEmbeddedTerminals()
-		var cmds []tea.Cmd
 		if hadExitedFlowTerminals {
 			var refreshCmd tea.Cmd
 			m, refreshCmd = m.startFlowSurfaceRefreshFetch()
@@ -2061,6 +2098,17 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		return m.startFlowSurfaceRefreshFetch()
+	case FlowControlAppliedMsg:
+		return m.startFlowSurfaceRefreshFetch()
+	case launchSweepTickMsg:
+		if msg.Generation != m.launchSweepTickGen {
+			return m, nil
+		}
+		return m.startLaunchSweep()
+	case launchSweepDoneMsg:
+		return m.handleLaunchSweepDone(msg)
+	case launchExitReconcileDoneMsg:
+		return m.handleLaunchExitReconcileDone(msg)
 	case prBabysitterPollMsg:
 		if !m.prBabysitterSurfaceVisible() || msg.Generation != m.currentListRequest(ui.ModePRBabysitter) {
 			return m, nil
@@ -2416,6 +2464,11 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 			}
 		}
 		m = m.setStatus(statusOther, status)
+	} else if cmd := m.reconcileInteractiveLaunchExitCmd(ctx); cmd != nil {
+		// An interactive launch's agent has ended with the TTY handed back; a
+		// tracked phase it left running has no result and is reconciled the
+		// same way an embedded terminal's exit is.
+		return m, cmd
 	}
 	return m, nil
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
@@ -70,7 +71,14 @@ func run(args []string, deps runDeps) error {
 		return flowlease.RunTmuxSpawn(args[2:], deps.stderr)
 	}
 	if len(args) > 1 && args[1] == flowlease.LeaseRunCommand {
-		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr, nil)
+		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr, func(exit flowlease.LaunchExit) {
+			// exit.json is the sweep's authoritative exit evidence for a
+			// tracked tmux launch. Best effort: the runner's job is the lease
+			// and the exit status, and a failed write must not change either.
+			if err := launchcontrol.RecordLaunchExit(exit.Root, exit.FlowID, exit.PhaseID, exit.LaunchID, exit.Code, exit.Signaled, exit.EndedAt); err != nil {
+				fmt.Fprintf(deps.stderr, "approach: record launch exit: %v\n", err)
+			}
+		})
 	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)
@@ -467,10 +475,43 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 		return fmt.Errorf("%s", pin.Notice)
 	}
 
+	// The launch controller owns this root's launch directories and, when it
+	// can bind the root's socket, serves the agents' `approach flow` writes
+	// through the one store above. Recovery — replaying what earlier launches
+	// spooled and reconciling launches that exited without a result — runs
+	// before the first render; its failures are logged, never fatal, because a
+	// broken launch directory must not take the TUI down. A live listener on
+	// the socket means another TUI owns this root: this process runs without an
+	// endpoint and its launches take the direct path.
+	controller, err := launchcontrol.New(launchcontrol.Options{
+		Root:     sessionStore.Root(),
+		Store:    flowStore,
+		Liveness: sessionLivenessProbe(sessionStore),
+		Log:      os.Stderr,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := controller.Recover(); err != nil {
+		fmt.Fprintf(os.Stderr, "approach: launch control recovery: %v\n", err)
+	}
+	if err := controller.Listen(); err != nil {
+		if !errors.Is(err, launchcontrol.ErrEndpointOwned) && !errors.Is(err, launchcontrol.ErrNoSocketPath) {
+			fmt.Fprintf(os.Stderr, "approach: launch control endpoint unavailable: %v\n", err)
+		}
+	}
+	defer func() { _ = controller.Close() }()
+
 	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
 	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
 	modelOpts.LaunchPin = pin
 	modelOpts.LaunchPinNotice = controlplane.PathMismatchNotice(pin, nil)
+	modelOpts.LaunchControl = controller
+	modelOpts.ReconcileLaunchExit = func(flowID, phaseID, launchID string, ev launchcontrol.ExitEvidence) error {
+		_, err := controller.Reconcile(flowID, phaseID, launchID, ev)
+		return err
+	}
+	modelOpts.SweepLaunches = func() { controller.Sweep() }
 	// Bubble Tea normally exits immediately on SIGINT/SIGTERM without waiting
 	// for command goroutines. Let the model defer those messages while its
 	// private tmux helper still carries an authoritative Flow reservation.
@@ -479,9 +520,43 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 		tea.WithAltScreen(),
 		tea.WithFilter(model.DeferQuitDuringFlowLaunch),
 	)
+	controller.SetAppliedNotifier(func(event launchcontrol.AppliedEvent) {
+		p.Send(model.FlowControlAppliedMsg{FlowID: event.FlowID, PhaseID: event.PhaseID, LaunchID: event.LaunchID})
+	})
 	_, err = p.Run()
 	_ = controlplane.ReleaseProcessPin(sessionStore.Root())
 	return err
+}
+
+// sessionLivenessProbe answers the launch controller's "did this launch's
+// session end" from the session store. Status is authoritative over EndedAt;
+// several records for one launch count as ended only when all of them are,
+// with the latest end time.
+func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
+	return func(launchID string) (launchcontrol.LaunchLiveness, error) {
+		records, err := store.List(sessions.SessionFilter{})
+		if err != nil {
+			return launchcontrol.LaunchLiveness{}, err
+		}
+		liveness := launchcontrol.LaunchLiveness{Ended: true}
+		for _, record := range records {
+			if strings.TrimSpace(record.LaunchID) != launchID {
+				continue
+			}
+			liveness.RecordKnown = true
+			if sessions.IsActive(record.Status, record.EndedAt) {
+				liveness.Ended = false
+				continue
+			}
+			if record.EndedAt.After(liveness.EndedAt) {
+				liveness.EndedAt = record.EndedAt
+			}
+		}
+		if !liveness.RecordKnown {
+			liveness.Ended = false
+		}
+		return liveness, nil
+	}
 }
 
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {

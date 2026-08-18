@@ -12,6 +12,7 @@ import (
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
 
 type IngestOptions struct {
@@ -137,7 +138,60 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	// Upsert releases the per-session lock before Flow attachment. Keeping that
 	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts, warnings)
+	// After the attach, and with its own store: the hook path holds one Flow
+	// store handle at a time.
+	reconcileFlowLaunchExit(record, opts, warnings)
 	return record, nil
+}
+
+// reconcileFlowLaunchExit reports a session's end to the launch controller
+// so a tracked phase the agent left running without a result is marked, and
+// anything the launch spooled is replayed first. It is direct evidence, so no
+// grace applies; the Flow lease veto does, because Claude's SessionEnd fires
+// on /clear with the agent still alive. Failures are warnings: the session
+// record this hook exists to write was still captured.
+func reconcileFlowLaunchExit(record SessionRecord, opts IngestOptions, warnings *[]string) {
+	if record.Status != "ended" || record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.LaunchID) == "" {
+		return
+	}
+	root, explicit := flowStateRoot(opts)
+	if root == "" {
+		return
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:         root,
+		RootExplicit: explicit,
+		Role:         flowstore.RoleWriter,
+		Presets:      opts.FlowPresets,
+	})
+	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not reconcile launch %s for Flow %s phase %s: %v",
+			record.LaunchID, record.FlowID, record.FlowPhaseID, err))
+		return
+	}
+	defer func() { _ = store.Close() }()
+	controller, err := launchcontrol.New(launchcontrol.Options{Root: root, Store: store})
+	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not reconcile launch %s for Flow %s phase %s: %v",
+			record.LaunchID, record.FlowID, record.FlowPhaseID, err))
+		return
+	}
+	outcome, err := controller.Reconcile(record.FlowID, record.FlowPhaseID, strings.TrimSpace(record.LaunchID), launchcontrol.ExitEvidence{
+		Source:  launchcontrol.SourceSessionEnd,
+		EndedAt: record.EndedAt,
+	})
+	for _, notice := range outcome.Notices {
+		appendWarning(warnings, notice)
+	}
+	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not reconcile launch %s for Flow %s phase %s: %v",
+			record.LaunchID, record.FlowID, record.FlowPhaseID, err))
+		return
+	}
+	if outcome.Action == launchcontrol.ActionDemoted {
+		appendWarning(warnings, fmt.Sprintf("Flow %s phase %s marked %s: launch %s ended without a valid result (%s)",
+			record.FlowID, record.FlowPhaseID, outcome.Status, record.LaunchID, outcome.Reason))
+	}
 }
 
 type hookPayload struct {

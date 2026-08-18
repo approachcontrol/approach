@@ -200,6 +200,13 @@ type flowLaunchAgentSettingsSnapshot struct {
 	// repair, autofix, generic-agent, and resume launches cannot drift onto
 	// ambient PATH while tracked phase launches stay pinned.
 	Pin controlplane.Pin
+	// Control travels with Pin for the same reason: every launch kind that
+	// pins must also register, or its results bypass the controller.
+	Control LaunchRegistrar
+}
+
+func (snapshot flowLaunchAgentSettingsSnapshot) stamp() launchStamp {
+	return launchStamp{Pin: snapshot.Pin, Control: snapshot.Control}
 }
 
 func snapshotFlowLaunchAgentSettings(launcher flowLaunchPreparation) flowLaunchAgentSettingsSnapshot {
@@ -211,6 +218,7 @@ func snapshotFlowLaunchAgentSettings(launcher flowLaunchPreparation) flowLaunchA
 		SessionStateRoot: launcher.SessionStateRoot,
 		PromptTemplates:  launcher.PromptTemplates,
 		Pin:              launcher.Pin,
+		Control:          launcher.Control,
 	}
 }
 
@@ -222,6 +230,7 @@ func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher flowLaunchPrepara
 	launcher.SessionStateRoot = snapshot.SessionStateRoot
 	launcher.PromptTemplates = snapshot.PromptTemplates
 	launcher.Pin = snapshot.Pin
+	launcher.Control = snapshot.Control
 	return launcher
 }
 

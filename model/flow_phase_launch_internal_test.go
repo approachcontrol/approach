@@ -395,17 +395,17 @@ func TestFlowPhaseLaunchPreflightAcceptsAnUnpinnedLaunch(t *testing.T) {
 	}
 }
 
-func TestApplyLaunchPinStampsTheLaunchingBuild(t *testing.T) {
+func TestApplyLaunchStampStampsTheLaunchingBuild(t *testing.T) {
 	pin := controlplane.Pin{
 		ExecutablePath: "/state/bin/approach-abc123",
 		Version:        "v0.10.3",
 		SchemaVersion:  6,
 	}
-	ctx := applyLaunchPin(actions.AgentLaunchContext{Command: "codex"}, pin)
+	ctx := applyLaunchStamp(actions.AgentLaunchContext{Command: "codex"}, launchStamp{Pin: pin})
 	if ctx.Executable != pin.ExecutablePath || ctx.BuildVersion != "v0.10.3" || ctx.DBSchemaVersion != 6 {
 		t.Fatalf("pinned context = %+v", ctx)
 	}
-	unpinned := applyLaunchPin(actions.AgentLaunchContext{Command: "codex"}, controlplane.Pin{})
+	unpinned := applyLaunchStamp(actions.AgentLaunchContext{Command: "codex"}, launchStamp{Pin: controlplane.Pin{}})
 	if unpinned.Executable != "" || unpinned.BuildVersion != "" || unpinned.DBSchemaVersion != 0 {
 		t.Fatalf("zero pin stamped a context: %+v", unpinned)
 	}
@@ -425,15 +425,15 @@ func stubRetainLaunchPin(t *testing.T) *[][3]string {
 	return &claims
 }
 
-func TestApplyLaunchPinClaimsTheCachedBinary(t *testing.T) {
+func TestApplyLaunchStampClaimsTheCachedBinary(t *testing.T) {
 	claims := stubRetainLaunchPin(t)
 	pin := controlplane.Pin{ExecutablePath: "/state/bin/approach-abc123", Digest: "abc123def456"}
 
-	applyLaunchPin(actions.AgentLaunchContext{
+	applyLaunchStamp(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		SessionStateRoot: "/state",
-	}, pin)
+	}, launchStamp{Pin: pin})
 
 	if len(*claims) != 1 {
 		t.Fatalf("claims = %v, want exactly one", *claims)
@@ -453,7 +453,7 @@ var nonLaunchingContextFiles = map[string]string{
 
 // Every launch kind bakes the pinned path into its provider session-hook argv,
 // so every launch kind has to stamp the pin and claim its cached copy. Both
-// happen in applyLaunchPin, and this is the fence that keeps a NEW launch kind
+// happen in applyLaunchStamp, and this is the fence that keeps a NEW launch kind
 // from quietly skipping it: exercising the eight existing paths would say
 // nothing about the ninth, which is the one that will be wrong.
 //
@@ -462,7 +462,7 @@ var nonLaunchingContextFiles = map[string]string{
 // it matches the composite literal rather than `var ctx actions.AgentLaunchContext`.
 // What it does catch is the realistic mistake — a launch kind added in a new
 // file — and it costs no fixtures to do it.
-func TestEveryLaunchingContextGoesThroughApplyLaunchPin(t *testing.T) {
+func TestEveryLaunchingContextGoesThroughApplyLaunchStamp(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read package dir: %v", err)
@@ -484,13 +484,13 @@ func TestEveryLaunchingContextGoesThroughApplyLaunchPin(t *testing.T) {
 		}
 		if _, exempt := nonLaunchingContextFiles[name]; exempt {
 			seenExempt[name] = true
-			if strings.Contains(text, "applyLaunchPin(") {
+			if strings.Contains(text, "applyLaunchStamp(") {
 				t.Fatalf("%s is listed as non-launching but stamps a pin; remove it from nonLaunchingContextFiles", name)
 			}
 			continue
 		}
-		if !strings.Contains(text, "applyLaunchPin(") {
-			t.Fatalf("%s builds an agent launch context but never calls applyLaunchPin, so its agent runs whatever "+
+		if !strings.Contains(text, "applyLaunchStamp(") {
+			t.Fatalf("%s builds an agent launch context but never calls applyLaunchStamp, so its agent runs whatever "+
 				"`approach` PATH resolves and its cached binary is unclaimed. Stamp the pin, or document the file in "+
 				"nonLaunchingContextFiles with the reason it launches nothing.", name)
 		}
@@ -506,19 +506,19 @@ func TestEveryLaunchingContextGoesThroughApplyLaunchPin(t *testing.T) {
 	}
 }
 
-func TestApplyLaunchPinDoesNotClaimWhenThereIsNothingToProtect(t *testing.T) {
+func TestApplyLaunchStampDoesNotClaimWhenThereIsNothingToProtect(t *testing.T) {
 	claims := stubRetainLaunchPin(t)
 	cached := controlplane.Pin{ExecutablePath: "/state/bin/approach-abc123", Digest: "abc123def456"}
 	degraded := controlplane.Pin{ExecutablePath: "/usr/local/bin/approach", Digest: "abc123def456", Degraded: true}
 
 	// A degraded pin runs the source binary; there is no cached copy retention
 	// could evict, so a claim would only leak a file.
-	applyLaunchPin(actions.AgentLaunchContext{LaunchID: "launch-1", SessionStateRoot: "/state"}, degraded)
+	applyLaunchStamp(actions.AgentLaunchContext{LaunchID: "launch-1", SessionStateRoot: "/state"}, launchStamp{Pin: degraded})
 	// RetainPin rejects an empty launch id, and an unrooted context has nowhere
 	// to write. Both are untracked launches, not failures.
-	applyLaunchPin(actions.AgentLaunchContext{SessionStateRoot: "/state"}, cached)
-	applyLaunchPin(actions.AgentLaunchContext{LaunchID: "launch-2"}, cached)
-	applyLaunchPin(actions.AgentLaunchContext{LaunchID: "launch-3", SessionStateRoot: "/state"}, controlplane.Pin{})
+	applyLaunchStamp(actions.AgentLaunchContext{SessionStateRoot: "/state"}, launchStamp{Pin: cached})
+	applyLaunchStamp(actions.AgentLaunchContext{LaunchID: "launch-2"}, launchStamp{Pin: cached})
+	applyLaunchStamp(actions.AgentLaunchContext{LaunchID: "launch-3", SessionStateRoot: "/state"}, launchStamp{Pin: controlplane.Pin{}})
 
 	if len(*claims) != 0 {
 		t.Fatalf("claims = %v, want none", *claims)
@@ -585,7 +585,7 @@ var unverifiedLaunchPinFiles = map[string]string{}
 // against the same store. A check that lived only in preflight would leave every
 // one of them launching an unverified binary, so this is the fence that keeps
 // the NEXT launch kind from skipping it too — the same file-granularity trade as
-// TestEveryLaunchingContextGoesThroughApplyLaunchPin, for the same reason.
+// TestEveryLaunchingContextGoesThroughApplyLaunchStamp, for the same reason.
 func TestEveryFlowLaunchRouteRefusesAnUnverifiedPin(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -603,7 +603,7 @@ func TestEveryFlowLaunchRouteRefusesAnUnverifiedPin(t *testing.T) {
 			t.Fatalf("read %s: %v", name, err)
 		}
 		text := string(source)
-		if !strings.Contains(text, "applyLaunchPin(") {
+		if !strings.Contains(text, "applyLaunchStamp(") {
 			continue
 		}
 		if reason, exempt := unverifiedLaunchPinFiles[name]; exempt {

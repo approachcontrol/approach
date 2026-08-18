@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
@@ -103,27 +104,7 @@ func newFlowStore(stateRoot string, deps runDeps, role flowstore.Role) (*flowsto
 }
 
 func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps, role flowstore.Role) (*flowstore.Store, error) {
-	root := stateRoot
-	// Explicit means "the operator named this root", which is what decides
-	// whether a missing directory is a typo to report or a first run to create.
-	// A typo'd environment variable deserves the same answer as a typo'd flag —
-	// the launch env sets APPROACH_FLOW_STATE_ROOT, so that is where a wrong
-	// root is most likely — and only the config fallback is not explicit.
-	explicit := root != ""
-	if root == "" {
-		if envRoot := deps.getenv("APPROACH_FLOW_STATE_ROOT"); envRoot != "" {
-			root, explicit = envRoot, true
-		} else if envRoot := deps.getenv("APPROACH_PLAN_STATE_ROOT"); envRoot != "" {
-			root, explicit = envRoot, true
-		} else if envRoot := deps.getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
-			root, explicit = envRoot, true
-		} else {
-			root = cfg.Sessions.Root
-		}
-	}
-	if root == "" {
-		root = cfg.Sessions.Root
-	}
+	root, explicit := resolveFlowStateRoot(stateRoot, cfg, deps)
 	// The env spelling only, deliberately: the dev-live-migration refusal names
 	// both --allow-dev-live-migration and APPROACH_ALLOW_DEV_LIVE_MIGRATION=1,
 	// and a refusal an operator cannot act on is worse than no refusal. The flag
@@ -150,6 +131,33 @@ func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps, r
 		fmt.Fprintf(deps.stderr, "approach: %s\n", warning)
 	}
 	return store, nil
+}
+
+// resolveFlowStateRoot picks the artifact root a `flow` leaf operates on and
+// reports whether it was named explicitly.
+func resolveFlowStateRoot(stateRoot string, cfg config.Config, deps runDeps) (string, bool) {
+	root := stateRoot
+	// Explicit means "the operator named this root", which is what decides
+	// whether a missing directory is a typo to report or a first run to create.
+	// A typo'd environment variable deserves the same answer as a typo'd flag —
+	// the launch env sets APPROACH_FLOW_STATE_ROOT, so that is where a wrong
+	// root is most likely — and only the config fallback is not explicit.
+	explicit := root != ""
+	if root == "" {
+		if envRoot := deps.getenv("APPROACH_FLOW_STATE_ROOT"); envRoot != "" {
+			root, explicit = envRoot, true
+		} else if envRoot := deps.getenv("APPROACH_PLAN_STATE_ROOT"); envRoot != "" {
+			root, explicit = envRoot, true
+		} else if envRoot := deps.getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
+			root, explicit = envRoot, true
+		} else {
+			root = cfg.Sessions.Root
+		}
+	}
+	if root == "" {
+		root = cfg.Sessions.Root
+	}
+	return root, explicit
 }
 
 func runFlowCreate(args []string, deps runDeps) error {
@@ -1225,6 +1233,12 @@ func runFlowLeaf(deps runDeps, stateRoot string, req launchcontrol.Request, role
 		return err
 	}
 	resp, err := runFlowRequest(deps, stateRoot, req, role)
+	if errors.As(err, new(flowRequestSpooled)) {
+		// Deferred success: say so on stderr, print no JSON, exit 0. The skill
+		// tells agents to report a spooled write as deferred and not retry.
+		_, writeErr := fmt.Fprintln(deps.stderr, flowSpooledMessage)
+		return writeErr
+	}
 	if err != nil {
 		return err
 	}
@@ -1242,9 +1256,146 @@ func runFlowLeaf(deps runDeps, stateRoot string, req launchcontrol.Request, role
 	return nil
 }
 
-// runFlowRequest opens the store with role and runs req through the shared
-// executor.
+// flowControlContext is what a launched agent's environment says about its
+// registration with the TUI's launch controller. An empty endpoint means the
+// agent was not registered (or is not a launched agent at all) and every leaf
+// opens the store directly, exactly as before the controller existed.
+type flowControlContext struct {
+	endpoint string
+	token    string
+	launchID string
+	flowID   string
+	phaseID  string
+}
+
+func flowControlContextFromEnv(deps runDeps) flowControlContext {
+	return flowControlContext{
+		endpoint: strings.TrimSpace(deps.getenv("APPROACH_CONTROL_ENDPOINT")),
+		token:    strings.TrimSpace(deps.getenv("APPROACH_CONTROL_TOKEN")),
+		launchID: strings.TrimSpace(deps.getenv("APPROACH_LAUNCH_ID")),
+		flowID:   strings.TrimSpace(deps.getenv("APPROACH_FLOW_ID")),
+		phaseID:  strings.TrimSpace(deps.getenv("APPROACH_FLOW_PHASE_ID")),
+	}
+}
+
+// flowRequestSpooled reports a replayable write that could neither reach the
+// controller nor open the database, and was left in the launch log for the
+// next approach start. It is a deferred success: exit 0, no JSON.
+type flowRequestSpooled struct{}
+
+func (flowRequestSpooled) Error() string { return flowSpooledMessage }
+
+const (
+	flowSpooledMessage        = "spooled: control endpoint unreachable and this build cannot open the flow database; the request will be applied on the next approach start"
+	flowNotDeferrableTemplate = "cannot be deferred: %s is not replayable; control endpoint %s unreachable and the flow database could not be opened: %v"
+	flowReadFallbackTemplate  = "control endpoint %s unreachable; direct read failed: %v"
+)
+
+// runFlowRequest dispatches req by verb class and by what the environment
+// says about the launch:
+//
+//   - a direct verb, or no endpoint: open the store with role, execute;
+//   - an endpoint that answers: that answer is final, OK or refused;
+//   - an endpoint that does not answer: reads open the store read-only or fail
+//     loudly (a read never exits 0 without data); non-replayable writes open
+//     the store or fail loudly (they can never be deferred); replayable writes
+//     open the store and log the apply, or, when this build cannot open the
+//     database at all, spool the request for the next controller start.
 func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, role flowstore.Role) (launchcontrol.Response, error) {
+	class, ok := launchcontrol.Classify(req.Verb)
+	if !ok {
+		return launchcontrol.Response{}, fmt.Errorf("unknown launch control verb %q", req.Verb)
+	}
+	control := flowControlContextFromEnv(deps)
+	if class == launchcontrol.ClassDirect || control.endpoint == "" {
+		return runFlowRequestDirect(deps, stateRoot, req, role)
+	}
+	client := launchcontrol.Client{
+		Endpoint: control.endpoint, Token: control.token,
+		LaunchID: control.launchID, FlowID: control.flowID, PhaseID: control.phaseID,
+	}
+	resp, err := client.Call(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !errors.Is(err, launchcontrol.ErrUnreachable) {
+		return launchcontrol.Response{}, err
+	}
+	cfg, cfgErr := deps.loadConfig()
+	if cfgErr != nil {
+		return launchcontrol.Response{}, fmt.Errorf("error loading config: %w", cfgErr)
+	}
+	switch {
+	case launchcontrol.IsRead(req.Verb):
+		store, openErr := newFlowStoreWithConfig(stateRoot, cfg, deps, flowstore.RoleReader)
+		if openErr != nil {
+			return launchcontrol.Response{}, fmt.Errorf(flowReadFallbackTemplate, control.endpoint, openErr)
+		}
+		defer func() { _ = store.Close() }()
+		return launchcontrol.Execute(store, req)
+	case class == launchcontrol.ClassProxiedNonReplayable:
+		store, openErr := newFlowStoreWithConfig(stateRoot, cfg, deps, flowstore.RoleWriter)
+		if openErr != nil {
+			return launchcontrol.Response{}, fmt.Errorf(flowNotDeferrableTemplate, req.Verb, control.endpoint, openErr)
+		}
+		defer func() { _ = store.Close() }()
+		return launchcontrol.Execute(store, req)
+	}
+	// Replayable write. The launch log is keyed by the launch that owns this
+	// agent, and only for the Flow it was launched for: a write against
+	// another Flow is applied (as before) but not logged, because no replay of
+	// this launch may touch it.
+	root, _ := resolveFlowStateRoot(stateRoot, cfg, deps)
+	var log *launchcontrol.Log
+	if control.launchID != "" && (control.flowID == "" || control.flowID == req.FlowID) {
+		log, _ = launchcontrol.OpenLog(root, control.launchID)
+	}
+	envelope := launchcontrol.RequestEnvelope{
+		RequestID: req.RequestID, LaunchID: control.launchID, FlowID: req.FlowID,
+		PhaseID: req.PhaseID, Verb: req.Verb, Replayable: true, Unowned: control.phaseID == "",
+		Payload: req.Payload,
+	}
+	if envelope.PhaseID == "" {
+		envelope.PhaseID = control.phaseID
+	}
+	store, openErr := newFlowStoreWithConfig(stateRoot, cfg, deps, flowstore.RoleWriter)
+	if openErr == nil {
+		defer func() { _ = store.Close() }()
+		if log == nil {
+			return launchcontrol.Execute(store, req)
+		}
+		unlock, lockErr := log.Lock(launchcontrol.LaunchLockTimeout)
+		if lockErr != nil {
+			fmt.Fprintf(deps.stderr, "approach: launch log unavailable, applying without a marker: %v\n", lockErr)
+			return launchcontrol.Execute(store, req)
+		}
+		defer unlock()
+		envelope.WrittenBy = launchcontrol.WrittenByDirect
+		return launchcontrol.ApplyLogged(store, log, req, envelope, time.Now().UTC())
+	}
+	if !flowstore.IsSchemaCompatibilityRefusal(openErr) || log == nil {
+		return launchcontrol.Response{}, openErr
+	}
+	// Spool: this build must not touch the database, but the controller that
+	// launched this agent can, and will on its next start.
+	unlock, lockErr := log.Lock(launchcontrol.LaunchLockTimeout)
+	if lockErr != nil {
+		return launchcontrol.Response{}, errors.Join(openErr, lockErr)
+	}
+	defer unlock()
+	if baseline, ok, _ := log.Baseline(); ok {
+		envelope.Observed = launchcontrol.ObservedPhase{Status: baseline.BaselineStatus, UpdatedAt: baseline.ObservedUpdatedAt}
+	}
+	envelope.WrittenBy = launchcontrol.WrittenBySpool
+	if _, err := log.Append(envelope); err != nil {
+		return launchcontrol.Response{}, errors.Join(openErr, err)
+	}
+	return launchcontrol.Response{}, flowRequestSpooled{}
+}
+
+// runFlowRequestDirect opens the store with role and runs req through the
+// shared executor.
+func runFlowRequestDirect(deps runDeps, stateRoot string, req launchcontrol.Request, role flowstore.Role) (launchcontrol.Response, error) {
 	store, err := newFlowStore(stateRoot, deps, role)
 	if err != nil {
 		return launchcontrol.Response{}, err

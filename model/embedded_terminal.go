@@ -120,6 +120,10 @@ type embeddedTerminalSlot struct {
 	Terminal               EmbeddedTerminal
 	ID                     embeddedTerminalID
 	PrefillPending         bool
+	// ExitReconciled marks a Flow terminal whose exit has been reported to the
+	// launch controller, so a slot that stays visible (a failed launch) is
+	// reconciled once, not on every tick.
+	ExitReconciled bool
 }
 
 type embeddedSessionPickerSelectedMsg struct {
