@@ -342,8 +342,8 @@ header. The current list remains usable above the dock; in particular, the
 saved-session table is never replaced by the terminal surface.
 
 Press `ctrl+t` from repo or list focus to store whether the dock is requested
-open or manually hidden. An expanded dock shrinks before either stored pane is
-sacrificed. If the viewport cannot fit both panes plus a framed terminal header
+open or manually hidden. An expanded dock asks for roughly three eighths of the
+viewport and shrinks before either stored pane is sacrificed. If the viewport cannot fit both panes plus a framed terminal header
 and one output row, the requested-open dock automatically becomes the collapsed
 chip. Growing the viewport restores it automatically while the request remains
 open. Pressing `ctrl+t` during automatic collapse changes that request to a
