@@ -64,20 +64,20 @@ func TestApproachFlowSkillDocumentsAgentContract(t *testing.T) {
 func TestApproachFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	root := repoRoot(t)
 	skill := canonicalizeApproachInvocations(readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md")))
-	flowCLI := readFile(t, filepath.Join(root, "cmd", "approach", "flow.go"))
+	flowCLI := collapseSpaces(readFile(t, filepath.Join(root, "cmd", "approach", "flow.go")))
 	planCLI := readFile(t, filepath.Join(root, "cmd", "approach", "plan.go"))
 	flowStore := readFile(t, filepath.Join(root, "flowstore", "store.go"))
 
 	if !strings.Contains(skill, "approach flow phase set") || !strings.Contains(flowCLI, "runFlowPhaseSet") {
 		t.Fatal("skill and CLI should both expose flow phase set")
 	}
-	if !strings.Contains(skill, "approach flow phase complete") || !strings.Contains(flowCLI, `command:        "complete"`) {
+	if !strings.Contains(skill, "approach flow phase complete") || !strings.Contains(flowCLI, `command: "complete"`) {
 		t.Fatal("skill and CLI should both expose flow phase complete")
 	}
-	if !strings.Contains(skill, "approach flow phase block") || !strings.Contains(flowCLI, `command:        "block"`) {
+	if !strings.Contains(skill, "approach flow phase block") || !strings.Contains(flowCLI, `command: "block"`) {
 		t.Fatal("skill and CLI should both expose flow phase block")
 	}
-	if !strings.Contains(skill, "approach flow phase needs-attention") || !strings.Contains(flowCLI, `command:        "needs-attention"`) {
+	if !strings.Contains(skill, "approach flow phase needs-attention") || !strings.Contains(flowCLI, `command: "needs-attention"`) {
 		t.Fatal("skill and CLI should both expose flow phase needs-attention")
 	}
 	if !strings.Contains(skill, "approach flow phase restart") || !strings.Contains(flowCLI, "runFlowPhaseRestart") {
@@ -289,16 +289,16 @@ func TestApproachFlowCreateSkillExamplesAreUnsetSafe(t *testing.T) {
 func TestApproachFlowCreateSkillMatchesImplementedCLIContract(t *testing.T) {
 	root := repoRoot(t)
 	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow-create", "SKILL.md"))
-	flowCLI := readFile(t, filepath.Join(root, "cmd", "approach", "flow.go"))
+	flowCLI := collapseSpaces(readFile(t, filepath.Join(root, "cmd", "approach", "flow.go")))
 	planCLI := readFile(t, filepath.Join(root, "cmd", "approach", "plan.go"))
 
 	requireContainsAll(t, "flow CLI contract", flowCLI, []string{
 		"runFlowCreate",
 		"runFlowRead",
 		"runFlowPlanSet",
-		`command:        "complete"`,
-		`command:        "block"`,
-		`command:        "needs-attention"`,
+		`command: "complete"`,
+		`command: "block"`,
+		`command: "needs-attention"`,
 	})
 	requireContainsAll(t, "plan CLI contract", planCLI, []string{
 		"runPlanSave",
@@ -792,3 +792,11 @@ func TestBundledSkillsRefuseAnUnusablePinInsteadOfFallingBackToPath(t *testing.T
 		})
 	}
 }
+
+// collapseSpaces makes struct-literal assertions independent of gofmt's
+// column alignment, which shifts whenever a neighbouring field is renamed.
+func collapseSpaces(text string) string {
+	return spaceRuns.ReplaceAllString(text, " ")
+}
+
+var spaceRuns = regexp.MustCompile(` {2,}`)

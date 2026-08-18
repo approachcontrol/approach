@@ -70,7 +70,7 @@ func run(args []string, deps runDeps) error {
 		return flowlease.RunTmuxSpawn(args[2:], deps.stderr)
 	}
 	if len(args) > 1 && args[1] == flowlease.LeaseRunCommand {
-		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr)
+		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr, nil)
 	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)

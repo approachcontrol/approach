@@ -141,3 +141,14 @@ type OpenDiagnostics struct {
 	// Warnings are operator-facing notices that are not failures.
 	Warnings []string
 }
+
+// IsSchemaCompatibilityRefusal reports whether err means "this binary must
+// not touch this database": the database was written by a newer build, or
+// this opener's role forbids the migration it needs. Both are refusals about
+// the pairing of build and database, not about the request, so a caller that
+// can defer its write to a compatible process (the launch controller's spool
+// path) should do that rather than fail. Every other error — a locked file,
+// a corrupt page, a typo'd root — is not one of these.
+func IsSchemaCompatibilityRefusal(err error) bool {
+	return errors.Is(err, errDatabaseFromNewerBuild) || errors.Is(err, errRoleRefusedMigration)
+}

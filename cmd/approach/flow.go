@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,11 +10,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
 
 // runFlow handles `approach flow ...` subcommands. It may load config to resolve
@@ -306,28 +307,11 @@ func runFlowList(args []string, deps runDeps) error {
 	if !*asJSON {
 		return fmt.Errorf("flow list requires --json in v1")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleReader)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbFlowList, launchcontrol.ListPayload{RepoPath: *repoPath})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	records, err := store.List(flowstore.FlowFilter{RepoPath: *repoPath})
-	_, partial := flowstore.AsPartialList(err)
-	if err != nil && !partial {
-		return err
-	}
-	if records == nil {
-		records = []flowstore.FlowRecord{}
-	}
-	if err := writeFlowJSON(deps.stdout, records); err != nil {
-		return err
-	}
-	if partial {
-		if _, writeErr := fmt.Fprintln(deps.stderr, err); writeErr != nil {
-			return fmt.Errorf("write partial flow list diagnostic: %w", writeErr)
-		}
-	}
-	return nil
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleReader)
 }
 
 func printFlowListHelp(w io.Writer) {
@@ -362,16 +346,12 @@ func runFlowRead(args []string, deps runDeps) error {
 	if *flowID == "" {
 		return fmt.Errorf("flow read requires --flow-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleReader)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbFlowRead, launchcontrol.ReadPayload{})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	record, err := store.Read(*flowID)
-	if err != nil {
-		return err
-	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID = *flowID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleReader)
 }
 
 func printFlowReadHelp(w io.Writer) {
@@ -403,24 +383,21 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return runFlowPhaseSet(args[1:], deps)
 	case "complete":
 		return runFlowPhaseAction(args[1:], deps, flowPhaseActionSpec{
-			command:        "complete",
-			status:         flowstore.PhaseCompleted,
-			defaultOutcome: flowstore.OutcomeApproved,
-			printHelp:      printFlowPhaseCompleteHelp,
+			command:   "complete",
+			verb:      launchcontrol.VerbPhaseComplete,
+			printHelp: printFlowPhaseCompleteHelp,
 		})
 	case "block":
 		return runFlowPhaseAction(args[1:], deps, flowPhaseActionSpec{
-			command:        "block",
-			status:         flowstore.PhaseBlocked,
-			defaultOutcome: flowstore.OutcomeBlocked,
-			printHelp:      printFlowPhaseBlockHelp,
+			command:   "block",
+			verb:      launchcontrol.VerbPhaseBlock,
+			printHelp: printFlowPhaseBlockHelp,
 		})
 	case "needs-attention":
 		return runFlowPhaseAction(args[1:], deps, flowPhaseActionSpec{
-			command:        "needs-attention",
-			status:         flowstore.PhaseNeedsAttention,
-			defaultOutcome: flowstore.OutcomeChangesRequested,
-			printHelp:      printFlowPhaseNeedsAttentionHelp,
+			command:   "needs-attention",
+			verb:      launchcontrol.VerbPhaseNeedsAttention,
+			printHelp: printFlowPhaseNeedsAttentionHelp,
 		})
 	case "restart":
 		return runFlowPhaseRestart(args[1:], deps)
@@ -525,20 +502,16 @@ func runFlowPhaseAgentSet(args []string, deps runDeps) error {
 	} else if strings.TrimSpace(*agentCommand) == "" {
 		return fmt.Errorf("flow phase agent set requires --agent or --clear")
 	}
-	settings := flowstore.PhaseAgentSettings{}
+	payload := launchcontrol.AgentSetPayload{Clear: *clear}
 	if !*clear {
-		settings = flowstore.PhaseAgentSettings{Agent: *agentCommand, Model: *model, ReasoningEffort: *effort}
+		payload = launchcontrol.AgentSetPayload{Agent: *agentCommand, Model: *model, ReasoningEffort: *effort}
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseAgentSet, payload)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{FlowID: *flowID, PhaseID: *phaseID, Settings: settings})
-	if err != nil {
-		return err
-	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID, req.PhaseID = *flowID, *phaseID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowPhaseAgentSetHelp(w io.Writer) {
@@ -564,27 +537,22 @@ Examples:
 `)
 }
 
+// flowPhaseActionSpec names one `flow phase <action>` leaf. The status each
+// action writes and the outcome it defaults to on review kinds live with the
+// verb in launchcontrol, so the proxied and direct paths cannot disagree.
 type flowPhaseActionSpec struct {
-	command        string
-	status         string
-	defaultOutcome string
-	printHelp      func(io.Writer)
+	command   string
+	verb      launchcontrol.Verb
+	printHelp func(io.Writer)
 }
 
-type flowPhaseActionResult struct {
-	FlowID       string                `json:"flow_id"`
-	FlowStatus   string                `json:"flow_status"`
-	UpdatedPhase flowstore.FlowPhase   `json:"updated_phase"`
-	NextPhase    *flowPhaseActionState `json:"next_phase,omitempty"`
-	Flow         flowstore.FlowRecord  `json:"flow"`
-}
-
-type flowPhaseActionState struct {
-	PhaseID         string   `json:"phase_id"`
-	Title           string   `json:"title"`
-	Status          string   `json:"status"`
-	AllowedStatuses []string `json:"allowed_statuses,omitempty"`
-}
+// flowPhaseActionResult and flowPhaseActionState are the shapes the phase
+// action leaves print. They live in launchcontrol so the proxied and direct
+// paths print one shape; the aliases keep this package's tests readable.
+type (
+	flowPhaseActionResult = launchcontrol.PhaseActionResult
+	flowPhaseActionState  = launchcontrol.PhaseActionState
+)
 
 func runFlowPhaseSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase set", flag.ContinueOnError)
@@ -612,32 +580,17 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 	if *status == "" {
 		return fmt.Errorf("flow phase set requires --status")
 	}
-	// Early agent-facing validation; the store re-validates status and the
-	// transition against the canonical table.
-	if *status == flowstore.PhaseReady {
-		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
-	}
-	if !slices.Contains(flowstore.AgentSettablePhaseStatuses(), *status) {
-		return fmt.Errorf("unsupported agent-facing phase status %q; valid statuses: %s",
-			*status, strings.Join(flowstore.AgentSettablePhaseStatuses(), ", "))
-	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-	record, err := store.SetPhase(flowstore.PhaseUpdate{
-		FlowID:  *flowID,
-		PhaseID: *phaseID,
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseSet, launchcontrol.PhaseSetPayload{
 		Status:  *status,
 		Outcome: *outcome,
-		Notes:   *notes,
 		Summary: *summary,
+		Notes:   *notes,
 	})
 	if err != nil {
 		return err
 	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID, req.PhaseID = *flowID, *phaseID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowPhaseSetHelp(w io.Writer) {
@@ -684,62 +637,16 @@ func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) e
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase %s requires --phase-id", spec.command)
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-	actionOutcome := strings.TrimSpace(*outcome)
-	if actionOutcome == "" {
-		record, err := store.Read(*flowID)
-		if err != nil {
-			return err
-		}
-		phase, ok := flowPhaseByID(record, *phaseID)
-		if !ok {
-			return fmt.Errorf("phase %q not found in flow %q", *phaseID, *flowID)
-		}
-		actionOutcome = defaultFlowPhaseActionOutcome(flowstore.SemanticKind(phase), spec)
-	}
-	record, err := store.SetPhase(flowstore.PhaseUpdate{
-		FlowID:  *flowID,
-		PhaseID: *phaseID,
-		Status:  spec.status,
-		Outcome: actionOutcome,
-		Notes:   *notes,
+	req, err := launchcontrol.NewRequest(spec.verb, launchcontrol.PhaseActionPayload{
+		Outcome: *outcome,
 		Summary: *summary,
+		Notes:   *notes,
 	})
 	if err != nil {
 		return err
 	}
-	updated, ok := flowPhaseByID(record, *phaseID)
-	if !ok {
-		return fmt.Errorf("phase %q not found in updated flow %q", *phaseID, *flowID)
-	}
-	return writeFlowJSON(deps.stdout, flowPhaseActionResult{
-		FlowID:       record.FlowID,
-		FlowStatus:   record.Status,
-		UpdatedPhase: updated,
-		NextPhase:    nextFlowPhaseActionState(record, updated),
-		Flow:         record,
-	})
-}
-
-func defaultFlowPhaseActionOutcome(kind string, spec flowPhaseActionSpec) string {
-	switch kind {
-	case flowstore.KindPlanReview:
-		return spec.defaultOutcome
-	case flowstore.KindAutoreview:
-		switch spec.status {
-		case flowstore.PhaseCompleted:
-			return "passed"
-		case flowstore.PhaseNeedsAttention:
-			return "needs_attention"
-		case flowstore.PhaseBlocked:
-			return flowstore.OutcomeBlocked
-		}
-	}
-	return ""
+	req.FlowID, req.PhaseID = *flowID, *phaseID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func runFlowPhaseRestart(args []string, deps runDeps) error {
@@ -762,34 +669,12 @@ func runFlowPhaseRestart(args []string, deps runDeps) error {
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase restart requires --phase-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseRestart, launchcontrol.PhaseRestartPayload{Notes: *notes})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	note := strings.TrimSpace(*notes)
-	if note == "" {
-		note = fmt.Sprintf("Rerunning %s after addressing prior findings.", defaultPhaseTitle(*phaseID))
-	}
-	record, err := store.RestartPhase(flowstore.PhaseRestartUpdate{
-		FlowID:  *flowID,
-		PhaseID: *phaseID,
-		Notes:   note,
-	})
-	if err != nil {
-		return err
-	}
-	updated, ok := flowPhaseByID(record, *phaseID)
-	if !ok {
-		return fmt.Errorf("phase %q not found in updated flow %q", *phaseID, *flowID)
-	}
-	return writeFlowJSON(deps.stdout, flowPhaseActionResult{
-		FlowID:       record.FlowID,
-		FlowStatus:   record.Status,
-		UpdatedPhase: updated,
-		NextPhase:    nextFlowPhaseActionState(record, updated),
-		Flow:         record,
-	})
+	req.FlowID, req.PhaseID = *flowID, *phaseID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func runFlowPhaseReset(args []string, deps runDeps) error {
@@ -811,45 +696,12 @@ func runFlowPhaseReset(args []string, deps runDeps) error {
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase reset requires --phase-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseReset, launchcontrol.PhaseResetPayload{})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{
-		FlowID:  *flowID,
-		PhaseID: *phaseID,
-	})
-	if err != nil {
-		return err
-	}
-	updated, ok := flowPhaseByID(record, *phaseID)
-	if !ok {
-		return fmt.Errorf("phase %q not found in updated flow %q", *phaseID, *flowID)
-	}
-	return writeFlowJSON(deps.stdout, flowPhaseActionResult{
-		FlowID:       record.FlowID,
-		FlowStatus:   record.Status,
-		UpdatedPhase: updated,
-		NextPhase:    nextFlowPhaseActionState(record, updated),
-		Flow:         record,
-	})
-}
-
-func defaultPhaseTitle(phaseID string) string {
-	normalized := normalizeFlowPhaseID(phaseID)
-	if normalized == "" {
-		return "phase"
-	}
-	parts := strings.Fields(strings.ReplaceAll(normalized, "-", " "))
-	for i, part := range parts {
-		if part == "pr" {
-			parts[i] = "PR"
-			continue
-		}
-		parts[i] = strings.ToUpper(part[:1]) + part[1:]
-	}
-	return strings.Join(parts, " ")
+	req.FlowID, req.PhaseID = *flowID, *phaseID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowPhaseCompleteHelp(w io.Writer) {
@@ -956,39 +808,6 @@ Examples:
 `)
 }
 
-func nextFlowPhaseActionState(record flowstore.FlowRecord, updated flowstore.FlowPhase) *flowPhaseActionState {
-	if flowstore.PhaseIsActionable(updated) && updated.Status != flowstore.PhaseCompleted && updated.Status != flowstore.PhaseSkipped {
-		return newFlowPhaseActionState(updated)
-	}
-	if phase, ok := flowstore.NextActionablePhase(record); ok {
-		return newFlowPhaseActionState(phase)
-	}
-	return nil
-}
-
-func newFlowPhaseActionState(phase flowstore.FlowPhase) *flowPhaseActionState {
-	return &flowPhaseActionState{
-		PhaseID:         phase.PhaseID,
-		Title:           phase.Title,
-		Status:          phase.Status,
-		AllowedStatuses: flowstore.AllowedNextPhaseStatuses(phase.Status),
-	}
-}
-
-func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
-	normalized := normalizeFlowPhaseID(phaseID)
-	for _, phase := range record.Phases {
-		if normalizeFlowPhaseID(phase.PhaseID) == normalized {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
-}
-
-func normalizeFlowPhaseID(phaseID string) string {
-	return strings.ToLower(strings.TrimSpace(phaseID))
-}
-
 func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase add-child", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -1017,13 +836,7 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	if *order < 1 {
 		return fmt.Errorf("flow phase add-child requires positive --order")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-	record, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
-		FlowID:        *flowID,
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseAddChild, launchcontrol.AddChildPayload{
 		ParentPhaseID: *parentPhaseID,
 		PhaseID:       *phaseID,
 		Title:         *title,
@@ -1032,7 +845,8 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID = *flowID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowPhaseAddChildHelp(w io.Writer) {
@@ -1101,20 +915,12 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 	if *planID == "" {
 		return fmt.Errorf("flow plan set requires --plan-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPlanSet, launchcontrol.PlanSetPayload{PlanID: *planID, PlanPath: *planPath})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{
-		FlowID:   *flowID,
-		PlanID:   *planID,
-		PlanPath: *planPath,
-	})
-	if err != nil {
-		return err
-	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID = *flowID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowPlanSetHelp(w io.Writer) {
@@ -1194,21 +1000,12 @@ func runFlowIssueSet(args []string, deps runDeps) error {
 	if *issueURL == "" {
 		return fmt.Errorf("flow issue set requires --url")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbIssueSet, launchcontrol.IssueSetPayload{Provider: *provider, Number: *number, URL: *issueURL})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
-	record, err := store.SetIssue(flowstore.IssueUpdate{
-		FlowID:   *flowID,
-		Provider: *provider,
-		Number:   *number,
-		URL:      *issueURL,
-	})
-	if err != nil {
-		return err
-	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID = *flowID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowIssueSetHelp(w io.Writer) {
@@ -1289,24 +1086,19 @@ func runFlowPRSet(args []string, deps runDeps) error {
 	if *base == "" {
 		return fmt.Errorf("flow pr set requires --base")
 	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-	record, err := store.SetPR(flowstore.PRUpdate{
-		FlowID:     *flowID,
-		Provider:   *provider,
-		Number:     *number,
-		URL:        *prURL,
-		HeadBranch: *head,
-		BaseBranch: *base,
-		Status:     *status,
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPRSet, launchcontrol.PRSetPayload{
+		Provider: *provider,
+		Number:   *number,
+		URL:      *prURL,
+		Head:     *head,
+		Base:     *base,
+		Status:   *status,
 	})
 	if err != nil {
 		return err
 	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID = *flowID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowPRSetHelp(w io.Writer) {
@@ -1378,35 +1170,16 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 	if *status == "" {
 		return fmt.Errorf("flow merge set requires --status")
 	}
-	var parsedMergedAt time.Time
-	if *status == flowstore.MergeMerged {
-		if strings.TrimSpace(*commit) == "" {
-			return fmt.Errorf("flow merge set --status merged requires --commit")
-		}
-		if strings.TrimSpace(*mergedAt) == "" {
-			return fmt.Errorf("flow merge set --status merged requires --merged-at")
-		}
-		var err error
-		parsedMergedAt, err = time.Parse(time.RFC3339, strings.TrimSpace(*mergedAt))
-		if err != nil {
-			return fmt.Errorf("invalid --merged-at: %w", err)
-		}
-	}
-	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-	record, err := store.SetMerge(flowstore.MergeUpdate{
-		FlowID:   *flowID,
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbMergeSet, launchcontrol.MergeSetPayload{
 		Status:   *status,
 		Commit:   *commit,
-		MergedAt: parsedMergedAt,
+		MergedAt: *mergedAt,
 	})
 	if err != nil {
 		return err
 	}
-	return writeFlowJSON(deps.stdout, record)
+	req.FlowID = *flowID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
 }
 
 func printFlowMergeSetHelp(w io.Writer) {
@@ -1442,6 +1215,42 @@ func readFlowInstructions(inline, file string) (string, error) {
 		return string(data), nil
 	}
 	return inline, nil
+}
+
+// runFlowLeaf is every `flow` leaf's tail: validate the request without a
+// store, run it, and print the result. Validation first, so an agent-facing
+// mistake is refused before any database is opened, exactly as before.
+func runFlowLeaf(deps runDeps, stateRoot string, req launchcontrol.Request, role flowstore.Role) error {
+	if err := launchcontrol.Validate(req); err != nil {
+		return err
+	}
+	resp, err := runFlowRequest(deps, stateRoot, req, role)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	if err := writeFlowJSON(deps.stdout, json.RawMessage(resp.Result)); err != nil {
+		return err
+	}
+	if resp.Warning != "" {
+		if _, writeErr := fmt.Fprintln(deps.stderr, resp.Warning); writeErr != nil {
+			return fmt.Errorf("write partial flow list diagnostic: %w", writeErr)
+		}
+	}
+	return nil
+}
+
+// runFlowRequest opens the store with role and runs req through the shared
+// executor.
+func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, role flowstore.Role) (launchcontrol.Response, error) {
+	store, err := newFlowStore(stateRoot, deps, role)
+	if err != nil {
+		return launchcontrol.Response{}, err
+	}
+	defer func() { _ = store.Close() }()
+	return launchcontrol.Execute(store, req)
 }
 
 func writeFlowJSON(w io.Writer, value any) error {
