@@ -15,12 +15,32 @@ import (
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 )
+
+func TestPrivateFlowTmuxCommandsDispatchBeforeConfig(t *testing.T) {
+	for _, command := range []string{flowlease.TmuxSpawnCommand, flowlease.LeaseRunCommand} {
+		t.Run(command, func(t *testing.T) {
+			err := run([]string{"approach", command}, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run for a private Flow tmux command")
+					return config.Config{}, nil
+				},
+				stdin:  strings.NewReader(""),
+				stdout: &bytes.Buffer{},
+				stderr: &bytes.Buffer{},
+			})
+			if err == nil || !strings.Contains(err.Error(), "private Flow tmux") {
+				t.Fatalf("run(%s) error = %v, want private argument error", command, err)
+			}
+		})
+	}
+}
 
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 	var stdout bytes.Buffer
@@ -1075,6 +1095,8 @@ func TestRunSessionHookPassesFlowPresetsForRecovery(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+
+	migrateLegacyCorpusForCLITest(t, root, []flowstore.Preset{researchPresetForCLITest()})
 
 	err := run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {

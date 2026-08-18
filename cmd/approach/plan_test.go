@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
 )
@@ -616,8 +616,7 @@ func makeLinkedWorktree(t *testing.T) (repoDir, worktreeDir string) {
 	repoDir = filepath.Join(root, "project")
 	worktreeDir = filepath.Join(root, "project-worktrees", "feature-plan")
 	mustGit(t, root, "init", repoDir)
-	mustGit(t, repoDir, "config", "user.email", "test@example.com")
-	mustGit(t, repoDir, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoDir)
 	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -633,8 +632,7 @@ func makeBareRepo(t *testing.T) (bareDir, commit string) {
 	repoDir := filepath.Join(root, "project")
 	bareDir = filepath.Join(root, "project.git")
 	mustGit(t, root, "init", repoDir)
-	mustGit(t, repoDir, "config", "user.email", "test@example.com")
-	mustGit(t, repoDir, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoDir)
 	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -647,22 +645,12 @@ func makeBareRepo(t *testing.T) (bareDir, commit string) {
 
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
+	testgit.Run(t, dir, args...)
 }
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return testgit.Output(t, dir, args...)
 }
 
 func readPlanRecord(t *testing.T, root, planID string) planstore.PlanRecord {

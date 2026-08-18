@@ -19,6 +19,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
@@ -55,6 +56,10 @@ func activeFlowResultFromCommand(t *testing.T, cmd tea.Cmd) model.ActiveFlowResu
 	t.Fatalf("command returned %T, want ActiveFlowResultMsg", msg)
 	return model.ActiveFlowResultMsg{}
 }
+
+// testCommandSettleTimeout stays short so settleModelCommands does not
+// consume status-fade timers (1s+) and clear the error under test.
+const testCommandSettleTimeout = 20 * time.Millisecond
 
 func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) model.Model {
 	t.Helper()
@@ -159,7 +164,7 @@ func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
 	select {
 	case msg := <-result:
 		return msg, true
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(testCommandSettleTimeout):
 		return nil, false
 	}
 }
@@ -7856,7 +7861,7 @@ func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *
 func TestModel_SkippedFlowPhaseWithEndedSessionAdvertisesResume(t *testing.T) {
 	flow := flowWithEndedRunningImplementation()
 	flow.Phases[2].Status = flowstore.PhaseSkipped
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{}), []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	view := ansi.Strip(m.View())
@@ -11891,8 +11896,7 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 	mustGit(t, repoPath, "init", "-b", "main")
-	mustGit(t, repoPath, "config", "user.email", "test@example.com")
-	mustGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("fixture\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -11904,6 +11908,10 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	sessionRoot := filepath.Join(root, "sessions")
+	if err := os.Mkdir(sessionRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	term := &fakeEmbeddedTerminal{lines: []string{"Codex ready", "agent output"}, state: "running"}
 	var started actions.AgentLaunchContext
@@ -11912,7 +11920,7 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		AgentCommand:         "codex",
 		CodexModel:           "gpt-5.6-sol",
 		CodexReasoningEffort: "high",
-		SessionStateRoot:     filepath.Join(root, "sessions"),
+		SessionStateRoot:     sessionRoot,
 		FlowStore:            store,
 		LaunchBackend:        "tmux",
 		TmuxLaunchAvailable:  func() bool { return true },

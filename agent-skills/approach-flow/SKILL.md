@@ -133,6 +133,14 @@ the user. These persistence failures must not be treated as successful phase
 progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
+The rule is about the **exit status**, not about output. `approach session-hook`
+writes a warning to stderr and still exits zero when it captured the session but
+could not attach it to a Flow — that is a schema-compatibility notice, not a
+persistence failure, and the fix is to run `approach db migrate` on that state
+root. Conversely, a `flow` command that exits non-zero saying the flow database
+schema needs migration *is* a persistence failure: nothing was written, and the
+phase did not advance. Report it and stop.
+
 The current Flow CLI exposes `create`, `list`, `read`, `phase complete`,
 `phase block`, `phase needs-attention`, `phase restart`, `phase reset`, `phase set`,
 `phase add-child`,

@@ -24,7 +24,10 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-const embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
+const (
+	embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
+	flowLaunchQuitPendingStatus     = "Flow launch is still starting; wait for it to finish before quitting"
+)
 
 const (
 	embeddedPromptPasteStart = "\x1b[200~"
@@ -135,6 +138,29 @@ type terminateEmbeddedTerminalMsg struct {
 }
 
 type quitEmbeddedTerminalsMsg struct{}
+
+type flowLaunchQuitRequestedMsg struct {
+	Interrupt bool
+}
+
+// DeferQuitDuringFlowLaunch keeps Bubble Tea's signal-generated quit messages
+// inside the model while a private tmux handoff owns a Flow reservation. The
+// model emits the real quit only after every in-flight launch attempt has
+// consumed its command result and released its reservation.
+func DeferQuitDuringFlowLaunch(current tea.Model, msg tea.Msg) tea.Msg {
+	m, ok := current.(Model)
+	if !ok || !m.flowLaunchHandoffPending() {
+		return msg
+	}
+	switch msg.(type) {
+	case tea.QuitMsg:
+		return flowLaunchQuitRequestedMsg{}
+	case tea.InterruptMsg:
+		return flowLaunchQuitRequestedMsg{Interrupt: true}
+	default:
+		return msg
+	}
+}
 
 type embeddedTerminalTickMsg struct {
 	Generation uint64
@@ -873,6 +899,9 @@ func (m Model) quitProgram() (Model, tea.Cmd) {
 }
 
 func (m Model) handleEmbeddedTerminalQuitPrefix() (Model, tea.Cmd) {
+	if m.flowLaunchHandoffPending() {
+		return m.setStatus(statusOther, flowLaunchQuitPendingStatus), nil
+	}
 	if !m.hasRunningEmbeddedTerminal() {
 		return m.quitProgram()
 	}
@@ -892,6 +921,9 @@ func (m Model) hasRunningEmbeddedTerminal() bool {
 }
 
 func (m Model) handleQuitEmbeddedTerminals() (Model, tea.Cmd) {
+	if m.flowLaunchHandoffPending() {
+		return m.setStatus(statusOther, flowLaunchQuitPendingStatus), nil
+	}
 	for _, slot := range m.embeddedTerminals {
 		if !embeddedTerminalRunning(slot.Terminal) {
 			continue

@@ -93,23 +93,29 @@ Most commands accept:
   --state-root PATH  Override the artifact state root after the leaf command.
 `
 
-func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
+func newFlowStore(stateRoot string, deps runDeps, role flowstore.Role) (*flowstore.Store, error) {
 	cfg, err := deps.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config: %w", err)
 	}
-	return newFlowStoreWithConfig(stateRoot, cfg, deps)
+	return newFlowStoreWithConfig(stateRoot, cfg, deps, role)
 }
 
-func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps) (*flowstore.Store, error) {
+func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps, role flowstore.Role) (*flowstore.Store, error) {
 	root := stateRoot
+	// Explicit means "the operator named this root", which is what decides
+	// whether a missing directory is a typo to report or a first run to create.
+	// A typo'd environment variable deserves the same answer as a typo'd flag —
+	// the launch env sets APPROACH_FLOW_STATE_ROOT, so that is where a wrong
+	// root is most likely — and only the config fallback is not explicit.
+	explicit := root != ""
 	if root == "" {
 		if envRoot := deps.getenv("APPROACH_FLOW_STATE_ROOT"); envRoot != "" {
-			root = envRoot
+			root, explicit = envRoot, true
 		} else if envRoot := deps.getenv("APPROACH_PLAN_STATE_ROOT"); envRoot != "" {
-			root = envRoot
+			root, explicit = envRoot, true
 		} else if envRoot := deps.getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
-			root = envRoot
+			root, explicit = envRoot, true
 		} else {
 			root = cfg.Sessions.Root
 		}
@@ -123,11 +129,26 @@ func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps) (
 	// belongs to the TUI's own flag set; threading it through every `flow`
 	// subcommand would add a flag to two dozen usage strings for an
 	// acknowledgement that is meant to be rare and deliberate.
-	return flowstore.NewStore(flowstore.StoreOptions{
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
 		Root:                  root,
+		RootExplicit:          explicit,
+		Role:                  role,
 		Presets:               cfg.Flow.Presets,
 		AllowDevLiveMigration: truthyEnv(deps.getenv("APPROACH_ALLOW_DEV_LIVE_MIGRATION")),
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Reported here rather than at each call site, because the checks a reader
+	// drops — the 0700 root assertion and the journal_mode=WAL write — are
+	// substituted by this channel, not deleted, and a diagnostic nothing prints
+	// is a deletion with extra steps. `db migrate` opens its own store and
+	// prints these itself, so centralizing here does not double up. stderr, so
+	// piping `flow list` stays clean.
+	for _, warning := range store.OpenDiagnostics().Warnings {
+		fmt.Fprintf(deps.stderr, "approach: %s\n", warning)
+	}
+	return store, nil
 }
 
 func runFlowCreate(args []string, deps runDeps) error {
@@ -175,7 +196,7 @@ func runFlowCreate(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps)
+	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -285,7 +306,7 @@ func runFlowList(args []string, deps runDeps) error {
 	if !*asJSON {
 		return fmt.Errorf("flow list requires --json in v1")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleReader)
 	if err != nil {
 		return err
 	}
@@ -341,7 +362,7 @@ func runFlowRead(args []string, deps runDeps) error {
 	if *flowID == "" {
 		return fmt.Errorf("flow read requires --flow-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleReader)
 	if err != nil {
 		return err
 	}
@@ -508,7 +529,7 @@ func runFlowPhaseAgentSet(args []string, deps runDeps) error {
 	if !*clear {
 		settings = flowstore.PhaseAgentSettings{Agent: *agentCommand, Model: *model, ReasoningEffort: *effort}
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -600,7 +621,7 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 		return fmt.Errorf("unsupported agent-facing phase status %q; valid statuses: %s",
 			*status, strings.Join(flowstore.AgentSettablePhaseStatuses(), ", "))
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -663,7 +684,7 @@ func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) e
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase %s requires --phase-id", spec.command)
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -741,7 +762,7 @@ func runFlowPhaseRestart(args []string, deps runDeps) error {
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase restart requires --phase-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -790,7 +811,7 @@ func runFlowPhaseReset(args []string, deps runDeps) error {
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase reset requires --phase-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -996,7 +1017,7 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	if *order < 1 {
 		return fmt.Errorf("flow phase add-child requires positive --order")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -1080,7 +1101,7 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 	if *planID == "" {
 		return fmt.Errorf("flow plan set requires --plan-id")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -1173,7 +1194,7 @@ func runFlowIssueSet(args []string, deps runDeps) error {
 	if *issueURL == "" {
 		return fmt.Errorf("flow issue set requires --url")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -1268,7 +1289,7 @@ func runFlowPRSet(args []string, deps runDeps) error {
 	if *base == "" {
 		return fmt.Errorf("flow pr set requires --base")
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}
@@ -1371,7 +1392,7 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 			return fmt.Errorf("invalid --merged-at: %w", err)
 		}
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
 	if err != nil {
 		return err
 	}

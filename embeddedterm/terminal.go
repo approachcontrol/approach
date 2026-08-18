@@ -259,7 +259,7 @@ func (t *Terminal) Close() error {
 	}
 	t.unblockEmulatorWrites()
 	t.waitForReadDone()
-	t.saveFinalRows(t.snapshotRows())
+	t.saveFinalRows(t.trySnapshotRows())
 	t.shutdownEmulator()
 	t.waitForTerminalIO()
 	return nil
@@ -296,9 +296,9 @@ func (t *Terminal) waitLoop() {
 	if !t.waitForReadDone() {
 		_ = t.closePTY()
 		t.unblockEmulatorWrites()
-		<-t.readDone
+		_ = t.waitForReadDone()
 	}
-	finalRows := t.snapshotRows()
+	finalRows := t.trySnapshotRows()
 	_ = t.closePTY()
 	t.shutdownEmulator()
 	t.waitForTerminalIO()
@@ -382,14 +382,19 @@ func (t *Terminal) shutdownEmulator() {
 	closeEmulatorResponses(emu)
 }
 
-func (t *Terminal) snapshotRows() []string {
+// trySnapshotRows is for Close/waitLoop so a stuck emulator write cannot
+// deadlock shutdown the way real-tmux Detach did on CI. A nil result is
+// intentional: dropping the last frame is preferable to blocking.
+func (t *Terminal) trySnapshotRows() []string {
 	t.mu.Lock()
 	emu := t.emulator
 	t.mu.Unlock()
 	if emu == nil {
 		return nil
 	}
-	t.emuMu.Lock()
+	if !t.emuMu.TryLock() {
+		return nil
+	}
 	defer t.emuMu.Unlock()
 	rows := make([]string, 0, emu.ScrollbackLen()+emu.Height())
 	if scrollback := emu.Scrollback(); scrollback != nil {
@@ -401,6 +406,9 @@ func (t *Terminal) snapshotRows() []string {
 	return trimBlankTerminalRows(rows)
 }
 
+// saveFinalRows keeps a Close/waitLoop snapshot when one was captured.
+// An empty or nil snapshot is intentional: trySnapshotRows skips when
+// emuMu is held rather than deadlock against a stuck emu.Write.
 func (t *Terminal) saveFinalRows(rows []string) {
 	if len(rows) == 0 {
 		return

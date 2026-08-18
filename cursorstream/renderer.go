@@ -103,8 +103,9 @@ func (r *Renderer) renderEvent(ev streamEvent) []byte {
 			return nil
 		}
 		if len(ev.Timestamp) > 0 {
-			r.textOpen = true
-			return []byte(normalizeCRLF(text))
+			rendered := normalizeCRLF(text)
+			r.textOpen = !strings.HasSuffix(rendered, "\n")
+			return []byte(rendered)
 		}
 		if r.textOpen {
 			out := crlf("")
@@ -117,6 +118,11 @@ func (r *Renderer) renderEvent(ev streamEvent) []byte {
 		name := firstToolName(ev)
 		if name == "" {
 			name = "tool"
+		}
+		if r.textOpen {
+			out := crlf("")
+			r.textOpen = false
+			return append(out, crlf("⏺ "+name)...)
 		}
 		return crlf("⏺ " + name)
 	case "result":

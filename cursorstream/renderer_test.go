@@ -68,3 +68,22 @@ func TestRendererSurfacesNonJSONFailures(t *testing.T) {
 		t.Errorf("non-JSON output should be surfaced, got:\n%s", got)
 	}
 }
+
+func TestRendererClosesStreamedTextBeforeToolCall(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{name: "open line", text: "I'll read"},
+		{name: "line already closed", text: "I'll read\\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderAll(t, `{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"`+tc.text+`"}]}}
+{"type":"tool_call","subtype":"started","message":{"content":[{"name":"ReadFile"}]}}
+`)
+			if want := "I'll read\r\n⏺ ReadFile\r\n"; got != want {
+				t.Fatalf("rendered output = %q, want %q", got, want)
+			}
+		})
+	}
+}

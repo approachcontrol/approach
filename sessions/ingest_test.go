@@ -3,16 +3,17 @@ package sessions_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/sessions"
 )
 
@@ -238,8 +239,7 @@ func TestIngestHookResolvesGitMetadataFromCWD(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repoPath := t.TempDir()
 	runGit(t, repoPath, "init")
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -280,8 +280,7 @@ func TestIngestHookResolvesLinkedWorktreeToMainRepoPath(t *testing.T) {
 		t.Fatalf("create repo dir: %v", err)
 	}
 	runGit(t, repoPath, "init")
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -322,8 +321,7 @@ func TestIngestHookKeepsSeparateGitDirRepoPathAsWorktree(t *testing.T) {
 		t.Fatalf("create repo dir: %v", err)
 	}
 	runGit(t, root, "init", "--separate-git-dir", gitDir, repoPath)
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -357,8 +355,7 @@ func TestIngestHookAvoidsSeparateGitDirMetadataPathForLinkedWorktree(t *testing.
 		t.Fatalf("create repo dir: %v", err)
 	}
 	runGit(t, root, "init", "--separate-git-dir", gitDir, repoPath)
-	runGit(t, repoPath, "config", "user.email", "test@example.com")
-	runGit(t, repoPath, "config", "user.name", "Test User")
+	testgit.ConfigureRepo(t, repoPath)
 	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("test\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -558,15 +555,16 @@ func TestIngestHookCursorUsesEnvTranscriptPath(t *testing.T) {
 	}
 }
 
-func TestIngestHookCursorAcceptsProjectsAgentTranscript(t *testing.T) {
+func TestIngestHookCursorAcceptsProjectTranscriptPath(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
-	transcriptPath := filepath.Join(home, ".cursor", "projects", "repo", "agent-transcripts", "chat.db")
-	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o700); err != nil {
-		t.Fatalf("create cursor projects transcript: %v", err)
+	transcriptRoot := filepath.Join(home, ".cursor", "projects", "repo", "agent-transcripts")
+	if err := os.MkdirAll(transcriptRoot, 0o700); err != nil {
+		t.Fatalf("create cursor project transcript root: %v", err)
 	}
+	transcriptPath := filepath.Join(transcriptRoot, "session.jsonl")
 	if err := os.WriteFile(transcriptPath, []byte("opaque"), 0o600); err != nil {
-		t.Fatalf("write cursor transcript: %v", err)
+		t.Fatalf("write cursor project transcript: %v", err)
 	}
 	canonical, err := filepath.EvalSymlinks(transcriptPath)
 	if err != nil {
@@ -574,7 +572,7 @@ func TestIngestHookCursorAcceptsProjectsAgentTranscript(t *testing.T) {
 	}
 
 	record, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{
-		"conversation_id": "cursor-projects-1",
+		"conversation_id": "cursor-project-1",
 		"transcript_path": `+quoteJSON(transcriptPath)+`
 	}`)), sessions.IngestOptions{
 		StateRoot: root,
@@ -584,7 +582,7 @@ func TestIngestHookCursorAcceptsProjectsAgentTranscript(t *testing.T) {
 		t.Fatalf("IngestHook() error = %v", err)
 	}
 	if record.TranscriptPath != canonical {
-		t.Fatalf("TranscriptPath = %q, want projects path %q", record.TranscriptPath, canonical)
+		t.Fatalf("TranscriptPath = %q, want project path %q", record.TranscriptPath, canonical)
 	}
 }
 
@@ -607,6 +605,30 @@ func TestIngestHookCursorRejectsOutOfRootTranscript(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "outside expected") {
 		t.Fatalf("IngestHook() error = %v, want out-of-root rejection", err)
+	}
+}
+
+func TestIngestHookCursorRejectsNonTranscriptStateFile(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	cursorRoot := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(filepath.Join(cursorRoot, "chats"), 0o700); err != nil {
+		t.Fatalf("create cursor chats root: %v", err)
+	}
+	hooksPath := filepath.Join(cursorRoot, "hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(`{"version":1}`), 0o600); err != nil {
+		t.Fatalf("write cursor hooks file: %v", err)
+	}
+
+	_, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{
+		"conversation_id": "cursor-hooks-reject-1",
+		"transcript_path": `+quoteJSON(hooksPath)+`
+	}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env:       map[string]string{"HOME": home},
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside expected") {
+		t.Fatalf("IngestHook() error = %v, want non-transcript Cursor state rejection", err)
 	}
 }
 
@@ -1093,20 +1115,12 @@ func assertNoSessionRecords(t *testing.T, root string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
+	testgit.Run(t, dir, args...)
 }
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git %v failed: %v", args, err)
-	}
-	return string(bytes.TrimSpace(out))
+	return testgit.Output(t, dir, args...)
 }
 
 func quoteJSON(value string) string {
@@ -1155,4 +1169,102 @@ func flowPhaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) fl
 	}
 	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
 	return flowstore.FlowPhase{}
+}
+
+// After role separation a post-bump session attachment fails on every hook run
+// until someone migrates. The hook path is the one nobody is watching, so the
+// failure has to leave a trace instead of a bare return.
+func TestIngestHookWithWarningsReportsAFlowStoreCompatibilityFailure(t *testing.T) {
+	root := t.TempDir()
+	seed, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleMigrator})
+	if err != nil {
+		t.Fatalf("seed flow store: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(root, "approach.db")+"?mode=rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 99"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"session_id":"codex-compat","cwd":"/repo/worktree"}`
+	result, err := sessions.IngestHookWithWarnings(sessions.ProviderCodex, strings.NewReader(payload), sessions.IngestOptions{
+		StateRoot: root,
+		Env: map[string]string{
+			"APPROACH_FLOW_ID":       "20260607T120000Z-compat",
+			"APPROACH_FLOW_PHASE_ID": "implementation",
+		},
+	})
+	if err != nil {
+		t.Fatalf("the session record itself must still be written: %v", err)
+	}
+	if result.Record.SessionID != "codex-compat" {
+		t.Fatalf("record = %+v", result.Record)
+	}
+	if len(result.Warnings) != 2 {
+		t.Fatalf("warnings = %#v, want one from the reader and one from the writer", result.Warnings)
+	}
+	for _, warning := range result.Warnings {
+		if !strings.Contains(warning, "newer version of approach") {
+			t.Fatalf("warning %q does not name the compatibility failure", warning)
+		}
+	}
+
+	// The persisted record is untouched by this step: HookResult is not a
+	// stored type and SessionRecord's on-disk JSON does not gain a field.
+	stored, err := os.ReadFile(singleSessionFile(t, root, sessions.ProviderCodex, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(stored, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded["warnings"]; ok {
+		t.Fatalf("the persisted session record grew a warnings field: %s", stored)
+	}
+}
+
+// Opening the store is only the first way the attachment can fail. An absent
+// Flow, a rejected update, or a SQLite error during the write leave the session
+// unattached too, and discarding those errors made the hook exit 0 with nothing
+// to show for it — the silent failure this channel exists to end.
+func TestIngestHookWithWarningsReportsAFailedFlowAttachment(t *testing.T) {
+	root := t.TempDir()
+	seed, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleMigrator})
+	if err != nil {
+		t.Fatalf("seed flow store: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"session_id":"codex-orphan","cwd":"/repo/worktree"}`
+	result, err := sessions.IngestHookWithWarnings(sessions.ProviderCodex, strings.NewReader(payload), sessions.IngestOptions{
+		StateRoot: root,
+		Env: map[string]string{
+			// A healthy, current store that simply holds no such Flow.
+			"APPROACH_FLOW_ID":       "20260607T120000Z-absent",
+			"APPROACH_FLOW_PHASE_ID": "implementation",
+		},
+	})
+	if err != nil {
+		t.Fatalf("the session record itself must still be written: %v", err)
+	}
+	if result.Record.SessionID != "codex-orphan" {
+		t.Fatalf("record = %+v", result.Record)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want the failed attachment reported exactly once", result.Warnings)
+	}
+	if !strings.Contains(result.Warnings[0], "could not attach this session to Flow 20260607T120000Z-absent") {
+		t.Fatalf("warning %q does not name the failed attachment", result.Warnings[0])
+	}
 }

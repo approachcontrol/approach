@@ -49,6 +49,10 @@ WORKTREE_ROOT=~/projects ./bin/approach
 
 # Serve the read-only GraphQL API on 127.0.0.1:8787
 ./bin/approach serve
+
+# Report what is in the artifact root, and migrate it after a release bump
+./bin/approach db inspect --json
+./bin/approach db migrate
 ```
 
 `approach serve` exposes repos and Flows over `POST /graphql` for external
@@ -77,6 +81,7 @@ right. The essentials:
 | `/` | Fuzzy filter the active pane |
 | `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
 | `F` | In a settled Beads Ready pane, create the selected Bead's Flow and start its first actionable phase; pull in eligible Git contexts and elsewhere outside that Ready selection |
+| `S` | In a settled Beads Ready pane with an epic selected, launch one configured agent at the repository root to slice that epic into child Beads with the `slice-issues` skill |
 | `f5` | Rescan repositories and refresh both stored content panes; the visible takeover refreshes independently too |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent; on a selected epic, toggle its auto-progression; on a Flow, toggle phase auto mode |
@@ -96,6 +101,9 @@ group at its last-used subview, defaulting to Ready on first entry.
 All Beads queries and detail reads are read-only. The only tracker mutation is
 the explicit claim performed when epic auto-progression prepares a new child
 Flow; ordinary browsing and manual Ready Flow creation never mutate Beads.
+`S` on a Ready epic is no exception: it only hands a launched agent the epic ID
+and the slicing contract, and the approved child Beads are created by that
+agent, never by the TUI.
 Pressing `2` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
 Closed, and `←`/`→` step and wrap through those five subviews. The letters
@@ -222,6 +230,9 @@ become windows in it — visible to your own `tmux ls`, reattachable with `T` or
 plan launch performed during Flow creation keep their embedded routes, and
 Approach falls back to the embedded terminal when tmux is not installed. See
 [docs/config.md](docs/config.md) and [docs/tui-guide.md](docs/tui-guide.md).
+Tracked Flow phase windows retain Flow occupancy with a kernel lease until the
+agent process exits, even if the phase is already completed and even across TUI
+restarts. Successor launches and AutoMode defer without polling tmux.
 
 Agents persist plans and Flow progress through the `approach plan` and
 `approach flow` CLIs. The canonical agent instructions are the bundled skills
@@ -251,6 +262,10 @@ approach session-hook --provider claude
 approach session-hook --provider codex
 approach session-hook --provider cursor-agent
 ```
+
+The hook writes a warning to stderr and still exits zero when it captures the
+session but cannot attach it to a Flow — a schema-compatibility notice is not a
+persistence failure. Run `approach db migrate` when you see one.
 
 Transcripts are stored under the user state directory with restrictive
 permissions, never inside repositories. Storage layout, security details, and

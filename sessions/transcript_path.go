@@ -13,9 +13,9 @@ import (
 //
 // Hook payloads name arbitrary paths, so canonicalization (symlink
 // resolution plus containment against the provider root — Codex
-// $CODEX_HOME/sessions, Claude $CLAUDE_CONFIG_DIR/projects, Cursor
-// $HOME/.cursor/chats or $HOME/.cursor/projects) is what keeps a crafted
-// payload from making Approach ingest files outside that root.
+// $CODEX_HOME/sessions, Claude $CLAUDE_CONFIG_DIR/projects, and Cursor's chats
+// or per-project agent-transcripts directory) is what keeps a crafted payload
+// from making Approach ingest files outside those roots.
 func ValidateTranscriptPath(provider Provider, path string, env map[string]string) (string, error) {
 	canonicalPath, _, err := validateTranscriptPath(provider, path, env)
 	return canonicalPath, err
@@ -28,60 +28,46 @@ func validateTranscriptPath(provider Provider, path string, env map[string]strin
 	if !filepath.IsAbs(path) {
 		return "", nil, fmt.Errorf("provider transcript path must be absolute: %q", path)
 	}
-	roots, err := providerTranscriptRoots(provider, env)
+	roots, err := providerTranscriptRoots(provider, path, env)
 	if err != nil {
 		return "", nil, err
+	}
+	for _, root := range roots {
+		if !filepath.IsAbs(root) {
+			return "", nil, fmt.Errorf("%s transcript root must be absolute: %q", provider, root)
+		}
 	}
 	canonicalPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve provider transcript %q: %w", path, err)
 	}
-	var resolvedRoots []string
-	var lastRootErr error
+	contained := false
 	for _, root := range roots {
-		if !filepath.IsAbs(root) {
-			return "", nil, fmt.Errorf("%s transcript root must be absolute: %q", provider, root)
-		}
 		canonicalRoot, err := filepath.EvalSymlinks(root)
 		if err != nil {
-			lastRootErr = fmt.Errorf("resolve %s transcript root %q: %w", provider, root, err)
 			continue
 		}
-		resolvedRoots = append(resolvedRoots, canonicalRoot)
-		inside, err := pathInsideRoot(canonicalPath, canonicalRoot)
-		if err != nil {
-			return "", nil, err
+		if pathWithinRoot(canonicalRoot, canonicalPath) {
+			contained = true
+			break
 		}
-		if !inside {
-			continue
-		}
-		info, err := os.Stat(canonicalPath)
-		if err != nil {
-			return "", nil, fmt.Errorf("stat provider transcript %q: %w", canonicalPath, err)
-		}
-		if !info.Mode().IsRegular() {
-			return "", nil, fmt.Errorf("provider transcript %q is not a regular file", canonicalPath)
-		}
-		return canonicalPath, info, nil
 	}
-	if len(resolvedRoots) == 0 {
-		if lastRootErr != nil {
-			return "", nil, lastRootErr
-		}
-		return "", nil, fmt.Errorf("resolve %s transcript root: no configured roots", provider)
+	if !contained {
+		return "", nil, fmt.Errorf("provider transcript %q is outside expected %s transcript roots", path, provider)
 	}
-	return "", nil, fmt.Errorf("provider transcript %q is outside expected %s root %q", path, provider, strings.Join(resolvedRoots, ", "))
+	info, err := os.Stat(canonicalPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("stat provider transcript %q: %w", canonicalPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("provider transcript %q is not a regular file", canonicalPath)
+	}
+	return canonicalPath, info, nil
 }
 
-func pathInsideRoot(canonicalPath, canonicalRoot string) (bool, error) {
-	rel, err := filepath.Rel(canonicalRoot, canonicalPath)
-	if err != nil {
-		return false, fmt.Errorf("check provider transcript containment: %w", err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return false, nil
-	}
-	return true, nil
+func pathWithinRoot(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func openValidatedTranscript(provider Provider, path string, env map[string]string) (*os.File, string, error) {
@@ -117,7 +103,7 @@ func openValidatedTranscriptFile(path string, validatedInfo os.FileInfo) (*os.Fi
 	return file, nil
 }
 
-func providerTranscriptRoots(provider Provider, env map[string]string) ([]string, error) {
+func providerTranscriptRoots(provider Provider, path string, env map[string]string) ([]string, error) {
 	value := func(key string) string {
 		if env != nil {
 			if value, ok := env[key]; ok {
@@ -148,11 +134,26 @@ func providerTranscriptRoots(provider Provider, env map[string]string) ([]string
 		if home == "" {
 			return nil, fmt.Errorf("resolve Cursor transcript root: HOME is unset")
 		}
-		cursorHome := filepath.Join(home, ".cursor")
-		return []string{
-			filepath.Join(cursorHome, "chats"),
-			filepath.Join(cursorHome, "projects"),
-		}, nil
+		cursorRoot := filepath.Join(home, ".cursor")
+		if canonicalCursorRoot, err := filepath.EvalSymlinks(cursorRoot); err == nil {
+			cursorRoot = canonicalCursorRoot
+		}
+		candidatePath := path
+		if canonicalPath, err := filepath.EvalSymlinks(path); err == nil {
+			candidatePath = canonicalPath
+		}
+		roots := []string{filepath.Join(cursorRoot, "chats")}
+		projectsRoot := filepath.Join(cursorRoot, "projects")
+		if pathWithinRoot(projectsRoot, candidatePath) {
+			rel, err := filepath.Rel(projectsRoot, candidatePath)
+			if err == nil {
+				parts := strings.Split(rel, string(filepath.Separator))
+				if len(parts) >= 3 && parts[0] != "" && parts[1] == "agent-transcripts" {
+					roots = append(roots, filepath.Join(projectsRoot, parts[0], "agent-transcripts"))
+				}
+			}
+		}
+		return roots, nil
 	default:
 		return nil, fmt.Errorf("unsupported session provider %q", provider)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -29,9 +31,14 @@ import (
 // registration path runs against an already-constructed model, so clearing at
 // construction cannot drop a record a live test still needs. Sharing one map
 // does forbid t.Parallel() in the tests that use it.
-var autoAdvanceTestFlows = map[string]flowstore.FlowRecord{}
+var (
+	autoAdvanceTestFlowsMu sync.RWMutex
+	autoAdvanceTestFlows   = map[string]flowstore.FlowRecord{}
+)
 
 func recordAutoAdvanceTestFlows(records []flowstore.FlowRecord) {
+	autoAdvanceTestFlowsMu.Lock()
+	defer autoAdvanceTestFlowsMu.Unlock()
 	for _, record := range records {
 		if record.FlowID != "" {
 			autoAdvanceTestFlows[record.FlowID] = cloneFlowRecord(record)
@@ -40,6 +47,8 @@ func recordAutoAdvanceTestFlows(records []flowstore.FlowRecord) {
 }
 
 func autoAdvanceTestReadFlow(flowID string) (flowstore.FlowRecord, error) {
+	autoAdvanceTestFlowsMu.RLock()
+	defer autoAdvanceTestFlowsMu.RUnlock()
 	if record, ok := autoAdvanceTestFlows[strings.TrimSpace(flowID)]; ok {
 		return record, nil
 	}
@@ -47,7 +56,14 @@ func autoAdvanceTestReadFlow(flowID string) (flowstore.FlowRecord, error) {
 }
 
 func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
+	autoAdvanceTestFlowsMu.Lock()
 	clear(autoAdvanceTestFlows)
+	autoAdvanceTestFlowsMu.Unlock()
+	if opts.InspectFlowLease == nil {
+		opts.InspectFlowLease = func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
+		}
+	}
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = autoAdvanceTestReadFlow
 	}
@@ -151,7 +167,7 @@ func runAutoAdvanceResultForTest(t *testing.T, m Model, flows []flowstore.FlowRe
 // disarms the drain, and the read event is what re-arms, drops, or announces.
 func applyAutoFlowLaunchReads(m Model, cmd tea.Cmd) (Model, []tea.Cmd) {
 	var produced []tea.Cmd
-	for _, msg := range immediateFlowRefreshMessages(cmd) {
+	for _, msg := range immediateFlowRefreshMessagesWithin(cmd, testStoreCommandSettleTimeout) {
 		event, ok := msg.(flowLaunchEventMsg)
 		if !ok || event.Stage != flowLaunchStageRead {
 			continue
@@ -177,7 +193,7 @@ func preparedAutoFlowLaunches(m Model, cmd tea.Cmd) (Model, []flowLaunchEventMsg
 	m, produced := applyAutoFlowLaunchReads(m, cmd)
 	var prepared []flowLaunchEventMsg
 	for _, next := range produced {
-		for _, msg := range immediateFlowRefreshMessages(next) {
+		for _, msg := range immediateFlowRefreshMessagesWithin(next, testStoreCommandSettleTimeout) {
 			if event, ok := msg.(flowLaunchEventMsg); ok && event.Stage == flowLaunchStagePrepared {
 				prepared = append(prepared, event)
 			}

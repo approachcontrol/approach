@@ -10,6 +10,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -887,6 +888,46 @@ func TestStoredCodexAppPreferenceRespectsRetainedTerminalOccupancy(t *testing.T)
 	}
 	if got := next.(Model).status.Text; got != flowPhaseResumeTerminalStatus {
 		t.Fatalf("status = %q, want %q", got, flowPhaseResumeTerminalStatus)
+	}
+}
+
+func TestPhaseResumeFooterWithdrawsForTrackedLease(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state flowlease.LeaseState
+		err   error
+	}{
+		{name: "held", state: flowlease.Held},
+		{name: "inspection error", err: errors.New("unsafe lease directory")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
+			h.leaseState = tc.state
+			h.leaseErr = tc.err
+			if h.resumeModel().selectedFlowPhaseResumable() {
+				t.Fatal("footer advertised phase resume while tracked lease occupancy was held or unknown")
+			}
+		})
+	}
+}
+
+func TestPhaseResumeLeaseRaceRetainsOccupiedDiagnostic(t *testing.T) {
+	h := newManualLaunchHarness(t, resumeLaunchFlowRecord())
+	h.leaseInspect = func(call int, _, _ string) (flowlease.LeaseState, error) {
+		if call >= 2 {
+			return flowlease.Held, nil
+		}
+		return flowlease.Free, nil
+	}
+	m := h.resume(h.resumeModel())
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations=%d releases=%d, want protected recheck", h.launchReservations, h.launchReleases)
+	}
+	if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatalf("late lease started work: updates=%d embedded=%d tmux=%d", len(h.launchUpdates), len(h.launchContexts), len(h.tmuxContexts))
+	}
+	if m.status.Text != flowLeaseOccupiedStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowLeaseOccupiedStatus)
 	}
 }
 

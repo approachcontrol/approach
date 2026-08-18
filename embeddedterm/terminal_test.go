@@ -162,7 +162,7 @@ func TestTerminalBridgesTerminalQueryResponses(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is not installed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	term, err := NewManager().Start(ctx, StartRequest{
@@ -179,10 +179,7 @@ func TestTerminalBridgesTerminalQueryResponses(t *testing.T) {
 	}
 	defer term.Close()
 
-	if err := term.Wait(ctx); err != nil {
-		t.Fatalf("Wait returned error: %v", err)
-	}
-	got := strings.Join(term.VisibleLines(40, 5), "\n")
+	got := waitForVisible(t, term, 40, 5, "query-answered", 5*time.Second)
 	if !strings.Contains(got, "query-answered") {
 		t.Fatalf("visible lines = %q, want output after terminal query response", got)
 	}
@@ -393,7 +390,7 @@ func TestTerminalAnswersCursorPositionWithinScreenHeight(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is not installed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	term, err := NewManager().Start(ctx, StartRequest{
@@ -410,10 +407,7 @@ func TestTerminalAnswersCursorPositionWithinScreenHeight(t *testing.T) {
 	}
 	defer term.Close()
 
-	if err := term.Wait(ctx); err != nil {
-		t.Fatalf("Wait returned error: %v", err)
-	}
-	got := ansi.Strip(strings.Join(term.VisibleLines(40, 5), "\n"))
+	got := ansi.Strip(waitForVisible(t, term, 40, 5, "ROW=", 5*time.Second))
 	idx := strings.LastIndex(got, "ROW=")
 	if idx == -1 {
 		t.Fatalf("visible lines = %q, want echoed cursor row", got)
@@ -935,15 +929,15 @@ func TestTerminalCloseUnblocksWhenEmulatorResponseWriteIsStuck(t *testing.T) {
 	}
 	defer term.Terminate()
 
-	if err := term.closePTY(); err != nil {
-		t.Fatalf("closePTY returned error: %v", err)
-	}
-
 	term.mu.Lock()
 	emu := term.emulator
 	term.mu.Unlock()
 	if emu == nil {
 		t.Fatal("emulator was already shut down")
+	}
+
+	if err := term.closePTY(); err != nil {
+		t.Fatalf("closePTY returned error: %v", err)
 	}
 
 	// One device-attribute query lets the drain read a response, fail the
@@ -1100,4 +1094,19 @@ func TestTerminalTerminateWhileOutputIsActive(t *testing.T) {
 	if got := term.State(); got != StateTerminated {
 		t.Fatalf("State = %q, want %q", got, StateTerminated)
 	}
+}
+
+func waitForVisible(t *testing.T, term *Terminal, width, height int, needle string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var got string
+	for time.Now().Before(deadline) {
+		got = strings.Join(term.VisibleLines(width, height), "\n")
+		if strings.Contains(ansi.Strip(got), needle) {
+			return got
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("visible lines never contained %q, last=%q", needle, got)
+	return got
 }

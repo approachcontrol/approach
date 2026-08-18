@@ -9,10 +9,22 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/approachcontrol/approach/internal/flowlease"
 )
 
-func tmuxModeContext() AgentLaunchContext {
+func tmuxModeContext(t *testing.T) AgentLaunchContext {
+	t.Helper()
 	ctx := planAgentContext()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := flowlease.ResolveRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.SessionStateRoot = canonical
 	ctx.RepoPath = "/repo"
 	ctx.WorktreePath = "/repo/worktree"
 	ctx.FlowID = "flow-1"
@@ -40,6 +52,16 @@ func TestRepoAgentSessionNameIsRepoScopedAndPrefixed(t *testing.T) {
 	// names on the same default server; the two must never collide.
 	if name == WorktreeSessionName(repo) {
 		t.Fatalf("expected repo agent session name to differ from worktree session name, got %q", name)
+	}
+}
+
+func TestRepoAgentSessionNamePreservesUnicodeForPrivateTransport(t *testing.T) {
+	name := RepoAgentSessionName("/repos/café-东京")
+	if _, err := flowlease.ExactWindowTarget(name, "implementation-deadbeef-12345678"); err != nil {
+		t.Fatalf("RepoAgentSessionName() = %q is incompatible with the private tmux transport: %v", name, err)
+	}
+	if !strings.Contains(name, "café-东京") {
+		t.Fatalf("RepoAgentSessionName() = %q, want established Unicode identity preserved", name)
 	}
 }
 
@@ -73,7 +95,7 @@ func TestRepoAgentSessionNameHasNoTmuxTargetSeparators(t *testing.T) {
 }
 
 func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
-	_, err := repoTmuxAgentLaunch(tmuxModeContext(), fakeLookPath())
+	_, err := repoTmuxAgentLaunch(tmuxModeContext(t), fakeLookPath())
 	if !errors.Is(err, ErrRepoTmuxUnavailable) {
 		t.Fatalf("expected ErrRepoTmuxUnavailable, got %v", err)
 	}
@@ -82,7 +104,7 @@ func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
 func TestRepoTmuxAgentLaunchAcceptsCursorAgent(t *testing.T) {
 	putAgentOnPath(t, "cursor-agent")
 	t.Setenv("HOME", t.TempDir())
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.Command = "cursor-agent"
 	ctx.WorktreePath = t.TempDir()
 
@@ -97,7 +119,7 @@ func TestRepoTmuxAgentLaunchAcceptsCursorAgent(t *testing.T) {
 }
 
 func TestRepoTmuxAgentLaunchRejectsUnsupportedAgent(t *testing.T) {
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.Command = "gemini"
 	_, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
 	if err == nil || !strings.Contains(err.Error(), "supports only CLI agents") {
@@ -107,7 +129,7 @@ func TestRepoTmuxAgentLaunchRejectsUnsupportedAgent(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
@@ -133,15 +155,37 @@ func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	}
 
 	args := spec.Launch.Cmd.Args
-	if len(args) < 4 || args[0] != "sh" || args[1] != "-c" {
-		t.Fatalf("expected sh -c script, got %#v", args)
+	if len(args) < 2 || args[1] != flowlease.TmuxSpawnCommand {
+		t.Fatalf("expected private Flow tmux parent command, got %#v", args)
 	}
-	if args[2] != repoTmuxLaunchScript {
-		t.Fatal("the launch must run the shared tmux script")
+	joined := strings.Join(args, "\x00")
+	for _, want := range []string{spec.SessionName, spec.WindowName, ctx.WorktreePath, ctx.FlowID, ctx.FlowPhaseID, ctx.LaunchID} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("private spawn args = %#v, want %q", args, want)
+		}
 	}
-	wantArgs := []string{spec.SessionName, spec.WindowName, ctx.WorktreePath}
-	if !strings.HasPrefix(strings.Join(args[4:], "\x00"), strings.Join(wantArgs, "\x00")) {
-		t.Fatalf("script args = %#v, want prefix %#v", args[4:], wantArgs)
+}
+
+func TestRepoTmuxAgentLaunchSupportsCursor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	putAgentOnPath(t, "cursor-agent")
+	ctx := tmuxModeContext(t)
+	ctx.Command = "cursor-agent"
+	ctx.WorktreePath = t.TempDir()
+	ctx.FlowLaunchTracked = false
+
+	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunch returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+
+	script, err := os.ReadFile(launchScriptPathFromArgs(t, spec.Launch.Cmd.Args))
+	if err != nil {
+		t.Fatalf("read launch script: %v", err)
+	}
+	if !strings.Contains(string(script), "cursor-agent") {
+		t.Fatalf("launch script does not run cursor-agent:\n%s", script)
 	}
 }
 
@@ -264,8 +308,9 @@ func TestRepoTmuxLaunchScriptReportsTheFinalFailure(t *testing.T) {
 // /dev/null and every tmux failure reads as a bare exit status.
 func TestRepoTmuxAgentLaunchCapturesSpawnStderr(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
+	ctx.FlowLaunchTracked = false
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
 	if err != nil {
@@ -309,7 +354,7 @@ func TestRepoTmuxAgentLaunchStripsMultiplexerEnv(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")
 	t.Setenv("ZELLIJ", "0")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
@@ -331,7 +376,7 @@ func TestRepoTmuxAgentLaunchStripsMultiplexerEnv(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchDeliversPromptInArgv(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 	ctx.InitialPrompt = "Implement the plan."
 
@@ -358,7 +403,7 @@ func TestRepoTmuxAgentLaunchDeliversPromptInArgv(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchWindowNamesAreUniquePerLaunch(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	first := tmuxModeContext()
+	first := tmuxModeContext(t)
 	first.WorktreePath = t.TempDir()
 	first.LaunchID = "approach-1700000000000000000-aabbccddeeff"
 	second := first
@@ -383,6 +428,169 @@ func TestRepoTmuxAgentLaunchWindowNamesAreUniquePerLaunch(t *testing.T) {
 	}
 }
 
+func TestRepoTmuxTrackedLaunchNamesStayUniqueWhenLaunchSuffixesCollide(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	first := tmuxModeContext(t)
+	first.WorktreePath = t.TempDir()
+	first.LaunchID = "approach-1700000000000000000-aabbccdd"
+	second := first
+	second.LaunchID = "another-1700000000000000001-aabbccdd"
+
+	firstSpec, err := repoTmuxAgentLaunch(first, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("first launch error: %v", err)
+	}
+	defer firstSpec.Launch.Cleanup()
+	secondSpec, err := repoTmuxAgentLaunch(second, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("second launch error: %v", err)
+	}
+	defer secondSpec.Launch.Cleanup()
+
+	if firstSpec.WindowName == secondSpec.WindowName {
+		t.Fatalf("collision-bearing tracked windows both = %q", firstSpec.WindowName)
+	}
+	for _, name := range []string{firstSpec.WindowName, secondSpec.WindowName} {
+		if !strings.HasSuffix(name, "aabbccdd") {
+			t.Fatalf("window %q no longer preserves the launch-ID suffix probe", name)
+		}
+	}
+}
+
+func TestRepoTmuxTrackedLaunchRejectsMissingLeaseIdentity(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	tests := []struct {
+		name   string
+		mutate func(*AgentLaunchContext)
+	}{
+		{name: "flow id", mutate: func(ctx *AgentLaunchContext) { ctx.FlowID = "" }},
+		{name: "phase id", mutate: func(ctx *AgentLaunchContext) { ctx.FlowPhaseID = "" }},
+		{name: "launch id", mutate: func(ctx *AgentLaunchContext) { ctx.LaunchID = "../bad" }},
+		{name: "state root", mutate: func(ctx *AgentLaunchContext) { ctx.SessionStateRoot = "relative" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := tmuxModeContext(t)
+			ctx.WorktreePath = t.TempDir()
+			tc.mutate(&ctx)
+			if _, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux")); err == nil {
+				t.Fatal("tracked launch error = nil, want hard lease validation failure")
+			}
+		})
+	}
+}
+
+func TestRepoTmuxTrackedLaunchRejectsIncompatibleRoles(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	tests := []struct {
+		name   string
+		mutate func(*AgentLaunchContext)
+	}{
+		{name: "auto launch", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAutoLaunch = true }},
+		{name: "headless", mutate: func(ctx *AgentLaunchContext) { ctx.Headless = true }},
+		{name: "repair", mutate: func(ctx *AgentLaunchContext) { ctx.FlowRepair = true }},
+		{name: "generic Flow agent", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAgent = true }},
+		{name: "saved session resume", mutate: func(ctx *AgentLaunchContext) { ctx.FlowSavedSessionResume = true }},
+		{name: "autofix", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAutofix = true }},
+		{name: "autofix PR", mutate: func(ctx *AgentLaunchContext) { ctx.FlowAutofixPRNumber = 42 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := tmuxModeContext(t)
+			ctx.WorktreePath = t.TempDir()
+			tc.mutate(&ctx)
+			if _, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux")); err == nil ||
+				!strings.Contains(err.Error(), "invalid tracked Flow tmux launch role") {
+				t.Fatalf("tracked launch error = %v, want incompatible role rejection", err)
+			}
+		})
+	}
+}
+
+func TestRepoTmuxTrackedLaunchRejectsSelfExecutableResolutionFailure(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	_, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		return "", errors.New("executable unavailable")
+	})
+	if err == nil || !strings.Contains(err.Error(), "executable unavailable") {
+		t.Fatalf("launch error = %v, want executable resolution failure", err)
+	}
+}
+
+// TestRepoTmuxTrackedLaunchPrefersPinnedExecutable is the upgrade-safety
+// contract for the private lease helpers. os.Executable names the mutable
+// installation path; after brew/cask replace that file, a long-lived TUI still
+// holds a verified pin in ctx.Executable. Both __flow-tmux-spawn and
+// __flow-lease-run must exec that pin, or a protocol-incompatible replacement
+// build can hang the handoff.
+func TestRepoTmuxTrackedLaunchPrefersPinnedExecutable(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	ctx.Executable = "/state/approach/sessions/v1/bin/approach-abc123"
+	fallbackCalled := false
+	spec, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		fallbackCalled = true
+		return "/opt/homebrew/bin/approach", nil
+	})
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunchWithExecutable returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+	if fallbackCalled {
+		t.Fatal("pinned launch must not resolve os.Executable")
+	}
+	requireTrackedLeaseHelpersUseExecutable(t, spec, ctx.Executable)
+}
+
+func TestRepoTmuxTrackedLaunchFallsBackToRunningBinaryWhenUnpinned(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	const running = "/tmp/approach-running-unpinned"
+	spec, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		return running, nil
+	})
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunchWithExecutable returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+	requireTrackedLeaseHelpersUseExecutable(t, spec, running)
+}
+
+func TestRepoTmuxTrackedLaunchRejectsRelativePinnedExecutable(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	ctx.Executable = "approach-abc123"
+	_, err := repoTmuxAgentLaunchWithExecutable(ctx, fakeLookPath("tmux"), func() (string, error) {
+		t.Fatal("relative pin must not fall back to os.Executable")
+		return "/opt/homebrew/bin/approach", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "pinned Approach executable path must be absolute") {
+		t.Fatalf("launch error = %v, want absolute pinned-path rejection", err)
+	}
+}
+
+func requireTrackedLeaseHelpersUseExecutable(t *testing.T, spec RepoTmuxAgentSpec, want string) {
+	t.Helper()
+	args := spec.Launch.Cmd.Args
+	if len(args) < 2 || args[0] != want || args[1] != flowlease.TmuxSpawnCommand {
+		t.Fatalf("spawn argv = %#v, want %s %s ...", args, want, flowlease.TmuxSpawnCommand)
+	}
+	scriptPath := privateArgValue(t, args, "--script")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read lease-run script: %v", err)
+	}
+	wantLease := shellQuote(want) + " " + shellQuote(flowlease.LeaseRunCommand)
+	if !strings.Contains(string(script), wantLease) {
+		t.Fatalf("lease-run script missing %q:\n%s", wantLease, script)
+	}
+}
+
 // TestRepoTmuxWindowNameNeverEmpty pins the fallback chain. tmux names an
 // unnamed window after its command, so an empty -n would silently rename the
 // window to the launch script's path.
@@ -404,10 +612,11 @@ func TestRepoTmuxWindowNameNeverEmpty(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := tmuxModeContext()
+			ctx := tmuxModeContext(t)
 			ctx.WorktreePath = t.TempDir()
 			ctx.FlowPhaseKind = tc.phaseKind
 			ctx.LaunchID = tc.launchID
+			ctx.FlowLaunchTracked = false
 
 			spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
 			if err != nil {
@@ -538,7 +747,7 @@ func TestLaunchWindowRunningInListingMatchesAnyOfAPhasesLaunches(t *testing.T) {
 // back to that launch ID, and must not match a different launch's window.
 func TestRepoTmuxLaunchWindowLiveMatchesTheLaunchsOwnWindow(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 	ctx.LaunchID = "approach-1700000000000000000-aabbccddeeff"
 
@@ -566,7 +775,7 @@ func TestRepoTmuxLaunchWindowLiveMatchesTheLaunchsOwnWindow(t *testing.T) {
 
 func TestRepoTmuxAgentLaunchCleanupRemovesScript(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	ctx := tmuxModeContext()
+	ctx := tmuxModeContext(t)
 	ctx.WorktreePath = t.TempDir()
 
 	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
@@ -584,6 +793,41 @@ func TestRepoTmuxAgentLaunchCleanupRemovesScript(t *testing.T) {
 	if _, err := os.Stat(script); !os.IsNotExist(err) {
 		t.Fatalf("cleanup should have removed %s, stat err = %v", script, err)
 	}
+}
+
+func TestRepoTmuxTrackedLaunchCleanupReportsCancellationFailure(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunch returned error: %v", err)
+	}
+	handoffDir := privateArgValue(t, spec.Launch.Cmd.Args, "--handoff")
+	if err := os.Mkdir(filepath.Dir(handoffDir), 0o700); err != nil {
+		t.Fatalf("Mkdir(handoff collection) error = %v", err)
+	}
+	if err := os.Mkdir(handoffDir, 0o700); err != nil {
+		t.Fatalf("Mkdir(handoff attempt) error = %v", err)
+	}
+	stubDir, _ := tmuxStub(t, "kill-window")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	spec.Launch.Cleanup()
+	if detail := spec.Launch.ErrorDetail(); !strings.Contains(detail, "cancel exact tmux window") {
+		t.Fatalf("ErrorDetail() = %q, want cancellation failure", detail)
+	}
+}
+
+func privateArgValue(t *testing.T, args []string, name string) string {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("private argument %s not found in %#v", name, args)
+	return ""
 }
 
 // launchScriptPathFromArgs pulls the self-deleting launch script's path out of
