@@ -97,6 +97,27 @@ printf 'worktree /tmp/main-repo\nHEAD deadbeef\nbranch refs/heads/main\n\n'
 	}
 }
 
+func TestMainWorktreePathIgnoresStderrOnNULPorcelain(t *testing.T) {
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	script := `#!/bin/sh
+echo "hint: using extra worktrees" >&2
+printf 'worktree /tmp/main-repo\0HEAD deadbeef\0branch refs/heads/main\0\0'
+`
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := actions.MainWorktreePath("/tmp/linked-repo")
+	if err != nil {
+		t.Fatalf("MainWorktreePath() error = %v", err)
+	}
+	if got != "/tmp/main-repo" {
+		t.Fatalf("MainWorktreePath() = %q, want /tmp/main-repo", got)
+	}
+}
+
 func prependFakePath(t *testing.T, names ...string) string {
 	t.Helper()
 	dir := t.TempDir()

@@ -392,16 +392,21 @@ type FlowWorktreeCreateResult struct {
 // path. Git always lists the primary worktree first, including when path is a
 // linked worktree.
 func MainWorktreePath(path string) (string, error) {
-	out, err := exec.Command("git", "-C", path, "worktree", "list", "--porcelain", "-z").CombinedOutput()
+	out, err := exec.Command("git", "-C", path, "worktree", "list", "--porcelain", "-z").Output()
 	nulDelimited := err == nil
 	if err != nil {
 		// Git added -z support to `worktree list` after the project's minimum
 		// supported version. Retry the legacy format so ordinary paths continue
 		// to work there; modern Git keeps the unambiguous path representation.
-		out, err = exec.Command("git", "-C", path, "worktree", "list", "--porcelain").CombinedOutput()
+		out, err = exec.Command("git", "-C", path, "worktree", "list", "--porcelain").Output()
 	}
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+				msg = stderr
+			}
+		}
 		if msg != "" {
 			return "", fmt.Errorf("%s: %w", msg, err)
 		}
