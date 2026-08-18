@@ -2212,8 +2212,18 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 	if errText == "" {
 		errText = "Unable to create flow"
 	}
-	if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
-		errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
+	// A Bead-slot refusal creates nothing, so it must not be reported as a Flow
+	// that "was created, but preparation failed".
+	switch {
+	case strings.TrimSpace(msg.ExistingFlow.FlowID) != "":
+		errText = conflictStatus(msg.ExistingFlow, true)
+	case msg.Refused:
+		// The unreadable-row refusal names no decodable Flow, so the store's
+		// own text stands: it already names the row a human must repair.
+	default:
+		if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
+			errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
+		}
 	}
 	m = m.setStatus(statusOther, errText)
 	if m.flowRefreshSurfaceVisible() {
@@ -3215,8 +3225,9 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 	releaseFlowLaunchReservation(msg.Release)
 	ctx := msg.LaunchContext
 	presentCreate := true
-	if msg.Create != nil {
-		presentCreate = m.createFlowLaunchOriginCurrent(*msg.Create)
+	create := msg.Create
+	if create != nil {
+		presentCreate = m.createFlowLaunchOriginCurrent(*create)
 	}
 	if msg.releaseReadyBeadAdmission {
 		m = m.releaseFlowPreparation(msg.preparationKind, msg.preparationToken)
@@ -3227,7 +3238,9 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateFailurePersisting); ok {
 		if attempt.Kind == flowLaunchKindCreatePhase {
 			presentCreate = m.createFlowLaunchOriginCurrent(attempt.Create)
-			if msg.Create == nil {
+			if create == nil {
+				created := attempt.Create
+				create = &created
 				m = m.clearFlowLaunchCreatePresentation(attempt.Create)
 			}
 		}
@@ -3251,10 +3264,19 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		errText += "update flow phase: " + msg.PersistErr.Error()
 	}
 	m = m.setStatus(statusOther, errText)
-	if msg.LaunchContext.FlowID != "" && m.flowRefreshSurfaceVisible() {
-		return m.startFlowSurfaceFetch()
+	// A create-phase launch that got this far persisted its failure onto a real
+	// phase. For a progression child that is the end of the chain unless the
+	// epic is told why, so the halt is raised from the same place the user's
+	// status is.
+	var haltCmd tea.Cmd
+	if create != nil {
+		m, haltCmd = m.failEpicProgressionCreate(*create, ctx.FlowID, errText)
 	}
-	return m, nil
+	if msg.LaunchContext.FlowID != "" && m.flowRefreshSurfaceVisible() {
+		next, fetchCmd := m.startFlowSurfaceFetch()
+		return next, batchNonNil(haltCmd, fetchCmd)
+	}
+	return m, haltCmd
 }
 
 // agentLaunchedStatus describes a successful detached launch without implying

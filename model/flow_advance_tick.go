@@ -149,6 +149,14 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 			if epicProgressionSuccessTerminal(baseline) {
 				continue
 			}
+			if owned, ok := m.epicProgressionOwnedSuccessors[key]; ok && owned.SourceFlowID == baseline.FlowID {
+				// An advance for this source already owns a created child Flow.
+				// The create pipeline clears that marker at every terminal, so
+				// this is skipped only while the child's own attempt is running.
+				// The halt edge below is deliberately not fenced this way: a
+				// failing child must be able to stop the chain regardless.
+				continue
+			}
 			var cmd tea.Cmd
 			m, cmd = m.startEpicProgressionAdvance(key, baseline)
 			if cmd != nil {

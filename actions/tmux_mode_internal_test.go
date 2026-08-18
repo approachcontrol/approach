@@ -843,3 +843,68 @@ func launchScriptPathFromArgs(t *testing.T, args []string) string {
 	t.Fatalf("no launch script path in %#v", args)
 	return ""
 }
+
+func TestRepoTmuxListClientsCommandProbesDefaultServerExactly(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")
+	cmd := tmuxProbeCommand(context.Background(), repoTmuxListClientsArgs("/repo")...)
+	want := []string{"tmux", "list-clients", "-t", "=" + RepoAgentSessionName("/repo"), "-F", "#{client_name}"}
+	if strings.Join(cmd.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", cmd.Args, want)
+	}
+	for _, arg := range cmd.Args {
+		if arg == "-L" || arg == "-f" {
+			t.Fatalf("probe must use the default tmux server, got %#v", cmd.Args)
+		}
+	}
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "TMUX=") {
+			t.Fatal("probe must not inherit TMUX")
+		}
+	}
+}
+
+// TestSessionAttachedInListingReadsClientRows is the parse half of the attach
+// probe. Blank output is tmux's answer for a session nobody is watching, and
+// reading it as attached would suppress the terminal window forever.
+func TestSessionAttachedInListingReadsClientRows(t *testing.T) {
+	tests := []struct {
+		name    string
+		listing string
+		want    bool
+	}{
+		{name: "no clients", listing: ""},
+		{name: "blank lines only", listing: "\n   \n"},
+		{name: "one client", listing: "/dev/ttys004\n", want: true},
+		{name: "several clients", listing: "/dev/ttys004\n/dev/ttys007\n", want: true},
+		{name: "leading blank line", listing: "\n/dev/ttys004\n", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessionAttachedInListing(tc.listing); got != tc.want {
+				t.Fatalf("sessionAttachedInListing(%q) = %t, want %t", tc.listing, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInsideMultiplexerReadsTmuxAndZellij(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{name: "bare shell", env: map[string]string{}},
+		{name: "empty vars", env: map[string]string{"TMUX": "", "ZELLIJ": ""}},
+		{name: "inside tmux", env: map[string]string{"TMUX": "/tmp/tmux-1000/default,123,0"}, want: true},
+		{name: "inside zellij", env: map[string]string{"ZELLIJ": "0"}, want: true},
+		{name: "inside both", env: map[string]string{"TMUX": "/tmp/x,1,0", "ZELLIJ": "0"}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := insideMultiplexer(func(key string) string { return tc.env[key] })
+			if got != tc.want {
+				t.Fatalf("insideMultiplexer(%v) = %t, want %t", tc.env, got, tc.want)
+			}
+		})
+	}
+}

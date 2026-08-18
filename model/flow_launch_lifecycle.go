@@ -113,11 +113,29 @@ type flowLaunchEventMsg struct {
 	// CreatedRecord is create-phase-only: the exact create result is retained
 	// across tracked reservation so the winner can detect a cross-process claim.
 	CreatedRecord flowstore.FlowRecord
+	// BeadFlowConflict is create-phase-only and set when the store refused the
+	// write because the Bead already has a non-terminal Flow. Nothing was
+	// created, so the generic "create flow %s" failure text would be wrong.
+	BeadFlowConflict flowstore.FlowRecord
+	// BeadFlowRefused is create-phase-only and reports that the store's
+	// Bead-slot guard refused before writing anything. It is set for the
+	// unreadable-row refusal too, where no decodable Flow exists to name in
+	// BeadFlowConflict but the write still never happened.
+	BeadFlowRefused bool
 	// PreparationFinalizer is create-phase-only and present only for Ready-Bead
 	// launches. It is the one-shot capability that stamps PreparedAt after the
 	// worktree metadata and bootstrap hook succeed, before launch persistence.
 	PreparationFinalizer flowstore.PreparationFinalizer
 	PreparationUnknown   bool
+	// Successor and SuccessorErr are epic-progression create-phase only: the
+	// authoritative classification of this created child against its epic,
+	// taken under the launch reservation once the preparation receipt exists
+	// and before the first phase is made running.
+	Successor    flowstore.EpicProgressionSuccessorResult
+	SuccessorErr string
+	// ProgressionRetry marks a progression abort the epic should retry rather
+	// than halt on: the child was compensated away and selection may run again.
+	ProgressionRetry bool
 	// CompensationRetryable is set when Ready compensation left the one-shot
 	// finalizer usable: either both writer attempts reconciled as unlanded, or
 	// Compensate could not acquire the launch/close reservation.
@@ -1155,9 +1173,10 @@ func (m Model) failCreateFlowLaunchEmbedded(attempt flowLaunchAttempt, ctx actio
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
 		releaseFlowLaunchReservation(release)
-		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
 			clearFlowLaunchCreatePresentation(attempt.Create).
-			setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText), nil
+			setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText)
+		return m.failEpicProgressionCreate(attempt.Create, attempt.FlowID, errText)
 	}
 	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
 	if !ok {
@@ -1210,11 +1229,26 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
 	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
+	// Placed after the handoffPending transition above, so a handoff canceled
+	// before its spawn opens no window. It is a sibling command: it touches no
+	// attempt token, reservation, or AgentResultMsg field.
+	m, terminalCmd := m.maybeOpenRepoTmuxTerminal(flowLaunchTmuxRepoPath(ctx, msg.RepoPath), spec.SessionName)
 	var fetchCmd tea.Cmd
 	if ctx.FlowID != "" && m.flowSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()
 	}
-	return m, batchNonNil(fetchCmd, launchCmd)
+	return m, batchNonNil(fetchCmd, launchCmd, terminalCmd)
+}
+
+// flowLaunchTmuxRepoPath resolves which repo's terminal a tracked Flow launch
+// should open. repoTmuxAgentLaunch keys the session on the context's RepoPath,
+// so that is what the terminal must follow; the event's repo path is only a
+// fallback for a context that carries none.
+func flowLaunchTmuxRepoPath(ctx actions.AgentLaunchContext, fallbackRepoPath string) string {
+	if repoPath := strings.TrimSpace(ctx.RepoPath); repoPath != "" {
+		return repoPath
+	}
+	return strings.TrimSpace(fallbackRepoPath)
 }
 
 // flowLaunchEmbeddedBackstop is the last occupancy check before a slot is
@@ -1384,10 +1418,13 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 				return m, nil
 			}
 			m = m.setStatus(statusOther, "Flow "+ctx.FlowID+": "+errText)
+			var haltCmd tea.Cmd
+			m, haltCmd = m.failEpicProgressionCreate(*msg.Create, ctx.FlowID, errText)
 			if m.flowRefreshSurfaceVisible() {
-				return m.startFlowSurfaceFetch()
+				next, fetchCmd := m.startFlowSurfaceFetch()
+				return next, batchNonNil(haltCmd, fetchCmd)
 			}
-			return m, nil
+			return m, haltCmd
 		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}

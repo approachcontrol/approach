@@ -55,14 +55,20 @@ const (
 )
 
 func (m Model) createFlowLaunchOriginCurrent(create flowLaunchCreateRequest) bool {
-	if create.Presentation.Request == 0 || !m.isCurrentRepo(create.RepoPath) {
+	if create.Presentation.Request == 0 {
 		return false
 	}
 	switch create.Presentation.Origin {
 	case flowLaunchOriginNewFlow:
-		return m.isCurrentFlowCreateRequest(create.Presentation.Request)
+		return m.isCurrentRepo(create.RepoPath) && m.isCurrentFlowCreateRequest(create.Presentation.Request)
 	case flowLaunchOriginReadyBead:
-		return m.isCurrentReadyBeadFlowCreateRequest(create.Presentation.Request)
+		return m.isCurrentRepo(create.RepoPath) && m.isCurrentReadyBeadFlowCreateRequest(create.Presentation.Request)
+	case flowLaunchOriginEpicProgression:
+		// The advance poll is unscoped and runs whatever view is displayed, so
+		// this origin is deliberately not fenced on the current repository. Its
+		// fence is the exact advance request that submitted it and the
+		// preparation admission that request still owns.
+		return m.isCurrentEpicProgressionAdvanceRequest(create.Presentation.Request)
 	default:
 		return false
 	}
@@ -75,9 +81,36 @@ func (m Model) clearFlowLaunchCreatePresentation(create flowLaunchCreateRequest)
 	case flowLaunchOriginReadyBead:
 		m = m.clearReadyBeadFlowCreateRequest(create.Presentation.Request)
 		return m.releaseFlowPreparation(flowPreparationReadyBead, m.flowPreparationOwner.Token)
+	case flowLaunchOriginEpicProgression:
+		return m.clearEpicProgressionFlowCreateRequest(create.Presentation.Request)
 	default:
 		return m
 	}
+}
+
+// createOriginPreparesFlow reports whether a create origin writes its record
+// through CreatePreparation and therefore carries the one-shot finalizer that
+// compensates a failure between the write and the preparation receipt. Both
+// unattended-capable origins do: a receipt-less nonce-bearing Flow left behind
+// by a failed pipeline is exactly what compensation exists to remove. Failures
+// after the receipt are past that capability and block the startup roots
+// instead, for every origin alike.
+func createOriginPreparesFlow(origin flowLaunchOrigin) bool {
+	return origin == flowLaunchOriginReadyBead || origin == flowLaunchOriginEpicProgression
+}
+
+// refuseCreateFlowLaunch ends a create request that never reached the store.
+// The status is both what the user sees and, for a progression child, the
+// cause its epic halts on: an epic whose next child was refused before
+// creation is as stuck as one whose child failed mid-pipeline.
+func (m Model) refuseCreateFlowLaunch(create flowLaunchCreateRequest, status string) (Model, tea.Cmd) {
+	present := m.createFlowLaunchOriginCurrent(create)
+	m = m.clearFlowLaunchCreatePresentation(create)
+	if !present || strings.TrimSpace(status) == "" {
+		return m, nil
+	}
+	m = m.setStatus(statusOther, status)
+	return m.failEpicProgressionCreate(create, "", status)
 }
 
 func (m Model) admitCreateFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
@@ -97,15 +130,18 @@ func (m Model) admitCreateFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
-		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, "Unable to allocate a Flow launch ID"), nil, false
+		next, haltCmd := m.refuseCreateFlowLaunch(create, "Unable to allocate a Flow launch ID")
+		return next, haltCmd, false
 	}
 	settings := intent.Settings
 	command := agent.Normalize(settings.Command)
 	if command == "" || agent.NormalizeStored(settings.Command) != command {
-		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, flowLaunchNoAgentCommandStatus), nil, false
+		next, haltCmd := m.refuseCreateFlowLaunch(create, flowLaunchNoAgentCommandStatus)
+		return next, haltCmd, false
 	}
 	if err := agent.Validate(command); err != nil {
-		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, err.Error()), nil, false
+		next, haltCmd := m.refuseCreateFlowLaunch(create, err.Error())
+		return next, haltCmd, false
 	}
 	settings.Command = command
 	// At admission, before a Flow ID is allocated and long before a worktree
@@ -113,11 +149,13 @@ func (m Model) admitCreateFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	// leaves nothing behind, and the phase this creates is tracked exactly like
 	// one launched from preflight.
 	if refusal := refuseUnverifiedLaunchPin(m.launchPin); refusal != "" {
-		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, refusal), nil, false
+		next, haltCmd := m.refuseCreateFlowLaunch(create, refusal)
+		return next, haltCmd, false
 	}
 	allocate := m.launchSeams.AllocateFlowID
 	if allocate == nil {
-		return m.clearFlowLaunchCreatePresentation(create).setStatus(statusOther, "Flow launch lifecycle is missing ID allocation"), nil, false
+		next, haltCmd := m.refuseCreateFlowLaunch(create, "Flow launch lifecycle is missing ID allocation")
+		return next, haltCmd, false
 	}
 	return m, func() tea.Msg {
 		flowID, err := allocate(create.Title)
@@ -163,14 +201,38 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateWritten:
 		if msg.Err != "" {
+			// A Bead-slot refusal wrote nothing: no record, no worktree,
+			// no reservation, no finalizer. finishCreateBeforeWrite releases
+			// the launch attempt and the Ready admission, but — unlike
+			// finishCreateAfterWrite — it does not refresh the Flow surface,
+			// so the refusal branch chains that fetch itself. The unreadable
+			// variant names no decodable Flow, so it surfaces the store's own
+			// text, which already names the row to repair.
+			if msg.BeadFlowRefused {
+				status := msg.Err
+				if strings.TrimSpace(msg.BeadFlowConflict.FlowID) != "" {
+					status = conflictStatus(msg.BeadFlowConflict, true)
+				}
+				next, cmd := m.finishCreateBeforeWrite(attempt, status)
+				if next.flowRefreshSurfaceVisible() {
+					refreshed, refreshCmd := next.startFlowSurfaceFetch()
+					return refreshed, tea.Batch(cmd, refreshCmd)
+				}
+				return next, cmd
+			}
 			return m.finishCreateBeforeWrite(attempt, fmt.Sprintf("create flow %s: %s", msg.FlowID, msg.Err))
 		}
 		if msg.Record.FlowID != msg.FlowID {
-			if attempt.Origin == flowLaunchOriginReadyBead && msg.PreparationFinalizer != nil {
-				return m.beginReadyPreparationCompensation(attempt, msg, []string{fmt.Sprintf("create flow %s returned flow %q", msg.FlowID, msg.Record.FlowID)})
+			if createOriginPreparesFlow(attempt.Origin) && msg.PreparationFinalizer != nil {
+				return m.beginCreatePreparationCompensation(attempt, msg, []string{fmt.Sprintf("create flow %s returned flow %q", msg.FlowID, msg.Record.FlowID)})
 			}
 			return m.finishCreateBeforeWrite(attempt, fmt.Sprintf("create flow %s returned flow %q", msg.FlowID, msg.Record.FlowID))
 		}
+		// Ownership is installed here, synchronously, before the first side
+		// effect outside the store: a failure anywhere later in the pipeline
+		// must find this child already owned, so no subsequent poll can create
+		// a second one for the same source Flow.
+		m = m.trackEpicProgressionCreatedSuccessor(attempt)
 		next, ok := m.transitionFlowLaunchAttempt(msg.FlowID, msg.Token, want, flowLaunchStateCreateReserving)
 		if !ok {
 			return m, nil
@@ -181,16 +243,16 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		if msg.Err != "" {
 			releaseFlowLaunchReservation(msg.Release)
 			msg.Release = nil
-			if attempt.Origin == flowLaunchOriginReadyBead {
-				return m.beginReadyPreparationCompensation(attempt, msg, []string{"reserve launch: " + msg.Err})
+			if createOriginPreparesFlow(attempt.Origin) {
+				return m.beginCreatePreparationCompensation(attempt, msg, []string{"reserve launch: " + msg.Err})
 			}
 			return m.finishCreateAfterWrite(attempt, "reserve launch: "+msg.Err)
 		}
 		if msg.Record.FlowID != msg.FlowID {
 			releaseFlowLaunchReservation(msg.Release)
 			msg.Release = nil
-			if attempt.Origin == flowLaunchOriginReadyBead {
-				return m.beginReadyPreparationCompensation(attempt, msg, []string{fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID)})
+			if createOriginPreparesFlow(attempt.Origin) {
+				return m.beginCreatePreparationCompensation(attempt, msg, []string{fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID)})
 			}
 			return m.finishCreateAfterWrite(attempt, fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID))
 		}
@@ -211,8 +273,8 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateWorktree:
 		if msg.Err != "" {
-			if attempt.Origin == flowLaunchOriginReadyBead {
-				return m.beginReadyPreparationCompensation(attempt, msg, []string{"create worktree: " + msg.Err})
+			if createOriginPreparesFlow(attempt.Origin) {
+				return m.beginCreatePreparationCompensation(attempt, msg, []string{"create worktree: " + msg.Err})
 			}
 			return m.beginCreateFlowRecovery(attempt, msg, []string{"create worktree: " + msg.Err}, false, true)
 		}
@@ -240,6 +302,13 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 				operation = "run bootstrap"
 			}
 			return m.beginCreateFlowRecovery(attempt, msg, []string{operation + ": " + msg.Err}, false, true)
+		}
+		if attempt.Origin == flowLaunchOriginEpicProgression {
+			next, cmd, stop := m.applyEpicProgressionSuccessor(attempt, msg)
+			if stop {
+				return next, cmd
+			}
+			m = next
 		}
 		if len(msg.StartupRoots) == 0 {
 			releaseFlowLaunchReservation(msg.Release)
@@ -315,13 +384,19 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		releaseFlowLaunchReservation(msg.Release)
 		present := m.createFlowLaunchOriginCurrent(attempt.Create)
 		m = m.releaseFlowLaunchAttempt(msg.FlowID, msg.Token).clearFlowLaunchCreatePresentation(attempt.Create)
-		if present {
-			m = m.setStatus(statusOther, "Flow "+msg.FlowID+": "+msg.Err)
+		if !present {
+			return m, nil
 		}
-		if present && m.flowRefreshSurfaceVisible() {
-			return m.startFlowSurfaceFetch()
+		m = m.setStatus(statusOther, "Flow "+msg.FlowID+": "+msg.Err)
+		var haltCmd tea.Cmd
+		if !msg.ProgressionRetry {
+			m, haltCmd = m.failEpicProgressionCreate(attempt.Create, msg.FlowID, msg.Err)
 		}
-		return m, nil
+		if m.flowRefreshSurfaceVisible() {
+			next, fetchCmd := m.startFlowSurfaceFetch()
+			return next, batchNonNil(haltCmd, fetchCmd)
+		}
+		return m, haltCmd
 	}
 	return m, nil
 }
@@ -334,14 +409,13 @@ func (m Model) handleCreateFlowAllocated(msg flowLaunchEventMsg) (Model, tea.Cmd
 		return m.clearFlowLaunchCreatePresentation(msg.Create), nil
 	}
 	if msg.Err != "" {
-		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, msg.Err), nil
+		return m.refuseCreateFlowLaunch(msg.Create, msg.Err)
 	}
 	if !artifacts.IsSafeID(msg.FlowID) {
-		return m.clearFlowLaunchCreatePresentation(msg.Create).
-			setStatus(statusOther, fmt.Sprintf("Flow ID allocation returned invalid ID %q", msg.FlowID)), nil
+		return m.refuseCreateFlowLaunch(msg.Create, fmt.Sprintf("Flow ID allocation returned invalid ID %q", msg.FlowID))
 	}
 	if m.flowLaunchRuntimeOccupied(msg.FlowID) {
-		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.refuseCreateFlowLaunch(msg.Create, noLaunchableFlowPhaseStatus)
 	}
 	attempt := flowLaunchAttempt{
 		Token: msg.Token, Kind: flowLaunchKindCreatePhase, FlowID: msg.FlowID,
@@ -349,7 +423,7 @@ func (m Model) handleCreateFlowAllocated(msg flowLaunchEventMsg) (Model, tea.Cmd
 	}
 	next, ok := m.reserveFlowLaunchAttempt(attempt, flowLaunchStateCreateSessionReading)
 	if !ok {
-		return m.clearFlowLaunchCreatePresentation(msg.Create).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.refuseCreateFlowLaunch(msg.Create, noLaunchableFlowPhaseStatus)
 	}
 	return next, createFlowLaunchSessionsCmd(next.launchSeams, attempt)
 }
@@ -412,7 +486,7 @@ func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, 
 		}
 		opts := flowstore.CreateOptions{Headless: req.Headless, PhaseAgent: phaseAgentSettingsForRequest(req)}
 		var err error
-		if attempt.Origin == flowLaunchOriginReadyBead {
+		if createOriginPreparesFlow(attempt.Origin) {
 			if seams.CreatePreparation == nil {
 				event.Err = "Flow launch lifecycle is missing exact-ID preparation"
 				return event
@@ -428,6 +502,8 @@ func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, 
 		event.Record = record
 		if err != nil {
 			event.Err = err.Error()
+			event.BeadFlowConflict, _ = flowstore.ActiveBeadFlow(err)
+			event.BeadFlowRefused = flowstore.IsBeadFlowRefusal(err)
 		}
 		return event
 	}
@@ -589,8 +665,33 @@ func createFlowLaunchBootstrapCmd(seams flowLaunchSeams, attempt flowLaunchAttem
 			return event
 		}
 		event.Record = fresh
+		if attempt.Origin == flowLaunchOriginEpicProgression {
+			// Reconciliation runs here and nowhere earlier: the store accepts a
+			// successor only once its preparation receipt exists, which the
+			// finalizer above just stamped, and only while it is still pending,
+			// which AddPhaseLaunchID below is about to end. The pipeline holds
+			// this Flow's launch/close reservation across both, so the
+			// classification and the phase it authorizes cannot be interleaved.
+			event.Successor, event.SuccessorErr = reconcileCreatedEpicSuccessor(seams, attempt)
+		}
 		return event
 	}
+}
+
+func reconcileCreatedEpicSuccessor(seams flowLaunchSeams, attempt flowLaunchAttempt) (flowstore.EpicProgressionSuccessorResult, string) {
+	if seams.ReconcileEpicSuccessor == nil {
+		return flowstore.EpicProgressionSuccessorResult{}, "Flow launch lifecycle is missing epic successor reconciliation"
+	}
+	create := attempt.Create
+	result, err := seams.ReconcileEpicSuccessor(flowstore.EpicProgressionSuccessorUpdate{
+		FlowID: attempt.FlowID,
+		Key:    flowstore.EpicProgressionKey{RepoPath: create.RepoPath, EpicID: create.Bead.EpicID},
+		Bead:   create.Bead,
+	})
+	if err != nil {
+		return result, err.Error()
+	}
+	return result, ""
 }
 
 func createFlowLaunchIDCmd(seams flowLaunchSeams, prior flowLaunchEventMsg) tea.Cmd {
@@ -734,23 +835,35 @@ func (m Model) finishCreateBeforeWrite(attempt flowLaunchAttempt, errText string
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	current := m.createFlowLaunchOriginCurrent(attempt.Create)
 	m = m.clearFlowLaunchCreatePresentation(attempt.Create)
-	if current {
-		m = m.setStatus(statusOther, errText)
+	if !current {
+		return m, nil
 	}
-	return m, nil
+	if strings.TrimSpace(errText) == "" {
+		// An empty cause is the cancellation path, not a failure: the request
+		// was superseded, and a superseded advance simply refires.
+		return m, nil
+	}
+	m = m.setStatus(statusOther, errText)
+	return m.failEpicProgressionCreate(attempt.Create, "", errText)
 }
 
 func (m Model) finishCreateAfterWrite(attempt flowLaunchAttempt, errText string) (Model, tea.Cmd) {
 	m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	present := m.createFlowLaunchOriginCurrent(attempt.Create)
 	m = m.clearFlowLaunchCreatePresentation(attempt.Create)
-	if present {
+	if !present {
+		return m, nil
+	}
+	var haltCmd tea.Cmd
+	if strings.TrimSpace(errText) != "" {
 		m = m.setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText)
+		m, haltCmd = m.failEpicProgressionCreate(attempt.Create, attempt.FlowID, errText)
 	}
-	if present && m.flowRefreshSurfaceVisible() {
-		return m.startFlowSurfaceFetch()
+	if m.flowRefreshSurfaceVisible() {
+		next, fetchCmd := m.startFlowSurfaceFetch()
+		return next, batchNonNil(haltCmd, fetchCmd)
 	}
-	return m, nil
+	return m, haltCmd
 }
 
 func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
@@ -765,22 +878,22 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		if msg.Err != "" {
 			return m.finishCreateBeforeWrite(attempt, "")
 		}
-		if attempt.Origin == flowLaunchOriginReadyBead {
-			return m.beginReadyPreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
+		if createOriginPreparesFlow(attempt.Origin) {
+			return m.beginCreatePreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
 		}
 		return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
 	case flowLaunchStageCreateReserved:
 		if msg.Err != "" || msg.Record.FlowID != msg.FlowID {
 			releaseFlowLaunchReservation(msg.Release)
 			msg.Release = nil
-			if attempt.Origin == flowLaunchOriginReadyBead {
+			if createOriginPreparesFlow(attempt.Origin) {
 				parts := []string{"creation canceled after repository changed"}
 				if msg.Err != "" {
 					parts = append([]string{"reserve launch: " + msg.Err}, parts...)
 				} else {
 					parts = append([]string{fmt.Sprintf("reserve launch returned flow %q", msg.Record.FlowID)}, parts...)
 				}
-				return m.beginReadyPreparationCompensation(attempt, msg, parts)
+				return m.beginCreatePreparationCompensation(attempt, msg, parts)
 			}
 			return m.finishCreateAfterWrite(attempt, "creation canceled after repository changed")
 		}
@@ -791,12 +904,12 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 		msg.StartupRoots = launchablePhases(msg.Record)
 		attempt.StartupRoots = append([]flowstore.FlowPhase(nil), msg.StartupRoots...)
 		m = m.withFlowLaunchAttempt(attempt)
-		if attempt.Origin == flowLaunchOriginReadyBead {
-			return m.beginReadyPreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
+		if createOriginPreparesFlow(attempt.Origin) {
+			return m.beginCreatePreparationCompensation(attempt, msg, []string{"creation canceled after repository changed"})
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, false, true)
 	case flowLaunchStageCreateWorktree:
-		if attempt.Origin == flowLaunchOriginReadyBead {
+		if createOriginPreparesFlow(attempt.Origin) {
 			parts := []string{"creation canceled after repository changed"}
 			if msg.Err != "" {
 				parts = append([]string{"create worktree: " + msg.Err}, parts...)
@@ -808,7 +921,7 @@ func (m Model) cancelCreateFlowLaunch(attempt flowLaunchAttempt, msg flowLaunchE
 					parts = append(parts, note)
 				}
 			}
-			return m.beginReadyPreparationCompensation(attempt, msg, parts)
+			return m.beginCreatePreparationCompensation(attempt, msg, parts)
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, []string{"creation canceled after repository changed"}, msg.Err == "", true)
 	case flowLaunchStageCreateMetadata:
@@ -858,7 +971,7 @@ func (m Model) beginCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunch
 }
 
 func (m Model) retryCreateFlowRecovery(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd, bool) {
-	if next, cmd, ok := m.retryReadyPreparationCompensation(attempt, msg); ok {
+	if next, cmd, ok := m.retryCreatePreparationCompensation(attempt, msg); ok {
 		return next, cmd, true
 	}
 	return m.retryCreateFlowRootBlocks(attempt, msg)
@@ -878,7 +991,7 @@ func (m Model) retryCreateFlowRootBlocks(attempt flowLaunchAttempt, msg flowLaun
 
 const readyPreparationCompensationAttemptLimit = 3
 
-func (m Model) beginReadyPreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg, parts []string) (Model, tea.Cmd) {
+func (m Model) beginCreatePreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg, parts []string) (Model, tea.Cmd) {
 	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
 	if !ok {
 		releaseFlowLaunchReservation(msg.Release)
@@ -886,10 +999,10 @@ func (m Model) beginReadyPreparationCompensation(attempt flowLaunchAttempt, msg 
 	}
 	msg.RecoveryErrs = append([]string(nil), parts...)
 	msg.CompensationRetryable = false
-	return next, createReadyPreparationCompensationCmd(msg, parts)
+	return next, createPreparationCompensationCmd(msg, parts)
 }
 
-func (m Model) retryReadyPreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd, bool) {
+func (m Model) retryCreatePreparationCompensation(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd, bool) {
 	if !msg.CompensationRetryable || msg.PreparationFinalizer == nil {
 		return m, nil, false
 	}
@@ -897,11 +1010,11 @@ func (m Model) retryReadyPreparationCompensation(attempt flowLaunchAttempt, msg 
 	if len(notes) == 0 {
 		notes = []string{"creation canceled after repository changed"}
 	}
-	next, cmd := m.beginReadyPreparationCompensation(attempt, msg, notes)
+	next, cmd := m.beginCreatePreparationCompensation(attempt, msg, notes)
 	return next, cmd, true
 }
 
-func createReadyPreparationCompensationCmd(prior flowLaunchEventMsg, parts []string) tea.Cmd {
+func createPreparationCompensationCmd(prior flowLaunchEventMsg, parts []string) tea.Cmd {
 	return func() tea.Msg {
 		event := prior
 		event.Stage, event.From = flowLaunchStageCreateRecovered, flowLaunchStateFailurePersisting
@@ -960,7 +1073,7 @@ func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg f
 		parts = append(parts, note)
 	}
 	landed, record, readErr := reconcileCreateStartMetadata(m.launchSeams, attempt, msg)
-	if readErr != nil && attempt.Origin == flowLaunchOriginReadyBead && msg.PreparationFinalizer != nil {
+	if readErr != nil && createOriginPreparesFlow(attempt.Origin) && msg.PreparationFinalizer != nil {
 		for i := 0; i < 2 && readErr != nil; i++ {
 			landed, record, readErr = reconcileCreateStartMetadata(m.launchSeams, attempt, msg)
 		}
@@ -980,8 +1093,8 @@ func (m Model) recoverCreateFlowMetadataFailure(attempt flowLaunchAttempt, msg f
 		}
 		return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
 	}
-	if attempt.Origin == flowLaunchOriginReadyBead && msg.PreparationFinalizer != nil {
-		return m.beginReadyPreparationCompensation(attempt, msg, parts)
+	if createOriginPreparesFlow(attempt.Origin) && msg.PreparationFinalizer != nil {
+		return m.beginCreatePreparationCompensation(attempt, msg, parts)
 	}
 	return m.beginCreateFlowRecovery(attempt, msg, parts, false, true)
 }

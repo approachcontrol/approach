@@ -201,7 +201,6 @@ type Model struct {
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowPreparation    func(string) (flowstore.FlowRecord, func(), error)
-	reserveEpicSuccessor      func(string) (func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -225,17 +224,26 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
-	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
-	leaseInspectInjected      bool
-	tmuxAttachHint            bool
-	startEmbeddedTerminal     EmbeddedTerminalStarter
-	embeddedTerminals         []embeddedTerminalSlot
-	nextEmbeddedTerminalID    int
-	activeTerminalNum         int
-	terminalDockVisible       bool
-	terminalFocus             terminalFocus
-	autoAdvanceDrainFlows     map[string]struct{}
-	epicProgressionBaselines  map[string]flowstore.FlowRecord
+	repoTmuxSessionAttached   func(string) bool
+	insideMultiplexer         func() bool
+	// repoTmuxTerminalPending holds the repos whose first tmux-mode terminal
+	// window has been dispatched but has not reported back. It debounces two
+	// launches into one repo seconds apart, where the second would probe
+	// `list-clients` before the first terminal's client has registered. It is
+	// never the authority — RepoTmuxSessionAttached is — so it needs no expiry
+	// beyond the result message that clears it.
+	repoTmuxTerminalPending  map[string]bool
+	inspectFlowLease         func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected     bool
+	tmuxAttachHint           bool
+	startEmbeddedTerminal    EmbeddedTerminalStarter
+	embeddedTerminals        []embeddedTerminalSlot
+	nextEmbeddedTerminalID   int
+	activeTerminalNum        int
+	terminalDockVisible      bool
+	terminalFocus            terminalFocus
+	autoAdvanceDrainFlows    map[string]struct{}
+	epicProgressionBaselines map[string]flowstore.FlowRecord
 
 	epicProgressionBaselineMinimumRequests map[string]uint64
 
@@ -377,7 +385,6 @@ type Options struct {
 	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
 	ReserveFlowRepairLaunch   func(flowID string) (flowstore.FlowRecord, func(), error)
 	ReserveFlowLaunch         func(flowID string) (flowstore.FlowRecord, func(), error)
-	ReserveEpicSuccessor      func(flowID string) (func(), error)
 	AddFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow                func(flowID string) error
@@ -406,6 +413,13 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
+	// RepoTmuxSessionAttached probes whether a terminal is already watching a
+	// repo's tmux session. It decides whether a tmux-mode launch opens the
+	// repo's first terminal window, and runs only inside a command goroutine.
+	RepoTmuxSessionAttached func(repoPath string) bool
+	// InsideMultiplexer reports whether approach itself runs inside tmux or
+	// Zellij, where tmux mode opens no terminal window of its own.
+	InsideMultiplexer func() bool
 	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
 	// manual admission, and AutoMode. It must never invoke tmux or fork.
 	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
@@ -453,7 +467,6 @@ func New(repos []scanner.Repo) Model {
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
-	customEpicSuccessorPersistence := opts.ReconcileEpicSuccessor != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -762,24 +775,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
-	reserveEpicSuccessor := opts.ReserveEpicSuccessor
-	if reserveEpicSuccessor == nil {
-		if customEpicSuccessorPersistence {
-			// A caller that replaces successor reconciliation owns its storage
-			// boundary; opening the default store here would reserve another backend.
-			reserveEpicSuccessor = func(string) (func(), error) {
-				return func() {}, nil
-			}
-		} else {
-			reserveEpicSuccessor = func(flowID string) (func(), error) {
-				store, err := newFlowStore()
-				if err != nil {
-					return nil, err
-				}
-				return store.ReserveEpicProgressionSuccessor(flowID)
-			}
-		}
-	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
 		// Custom phase persistence may belong to a different backend, so its
@@ -895,6 +890,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	repoTmuxSessionAttached := opts.RepoTmuxSessionAttached
+	if repoTmuxSessionAttached == nil {
+		repoTmuxSessionAttached = actions.RepoTmuxSessionAttached
+	}
+	insideMultiplexer := opts.InsideMultiplexer
+	if insideMultiplexer == nil {
+		insideMultiplexer = actions.InsideMultiplexer
+	}
 	leaseInspectInjected := opts.InspectFlowLease != nil
 	inspectFlowLease := opts.InspectFlowLease
 	if inspectFlowLease == nil {
@@ -985,6 +988,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
 	launchSeams.RunBootstrapHook = runBootstrapHook
 	launchSeams.SetStartMetadata = setFlowStartMetadata
+	launchSeams.ReconcileEpicSuccessor = reconcileEpicSuccessor
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
@@ -1059,7 +1063,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
 		reserveFlowPreparation:    reserveFlowPreparation,
-		reserveEpicSuccessor:      reserveEpicSuccessor,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,
 		deleteFlow:                deleteFlow,
@@ -1083,6 +1086,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		repoTmuxSessionAttached:   repoTmuxSessionAttached,
+		insideMultiplexer:         insideMultiplexer,
 		inspectFlowLease:          inspectFlowLease,
 		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
@@ -2305,6 +2310,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m = m.setStatus(statusOther, msg.Err)
 		}
 		return m, nil
+	case repoTmuxTerminalOpenedMsg:
+		return m.applyRepoTmuxTerminalOpened(msg), nil
 	case EmbeddedTerminalDetachHandoffResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, "Detached embedded terminal, but failed to open terminal: "+msg.Err)

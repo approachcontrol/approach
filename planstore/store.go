@@ -228,6 +228,34 @@ func (s *Store) Save(record PlanRecord) (string, error) {
 	return record.PlanID, nil
 }
 
+// SetStatus updates only a saved plan's lifecycle status.
+func (s *Store) SetStatus(planID, status string) (PlanRecord, error) {
+	if err := validatePlanID(planID); err != nil {
+		return PlanRecord{}, err
+	}
+	if !validStatuses[status] {
+		return PlanRecord{}, fmt.Errorf("invalid plan status %q", status)
+	}
+	release, err := s.acquireMutationLock()
+	if err != nil {
+		return PlanRecord{}, err
+	}
+	defer release()
+	record, ok := s.readRecord(planID)
+	if !ok {
+		return PlanRecord{}, fmt.Errorf("plan %q not found", planID)
+	}
+	if record.Status == status {
+		return record, nil
+	}
+	record.Status = status
+	record.UpdatedAt = s.now()
+	if err := s.write(record); err != nil {
+		return PlanRecord{}, err
+	}
+	return record, nil
+}
+
 // SetPhase creates or updates a single ordered phase on an existing plan. The
 // phase is matched by PhaseID; phases are kept sorted by Order.
 func (s *Store) SetPhase(planID string, phase PlanPhase) error {

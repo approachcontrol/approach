@@ -12,11 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/launchcontrol"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 // runFlow handles `approach flow ...` subcommands. It may load config to resolve
@@ -72,6 +75,7 @@ Commands:
   phase set        Advance a Flow phase with explicit status.
   phase add-child  Add or update an implementation child phase.
   phase agent set  Replace or clear a phase's agent settings stamp.
+  plan save        Save, verify, and link a plan artifact to a Flow.
   plan set         Link a saved plan artifact to a Flow.
   issue set        Record GitHub issue metadata.
   pr set           Record pull request metadata.
@@ -88,6 +92,7 @@ Examples:
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
   approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --agent claude --model claude-opus-5
+  approach flow plan save --flow-id "$FLOW_ID" --title "Ship saved plans" --file ./plan.md
   approach flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
   approach flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
   approach flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
@@ -175,6 +180,7 @@ func runFlowCreate(args []string, deps runDeps) error {
 	commit := flags.String("commit", "", "start commit")
 	presetName := flags.String("preset", "", "flow phase graph preset")
 	stateRoot := flags.String("state-root", "", "artifact state root")
+	prepareWorktree := flags.Bool("prepare-worktree", false, "create and persist a dedicated Flow worktree")
 	asJSON := flags.Bool("json", false, "emit JSON output")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		if help {
@@ -187,6 +193,21 @@ func runFlowCreate(args []string, deps runDeps) error {
 	}
 	if strings.TrimSpace(*title) == "" {
 		return fmt.Errorf("flow create requires --title")
+	}
+	if *prepareWorktree {
+		candidate := strings.TrimSpace(*repoPath)
+		if candidate == "" {
+			cwd, err := deps.getwd()
+			if err != nil {
+				return fmt.Errorf("resolve current directory for flow create: %w", err)
+			}
+			candidate = cwd
+		}
+		resolved, err := actions.MainWorktreePath(candidate)
+		if err != nil {
+			return fmt.Errorf("resolve repository for flow create: %w", err)
+		}
+		*repoPath = resolved
 	}
 	if strings.TrimSpace(*repoPath) == "" {
 		return fmt.Errorf("flow create requires --repo-path")
@@ -211,6 +232,34 @@ func runFlowCreate(args []string, deps runDeps) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
+	if *prepareWorktree {
+		if *worktreePath != "" || *branch != "" || *commit != "" {
+			return fmt.Errorf("flow create --prepare-worktree cannot be combined with --worktree-path, --branch, or --commit")
+		}
+		settings := configuredAgentSettings(cfg)
+		result, err := model.PrepareFlow(model.FlowStartRequest{
+			RepoPath:                 *repoPath,
+			Title:                    *title,
+			Instructions:             body,
+			BaseRef:                  *baseRef,
+			AgentCommand:             settings.Command,
+			Model:                    settings.Model,
+			ReasoningEffort:          settings.ReasoningEffort,
+			AgentPreferences:         agent.Preferences{Command: cfg.Agent.Command, CodexModel: cfg.Agent.CodexModel, ClaudeModel: cfg.Agent.ClaudeModel, CursorModel: cfg.Agent.CursorModel, CodexEffort: cfg.Agent.CodexReasoningEffort, ClaudeEffort: cfg.Agent.ClaudeReasoningEffort},
+			AgentPreferencesProvided: true,
+		}, model.FlowPreparationOptions{
+			Store:                store,
+			Preset:               preset,
+			BootstrapHookForRepo: bootstrapHookResolver(cfg),
+		})
+		if err != nil {
+			if flowID := strings.TrimSpace(result.Flow.FlowID); flowID != "" {
+				return fmt.Errorf("flow %q persisted in %s state but preparation failed: %w", flowID, flowstore.DeriveStatus(result.Flow), err)
+			}
+			return err
+		}
+		return writeFlowJSON(deps.stdout, result.Flow)
+	}
 	record, err := store.CreateWithOptions(flowstore.FlowRecord{
 		Title:        *title,
 		Instructions: body,
@@ -284,10 +333,11 @@ Create a Flow record. JSON output is required in v1.
 Required flags:
   --title TITLE
   --instructions TEXT or --instructions-file PATH
-  --repo-path PATH
   --json
 
 Common flags:
+  --repo-path PATH
+  --prepare-worktree  Create a dedicated Flow worktree; infers repo path from cwd when omitted.
   --worktree-path PATH
   --branch BRANCH
   --base-ref REF
@@ -344,7 +394,7 @@ func runFlowRead(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow read", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowReadHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		if help {
@@ -483,8 +533,8 @@ func runFlowPhaseAgentSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase agent set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPhaseAgentSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	phaseID := flags.String("phase-id", "", "phase id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	phaseID := flags.String("phase-id", deps.getenv("APPROACH_FLOW_PHASE_ID"), "phase id")
 	agentCommand := flags.String("agent", "", "agent command")
 	model := flags.String("model", "", "agent model")
 	effort := flags.String("reasoning-effort", "", "reasoning effort")
@@ -567,8 +617,8 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPhaseSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	phaseID := flags.String("phase-id", "", "phase id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	phaseID := flags.String("phase-id", deps.getenv("APPROACH_FLOW_PHASE_ID"), "phase id")
 	status := flags.String("status", "", "phase status")
 	outcome := flags.String("outcome", "", "phase outcome")
 	summary := flags.String("summary", "", "phase summary")
@@ -628,8 +678,8 @@ func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) e
 	flags := flag.NewFlagSet("flow phase "+spec.command, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { spec.printHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	phaseID := flags.String("phase-id", "", "phase id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	phaseID := flags.String("phase-id", deps.getenv("APPROACH_FLOW_PHASE_ID"), "phase id")
 	outcome := flags.String("outcome", "", "phase outcome")
 	summary := flags.String("summary", "", "phase summary")
 	notes := flags.String("notes", "", "phase notes")
@@ -662,8 +712,8 @@ func runFlowPhaseRestart(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase restart", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPhaseRestartHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	phaseID := flags.String("phase-id", "", "phase id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	phaseID := flags.String("phase-id", deps.getenv("APPROACH_FLOW_PHASE_ID"), "phase id")
 	notes := flags.String("notes", "", "phase notes")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
@@ -690,8 +740,8 @@ func runFlowPhaseReset(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase reset", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPhaseResetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	phaseID := flags.String("phase-id", "", "phase id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	phaseID := flags.String("phase-id", deps.getenv("APPROACH_FLOW_PHASE_ID"), "phase id")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		if help {
@@ -821,8 +871,8 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase add-child", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPhaseAddChildHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	parentPhaseID := flags.String("parent-phase-id", "implementation", "parent phase id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	parentPhaseID := flags.String("parent-phase-id", firstNonEmpty(deps.getenv("APPROACH_FLOW_PHASE_ID"), "implementation"), "parent phase id")
 	phaseID := flags.String("phase-id", "", "child phase id")
 	title := flags.String("title", "", "child phase title")
 	order := flags.Int("order", 0, "child phase order under implementation")
@@ -884,32 +934,167 @@ func runFlowPlan(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow plan set [flags]")
+		return fmt.Errorf("usage: approach flow plan <save|set> [flags]")
 	}
-	if args[0] != "set" {
-		return unknownCommandError(args[0], []string{"set"}, flowPlanHelpText)
+	switch args[0] {
+	case "save":
+		return runFlowPlanSave(args[1:], deps)
+	case "set":
+		return runFlowPlanSet(args[1:], deps)
+	default:
+		return unknownCommandError(args[0], []string{"save", "set"}, flowPlanHelpText)
 	}
-	return runFlowPlanSet(args[1:], deps)
 }
 
 func printFlowPlanHelp(w io.Writer) {
 	io.WriteString(w, flowPlanHelpText)
 }
 
-const flowPlanHelpText = `Usage: approach flow plan set [flags]
+const flowPlanHelpText = `Usage: approach flow plan <save|set> [flags]
 
-Link a saved plan artifact to a Flow.
+Save and link a plan artifact, or link an already-saved plan to a Flow.
 
 Example:
+  approach flow plan save --flow-id "$FLOW_ID" --title "Implementation plan" --file ./plan.md
   approach flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 `
+
+type flowPlanSaveResult struct {
+	FlowID   string `json:"flow_id"`
+	PlanID   string `json:"plan_id"`
+	PlanPath string `json:"plan_path"`
+	Linked   bool   `json:"linked"`
+}
+
+func flowPlanLinkFailure(planID, planPath string, err error) error {
+	return fmt.Errorf("plan %q persisted at %q, but Flow link failed: %w", planID, planPath, err)
+}
+
+func runFlowPlanSave(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow plan save", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPlanSaveHelp(deps.stdout) }
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
+	title := flags.String("title", "", "plan title")
+	status := flags.String("status", "", "plan status")
+	summary := flags.String("summary", "", "plan summary")
+	file := flags.String("file", "", "read markdown from file instead of stdin")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow plan save requires --flow-id")
+	}
+	markdown, err := readPlanInput(*file, deps.stdin)
+	if err != nil {
+		return err
+	}
+	flowStore, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = flowStore.Close() }()
+	flow, err := flowStore.Read(*flowID)
+	if err != nil {
+		return err
+	}
+	if *title == "" {
+		*title = flow.Title
+	}
+	if *planID == "" {
+		*planID = flow.PlanID
+	}
+	planStore, err := newPlanStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	savedID, err := planStore.Save(planstore.PlanRecord{
+		PlanID:       *planID,
+		Title:        *title,
+		Summary:      *summary,
+		Markdown:     markdown,
+		Status:       *status,
+		Provider:     deps.getenv("APPROACH_AGENT"),
+		LaunchID:     deps.getenv("APPROACH_LAUNCH_ID"),
+		RepoPath:     flow.RepoPath,
+		WorktreePath: flow.WorktreePath,
+		Branch:       flow.Branch,
+		Commit:       flow.Commit,
+	})
+	if err != nil {
+		return err
+	}
+	savedMetadata, err := planStore.ReadMetadata(savedID)
+	if err != nil {
+		return err
+	}
+	existingPhases := make(map[string]bool, len(savedMetadata.Phases))
+	for _, phase := range savedMetadata.Phases {
+		existingPhases[artifacts.NormalizePhaseID(phase.PhaseID)] = true
+	}
+	for _, phase := range flow.Phases {
+		if flowstore.SemanticKind(phase) != flowstore.KindImplementation || phase.ParentPhaseID != "" {
+			continue
+		}
+		if existingPhases[artifacts.NormalizePhaseID(phase.PhaseID)] {
+			continue
+		}
+		if err := planStore.SetPhase(savedID, planstore.PlanPhase{
+			PhaseID: phase.PhaseID,
+			Title:   phase.Title,
+			Status:  "pending",
+			Order:   phase.Order,
+		}); err != nil {
+			return err
+		}
+	}
+	root, err := resolvePlanRoot(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	planPath, err := planstore.MarkdownPath(root, savedID)
+	if err != nil {
+		return err
+	}
+	if _, err := planStore.ReadPlan(savedID); err != nil {
+		return err
+	}
+	if _, err := flowStore.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: *flowID, PlanID: savedID, PlanPath: planPath}); err != nil {
+		return flowPlanLinkFailure(savedID, planPath, err)
+	}
+	data, err := json.Marshal(flowPlanSaveResult{FlowID: *flowID, PlanID: savedID, PlanPath: planPath, Linked: true})
+	if err != nil {
+		return fmt.Errorf("encode saved Flow plan: %w", err)
+	}
+	fmt.Fprintln(deps.stdout, string(data))
+	return nil
+}
+
+func printFlowPlanSaveHelp(w io.Writer) {
+	io.WriteString(w, `Usage: approach flow plan save [flags]
+
+Save, verify, and link a plan artifact to a Flow. Flow and plan ids default
+from APPROACH_FLOW_ID and APPROACH_PLAN_ID when launched by Approach.
+
+Common flags:
+  --flow-id FLOW_ID
+  --plan-id PLAN_ID
+  --title TITLE
+  --status STATUS
+  --summary TEXT
+  --file PATH
+  --state-root PATH
+`)
+}
 
 func runFlowPlanSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow plan set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPlanSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	planID := flags.String("plan-id", "", "plan id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
 	planPath := flags.String("plan-path", "", "plan markdown path")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
@@ -989,7 +1174,7 @@ func runFlowIssueSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow issue set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowIssueSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
 	provider := flags.String("provider", "github", "issue provider")
 	number := flags.Int("number", 0, "issue number")
 	issueURL := flags.String("url", "", "issue URL")
@@ -1066,7 +1251,7 @@ func runFlowPRSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow pr set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPRSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
 	provider := flags.String("provider", "github", "PR provider")
 	number := flags.Int("number", 0, "PR number")
 	prURL := flags.String("url", "", "PR URL")
@@ -1162,7 +1347,7 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow merge set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowMergeSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
 	status := flags.String("status", "", "merge status")
 	commit := flags.String("commit", "", "merge commit")
 	mergedAt := flags.String("merged-at", "", "merge timestamp")

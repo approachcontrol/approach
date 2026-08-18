@@ -209,7 +209,7 @@ phases. For uppercase `F`, later reservation, launch-bookkeeping, and
 agent-spawn failures also keep the Flow for recovery and release their
 reservation. A Flow that
 has no worktree at all — one created through `approach flow create` without
-`--worktree-path`, for example — gets one created on its first phase launch
+`--worktree-path` or `--prepare-worktree`, for example — gets one created on its first phase launch
 rather than running the agent in the repository root; when that creation is
 impossible the launch is refused with the reason.
 
@@ -235,20 +235,19 @@ agent process exits, even if the phase is already completed and even across TUI
 restarts. Successor launches and AutoMode defer without polling tmux.
 
 Agents persist plans and Flow progress through the `approach plan` and
-`approach flow` CLIs. The canonical agent instructions are the bundled skills
-at `agent-skills/approach-plan-persist/`, `agent-skills/approach-flow/`, and
-`agent-skills/approach-flow-create/` — install or symlink them into your
-agent's user-level skill directory, such as `~/.codex/skills/` for Codex,
-the equivalent Claude skills directory, or Cursor's skills location. The bundled installer does this for you:
+`approach flow` CLIs. The canonical agent instructions are the unified bundled
+skill at `agent-skills/approach-flow/` — install or symlink it into your agent's
+user-level skill directory, such as `~/.codex/skills/` for Codex,
+the equivalent Claude skills directory, or Cursor's skills location. For
+example, install it in the shared skills directory with:
 
 ```bash
-./agent-skills/install.sh            # symlink into every agent skills dir found
-./agent-skills/install.sh --dry-run  # preview the changes first
+ln -s "$(pwd)/agent-skills/approach-flow" ~/.agents/skills/approach-flow
 ```
 
-Symlinks keep the skills tracking your checkout; pass `--copy` for detached
-copies, or `--target DIR` to choose the destination explicitly. Re-run it after
-moving the repository to repair links that still point at the old path.
+Symlinks keep the skill tracking your checkout; copy the directory instead for
+a detached installation. Reinstall it after moving the repository to repair a
+link that still points at the old path.
 Phase transitions, gating, and merge rules are documented in
 [docs/flow-phases.md](docs/flow-phases.md).
 

@@ -388,6 +388,29 @@ type FlowWorktreeCreateResult struct {
 	Branch       string
 }
 
+// MainWorktreePath resolves the primary worktree for the repository containing
+// path. Git always lists the primary worktree first, including when path is a
+// linked worktree.
+func MainWorktreePath(path string) (string, error) {
+	out, err := exec.Command("git", "-C", path, "worktree", "list", "--porcelain").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("%s: %w", msg, err)
+		}
+		return "", err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if mainPath, ok := strings.CutPrefix(strings.TrimSpace(line), "worktree "); ok {
+			if !filepath.IsAbs(mainPath) {
+				return "", fmt.Errorf("git returned non-absolute main worktree path %q", mainPath)
+			}
+			return filepath.Clean(mainPath), nil
+		}
+	}
+	return "", fmt.Errorf("git worktree list returned no primary worktree")
+}
+
 // CreateFlowWorktree creates a deterministic Flow branch/worktree pair:
 // flow/<slug> at <repo>-worktrees/flow-<slug>. Branch and path suffixes move
 // together on collision so the pair remains easy to recognize.

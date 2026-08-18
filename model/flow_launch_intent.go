@@ -37,6 +37,11 @@ const (
 	flowLaunchOriginInlineWorktreeSession
 	flowLaunchOriginNewFlow
 	flowLaunchOriginReadyBead
+	// flowLaunchOriginEpicProgression is the unattended create-phase origin.
+	// Its submitter is the 1 Hz advance poll rather than a key press, so it is
+	// fenced on the active advance request and its preparation admission
+	// instead of on the displayed repository.
+	flowLaunchOriginEpicProgression
 )
 
 // flowLaunchSavedSessionKey is the exact identity shared by the session store

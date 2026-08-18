@@ -399,6 +399,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	// Adding a new wrapper or source fails even when it declares no intent kind.
 	wiring := flowLaunchFunctionKey{name: "NewWithOptions"}
 	creatorWiring := flowLaunchFunctionKey{name: "newFlowCreator"}
+	preparationAPI := flowLaunchFunctionKey{name: "PrepareFlow"}
 	expectedSinkReferences := map[string]map[flowLaunchFunctionKey]bool{
 		"addFlowPhaseLaunchID":                 {modelFlowLaunchFunction("flowLaunchPreparation"): true, {receiver: "flowLaunchPreparation", name: "prepare"}: true},
 		"reserveFlowLaunch":                    {modelFlowLaunchFunction("reserveFlowSpawn"): true, modelFlowLaunchFunction("reserveTrackedFlowLaunch"): true, modelFlowLaunchFunction("savedSessionFlowLaunchPrepareCmd"): true},
@@ -411,11 +412,11 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 		"defaultEmbeddedTerminalStarter":       {wiring: true},
 		"CreateWithOptions":                    {wiring: true},
 		"CreateFlow":                           {wiring: true, creatorWiring: true, {name: "createFlowLaunchWriteCmd"}: true},
-		"CreatePreparation":                    {wiring: true, creatorWiring: true, {name: "createFlowLaunchWriteCmd"}: true},
-		"ReserveAgentLaunch":                   {wiring: true},
+		"CreatePreparation":                    {wiring: true, creatorWiring: true, preparationAPI: true, {name: "createFlowLaunchWriteCmd"}: true},
+		"ReserveAgentLaunch":                   {wiring: true, preparationAPI: true},
 		"ReserveLaunch":                        {wiring: true, creatorWiring: true, {name: "createFlowLaunchReserveCmd"}: true},
 		"AddPhaseLaunchID":                     {wiring: true, {name: "createFlowLaunchIDCmd"}: true, modelFlowLaunchFunction("flowLaunchLauncher"): true, modelFlowLaunchFunction("phaseResumeFlowLaunchPrepareCmd"): true},
-		"SetStartMetadata":                     {wiring: true, creatorWiring: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
+		"SetStartMetadata":                     {wiring: true, creatorWiring: true, preparationAPI: true, {name: "createFlowLaunchMetadataCmd"}: true, {name: "createFlowLaunchRecoveryCmd"}: true},
 		"openFlowEmbeddedTerminal":             {},
 		"openFlowEmbeddedTerminalReserved":     {modelFlowLaunchFunction("openFlowEmbeddedTerminal"): true, modelFlowLaunchFunction("installFlowLaunchEmbedded"): true},
 		"runAgentLaunchWithStatus":             {modelFlowLaunchFunction("launchAgentInRepoTmuxSession"): true, modelFlowLaunchFunction("launchAgentWithContextStatus"): true, modelFlowLaunchFunction("runAgentLaunchWithReservation"): true},
@@ -468,6 +469,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	}{
 		{name: "createFlowAndLaunchPlanForRepo", origin: "flowLaunchOriginNewFlow"},
 		{name: "requestReadyBeadFlowLaunch", origin: "flowLaunchOriginReadyBead"},
+		{name: "requestEpicProgressionChildLaunch", origin: "flowLaunchOriginEpicProgression"},
 	}
 	for _, source := range createSources {
 		sourceKey := modelFlowLaunchFunction(source.name)
