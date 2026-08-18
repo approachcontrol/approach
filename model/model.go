@@ -163,6 +163,7 @@ type Model struct {
 	agentCommand              string
 	codexModel                string
 	claudeModel               string
+	cursorModel               string
 	codexReasoningEffort      string
 	claudeReasoningEffort     string
 	planPromptTemplate        string
@@ -320,6 +321,7 @@ type Options struct {
 	AgentCommand              string
 	CodexModel                string
 	ClaudeModel               string
+	CursorModel               string
 	CodexReasoningEffort      string
 	ClaudeReasoningEffort     string
 	PlanPromptTemplate        string
@@ -970,6 +972,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		agentCommand:          agent.NormalizeStored(opts.AgentCommand),
 		codexModel:            agent.NormalizeModel(opts.CodexModel),
 		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
+		cursorModel:           agent.NormalizeModel(opts.CursorModel),
 		codexReasoningEffort:  agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
 		claudeReasoningEffort: agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
 		planPromptTemplate:    opts.PlanPromptTemplate,
@@ -1245,6 +1248,8 @@ func (m Model) ModelFor(command string) string {
 		return m.codexModel
 	case agent.CommandClaude:
 		return m.claudeModel
+	case agent.CommandCursor:
+		return m.cursorModel
 	default:
 		return ""
 	}
@@ -1263,6 +1268,7 @@ func (m Model) agentPreferences() agent.Preferences {
 		Command:      m.agentCommand,
 		CodexModel:   m.codexModel,
 		ClaudeModel:  m.claudeModel,
+		CursorModel:  m.cursorModel,
 		CodexEffort:  m.codexReasoningEffort,
 		ClaudeEffort: m.claudeReasoningEffort,
 	}
@@ -1284,6 +1290,8 @@ func (m Model) flowModelLabel() string {
 		return modelDisplay(settings.Model)
 	case agent.CommandClaude:
 		return strings.TrimPrefix(modelDisplay(settings.Model), "claude-")
+	case agent.CommandCursor:
+		return modelDisplay(settings.Model)
 	default:
 		return ""
 	}
@@ -1309,7 +1317,7 @@ func (m Model) flowAgentShortcutLabel() string {
 		return "invalid settings"
 	}
 	switch command := settings.Command; command {
-	case agent.CommandCodex, agent.CommandClaude:
+	case agent.CommandCodex, agent.CommandClaude, agent.CommandCursor:
 		return command
 	default:
 		return "choose agent"
@@ -1360,6 +1368,8 @@ func (m Model) withModel(command, model string) Model {
 		m.codexModel = model
 	case agent.CommandClaude:
 		m.claudeModel = model
+	case agent.CommandCursor:
+		m.cursorModel = model
 	}
 	return m
 }

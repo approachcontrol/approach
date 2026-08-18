@@ -1953,7 +1953,8 @@ func TestOpenVSCode_RunsWithoutPanic(t *testing.T) {
 }
 
 func TestAgentCommand_BuildsSupportedCommands(t *testing.T) {
-	for _, command := range []string{"codex", "claude"} {
+	t.Setenv("HOME", t.TempDir())
+	for _, command := range []string{"codex", "claude", "cursor-agent"} {
 		t.Run(command, func(t *testing.T) {
 			cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 				Command:      command,
@@ -2132,6 +2133,126 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 	}
 }
 
+func TestAgentCommandBuildsHeadlessCursorPrintCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "cursor-agent",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "flow/add-flow-mode",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/approach/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		Headless:         true,
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	want := []string{"cursor-agent", "-p", "--force", "--trust", "--output-format", "stream-json", "--stream-partial-output", "Implement this phase."}
+	if !slices.Equal(cmd.Args, want) {
+		t.Fatalf("headless cursor-agent args = %#v, want %#v", cmd.Args, want)
+	}
+	env := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"APPROACH_AGENT":              "cursor-agent",
+		"APPROACH_FLOW_ID":            "flow-1",
+		"APPROACH_FLOW_PHASE_ID":      "implementation",
+		"APPROACH_FLOW_STATE_ROOT":    "/state/approach/sessions/v1",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_COMMIT":             "abcdef",
+		"APPROACH_SESSION_STATE_ROOT": "/state/approach/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
+		}
+	}
+}
+
+func TestAgentCommandBuildsEmbeddedInteractiveCursorCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:           "cursor-agent",
+		LaunchID:          "launch-1",
+		RepoPath:          "/repo",
+		WorktreePath:      "/repo/worktree",
+		SessionStateRoot:  "/state/approach/sessions/v1",
+		FlowID:            "flow-1",
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		Embedded:          true,
+		InitialPrompt:     "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	if !slices.Equal(cmd.Args, []string{"cursor-agent"}) {
+		t.Fatalf("embedded interactive cursor-agent args = %#v, want [cursor-agent]", cmd.Args)
+	}
+}
+
+func TestAgentCommandCursorAddsModelArg(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:       "cursor-agent",
+		WorktreePath:  "/repo/worktree",
+		Embedded:      true,
+		Headless:      true,
+		Model:         "composer-2.5",
+		InitialPrompt: "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	want := []string{"cursor-agent", "--model", "composer-2.5", "-p", "--force", "--trust", "--output-format", "stream-json", "--stream-partial-output", "Implement this phase."}
+	if !slices.Equal(cmd.Args, want) {
+		t.Fatalf("cursor-agent model args = %#v, want %#v", cmd.Args, want)
+	}
+}
+
+func TestAgentCommandCursorOmitsDefaultModelAndEffort(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:         "cursor-agent",
+		WorktreePath:    "/repo/worktree",
+		Embedded:        true,
+		Headless:        true,
+		Model:           "default",
+		ReasoningEffort: "default",
+		InitialPrompt:   "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	joined := strings.Join(cmd.Args, "\x00")
+	if strings.Contains(joined, "--model") || strings.Contains(joined, "--effort") {
+		t.Fatalf("default cursor-agent launch should omit model and effort flags, got %#v", cmd.Args)
+	}
+}
+
+func TestAgentCommandBuildsCursorResumeCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:         "cursor-agent",
+		LaunchID:        "launch-1",
+		WorktreePath:    "/repo/worktree",
+		ResumeSessionID: "chat-123",
+		Embedded:        true,
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	want := []string{"cursor-agent", "--resume", "chat-123"}
+	if !slices.Equal(cmd.Args, want) {
+		t.Fatalf("cursor-agent resume args = %#v, want %#v", cmd.Args, want)
+	}
+}
+
 func TestUsesStreamJSONOutput(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2158,6 +2279,16 @@ func TestUsesStreamJSONOutput(t *testing.T) {
 			ctx:  actions.AgentLaunchContext{Command: "claude", Embedded: false, Headless: true},
 			want: false,
 		},
+		{
+			name: "embedded headless cursor-agent renders stream-json",
+			ctx:  actions.AgentLaunchContext{Command: "cursor-agent", Embedded: true, Headless: true},
+			want: true,
+		},
+		{
+			name: "interactive cursor-agent does not",
+			ctx:  actions.AgentLaunchContext{Command: "cursor-agent", Embedded: true, Headless: false},
+			want: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2172,7 +2303,8 @@ func TestStreamJSONArgsMatchPredicate(t *testing.T) {
 	// The renderer is attached iff UsesStreamJSONOutput is true, so the launch
 	// args must carry stream-json under exactly the same condition. A mismatch
 	// would dump raw JSON into the panel (or render plain text as events).
-	for _, command := range []string{"claude", "codex"} {
+	t.Setenv("HOME", t.TempDir())
+	for _, command := range []string{"claude", "codex", "cursor-agent"} {
 		for _, embedded := range []bool{true, false} {
 			for _, headless := range []bool{true, false} {
 				for _, resume := range []string{"", "sess-1"} {
@@ -3165,7 +3297,7 @@ func TestAgentCommand_RejectsMissingOrUnsupportedCommand(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected AgentCommand error")
 			}
-			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex or claude` {
+			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex, claude, or cursor-agent` {
 				t.Fatalf("AgentCommand error = %q", err)
 			}
 		})
@@ -3203,7 +3335,7 @@ func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected AgentLaunch error")
 			}
-			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex or claude` {
+			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex, claude, or cursor-agent` {
 				t.Fatalf("AgentLaunch error = %q", err)
 			}
 		})
@@ -3221,7 +3353,7 @@ func TestAgentLaunchResumeRejectsMissingOrUnsupportedCommand(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected AgentLaunch resume error")
 			}
-			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex or claude` {
+			if command == "codex-app" && err.Error() != `unsupported agent "codex-app"; choose codex, claude, or cursor-agent` {
 				t.Fatalf("AgentLaunch resume error = %q", err)
 			}
 		})

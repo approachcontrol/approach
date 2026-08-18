@@ -64,7 +64,7 @@ func tmuxRouteEligible(ctx actions.AgentLaunchContext) bool {
 		return false
 	}
 	switch agent.Normalize(ctx.Command) {
-	case agent.CommandCodex, agent.CommandClaude:
+	case agent.CommandCodex, agent.CommandClaude, agent.CommandCursor:
 		return true
 	default:
 		return false

@@ -15,7 +15,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/claudestream"
+	"github.com/approachcontrol/approach/cursorstream"
 	"github.com/approachcontrol/approach/embeddedterm"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
@@ -196,7 +198,7 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 	// translated. Run it directly (not via the tmux transport) so its output
 	// can be piped through the renderer before it reaches the emulator.
 	if actions.UsesStreamJSONOutput(ctx) {
-		return startStreamJSONClaudeTerminal(ctx, width, height)
+		return startStreamJSONTerminal(ctx, width, height)
 	}
 	tmuxSpec, err := actions.EmbeddedTmuxAgentCommand(ctx)
 	if err == nil {
@@ -220,14 +222,21 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 	return realEmbeddedTerminal{term: term}, nil
 }
 
-func startStreamJSONClaudeTerminal(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
+func startStreamJSONTerminal(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
 	cmd, err := actions.AgentCommand(ctx)
 	if err != nil {
 		return nil, err
 	}
+	var transform embeddedterm.OutputTransform
+	switch agent.Normalize(ctx.Command) {
+	case agent.CommandCursor:
+		transform = cursorstream.NewRenderer()
+	default:
+		transform = claudestream.NewRenderer()
+	}
 	term, err := embeddedterm.NewManager().StartCommandWithOptions(
 		context.Background(), cmd, width, height,
-		embeddedterm.StartOptions{Transform: claudestream.NewRenderer()},
+		embeddedterm.StartOptions{Transform: transform},
 	)
 	if err != nil {
 		return nil, err

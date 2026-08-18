@@ -867,7 +867,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		if msg.Kind == flowLaunchKindWorktreeAgent {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
 			command = agent.Normalize(command)
-			if command != attempt.Settings.Command || (command != agent.CommandCodex && command != agent.CommandClaude) {
+			if command != attempt.Settings.Command || !agent.Supported(command) {
 				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, flowWorktreeAgentChangedStatus), nil
 			}
 			settings.Command = command
@@ -903,7 +903,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		if msg.Kind == flowLaunchKindWorktreeAgent {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
 			command = agent.Normalize(command)
-			if command != attempt.Settings.Command || (command != agent.CommandCodex && command != agent.CommandClaude) {
+			if command != attempt.Settings.Command || !agent.Supported(command) {
 				releaseFlowLaunchReservation(msg.Release)
 				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
 					setStatus(statusOther, flowWorktreeAgentChangedStatus), nil

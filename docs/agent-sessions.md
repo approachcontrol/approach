@@ -33,12 +33,13 @@ their ordering and exact-Flow occupancy.
 
 ## Manual Hook Setup
 
-For agent sessions that are not launched by Approach, configure Claude Code or
-Codex hooks to call Approach:
+For agent sessions that are not launched by Approach, configure Claude Code,
+Codex, or Cursor CLI hooks to call Approach:
 
 ```bash
 approach session-hook --provider claude
 approach session-hook --provider codex
+approach session-hook --provider cursor-agent
 ```
 
 For local testing, use `--state-root /tmp/approach-sessions-test`.
@@ -84,6 +85,12 @@ Codex hook example:
   }
 }
 ```
+
+Cursor CLI has no per-launch hook flag. Approach-launched `cursor-agent`
+sessions merge a managed `stop` hook into `~/.cursor/hooks.json` (preserving
+other user hooks). The hook no-ops unless `APPROACH_LAUNCH_ID` is set, then
+runs `session-hook --provider cursor-agent`. Cursor `stop` payloads use
+`conversation_id` as the session ID and record the session as ended.
 
 For Codex hook payloads with `hook_event_name = "Stop"`, Approach records the
 session as ended. Claude hook ingestion also records ended sessions, using the
@@ -131,16 +138,20 @@ saved plans remain ordinary restrictive files.
 Hook transcript paths must resolve to regular files inside the provider-owned
 transcript root. Codex uses `$CODEX_HOME/sessions` (default
 `$HOME/.codex/sessions`); Claude uses `$CLAUDE_CONFIG_DIR/projects` (default
-`$HOME/.claude/projects`). Set those existing provider environment variables
-when the provider itself uses a custom home or config directory. Relative
+`$HOME/.claude/projects`); Cursor CLI uses `$HOME/.cursor/chats`. Set those
+existing provider environment variables when the provider itself uses a custom
+home or config directory. Relative
 paths, paths outside the expected root, and symlink escapes are rejected
-before Approach creates session artifacts.
+before Approach creates session artifacts. Cursor transcripts are opaque
+SQLite stores, so Approach records the validated path and does not normalize
+them into JSONL.
 
 ## Resume Semantics
 
 Resume uses the stored provider session ID: Codex resumes with
-`codex ... resume <session-id>` and Claude Code with
-`claude ... --resume <session-id>`, preserving the same hook and metadata
+`codex ... resume <session-id>`, Claude Code with
+`claude ... --resume <session-id>`, and Cursor CLI with
+`cursor-agent --resume <session-id>`, preserving the same hook and metadata
 wiring as fresh launches. Initially non-Flow resume session IDs retain their
 existing behavior: they are trimmed and whitespace-only IDs are rejected, so a
 resume command never carries a blank ID. Approach runs the

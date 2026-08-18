@@ -1002,6 +1002,9 @@ func providerTranscriptPath(t *testing.T, provider sessions.Provider, name strin
 	case sessions.ProviderClaude:
 		t.Setenv("CLAUDE_CONFIG_DIR", base)
 		root = filepath.Join(base, "projects")
+	case sessions.ProviderCursor:
+		t.Setenv("HOME", base)
+		root = filepath.Join(base, ".cursor", "chats")
 	default:
 		t.Fatalf("unsupported test provider %q", provider)
 	}

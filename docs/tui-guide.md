@@ -63,7 +63,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `↑`/`k` | Select previous repo |
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
-| `A` | Choose and persist the coding agent from a picker (`codex` or `claude`) |
+| `A` | Choose and persist the coding agent from a picker (`codex`, `claude`, or `cursor-agent`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -99,7 +99,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (eligible Flow rows) |
 | `U` | Launch an agent in the selected Flow's worktree with the `[flow_prompts].autofix` prompt (default `autofix pr #<num>`), wherever `m` (mark merged) is offered and the Flow has a worktree |
-| `A` | Choose and persist the global coding agent (`codex` or `claude`), or edit the selected expanded Flow phase's agent stamp |
+| `A` | Choose and persist the global coding agent (`codex`, `claude`, or `cursor-agent`), or edit the selected expanded Flow phase's agent stamp |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, toggle auto mode for the selected Flow, or toggle persisted auto-progression for a selected epic when `a: auto on/off` is shown |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR from any Flow surface when PR metadata exists |
@@ -228,7 +228,7 @@ indicators, and the worktree path:
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `A` to choose `codex` or `claude` from a picker; Approach
+Press `A` to choose `codex`, `claude`, or `cursor-agent` from a picker; Approach
 persists the choice to config. Press `a` to launch the selected agent in the
 current non-stale worktree, or `N` to create a worktree and launch the agent
 there immediately. Press `n` to create a worktree without launching an agent.
@@ -331,7 +331,7 @@ working directory are covered in `docs/agent-sessions.md`.
 
 ## Embedded Terminals
 
-Resuming a CLI `codex` or `claude` session, launching a CLI Flow phase, or
+Resuming a CLI `codex`, `claude`, or `cursor-agent` session, launching a CLI Flow phase, or
 repairing a stalled Flow opens
 a runtime-only terminal in one shared full-width dock — a top-level pane below
 the repo, content, and shortcut panes, directly above the status bar.
@@ -893,7 +893,7 @@ On a Flow row or an expanded phase row:
   Flow, and while a live session is attached to the phase being launched.
   Dismiss or detach the Flow's terminal before launching its next phase. Both
   `g` bindings (flows view and Active Flows) behave identically.
-- `s` starts the configured `codex` or `claude` CLI in the selected Flow's
+- `s` starts the configured `codex`, `claude`, or `cursor-agent` CLI in the selected Flow's
   exact existing worktree from either Flow surface. The key submits only a
   `worktreeAgent` intent with the trimmed exact Flow ID. The lifecycle reads
   that exact Flow and its exact-Flow sessions, then repeats those reads and the
@@ -1079,7 +1079,7 @@ reason `R` exists. This is the one repair refusal the footer cannot anticipate:
 it is decided against the session store during the authoritative read, so `R`
 stays advertised and the press reports the refusal.
 
-Repair is an embedded CLI operation and accepts only effective `codex` or `claude`.
+Repair is an embedded CLI operation and accepts only effective `codex`, `claude`, or `cursor-agent`.
 An unset or unsupported effective agent produces guidance instead of launching
 an agent or changing Flow state. A phase-scoped
 obstruction uses that phase's effective agent/model/effort; a graph-wide
@@ -1232,10 +1232,10 @@ outcome and receives its normal one-shot handoff.
 ### Headless mode, model, and effort
 
 Each Flow persists its own headless preference, which defaults on. Selected CLI
-`codex` and `claude` phase launches run in the shared runtime-only embedded
+`codex`, `claude`, and `cursor-agent` phase launches run in the shared runtime-only embedded
 terminal dock. Press `h` on a Flow or one of its expanded phase rows to choose
-that Flow's manual CLI command mode: headless runs `codex exec` or
-`claude --print`, while headless off runs interactive `codex` or `claude` in
+that Flow's manual CLI command mode: headless runs `codex exec`,
+`claude --print`, or `cursor-agent -p`, while headless off runs interactive `codex`, `claude`, or `cursor-agent` in
 the same dock. Headless-off launches prefill the phase prompt without
 submitting it, then focus the terminal in input mode so
 you can review or edit it before pressing enter. Headless launches keep focus

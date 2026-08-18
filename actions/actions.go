@@ -1277,10 +1277,11 @@ exit "$tmux_status"
 
 // UsesStreamJSONOutput reports whether an embedded launch emits claude
 // stream-json that approach must render into readable terminal lines. Headless
-// claude is the only mode that streams stream-json; codex and interactive
-// claude render their own output directly.
+// Claude and Cursor print modes stream stream-json; codex and interactive
+// launches render their own output directly.
 func UsesStreamJSONOutput(ctx AgentLaunchContext) bool {
-	return agent.Normalize(ctx.Command) == agent.CommandClaude && ctx.Embedded && ctx.Headless
+	command := agent.Normalize(ctx.Command)
+	return (command == agent.CommandClaude || command == agent.CommandCursor) && ctx.Embedded && ctx.Headless
 }
 
 func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
@@ -1294,7 +1295,7 @@ func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
 	// inference about it.
 	untrackedFlowAgent := ctx.FlowAgent && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked && !ctx.FlowRepair
 	untrackedFlowAutofix := ctx.FlowAutofix && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked && !ctx.FlowRepair
-	return (command == agent.CommandCodex || command == agent.CommandClaude) &&
+	return (command == agent.CommandCodex || command == agent.CommandClaude || command == agent.CommandCursor) &&
 		ctx.Embedded &&
 		!ctx.Headless &&
 		ctx.ResumeSessionID == "" &&
@@ -1307,6 +1308,11 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
 		return nil, nil, err
+	}
+	if command == agent.CommandCursor {
+		if err := ensureCursorSessionHook(os.Getenv("HOME")); err != nil {
+			return nil, nil, err
+		}
 	}
 	resumeSessionID, err := resumeSessionIDForContext(ctx)
 	if err != nil {
@@ -1523,6 +1529,27 @@ func agentLaunchArgs(command, resumeSessionID string, headless bool, model strin
 			// context, so these args appear iff the renderer is attached.
 			if opts.streamJSON {
 				args = append(args, "--verbose", "--output-format", "stream-json", "--include-partial-messages")
+			}
+		}
+		if resumeSessionID != "" {
+			args = append(args, "--resume", resumeSessionID)
+		}
+		return args
+	case agent.CommandCursor:
+		var args []string
+		if model != "" && model != agent.ModelDefault {
+			args = append(args, "--model", model)
+		}
+		if headless {
+			args = append(args, "-p", "--force", "--trust")
+			// cursor-agent --print text format waits for the final answer, so
+			// an embedded headless launch would show a blank panel for the
+			// whole run. Stream stream-json with partial deltas so approach
+			// can render readable progress as events arrive. opts.streamJSON
+			// is UsesStreamJSONOutput for this context, so these args appear
+			// iff the renderer is attached.
+			if opts.streamJSON {
+				args = append(args, "--output-format", "stream-json", "--stream-partial-output")
 			}
 		}
 		if resumeSessionID != "" {

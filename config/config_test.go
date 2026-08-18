@@ -128,6 +128,7 @@ command = "codex"
 plan_prompt = "Implement {title} from {plan_path}"
 codex_model = " GPT-5.5 "
 claude_model = "claude-fable-5"
+cursor_model = " Composer-2.5 "
 codex_reasoning_effort = " HIGH "
 claude_reasoning_effort = "max"
 
@@ -209,6 +210,9 @@ timeout_seconds = 300
 	}
 	if cfg.Agent.ClaudeModel != "claude-fable-5" {
 		t.Fatalf("expected claude model claude-fable-5, got %q", cfg.Agent.ClaudeModel)
+	}
+	if cfg.Agent.CursorModel != "composer-2.5" {
+		t.Fatalf("expected normalized cursor model composer-2.5, got %q", cfg.Agent.CursorModel)
 	}
 	if cfg.Agent.CodexReasoningEffort != "high" {
 		t.Fatalf("expected normalized codex reasoning effort high, got %q", cfg.Agent.CodexReasoningEffort)
@@ -626,6 +630,11 @@ func TestLoadFrom_RejectsInvalidModels(t *testing.T) {
 			body: "[agent]\nclaude_model = \"turbo\"\n",
 			want: "unsupported model",
 		},
+		{
+			name: "cursor unknown",
+			body: "[agent]\ncursor_model = \"turbo\"\n",
+			want: "unsupported model",
+		},
 	}
 
 	for _, tt := range tests {
@@ -670,7 +679,7 @@ func TestSaveAgentCommand_RejectsCodexAppWithoutWriting(t *testing.T) {
 				}),
 				config.WithHomeDir(func() (string, error) { return t.TempDir(), nil }),
 			)
-			want := `unsupported agent "codex-app"; choose codex or claude`
+			want := `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`
 			if err == nil || err.Error() != want {
 				t.Fatalf("SaveAgentCommand() error = %v, want %q", err, want)
 			}
@@ -986,6 +995,41 @@ func TestSaveAgentModel_RejectsUnsupportedModel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported model") {
 		t.Fatalf("expected unsupported model error, got %q", err.Error())
+	}
+}
+
+func TestSaveAgentModel_PersistsCursorModel(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveAgentModel("cursor-agent", "composer-2.5",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentModel returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "approach", "config.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `cursor_model = "composer-2.5"`) {
+		t.Fatalf("expected cursor model in saved config, got:\n%s", raw)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.CursorModel != "composer-2.5" {
+		t.Fatalf("expected saved cursor model composer-2.5, got %q", cfg.Agent.CursorModel)
 	}
 }
 

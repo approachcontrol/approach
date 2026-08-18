@@ -411,10 +411,10 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			return event
 		}
 		switch resolved.Command {
-		case agent.CommandCodex, agent.CommandClaude:
+		case agent.CommandCodex, agent.CommandClaude, agent.CommandCursor:
 			// Embedded repair providers.
 		default:
-			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", resolved.Command)
+			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex, claude, or cursor-agent", resolved.Command)
 			return event
 		}
 		ctx := applyLaunchPin(actions.AgentLaunchContext{
@@ -454,10 +454,10 @@ func resolveFlowRepairAgentSettings(record flowstore.FlowRecord, prefs agent.Pre
 func flowRepairAgentSettingsError(record flowstore.FlowRecord, prefs agent.Preferences, err error) string {
 	obstruction, _ := flowRepairObstructionForRecord(record)
 	if agent.Normalize(prefs.Command) == "" && (!obstruction.HasPhase || agent.Normalize(obstruction.Phase.Agent) == "") {
-		return "Press A to choose codex or claude before repairing a Flow"
+		return "Press A to choose codex, claude, or cursor-agent before repairing a Flow"
 	}
 	if !obstruction.HasPhase || obstruction.Phase.AgentSettings().IsZero() {
-		return fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", agent.Normalize(prefs.Command))
+		return fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex, claude, or cursor-agent", agent.Normalize(prefs.Command))
 	}
 	return err.Error()
 }

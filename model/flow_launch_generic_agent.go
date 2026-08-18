@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	flowWorktreeAgentChooseStatus  = "Press A to choose codex or claude before starting a Flow worktree agent"
+	flowWorktreeAgentChooseStatus  = "Press A to choose codex, claude, or cursor-agent before starting a Flow worktree agent"
 	flowWorktreeAgentPathStatus    = "Flow worktree agent requires the Flow's exact existing worktree directory"
 	flowWorktreeAgentPendingStatus = "Another launch or session is already pending for this Flow"
 	flowWorktreeAgentChangedStatus = "Configured agent changed while the Flow worktree launch was pending; try again"
@@ -30,7 +30,7 @@ func (m Model) selectedFlowWorktreeAgentReady() bool {
 		return false
 	}
 	command := agent.Normalize(m.agentCommand)
-	if command != agent.CommandCodex && command != agent.CommandClaude {
+	if !agent.Supported(command) {
 		return false
 	}
 	record, ok := m.selectedFlow()
@@ -88,9 +88,9 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	switch command {
 	case "":
 		return m.setStatus(statusOther, flowWorktreeAgentChooseStatus), nil, false
-	case agent.CommandCodex, agent.CommandClaude:
+	case agent.CommandCodex, agent.CommandClaude, agent.CommandCursor:
 	default:
-		return m.setStatus(statusOther, fmt.Sprintf("Flow worktree agents do not support agent %q; press A to choose codex or claude", command)), nil, false
+		return m.setStatus(statusOther, fmt.Sprintf("Flow worktree agents do not support agent %q; press A to choose codex, claude, or cursor-agent", command)), nil, false
 	}
 	if strings.TrimSpace(record.WorktreePath) == "" {
 		return m.setStatus(statusOther, flowWorktreeAgentPathStatus), nil, false

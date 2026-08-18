@@ -8,7 +8,10 @@ import (
 const (
 	CommandCodex  = "codex"
 	CommandClaude = "claude"
+	CommandCursor = "cursor-agent"
 )
+
+const supportedChoicePhrase = "codex, claude, or cursor-agent"
 
 // legacyCommandCodexApp is the retired macOS deep-link spelling. It is
 // unexported so no other package can branch on it.
@@ -32,6 +35,10 @@ const (
 	ModelClaudeOpus5   = "claude-opus-5"
 	ModelClaudeSonnet5 = "claude-sonnet-5"
 	ModelClaudeFable5  = "claude-fable-5"
+	ModelComposer      = "composer-2.5"
+	ModelGrok46        = "grok-4.6"
+	ModelOpus5         = "opus-5"
+	ModelFable5        = "fable-5"
 )
 
 func Normalize(command string) string {
@@ -52,7 +59,7 @@ func NormalizeStored(command string) string {
 
 func Supported(command string) bool {
 	switch Normalize(command) {
-	case CommandCodex, CommandClaude:
+	case CommandCodex, CommandClaude, CommandCursor:
 		return true
 	default:
 		return false
@@ -64,7 +71,7 @@ func Validate(command string) error {
 		return fmt.Errorf("agent is not set")
 	}
 	if !Supported(command) {
-		return fmt.Errorf("unsupported agent %q; choose codex or claude", command)
+		return fmt.Errorf("unsupported agent %q; choose %s", command, supportedChoicePhrase)
 	}
 	return nil
 }
@@ -83,6 +90,8 @@ func ReasoningEffortChoices(command string) []string {
 		return []string{ReasoningEffortDefault, ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh}
 	case CommandClaude:
 		return []string{ReasoningEffortDefault, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax}
+	case CommandCursor:
+		return []string{ReasoningEffortDefault}
 	default:
 		return nil
 	}
@@ -94,6 +103,8 @@ func ModelChoices(command string) []string {
 		return []string{ModelDefault, ModelGPT55, ModelGPT56Sol}
 	case CommandClaude:
 		return []string{ModelDefault, ModelClaudeOpus48, ModelClaudeOpus5, ModelClaudeSonnet5, ModelClaudeFable5}
+	case CommandCursor:
+		return []string{ModelDefault, ModelComposer, ModelGrok46, ModelOpus5, ModelFable5, ModelGPT56Sol}
 	default:
 		return nil
 	}

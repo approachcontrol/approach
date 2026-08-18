@@ -60,6 +60,9 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	}
 	sessionID := strings.TrimSpace(payload.SessionID)
 	if sessionID == "" {
+		sessionID = strings.TrimSpace(payload.ConversationID)
+	}
+	if sessionID == "" {
 		return SessionRecord{}, fmt.Errorf("%s hook payload has no usable session ID; rejecting session capture", provider)
 	}
 	now := time.Now().UTC()
@@ -75,7 +78,7 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 		TranscriptPath: payload.TranscriptPath,
 		CaptureSource:  "hook",
 	}
-	if record.EndedAt.IsZero() && provider == ProviderClaude {
+	if record.EndedAt.IsZero() && (provider == ProviderClaude || provider == ProviderCursor) {
 		record.EndedAt = now
 	}
 	if record.EndedAt.IsZero() && record.Status == "ended" {
@@ -91,6 +94,9 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 		record.LastSeenAt = now
 	}
 	applyEnvMetadata(&record, opts.Env)
+	if record.TranscriptPath == "" && provider == ProviderCursor && opts.Env != nil {
+		record.TranscriptPath = strings.TrimSpace(opts.Env["CURSOR_TRANSCRIPT_PATH"])
+	}
 	resolveGitMetadata(&record)
 	if record.TranscriptPath != "" {
 		canonical, err := ValidateTranscriptPath(provider, record.TranscriptPath, opts.Env)
@@ -136,6 +142,7 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 
 type hookPayload struct {
 	SessionID      string    `json:"session_id"`
+	ConversationID string    `json:"conversation_id"`
 	CWD            string    `json:"cwd"`
 	Model          string    `json:"model"`
 	Summary        string    `json:"summary"`
@@ -149,7 +156,7 @@ type hookPayload struct {
 }
 
 func statusForPayload(provider Provider, payload hookPayload) string {
-	if provider == ProviderClaude {
+	if provider == ProviderClaude || provider == ProviderCursor {
 		return "ended"
 	}
 	if provider == ProviderCodex && payload.HookEventName == "Stop" {

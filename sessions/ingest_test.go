@@ -471,6 +471,167 @@ func TestIngestHookCreatesEndedClaudeRecordFromSessionEnd(t *testing.T) {
 	}
 }
 
+func TestIngestHookCreatesEndedCursorRecordFromConversationID(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	cwd := filepath.Join(root, "worktree")
+	repoPath := filepath.Join(root, "repo")
+	transcriptRoot := filepath.Join(home, ".cursor", "chats")
+	if err := os.MkdirAll(transcriptRoot, 0o700); err != nil {
+		t.Fatalf("create cursor chats root: %v", err)
+	}
+	transcriptPath := filepath.Join(transcriptRoot, "store.db")
+	if err := os.WriteFile(transcriptPath, []byte("not-jsonl"), 0o600); err != nil {
+		t.Fatalf("write cursor transcript: %v", err)
+	}
+	canonicalTranscriptPath, err := filepath.EvalSymlinks(transcriptPath)
+	if err != nil {
+		t.Fatalf("canonicalize transcript: %v", err)
+	}
+	payload := []byte(`{
+		"conversation_id": "cursor-chat-1",
+		"hook_event_name": "stop",
+		"status": "completed",
+		"model": "composer-2.5",
+		"cwd": ` + quoteJSON(cwd) + `,
+		"transcript_path": ` + quoteJSON(transcriptPath) + `
+	}`)
+
+	record, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader(payload), sessions.IngestOptions{
+		StateRoot: root,
+		Env: map[string]string{
+			"HOME":                   home,
+			"APPROACH_LAUNCH_ID":     "launch-cursor-1",
+			"APPROACH_REPO_PATH":     repoPath,
+			"APPROACH_WORKTREE_PATH": cwd,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.Provider != sessions.ProviderCursor ||
+		record.SessionID != "cursor-chat-1" ||
+		record.LaunchID != "launch-cursor-1" ||
+		record.Status != "ended" ||
+		record.Model != "composer-2.5" ||
+		record.TranscriptPath != canonicalTranscriptPath ||
+		record.CaptureSource != "hook" ||
+		record.EndedAt.IsZero() {
+		t.Fatalf("Cursor record mismatch: %#v", record)
+	}
+	if _, err := os.Stat(filepath.Join(sessionArtifactDir(root, sessions.ProviderCursor, "cursor-chat-1"), "transcript.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("cursor ingest must not normalize opaque store.db transcripts, stat err = %v", err)
+	}
+}
+
+func TestIngestHookCursorUsesEnvTranscriptPath(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	transcriptRoot := filepath.Join(home, ".cursor", "chats")
+	if err := os.MkdirAll(transcriptRoot, 0o700); err != nil {
+		t.Fatalf("create cursor chats root: %v", err)
+	}
+	transcriptPath := filepath.Join(transcriptRoot, "from-env.db")
+	if err := os.WriteFile(transcriptPath, []byte("opaque"), 0o600); err != nil {
+		t.Fatalf("write cursor transcript: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(transcriptPath)
+	if err != nil {
+		t.Fatalf("canonicalize transcript: %v", err)
+	}
+
+	record, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{"conversation_id":"cursor-env-1"}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env: map[string]string{
+			"HOME":                   home,
+			"CURSOR_TRANSCRIPT_PATH": transcriptPath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.TranscriptPath != canonical {
+		t.Fatalf("TranscriptPath = %q, want env path %q", record.TranscriptPath, canonical)
+	}
+}
+
+func TestIngestHookCursorAcceptsProjectTranscriptPath(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	transcriptRoot := filepath.Join(home, ".cursor", "projects", "repo", "agent-transcripts")
+	if err := os.MkdirAll(transcriptRoot, 0o700); err != nil {
+		t.Fatalf("create cursor project transcript root: %v", err)
+	}
+	transcriptPath := filepath.Join(transcriptRoot, "session.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte("opaque"), 0o600); err != nil {
+		t.Fatalf("write cursor project transcript: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(transcriptPath)
+	if err != nil {
+		t.Fatalf("canonicalize transcript: %v", err)
+	}
+
+	record, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{
+		"conversation_id": "cursor-project-1",
+		"transcript_path": `+quoteJSON(transcriptPath)+`
+	}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env:       map[string]string{"HOME": home},
+	})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.TranscriptPath != canonical {
+		t.Fatalf("TranscriptPath = %q, want project path %q", record.TranscriptPath, canonical)
+	}
+}
+
+func TestIngestHookCursorRejectsOutOfRootTranscript(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".cursor", "chats"), 0o700); err != nil {
+		t.Fatalf("create cursor chats root: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.db")
+	if err := os.WriteFile(outside, []byte("opaque"), 0o600); err != nil {
+		t.Fatalf("write outside transcript: %v", err)
+	}
+	_, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{
+		"conversation_id": "cursor-reject-1",
+		"transcript_path": `+quoteJSON(outside)+`
+	}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env:       map[string]string{"HOME": home},
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside expected") {
+		t.Fatalf("IngestHook() error = %v, want out-of-root rejection", err)
+	}
+}
+
+func TestIngestHookCursorRejectsNonTranscriptStateFile(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	cursorRoot := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(filepath.Join(cursorRoot, "chats"), 0o700); err != nil {
+		t.Fatalf("create cursor chats root: %v", err)
+	}
+	hooksPath := filepath.Join(cursorRoot, "hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(`{"version":1}`), 0o600); err != nil {
+		t.Fatalf("write cursor hooks file: %v", err)
+	}
+
+	_, err := sessions.IngestHook(sessions.ProviderCursor, bytes.NewReader([]byte(`{
+		"conversation_id": "cursor-hooks-reject-1",
+		"transcript_path": `+quoteJSON(hooksPath)+`
+	}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env:       map[string]string{"HOME": home},
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside expected") {
+		t.Fatalf("IngestHook() error = %v, want non-transcript Cursor state rejection", err)
+	}
+}
+
 func TestIngestHookPersistsFlowMetadataAndAttachesSession(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -982,6 +1143,9 @@ func providerTranscriptRoot(t *testing.T, provider sessions.Provider) (string, m
 	case sessions.ProviderClaude:
 		env["CLAUDE_CONFIG_DIR"] = providerHome
 		transcriptRoot = filepath.Join(providerHome, "projects")
+	case sessions.ProviderCursor:
+		env["HOME"] = providerHome
+		transcriptRoot = filepath.Join(providerHome, ".cursor", "chats")
 	default:
 		t.Fatalf("unsupported test provider %q", provider)
 	}

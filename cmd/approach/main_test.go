@@ -94,6 +94,7 @@ func TestRun_HelpBypassesConfigAndScan(t *testing.T) {
 		"approach flow --help",
 		"approach serve --help",
 		"approach session-hook --provider codex",
+		"Claude, Codex, or Cursor",
 	})
 }
 
@@ -996,7 +997,7 @@ func TestRunSessionHookHonorsCopyRawTranscriptConfig(t *testing.T) {
 }
 
 func TestRunSessionHookRejectsOutOfRootTranscriptBeforeCreatingArtifacts(t *testing.T) {
-	for _, provider := range []sessions.Provider{sessions.ProviderCodex, sessions.ProviderClaude} {
+	for _, provider := range []sessions.Provider{sessions.ProviderCodex, sessions.ProviderClaude, sessions.ProviderCursor} {
 		t.Run(string(provider), func(t *testing.T) {
 			stateRoot := t.TempDir()
 			providerHome := t.TempDir()
@@ -1010,13 +1011,18 @@ func TestRunSessionHookRejectsOutOfRootTranscriptBeforeCreatingArtifacts(t *test
 					return providerHome
 				case provider == sessions.ProviderClaude && key == "CLAUDE_CONFIG_DIR":
 					return providerHome
+				case provider == sessions.ProviderCursor && key == "HOME":
+					return providerHome
 				default:
 					return ""
 				}
 			}
 			rootName := "sessions"
-			if provider == sessions.ProviderClaude {
+			switch provider {
+			case sessions.ProviderClaude:
 				rootName = "projects"
+			case sessions.ProviderCursor:
+				rootName = filepath.Join(".cursor", "chats")
 			}
 			if err := os.MkdirAll(filepath.Join(providerHome, rootName), 0o700); err != nil {
 				t.Fatalf("create provider root: %v", err)

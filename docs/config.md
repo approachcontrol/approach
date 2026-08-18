@@ -264,14 +264,15 @@ attach key, and the limitations tmux mode's ownership model carries.
 ### `[agent]`
 
 Stores the selected coding agent for interactive launches. Pressing `A` in Approach
-opens an agent picker for `codex` or `claude` and updates this
+opens an agent picker for `codex`, `claude`, or `cursor-agent` and updates this
 value immediately, creating the config file if needed.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | string | Supported values: `codex` or `claude`. |
+| `command` | string | Supported values: `codex`, `claude`, or `cursor-agent`. |
 | `codex_model` | string | Optional Codex CLI model for new launches. Supported values: `default`, `gpt-5.5`, `gpt-5.6-sol`. Empty or `default` omits the Codex override and keeps provider defaults. |
 | `claude_model` | string | Optional Claude Code model for new launches. Supported values: `default`, `claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5`. Empty or `default` omits the Claude override and keeps provider defaults. |
+| `cursor_model` | string | Optional Cursor CLI model for new launches. Supported values: `default`, `composer-2.5`, `grok-4.6`, `opus-5`, `fable-5`, `gpt-5.6-sol`. Empty or `default` omits `--model` so Cursor uses the account CLI default. `composer-2.5` is the current Composer SKU; Cursor has no floating `composer` alias that tracks later Composer releases. |
 | `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `minimal`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
@@ -286,7 +287,8 @@ corresponding key for the selected CLI agent. `E` opens the reasoning-effort
 picker. New Codex CLI launches use
 `--model <model>` and `--config
 model_reasoning_effort=<effort>`; new Claude Code launches use
-`--model <model>` and `--effort <effort>`. Session resumes do not receive model
+`--model <model>` and `--effort <effort>`; new Cursor CLI launches use
+`--model <model>` and have no reasoning-effort flag. Session resumes do not receive model
 or effort flags.
 
 These values are also stamped onto every phase of a Flow when it is created, so

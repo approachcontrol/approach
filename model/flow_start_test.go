@@ -1315,7 +1315,7 @@ func TestFlowCreatorCreateRejectsCodexAppBeforeCreatingFlowOrWorktree(t *testing
 	result, err := creator.Create(FlowStartRequest{
 		RepoPath: "/dev/alpha", Title: "One", Instructions: "Build it", AgentCommand: "codex-app",
 	})
-	want := `unsupported agent "codex-app"; choose codex or claude`
+	want := `unsupported agent "codex-app"; choose codex, claude, or cursor-agent`
 	if err == nil || err.Error() != want {
 		t.Fatalf("Create() = %#v, %v, want error %q", result, err, want)
 	}

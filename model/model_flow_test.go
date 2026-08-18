@@ -5434,7 +5434,7 @@ func TestModel_RRejectsNonEmbeddedProvidersBeforeLaunch(t *testing.T) {
 		want    string
 	}{
 		{name: "missing", command: "", want: "Press A"},
-		{name: "malformed", command: "not a provider", want: "codex or claude"},
+		{name: "malformed", command: "not a provider", want: "codex, claude, or cursor-agent"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			starts := 0

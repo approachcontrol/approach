@@ -434,6 +434,8 @@ func (l flowLaunchPreparation) preferences() agent.Preferences {
 	case agent.CommandClaude:
 		prefs.ClaudeModel = l.Model
 		prefs.ClaudeEffort = l.ReasoningEffort
+	case agent.CommandCursor:
+		prefs.CursorModel = l.Model
 	}
 	return prefs
 }
