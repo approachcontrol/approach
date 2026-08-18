@@ -84,6 +84,16 @@ func ActiveBeadFlow(err error) (FlowRecord, bool) {
 // needs_attention — holds it, because those are the states where a human is
 // meant to intervene on the existing Flow rather than fork a second one.
 //
+// Occupancy is a function of the derived status alone, deliberately including
+// receipt-less preparations: PreparationNonce is never consulted. A prepared
+// Flow holds its slot because seeded phases derive pending, not because it lacks
+// a receipt — and nothing clears the nonce on close, so exempting receipt-less
+// records from the terminal cases would make the documented remedy ("close it
+// from the Flows view with C, then press f/F") leave the Bead occupied forever.
+// Creating a Flow whose supplied phases already derive terminal is not a
+// production path; if it were, releasing the slot is what the terminal rule
+// asks for.
+//
 // DeriveStatus returns exactly eight values, so the switch below is total.
 func BeadFlowSlotOccupied(record FlowRecord) bool {
 	if strings.TrimSpace(record.Bead.ID) == "" {
