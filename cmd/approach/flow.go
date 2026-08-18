@@ -1151,8 +1151,10 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow plan save", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPlanSaveHelp(deps.stdout) }
-	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
-	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
+	launchFlowID := deps.getenv("APPROACH_FLOW_ID")
+	launchPlanID := deps.getenv("APPROACH_PLAN_ID")
+	flowID := flags.String("flow-id", launchFlowID, "flow id")
+	planID := flags.String("plan-id", launchPlanID, "plan id")
 	title := flags.String("title", "", "plan title")
 	status := flags.String("status", "", "plan status")
 	summary := flags.String("summary", "", "plan summary")
@@ -1161,6 +1163,12 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		return err
 	}
+	planIDExplicit := false
+	flags.Visit(func(flag *flag.Flag) {
+		if flag.Name == "plan-id" {
+			planIDExplicit = true
+		}
+	})
 	if *flowID == "" {
 		return fmt.Errorf("flow plan save requires --flow-id")
 	}
@@ -1180,7 +1188,9 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if *title == "" {
 		*title = flow.Title
 	}
-	if *planID == "" {
+	if !planIDExplicit && *flowID != launchFlowID {
+		*planID = flow.PlanID
+	} else if *planID == "" {
 		*planID = flow.PlanID
 	}
 	root, err := resolvePlanRoot(*stateRoot, deps)

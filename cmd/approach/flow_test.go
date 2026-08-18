@@ -1093,6 +1093,56 @@ func TestRunFlowPlanSavePreservesExistingPhaseProgress(t *testing.T) {
 	}
 }
 
+func TestRunFlowPlanSaveExplicitOtherFlowDoesNotInheritLaunchPlanID(t *testing.T) {
+	root := t.TempDir()
+	launchFlow := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Launch", "--instructions", "launch", "--repo-path", filepath.Join(root, "launch"), "--json", "--state-root", root})
+	targetFlow := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Target", "--instructions", "target", "--repo-path", filepath.Join(root, "target"), "--json", "--state-root", root})
+	save := func(flowID, planID, markdown string, deps runDeps) {
+		t.Helper()
+		if err := run([]string{"approach", "flow", "plan", "save", "--flow-id", flowID, "--plan-id", planID, "--title", planID, "--state-root", root}, noScanDeps(t, runDeps{stdin: strings.NewReader(markdown), stdout: &bytes.Buffer{}, getenv: deps.getenv})); err != nil {
+			t.Fatalf("seed flow plan %s: %v", planID, err)
+		}
+	}
+	save(launchFlow.FlowID, "launch-plan", "# Launch\n", runDeps{})
+	save(targetFlow.FlowID, "target-plan", "# Target\n", runDeps{})
+
+	err := run([]string{"approach", "flow", "plan", "save", "--flow-id", targetFlow.FlowID, "--title", "Target revised", "--state-root", root}, noScanDeps(t, runDeps{
+		stdin: strings.NewReader("# Target revised\n"),
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return launchFlow.FlowID
+			case "APPROACH_PLAN_ID":
+				return "launch-plan"
+			default:
+				return ""
+			}
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err != nil {
+		t.Fatalf("cross-Flow plan save: %v", err)
+	}
+
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.ReadPlan("launch-plan"); err != nil || got != "# Launch\n" {
+		t.Fatalf("launch plan = %q, %v; want unchanged", got, err)
+	}
+	if got, err := store.ReadPlan("target-plan"); err != nil || got != "# Target revised\n" {
+		t.Fatalf("target plan = %q, %v; want revised", got, err)
+	}
+	flow, err := mustFlowStore(t, root).Read(targetFlow.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.PlanID != "target-plan" {
+		t.Fatalf("target Flow plan = %q, want target-plan", flow.PlanID)
+	}
+}
+
 func TestFlowPlanPersistenceFailureReportsPersistedPlanForRecovery(t *testing.T) {
 	for _, operation := range []string{"phase seeding", "plan readback", "Flow link"} {
 		err := flowPlanPersistenceFailure("plan-1", "/state/plans/plan-1/plan.md", operation, errors.New("database busy"))

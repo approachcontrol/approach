@@ -8,7 +8,7 @@ the launched phase.
 Read the Flow before doing work:
 
 ```bash
-approach flow read
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read
 ```
 
 Confirm the active phase goal, status, dependencies, Flow instructions,
@@ -17,7 +17,7 @@ repository/worktree metadata, linked plan, and any previous outcome or notes.
 If a plan is linked, read it using the launch default:
 
 ```bash
-approach plan read --json
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan read --json
 ```
 
 ## Execute by semantic phase
@@ -33,10 +33,11 @@ approach plan read --json
 - **Review loop:** run the requested review workflow. Complete only when its
   quality gate passes; use `needs-attention` for actionable revision.
 - **PR creation:** create or update the PR only when authorized, persist it with
-  `approach flow pr set`, then complete the phase.
+  the pinned PR metadata command shown below, then complete the phase.
 - **Autoreview:** persist approved or revision-required outcomes truthfully.
-- **Merge:** merge only when authorized, persist with `approach flow merge set`,
-  and complete only after merge state is verified.
+- **Merge:** merge only when authorized and verify the external result. Then
+  complete or block the Flow phase, persist the matching merge metadata, and
+  read the Flow back. The metadata command requires the phase transition first.
 
 Use the phase's persisted semantic kind rather than assuming its ID is one of
 the default names.
@@ -46,9 +47,9 @@ the default names.
 Commands default both IDs from the launch:
 
 ```bash
-approach flow phase complete --outcome approved --summary "$SUMMARY" --notes "$NOTES"
-approach flow phase needs-attention --outcome changes_requested --notes "$NOTES"
-approach flow phase block --outcome blocked --notes "$NOTES"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase complete --outcome approved --summary "$SUMMARY" --notes "$NOTES"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase needs-attention --outcome changes_requested --notes "$NOTES"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase block --outcome blocked --notes "$NOTES"
 ```
 
 Use `needs-attention` when more agent or user work could resolve the issue. Use
@@ -58,22 +59,28 @@ do not manually mark later phases ready.
 For recovery requested by the user or supported by persisted state:
 
 ```bash
-approach flow phase restart
-approach flow phase reset
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase restart
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase reset
 ```
 
-After any transition, run `approach flow read` and confirm the active phase's
-status and outcome. A command or readback failure is a persistence failure and
-must not be treated as successful phase progression.
+After any transition, rerun the pinned Flow read command shown at the start and
+confirm the active phase's status and outcome. A command or readback failure is
+a persistence failure and must not be treated as successful phase progression.
 
 ## Related metadata
 
 Persist related artifacts when this phase creates or changes them:
 
 ```bash
-approach flow issue set --provider github --number "$ISSUE_NUMBER" --url "$ISSUE_URL"
-approach flow pr set --provider github --number "$PR_NUMBER" --url "$PR_URL" --head "$HEAD" --base "$BASE"
-approach flow merge set --status merged --commit "$MERGE_COMMIT" --merged-at "$MERGED_AT"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow issue set --provider github --number "$ISSUE_NUMBER" --url "$ISSUE_URL"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow pr set --provider github --number "$PR_NUMBER" --url "$PR_URL" --head "$HEAD" --base "$BASE"
+```
+
+After the Merge phase transition succeeds, persist its matching metadata:
+
+```bash
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow merge set --status merged --commit "$MERGE_COMMIT" --merged-at "$MERGED_AT"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read
 ```
 
 Pass `--flow-id` explicitly only when updating a Flow other than the launched

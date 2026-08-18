@@ -15,7 +15,9 @@ fi
 APPROACH_BIN="${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"
 ```
 
-Use `"$APPROACH_BIN"` wherever another reference writes `approach`.
+Every runnable example uses the same self-resolving command word. Preserve it
+when adapting a command; never replace it with bare `approach` in a launched
+workflow.
 
 ## IDs and state root
 
