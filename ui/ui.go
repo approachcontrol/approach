@@ -350,8 +350,6 @@ const PlanContentOverhead = BranchContentOverhead + TableHeaderRows
 // render: right-pane chrome plus the flows table header.
 const FlowContentOverhead = BranchContentOverhead + TableHeaderRows
 
-const flowSplitMinPanelHeight = 4
-
 // TerminalChipRows is the list-space reserved by a collapsed dock chip.
 const TerminalChipRows = 1
 
@@ -580,21 +578,14 @@ func EmbeddedTerminalDockHeights(height int, state EmbeddedTerminalDockState) (l
 	if state != EmbeddedTerminalDockExpanded {
 		return height, 0
 	}
-	if height < flowSplitMinPanelHeight*2 {
-		listHeight = height / 2
-		if listHeight < 1 {
-			listHeight = 1
-		}
-		return listHeight, height - listHeight
-	}
-	listHeight = height / 4
-	if listHeight < flowSplitMinPanelHeight {
-		listHeight = flowSplitMinPanelHeight
-	}
-	terminalHeight = height - listHeight
+	terminalHeight = height * 3 / 8
 	if terminalHeight < 1 {
 		terminalHeight = 1
-		listHeight = height - terminalHeight
+	}
+	listHeight = height - terminalHeight
+	if listHeight < 1 {
+		listHeight = 1
+		terminalHeight = height - listHeight
 	}
 	return listHeight, terminalHeight
 }

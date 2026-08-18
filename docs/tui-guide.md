@@ -342,8 +342,8 @@ header. The current list remains usable above the dock; in particular, the
 saved-session table is never replaced by the terminal surface.
 
 Press `ctrl+t` from repo or list focus to store whether the dock is requested
-open or manually hidden. An expanded dock shrinks before either stored pane is
-sacrificed. If the viewport cannot fit both panes plus a framed terminal header
+open or manually hidden. An expanded dock asks for roughly three eighths of the
+viewport and shrinks before either stored pane is sacrificed. If the viewport cannot fit both panes plus a framed terminal header
 and one output row, the requested-open dock automatically becomes the collapsed
 chip. Growing the viewport restores it automatically while the request remains
 open. Pressing `ctrl+t` during automatic collapse changes that request to a
@@ -563,7 +563,7 @@ With the top content pane focused, press `2` to enter the selected repository's
 Beads group at its last-used subview, defaulting to Ready before first use.
 Beads queries and detail reads are read-only. Manual Ready Flow creation is
 also claim-free; the only tracker mutation in this group is the child claim
-performed when epic auto-progression prepares a new Flow. Pressing `2` while
+performed when epic auto-progression is enabled on an epic. Pressing `2` while
 already in any Beads subview is a no-op. Press `r` for
 Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
 pressing the already-active letter is also a no-op. Top-pane `←`/`→` switches
@@ -766,15 +766,21 @@ revalidates its generation and current direct-child membership, repeats the
 idempotent claim, then surfaces incomplete preparation or adopts the prepared
 Flow. Consumed `completed`/`merged` markers are ignored so off/on recovery can
 select a later Ready sibling. Unmarked manual Flows do not enter this recovery
-path. This action prepares or adopts only; it does not start a phase or launch
-an agent.
+path. Enabling prepares or adopts only; it does not start a phase or launch an
+agent, so this first child is started by hand. Every child the epic advances to
+after it is created and started in one unattended step.
 
 Enabled epics advance from the same view-independent 1 Hz Flow poll. When the
 exact in-session baseline Flow is newly observed as `completed` or `merged`,
-Approach prepares the next unlinked direct child in fresh `bd ready` order; it
-does not claim the Bead or launch the new Flow. The status line reports the
-prepared child and Flow ID, retryable preparation/reconciliation errors, or an
-owned successor that blocks later children. When no creation candidate remains,
+Approach creates the next unlinked direct child in fresh `bd ready` order **and
+starts its first phase agent**, as one attempt; it does not claim the Bead. The
+child is created headless with auto mode on, so its later phases drain by
+themselves and the whole chain runs without a key press. The status line reports
+retryable preparation/reconciliation errors, an owned successor that blocks later
+children, or the launch's own failure. If that attempt fails at any point — the
+Flow cannot be created, the worktree cannot be made, the agent cannot start — the
+epic halts with a `blocked` cause naming the child, exactly as a failing child
+Flow would. When no creation candidate remains,
 it reports auto-progression completion and turns normal progression off. No
 startup catch-up occurs: explicitly toggle progression off and back on to
 install a new live baseline after reconciling an unknown drain state.

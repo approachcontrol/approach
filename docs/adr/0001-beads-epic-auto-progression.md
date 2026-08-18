@@ -41,9 +41,17 @@ launch.
   prepared-pending exact-link Flow over a later Ready sibling and repeats the
   same-actor idempotent claim before adoption. There is no cross-system
   transaction and no automatic unclaim. Prepared exact-link adoption and manual
-  Ready Flow creation remain claim-free. This slice does not start a phase or
-  launch an agent. Child launching is deferred to `approach-y7g.9`; selecting
-  and advancing subsequent children is deferred to `approach-y7g.5`.
+  Ready Flow creation remain claim-free.
+- The advance edge selects the next child and submits it to the create-phase
+  launch lifecycle as one create-then-launch intent. That single admitted
+  attempt creates the child, prepares it, reconciles it as the epic's successor
+  under the launch/close reservation it already holds, and launches its first
+  phase agent, so a chain runs unattended after the first child. Children are
+  written headless and keep the store's default AutoMode, which is what drains
+  their later phases. Any terminal failure of that attempt halts the epic with a
+  `blocked` tuple naming the child and the cause, so a chain that cannot start
+  its next child stops with a name instead of stalling silently. The enable edge
+  still only prepares its first child: that one is started by hand.
 
 ## Concurrency boundary
 

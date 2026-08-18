@@ -5495,13 +5495,13 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 func TestModel_EmbeddedTerminalUsesResponsiveRenderAndBackendRows(t *testing.T) {
 	m, fakeTerm, started := openEmbeddedSessionForSizingTest(t, 180, 65)
 	wantWidth := ui.EmbeddedTerminalPTYWidth(180)
-	if want := [2]int{wantWidth, 42}; started != want {
+	if want := [2]int{wantWidth, 19}; started != want {
 		t.Fatalf("height 65 start = %v, want %v", started, want)
 	}
 
 	fakeTerm.visibleCalls = nil
 	_ = m.View()
-	if want := [2]int{wantWidth, 42}; len(fakeTerm.visibleCalls) != 1 || fakeTerm.visibleCalls[0] != want {
+	if want := [2]int{wantWidth, 19}; len(fakeTerm.visibleCalls) != 1 || fakeTerm.visibleCalls[0] != want {
 		t.Fatalf("height 65 visible calls = %#v, want [%v]", fakeTerm.visibleCalls, want)
 	}
 
@@ -5510,7 +5510,7 @@ func TestModel_EmbeddedTerminalUsesResponsiveRenderAndBackendRows(t *testing.T) 
 		wantBackend int
 		wantRender  int
 	}{
-		{height: 64, wantBackend: 41, wantRender: 41},
+		{height: 64, wantBackend: 19, wantRender: 19},
 		{height: 24, wantBackend: 1, wantRender: 1},
 		{height: 23, wantBackend: 1},
 	} {

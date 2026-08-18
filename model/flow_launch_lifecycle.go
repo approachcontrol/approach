@@ -127,6 +127,15 @@ type flowLaunchEventMsg struct {
 	// worktree metadata and bootstrap hook succeed, before launch persistence.
 	PreparationFinalizer flowstore.PreparationFinalizer
 	PreparationUnknown   bool
+	// Successor and SuccessorErr are epic-progression create-phase only: the
+	// authoritative classification of this created child against its epic,
+	// taken under the launch reservation once the preparation receipt exists
+	// and before the first phase is made running.
+	Successor    flowstore.EpicProgressionSuccessorResult
+	SuccessorErr string
+	// ProgressionRetry marks a progression abort the epic should retry rather
+	// than halt on: the child was compensated away and selection may run again.
+	ProgressionRetry bool
 	// CompensationRetryable is set when Ready compensation left the one-shot
 	// finalizer usable: either both writer attempts reconciled as unlanded, or
 	// Compensate could not acquire the launch/close reservation.
@@ -1155,9 +1164,10 @@ func (m Model) failCreateFlowLaunchEmbedded(attempt flowLaunchAttempt, ctx actio
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
 		releaseFlowLaunchReservation(release)
-		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
 			clearFlowLaunchCreatePresentation(attempt.Create).
-			setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText), nil
+			setStatus(statusOther, "Flow "+attempt.FlowID+": "+errText)
+		return m.failEpicProgressionCreate(attempt.Create, attempt.FlowID, errText)
 	}
 	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, attempt.State, flowLaunchStateFailurePersisting)
 	if !ok {
@@ -1384,10 +1394,13 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 				return m, nil
 			}
 			m = m.setStatus(statusOther, "Flow "+ctx.FlowID+": "+errText)
+			var haltCmd tea.Cmd
+			m, haltCmd = m.failEpicProgressionCreate(*msg.Create, ctx.FlowID, errText)
 			if m.flowRefreshSurfaceVisible() {
-				return m.startFlowSurfaceFetch()
+				next, fetchCmd := m.startFlowSurfaceFetch()
+				return next, batchNonNil(haltCmd, fetchCmd)
 			}
-			return m, nil
+			return m, haltCmd
 		}
 		return m.startFlowLaunchFailure(ctx, errText)
 	}

@@ -509,7 +509,7 @@ func TestFirstTerminalStartupUsesProspectiveRequestedState(t *testing.T) {
 	t.Run("interactive session requests expansion", func(t *testing.T) {
 		var started [2]int
 		next, opened, err := newModel(&started).openEmbeddedTerminal(actions.AgentLaunchContext{}, sessions.SessionRecord{Provider: sessions.ProviderCodex})
-		if err != nil || !opened || started[1] != 42 || !next.terminalDockVisible {
+		if err != nil || !opened || started[1] != 19 || !next.terminalDockVisible {
 			t.Fatalf("session startup: opened=%v err=%v size=%v requested=%v", opened, err, started, next.terminalDockVisible)
 		}
 	})
@@ -517,7 +517,7 @@ func TestFirstTerminalStartupUsesProspectiveRequestedState(t *testing.T) {
 	t.Run("interactive Flow requests expansion", func(t *testing.T) {
 		var started [2]int
 		next, opened, err, _ := newModel(&started).openFlowEmbeddedTerminal(actions.AgentLaunchContext{Command: "codex"})
-		if err != nil || !opened || started[1] != 42 || !next.terminalDockVisible {
+		if err != nil || !opened || started[1] != 19 || !next.terminalDockVisible {
 			t.Fatalf("interactive Flow startup: opened=%v err=%v size=%v requested=%v", opened, err, started, next.terminalDockVisible)
 		}
 	})

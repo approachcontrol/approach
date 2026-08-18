@@ -70,12 +70,14 @@ type epicProgressionAdvanceDisposition uint8
 const (
 	epicProgressionAdvanceRetryable epicProgressionAdvanceDisposition = iota
 	epicProgressionAdvanceInactive
-	epicProgressionAdvanceReleased
-	epicProgressionAdvanceOwnedObstruction
-	epicProgressionAdvanceAccepted
 	epicProgressionAdvanceExhausted
 	epicProgressionAdvanceExhaustedActive
 	epicProgressionAdvanceExhaustedUnknown
+	// epicProgressionAdvanceSelected carries a chosen child that has no Flow
+	// yet. It is the only disposition that keeps the advance's preparation
+	// admission held: the create-then-launch intent it produces runs under the
+	// same admission, and the create pipeline releases it.
+	epicProgressionAdvanceSelected
 )
 
 type epicProgressionAdvanceResultMsg struct {
@@ -86,11 +88,11 @@ type epicProgressionAdvanceResultMsg struct {
 	epicID       string
 	sourceFlowID string
 	disposition  epicProgressionAdvanceDisposition
-	owned        epicProgressionOwnedSuccessor
-	hasOwned     bool
-	flow         flowstore.FlowRecord
-	status       string
-	release      func()
+	// owned and childTitle are selection-only: the chosen child and its Bead
+	// title, carried to the create-then-launch intent that follows.
+	owned      epicProgressionOwnedSuccessor
+	childTitle string
+	status     string
 }
 
 type epicProgressionHaltRequest struct {
@@ -166,21 +168,20 @@ func (m Model) startEpicProgressionAdvance(epicKey string, baseline flowstore.Fl
 		EpicKey: epicKey, SourceFlowID: baseline.FlowID,
 	}
 	m.activeEpicProgressionAdvance = request
-	owned, hasOwned := m.epicProgressionOwnedSuccessors[epicKey]
-	return m, m.advanceEpicProgressionCmd(request, baseline, owned, hasOwned)
+	return m, m.advanceEpicProgressionCmd(request, baseline)
 }
 
-func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, baseline flowstore.FlowRecord, owned epicProgressionOwnedSuccessor, hasOwned bool) tea.Cmd {
+// advanceEpicProgressionCmd selects the next child and stops there. Everything
+// that writes — the child Flow, its worktree, its preparation receipt, its
+// successor reconciliation and its first phase — belongs to the create-phase
+// launch pipeline the selection is handed to, so the whole advance is one
+// admitted launch attempt rather than a preparation plus a later start.
+func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, baseline flowstore.FlowRecord) tea.Cmd {
 	readProgression := m.readEpicProgression
 	listChildren := m.listChildrenBeads
 	listReady := m.listReadyBeads
 	listFlows := m.listFlows
-	createFlow := m.createFlow
-	reserveFlow := m.reserveEpicSuccessor
-	reconcile := m.reconcileEpicSuccessor
 	setProgression := m.setEpicProgression
-	command, launchModel, reasoningEffort := m.flowLaunchAgentSettings()
-	preferences := m.agentPreferences()
 	repoPath := filepath.Clean(baseline.RepoPath)
 	epicID := strings.TrimSpace(baseline.Bead.EpicID)
 	result := func(disposition epicProgressionAdvanceDisposition, status string) epicProgressionAdvanceResultMsg {
@@ -200,168 +201,105 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
 		}
 
-		candidate := owned
-		if hasOwned && owned.SourceFlowID == request.SourceFlowID {
-			candidate = owned
-		} else {
-			hasOwned = false
-			children, childrenErr := listChildren(repoPath, epicID)
-			if childrenErr != nil {
-				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not list children for epic %s: %v", epicID, childrenErr))
+		var candidate epicProgressionOwnedSuccessor
+		var childTitle string
+		children, childrenErr := listChildren(repoPath, epicID)
+		if childrenErr != nil {
+			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not list children for epic %s: %v", epicID, childrenErr))
+		}
+		ready, readyErr := listReady(repoPath)
+		if readyErr != nil {
+			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not list ready children for epic %s: %v", epicID, readyErr))
+		}
+		flows, flowsErr := listFlows(flowstore.FlowFilter{RepoPath: repoPath})
+		if flowsErr != nil {
+			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not check existing child Flows for epic %s: %v", epicID, flowsErr))
+		}
+		direct := make(map[string]struct{}, len(children))
+		for _, child := range children {
+			if id := strings.TrimSpace(child.ID); id != "" {
+				direct[id] = struct{}{}
 			}
-			ready, readyErr := listReady(repoPath)
-			if readyErr != nil {
-				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not list ready children for epic %s: %v", epicID, readyErr))
+		}
+		// This filter must agree with the store's creation guard in every
+		// dimension the guard uses — repository, TRIMMED Bead ID, and slot
+		// occupancy — or a child the filter selects gets refused by the guard
+		// on every pass. Selection sets no backoff and nothing here sets Halt,
+		// so a disagreement is an unbounded 1 Hz select-create-refuse loop
+		// rather than a cosmetic mismatch.
+		//
+		// Hence flowstore.BeadFlowSlotOccupied itself rather than a
+		// hand-rolled status test: a child whose only Flow is closed or merged
+		// is still selected, and the guard still permits the create. The epic
+		// disjunct preserves today's behaviour for a child whose epic-linked
+		// Flow has since completed — progression treats that child as done,
+		// and this fix is not the place to revisit that.
+		//
+		// A refusal that still gets through is a genuine race: another process
+		// committed the Flow between listFlows and the create. It surfaces in
+		// the shared launch-create pipeline, which names it, and the next
+		// pass's snapshot contains the winner, so this filter skips the child
+		// and selection moves on (or the exhausted path fires).
+		linkedChildren := make(map[string]struct{})
+		for _, flow := range flows {
+			if filepath.Clean(flow.RepoPath) != repoPath || strings.TrimSpace(flow.Bead.ID) == "" {
+				continue
 			}
-			flows, flowsErr := listFlows(flowstore.FlowFilter{RepoPath: repoPath})
-			if flowsErr != nil {
-				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not check existing child Flows for epic %s: %v", epicID, flowsErr))
+			if flow.Bead.EpicID == epicID || flowstore.BeadFlowSlotOccupied(flow) {
+				linkedChildren[strings.TrimSpace(flow.Bead.ID)] = struct{}{}
 			}
-			direct := make(map[string]struct{}, len(children))
-			for _, child := range children {
-				if id := strings.TrimSpace(child.ID); id != "" {
-					direct[id] = struct{}{}
-				}
+		}
+		intersection, linked := 0, 0
+		for _, readyChild := range ready {
+			childID := strings.TrimSpace(readyChild.ID)
+			if _, ok := direct[childID]; !ok {
+				continue
 			}
-			// This filter must agree with the store's creation guard in every
-			// dimension the guard uses — repository, TRIMMED Bead ID, and slot
-			// occupancy — or a child the filter selects gets refused by the
-			// guard on every pass. The retryable arm sets no backoff and
-			// nothing here sets Halt, so a disagreement is an unbounded 1 Hz
-			// create-refuse loop rather than a cosmetic mismatch.
-			//
-			// Hence flowstore.BeadFlowSlotOccupied itself rather than a
-			// hand-rolled status test: a child whose only Flow is closed or
-			// merged is still selected, and the guard still permits the create.
-			// The epic disjunct preserves today's behaviour for a child whose
-			// epic-linked Flow has since completed — progression treats that
-			// child as done, and this fix is not the place to revisit that.
-			linkedChildren := make(map[string]struct{})
-			for _, flow := range flows {
-				if filepath.Clean(flow.RepoPath) != repoPath || strings.TrimSpace(flow.Bead.ID) == "" {
-					continue
-				}
-				if flow.Bead.EpicID == epicID || flowstore.BeadFlowSlotOccupied(flow) {
-					linkedChildren[strings.TrimSpace(flow.Bead.ID)] = struct{}{}
-				}
+			intersection++
+			if _, ok := linkedChildren[childID]; ok {
+				linked++
+				continue
 			}
-			intersection, linked := 0, 0
-			var childTitle string
-			for _, readyChild := range ready {
-				childID := strings.TrimSpace(readyChild.ID)
-				if _, ok := direct[childID]; !ok {
-					continue
-				}
-				intersection++
-				if _, ok := linkedChildren[childID]; ok {
-					linked++
-					continue
-				}
-				candidate = epicProgressionOwnedSuccessor{SourceFlowID: request.SourceFlowID, ChildID: childID}
-				childTitle = strings.TrimSpace(readyChild.Title)
-				break
+			candidate = epicProgressionOwnedSuccessor{SourceFlowID: request.SourceFlowID, ChildID: childID}
+			childTitle = strings.TrimSpace(readyChild.Title)
+			break
+		}
+		if candidate.ChildID == "" {
+			// A child held by a Flow under another epic counts as exhausted
+			// rather than retryable, deliberately. Progression already
+			// terminates whenever no ready child is available to it — a
+			// blocked child reaches this branch the same way — and the
+			// alternative is an unbounded poll: nothing here sets a backoff,
+			// so a manual Flow left open on a child would keep this closure
+			// shelling out to `bd` every advance tick for as long as it lives.
+			// Termination is visible (the status below says so) and
+			// re-enabling auto-progression is one key away, whereas the poll
+			// has no exit the user can see.
+			status := fmt.Sprintf("Auto-progression complete for epic %s; no ready children remain", epicID)
+			if intersection > 0 && linked == intersection {
+				status = fmt.Sprintf("Auto-progression complete for epic %s; every ready child already has a Flow", epicID)
 			}
-			if candidate.ChildID == "" {
-				// A child held by a Flow under another epic counts as exhausted
-				// rather than retryable, deliberately. Progression already
-				// terminates whenever no ready child is available to it — a
-				// blocked child reaches this branch the same way — and the
-				// alternative is an unbounded poll: the retryable arm sets no
-				// backoff, so a manual Flow left open on a child would keep
-				// this closure shelling out to `bd` every advance tick for as
-				// long as it lives. Termination is visible (the status below
-				// says so) and re-enabling auto-progression is one key away,
-				// whereas the poll has no exit the user can see.
-				status := fmt.Sprintf("Auto-progression complete for epic %s; no ready children remain", epicID)
-				if intersection > 0 && linked == intersection {
-					status = fmt.Sprintf("Auto-progression complete for epic %s; every ready child already has a Flow", epicID)
-				}
-				_, doneErr := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false, Done: true})
-				if doneErr == nil {
-					return result(epicProgressionAdvanceExhausted, status)
-				}
-				authoritative, stillFound, readErr := readProgression(key)
-				if readErr != nil {
-					return result(epicProgressionAdvanceExhaustedUnknown, fmt.Sprintf("Could not confirm auto-progression completion for epic %s: %v", epicID, readErr))
-				}
-				if stillFound && authoritative.Done && !authoritative.Enabled && authoritative.Halt == nil {
-					return result(epicProgressionAdvanceExhausted, status)
-				}
-				if !stillFound || !authoritative.Enabled || authoritative.Halt != nil {
-					return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
-				}
-				return result(epicProgressionAdvanceExhaustedActive, fmt.Sprintf("Could not disable exhausted auto-progression for epic %s: %v", epicID, doneErr))
+			_, doneErr := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false, Done: true})
+			if doneErr == nil {
+				return result(epicProgressionAdvanceExhausted, status)
 			}
-
-			link := flowstore.BeadLink{ID: candidate.ChildID, EpicID: epicID}
-			flowResult, createErr := createFlow(FlowStartRequest{
-				RepoPath: repoPath, Title: candidate.ChildID + ": " + childTitle,
-				Instructions: fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", candidate.ChildID, candidate.ChildID),
-				Bead:         link, AgentCommand: command, Model: launchModel, ReasoningEffort: reasoningEffort,
-				AgentPreferences: preferences, AgentPreferencesProvided: true,
-			})
-			candidate.FlowID = strings.TrimSpace(flowResult.Flow.FlowID)
-			// With the selection filter aligned above, a store refusal here can
-			// only be a genuine race: another process committed the Flow
-			// between listFlows and createFlow. Retrying converges in one beat
-			// because the next pass's snapshot contains the winner, so
-			// linkedChildren skips this child and selection moves on (or the
-			// exhausted path fires). Adopting the winner as the owned successor
-			// does NOT work — its EpicID would fail reconcile's exact struct
-			// equality and livelock instead.
-			//
-			// Only the readable refusal is named here. The unreadable one
-			// (flowstore.ErrBeadFlowUnreadable) is unreachable from this line
-			// in practice: List returns a *PartialListError for the same row,
-			// so the flowsErr arm above already retried and this closure never
-			// got to createFlow. Special-casing it here would look like a fix
-			// and change nothing. That loop is approach-2ab.
-			if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
-				return result(epicProgressionAdvanceRetryable, conflictStatus(existing, false))
+			authoritative, stillFound, readErr := readProgression(key)
+			if readErr != nil {
+				return result(epicProgressionAdvanceExhaustedUnknown, fmt.Sprintf("Could not confirm auto-progression completion for epic %s: %v", epicID, readErr))
 			}
-			if createErr != nil && candidate.FlowID == "" {
-				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not prepare Flow for child %s: %v", candidate.ChildID, createErr))
+			if stillFound && authoritative.Done && !authoritative.Enabled && authoritative.Halt == nil {
+				return result(epicProgressionAdvanceExhausted, status)
 			}
-			if candidate.FlowID == "" {
-				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not prepare Flow for child %s: preparation returned no Flow ID", candidate.ChildID))
+			if !stillFound || !authoritative.Enabled || authoritative.Halt != nil {
+				return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
 			}
-			if candidate.FlowID != "" {
-				hasOwned = true
-			}
+			return result(epicProgressionAdvanceExhaustedActive, fmt.Sprintf("Could not disable exhausted auto-progression for epic %s: %v", epicID, doneErr))
 		}
 
-		release, reserveErr := reserveFlow(candidate.FlowID)
-		if reserveErr != nil {
-			msg := result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not reserve owned successor Flow %s: %v", candidate.FlowID, reserveErr))
-			msg.owned, msg.hasOwned = candidate, true
-			return msg
-		}
-		link := flowstore.BeadLink{ID: candidate.ChildID, EpicID: epicID}
-		reconciled, reconcileErr := reconcile(flowstore.EpicProgressionSuccessorUpdate{FlowID: candidate.FlowID, Key: key, Bead: link})
-		msg := result(epicProgressionAdvanceRetryable, "")
-		msg.release, msg.owned, msg.hasOwned = release, candidate, true
-		if reconcileErr != nil {
-			msg.status = fmt.Sprintf("Could not reconcile owned successor Flow %s: %v", candidate.FlowID, reconcileErr)
-			return msg
-		}
-		msg.flow = reconciled.Flow
-		switch reconciled.Outcome {
-		case flowstore.EpicProgressionSuccessorInactive:
-			msg.disposition = epicProgressionAdvanceInactive
-			msg.status = fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID)
-		case flowstore.EpicProgressionSuccessorReleased:
-			msg.disposition = epicProgressionAdvanceReleased
-			msg.status = fmt.Sprintf("Owned successor Flow %s was released; auto-progression will retry selection", candidate.FlowID)
-		case flowstore.EpicProgressionSuccessorOwnedObstruction:
-			msg.disposition = epicProgressionAdvanceOwnedObstruction
-			msg.status = rejectOwnedEpicProgressionSuccessor(reconciled.Flow)
-		case flowstore.EpicProgressionSuccessorAccepted:
-			msg.disposition = epicProgressionAdvanceAccepted
-			msg.status = fmt.Sprintf("Prepared next child %s for epic %s as Flow %s", candidate.ChildID, epicID, reconciled.Flow.FlowID)
-		default:
-			msg.status = fmt.Sprintf("Could not reconcile owned successor Flow %s; auto-progression will retry", candidate.FlowID)
-		}
-		return msg
+		selected := result(epicProgressionAdvanceSelected, "")
+		selected.owned = candidate
+		selected.childTitle = childTitle
+		return selected
 	}
 }
 
@@ -381,19 +319,22 @@ func (m Model) startEpicProgressionHalt(epicKey string, baseline, observed flows
 		EpicKey: epicKey, SourceFlowID: baseline.FlowID,
 	}
 	m.activeEpicProgressionHalt = request
-	return m, m.haltEpicProgressionCmd(request, observed)
-}
-
-func (m Model) haltEpicProgressionCmd(request epicProgressionHaltRequest, observed flowstore.FlowRecord) tea.Cmd {
-	haltProgression := m.haltEpicProgression
-	readProgression := m.readEpicProgression
-	repoPath := filepath.Clean(observed.RepoPath)
-	epicID := strings.TrimSpace(observed.Bead.EpicID)
-	childID := strings.TrimSpace(observed.Bead.ID)
 	// The web viewer renders the halt message verbatim beside the child and its
 	// state, so the message carries the one identifier neither surface derives.
-	message := fmt.Sprintf("child Flow %s halted auto-progression", strings.TrimSpace(observed.FlowID))
-	haltStatus := epicProgressionResolvedStatus(observed)
+	halt := flowstore.EpicProgressionHalt{
+		ChildBeadID: strings.TrimSpace(observed.Bead.ID),
+		Status:      epicProgressionResolvedStatus(observed),
+		Message:     fmt.Sprintf("child Flow %s halted auto-progression", strings.TrimSpace(observed.FlowID)),
+	}
+	return m, m.haltEpicProgressionCauseCmd(request, filepath.Clean(observed.RepoPath), strings.TrimSpace(observed.Bead.EpicID), halt)
+}
+
+// haltEpicProgressionCauseCmd persists one already-composed halt tuple. Both
+// halt edges — a failed child and a child that could not launch at all — share
+// it, so neither can invent its own announcement or its own retry rules.
+func (m Model) haltEpicProgressionCauseCmd(request epicProgressionHaltRequest, repoPath, epicID string, halt flowstore.EpicProgressionHalt) tea.Cmd {
+	haltProgression := m.haltEpicProgression
+	readProgression := m.readEpicProgression
 	result := func(disposition epicProgressionHaltDisposition, status string) epicProgressionHaltResultMsg {
 		return epicProgressionHaltResultMsg{
 			request: request.Request, ownerToken: request.OwnerToken, epicKey: request.EpicKey,
@@ -403,7 +344,6 @@ func (m Model) haltEpicProgressionCmd(request epicProgressionHaltRequest, observ
 	}
 	return func() tea.Msg {
 		key := flowstore.EpicProgressionKey{RepoPath: repoPath, EpicID: epicID}
-		halt := flowstore.EpicProgressionHalt{ChildBeadID: childID, Status: haltStatus, Message: message}
 		persisted, err := haltProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
 		if err == nil {
 			// Halt is sticky, so an already-halted row keeps its first cause and
@@ -495,52 +435,32 @@ func (m Model) handleEpicProgressionAdvanceResult(msg epicProgressionAdvanceResu
 		baselineFound && baseline.FlowID == msg.sourceFlowID &&
 		m.flowPreparationMatches(flowPreparationEpicAdvance, msg.ownerToken)
 	if !current {
-		if msg.release != nil {
-			msg.release()
-		}
 		return m, nil
 	}
-	if m.epicProgressionOwnedSuccessors == nil {
-		m.epicProgressionOwnedSuccessors = make(map[string]epicProgressionOwnedSuccessor)
-	}
-	if msg.hasOwned {
-		m.epicProgressionOwnedSuccessors[msg.epicKey] = msg.owned
+	if msg.disposition == epicProgressionAdvanceSelected {
+		// The advance is not over: it continues as one create-then-launch
+		// attempt that keeps this request's preparation admission until the
+		// create pipeline releases it.
+		return m.requestEpicProgressionChildLaunch(msg)
 	}
 	switch msg.disposition {
-	case epicProgressionAdvanceAccepted:
-		m.epicProgressionBaselines[msg.epicKey] = cloneFlowRecord(msg.flow)
-		if m.epicProgressionBaselineMinimumRequests == nil {
-			m.epicProgressionBaselineMinimumRequests = make(map[string]uint64)
-		}
-		m.epicProgressionBaselineMinimumRequests[msg.epicKey] = m.autoAdvanceRequestSeq + 1
-		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
 	case epicProgressionAdvanceInactive, epicProgressionAdvanceExhausted, epicProgressionAdvanceExhaustedUnknown:
 		delete(m.epicProgressionBaselines, msg.epicKey)
 		delete(m.epicProgressionBaselineMinimumRequests, msg.epicKey)
 		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
-	case epicProgressionAdvanceReleased:
-		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
 	}
 	m.activeEpicProgressionAdvance = epicProgressionAdvanceRequest{}
-	if msg.release != nil {
-		msg.release()
-	}
 	m = m.releaseFlowPreparation(flowPreparationEpicAdvance, msg.ownerToken)
 	var statusCmd tea.Cmd
 	if strings.TrimSpace(msg.status) != "" {
 		m, statusCmd = m.setAutoAdvanceLaunchStatus(msg.status)
 	}
-	var flowRefreshCmd, progressionRefreshCmd tea.Cmd
-	hasPersistedFlow := strings.TrimSpace(msg.flow.FlowID) != "" ||
-		(msg.hasOwned && strings.TrimSpace(msg.owned.FlowID) != "")
-	if hasPersistedFlow && m.flowRefreshSurfaceVisible() {
-		m, flowRefreshCmd = m.startFlowSurfaceFetch()
-	}
+	var progressionRefreshCmd tea.Cmd
 	target := m.beadExpansion.target
 	if target.token != 0 && filepath.Clean(target.repoPath) == msg.repoPath && strings.TrimSpace(target.epicID) == msg.epicID {
 		progressionRefreshCmd = m.readEpicProgressionCmd(target)
 	}
-	return m, batchNonNil(statusCmd, flowRefreshCmd, progressionRefreshCmd)
+	return m, batchNonNil(statusCmd, progressionRefreshCmd)
 }
 
 func (m Model) epicProgressionKeysOwned() bool {
