@@ -531,15 +531,17 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 // sessionLivenessProbe answers the launch controller's "did this launch's
 // agent process end" from the session store. Status is authoritative over
 // EndedAt; several records for one launch count as ended only when all of
-// them are, with the latest end time.
+// them are, and the launch's end is its latest record's end.
 //
 // An `ended` record is exit evidence only when the provider's hook means the
 // process ended. Codex records `ended` after every turn (its Stop hook fires
 // while the CLI stays open) and Cursor's stop hook is the same shape, so for
 // those providers an ended record is a turn boundary: the launch is known but
 // never reported ended, and its phase is left to authoritative evidence — the
-// embedded terminal's exit or the lease runner's exit.json. Only Claude's
-// SessionEnd-backed records count.
+// embedded terminal's exit or the lease runner's exit.json. Claude's
+// SessionEnd-backed records count, except a `/clear`: that ends the session
+// with the process alive on a new one that has no record until it ends, so a
+// launch whose latest end is a `clear` is continued, not ended.
 func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 	return func(launchID string) (launchcontrol.LaunchLiveness, error) {
 		records, err := store.List(sessions.SessionFilter{})
@@ -547,6 +549,7 @@ func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 			return launchcontrol.LaunchLiveness{}, err
 		}
 		liveness := launchcontrol.LaunchLiveness{Ended: true}
+		var latest sessions.SessionRecord
 		for _, record := range records {
 			if strings.TrimSpace(record.LaunchID) != launchID {
 				continue
@@ -556,21 +559,30 @@ func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 				liveness.Ended = false
 				continue
 			}
-			if record.EndedAt.After(liveness.EndedAt) {
-				liveness.EndedAt = record.EndedAt
+			if record.EndedAt.After(latest.EndedAt) {
+				latest = record
 			}
 		}
-		if !liveness.RecordKnown {
+		if !liveness.RecordKnown || sessionEndContinues(latest) {
 			liveness.Ended = false
+		}
+		if liveness.Ended {
+			liveness.EndedAt = latest.EndedAt
 		}
 		return liveness, nil
 	}
 }
 
 // sessionEndIsProcessEnd reports whether an `ended` session record from
-// provider means its agent process ended rather than a turn.
+// provider can mean its agent process ended rather than a turn.
 func sessionEndIsProcessEnd(provider sessions.Provider) bool {
 	return provider == sessions.ProviderClaude
+}
+
+// sessionEndContinues reports an ended record whose end left the agent
+// process alive: Claude's `/clear`.
+func sessionEndContinues(record sessions.SessionRecord) bool {
+	return record.Provider == sessions.ProviderClaude && strings.TrimSpace(record.EndReason) == "clear"
 }
 
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {

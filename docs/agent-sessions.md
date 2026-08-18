@@ -113,9 +113,9 @@ tracked phase launch also reports the end to the launch controller (see
 That record is not a death certificate — Codex `Stop` fires per turn and
 Claude's `SessionEnd` also fires on `/clear` while the agent keeps running —
 so a still-`running` phase is not demoted from the hook alone. The sweep
-treats an ended Claude session as evidence only after ten minutes — never a
-Codex or Cursor one, whose `ended` records are per-turn — and a held Flow
-lease vetoes demotion either way. The hook reports what it did as a stderr
+treats an ended Claude session as evidence only after ten minutes and only
+when its end was not a `/clear` — never a Codex or Cursor one, whose `ended`
+records are per-turn — and a held Flow lease vetoes demotion either way. The hook reports what it did as a stderr
 warning and still exits 0.
 
 `session-hook` loads the normal Approach config, so `[sessions].root` and
@@ -204,11 +204,15 @@ terminal's exit, an interactive launch handing the TTY back, the lease
 Reconciliation demotes a phase only on positive exit evidence: an embedded
 terminal's exit, an interactive launch handing the TTY back, the lease
 runner's `exit.json`, or a Claude session record the store says ended more
-than ten minutes ago — and never while the Flow lease is held. A `SessionEnd`
-hook replays first but is not itself exit evidence. Codex and Cursor records
-say `ended` after every turn, so they are never exit evidence either: a Codex
-or Cursor launch that exits without a result is demoted only by its embedded
-terminal's exit or the lease runner's `exit.json`.
+than ten minutes ago for a reason other than `/clear` — and never while the
+Flow lease is held. A `SessionEnd` hook replays first but is not itself exit
+evidence; it does keep the provider's `reason` on the record (`end_reason`),
+and a launch whose latest end is a `clear` is treated as continued, because
+the agent lives on in a new session that has no record until it ends. Codex
+and Cursor records say `ended` after every turn, so they are never exit
+evidence either: a Codex or Cursor launch that exits without a result is
+demoted only by its embedded terminal's exit or the lease runner's
+`exit.json`.
 The write is `needs_attention` with the reason as the outcome
 (`phase_result_missing` or `phase_result_stale`); on a plan-review kind it is
 `blocked`/`blocked` with the reason leading the notes, the convention that

@@ -286,3 +286,46 @@ func TestSpoolRefusesRequestsNoReplayCanApply(t *testing.T) {
 		t.Fatalf("pending = %#v, want the two spooled requests", pending)
 	}
 }
+
+// A spooled request is applied by replay against the launch's baseline, and
+// replay rejects a launch that has none. RecordBaseline is best-effort, so a
+// launch can lack baseline.json; spooling for it would be a deferred success
+// that never lands. It exits non-zero instead and leaves nothing pending.
+func TestSpoolRefusesLaunchWithoutABaseline(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "No Baseline", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	// Launched, but without the baseline decorator.
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 999"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(t.TempDir(), "dead.sock")
+	var stdout, stderr bytes.Buffer
+	err = run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "later", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+	if err == nil || !strings.HasPrefix(err.Error(), "cannot be deferred: ") || !strings.Contains(err.Error(), "baseline") {
+		t.Fatalf("exit = %v, want a cannot-be-deferred error naming the baseline", err)
+	}
+	if stdout.Len() != 0 || strings.Contains(stderr.String(), "spooled:") {
+		t.Fatalf("stdout = %q stderr = %q", stdout.String(), stderr.String())
+	}
+	log, _ := launchcontrol.OpenLog(root, "launch-1")
+	if pending, _ := log.Pending(); len(pending) != 0 {
+		t.Fatalf("pending = %#v, want nothing spooled", pending)
+	}
+}

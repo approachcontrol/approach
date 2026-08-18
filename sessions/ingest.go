@@ -71,6 +71,7 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 		Provider:       provider,
 		SessionID:      sessionID,
 		Status:         statusForPayload(provider, payload),
+		EndReason:      endReasonForPayload(provider, payload),
 		StartedAt:      payload.StartedAt,
 		EndedAt:        payload.EndedAt,
 		CWD:            payload.CWD,
@@ -217,6 +218,17 @@ func statusForPayload(provider Provider, payload hookPayload) string {
 		return "ended"
 	}
 	return "last_seen"
+}
+
+// endReasonForPayload keeps the provider's end reason on an ended record.
+// Only Claude's SessionEnd carries one that matters: `clear` means the agent
+// process is alive on a new session, which the launch liveness probe must
+// not read as an exit.
+func endReasonForPayload(provider Provider, payload hookPayload) string {
+	if statusForPayload(provider, payload) != "ended" {
+		return ""
+	}
+	return strings.TrimSpace(payload.Reason)
 }
 
 func summaryForPayload(payload hookPayload) string {

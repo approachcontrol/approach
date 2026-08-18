@@ -1292,9 +1292,10 @@ const (
 	// A spooled request is applied by replay under the launch's own phase, so
 	// a launch that owns no phase, or a request for another phase, has no
 	// replay that could ever apply it.
-	flowNotDeferrableUnownedTemplate = "cannot be deferred: launch %s owns no phase, so a spooled %s could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
-	flowNotDeferrablePhaseTemplate   = "cannot be deferred: %s targets phase %s, not this launch's phase %s, so it could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
-	flowReadFallbackTemplate         = "control endpoint %s unreachable; direct read failed: %v"
+	flowNotDeferrableUnownedTemplate  = "cannot be deferred: launch %s owns no phase, so a spooled %s could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
+	flowNotDeferrablePhaseTemplate    = "cannot be deferred: %s targets phase %s, not this launch's phase %s, so it could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
+	flowNotDeferrableBaselineTemplate = "cannot be deferred: launch %s has no readable baseline, so a spooled %s could never be replayed; control endpoint %s unreachable and the flow database could not be opened: %v"
+	flowReadFallbackTemplate          = "control endpoint %s unreachable; direct read failed: %v"
 )
 
 // runFlowRequest dispatches req by verb class and by what the environment
@@ -1404,9 +1405,13 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		return launchcontrol.Response{}, errors.Join(openErr, lockErr)
 	}
 	defer unlock()
-	if baseline, ok, _ := log.Baseline(); ok {
-		envelope.Observed = launchcontrol.ObservedPhase{Status: baseline.BaselineStatus, UpdatedAt: baseline.ObservedUpdatedAt}
+	// Replay measures a spooled request against the launch's baseline and
+	// rejects a launch without one, so no baseline means no deferral.
+	baseline, ok, baselineErr := log.Baseline()
+	if baselineErr != nil || !ok || baseline.BaselineStatus == "" {
+		return launchcontrol.Response{}, fmt.Errorf(flowNotDeferrableBaselineTemplate, control.launchID, req.Verb, control.endpoint, errors.Join(openErr, baselineErr))
 	}
+	envelope.Observed = launchcontrol.ObservedPhase{Status: baseline.BaselineStatus, UpdatedAt: baseline.ObservedUpdatedAt}
 	envelope.WrittenBy = launchcontrol.WrittenBySpool
 	if _, err := log.Append(envelope); err != nil {
 		return launchcontrol.Response{}, errors.Join(openErr, err)

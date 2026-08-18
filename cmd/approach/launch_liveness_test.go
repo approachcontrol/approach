@@ -50,6 +50,39 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 			}
 		})
 	}
+	// Claude's SessionEnd fires on /clear with the agent still alive and no
+	// record for the new session until it ends, so a launch whose latest end
+	// was a /clear is treated as continued, not ended; a later real end for
+	// the same launch is evidence again.
+	t.Run("claude clear is a continued session", func(t *testing.T) {
+		sessionStore, _, _ := testArtifactStores(t)
+		if err := sessionStore.Upsert(sessions.SessionRecord{
+			Provider: sessions.ProviderClaude, SessionID: "session-1", LaunchID: "launch-1",
+			Status: "ended", EndedAt: endedAt, EndReason: "clear",
+		}); err != nil {
+			t.Fatalf("Upsert() error = %v", err)
+		}
+		liveness, err := sessionLivenessProbe(sessionStore)("launch-1")
+		if err != nil {
+			t.Fatalf("probe error = %v", err)
+		}
+		if !liveness.RecordKnown || liveness.Ended {
+			t.Fatalf("liveness = %#v, want known and not ended after /clear", liveness)
+		}
+		if err := sessionStore.Upsert(sessions.SessionRecord{
+			Provider: sessions.ProviderClaude, SessionID: "session-2", LaunchID: "launch-1",
+			Status: "ended", EndedAt: endedAt.Add(time.Hour), EndReason: "prompt_input_exit",
+		}); err != nil {
+			t.Fatalf("Upsert() error = %v", err)
+		}
+		liveness, err = sessionLivenessProbe(sessionStore)("launch-1")
+		if err != nil {
+			t.Fatalf("probe error = %v", err)
+		}
+		if !liveness.Ended || !liveness.EndedAt.Equal(endedAt.Add(time.Hour)) {
+			t.Fatalf("liveness = %#v, want ended at the later real exit", liveness)
+		}
+	})
 	t.Run("unknown launch is not ended", func(t *testing.T) {
 		sessionStore, _, _ := testArtifactStores(t)
 		liveness, err := sessionLivenessProbe(sessionStore)("launch-none")

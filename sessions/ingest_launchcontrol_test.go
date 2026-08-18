@@ -225,3 +225,40 @@ func TestIngestHookPerTurnStopsDoNotDemoteRunningPhase(t *testing.T) {
 		})
 	}
 }
+
+// The hook keeps the provider's end reason on the record so the sweep's
+// liveness probe can tell a Claude /clear (the agent lives on) from an exit.
+func TestIngestHookRecordsTheSessionEndReason(t *testing.T) {
+	root := t.TempDir()
+	_, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+	result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+		"session_id": "claude-flow-1",
+		"cwd": `+quoteJSON(flow.WorktreePath)+`,
+		"hook_event_name": "SessionEnd",
+		"reason": "clear",
+		"timestamp": "2026-06-06T14:10:00Z"
+	}`)), sessions.IngestOptions{
+		Env: map[string]string{
+			"APPROACH_LAUNCH_ID":          "launch-flow-1",
+			"APPROACH_SESSION_STATE_ROOT": root,
+			"APPROACH_FLOW_STATE_ROOT":    root,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IngestHookWithWarnings() error = %v", err)
+	}
+	if result.Record.Status != "ended" || result.Record.EndReason != "clear" {
+		t.Fatalf("record = %#v, want ended with reason clear", result.Record)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].EndReason != "clear" {
+		t.Fatalf("stored records = %#v, want the end reason persisted", records)
+	}
+}
