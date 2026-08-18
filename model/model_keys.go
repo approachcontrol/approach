@@ -2783,7 +2783,7 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
 	}
-	return applyLaunchPin(ctx, m.launchPin), func() {}, true, m
+	return applyLaunchStamp(ctx, m.launchStamp()), func() {}, true, m
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
@@ -2864,7 +2864,7 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 		ctx.PlanPhaseStatus = phase.Status
 		ctx.InitialPrompt = m.implementationPromptForPhase(plan, planPath, repoPath, launchPath, phase)
 	}
-	return applyLaunchPin(ctx, m.launchPin), true, m
+	return applyLaunchStamp(ctx, m.launchStamp()), true, m
 }
 
 func validatePlanLaunchInput(input string) error {
@@ -3305,7 +3305,7 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 		}
 	}
 	launch := m.launchAgentSettings(m.agentCommand)
-	return applyLaunchPin(actions.AgentLaunchContext{
+	return applyLaunchStamp(actions.AgentLaunchContext{
 		Command:          m.agentCommand,
 		Model:            launch.Model,
 		ReasoningEffort:  launch.ReasoningEffort,
@@ -3315,7 +3315,7 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 		Branch:           branch,
 		Commit:           commit,
 		SessionStateRoot: m.sessionStateRoot,
-	}, m.launchPin)
+	}, m.launchStamp())
 }
 
 func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {

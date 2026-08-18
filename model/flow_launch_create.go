@@ -814,7 +814,7 @@ func createFlowLaunchContext(attempt flowLaunchAttempt, msg flowLaunchEventMsg, 
 		Headless:      msg.Record.Headless,
 		InitialPrompt: initialFlowLaunchPrompt(record, phase, attempt.Settings.PromptTemplates, attempt.Settings.Pin.ExecutablePath),
 	}
-	return applyLaunchPin(ctx, attempt.Settings.Pin)
+	return applyLaunchStamp(ctx, attempt.Settings.stamp())
 }
 
 func flowPhaseContainsLaunch(phase flowstore.FlowPhase, launchID string) bool {

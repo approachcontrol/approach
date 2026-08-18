@@ -417,7 +417,7 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex, claude, or cursor-agent", resolved.Command)
 			return event
 		}
-		ctx := applyLaunchPin(actions.AgentLaunchContext{
+		ctx := applyLaunchStamp(actions.AgentLaunchContext{
 			Command: resolved.Command,
 			// The admission token, never a fresh ID: every LaunchID-keyed fence
 			// downstream is on it.
@@ -432,7 +432,7 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			Embedded:         true,
 			Model:            resolved.Model,
 			ReasoningEffort:  resolved.ReasoningEffort,
-		}, settings.Pin)
+		}, settings.stamp())
 		// FlowPhaseID stays empty and FlowLaunchTracked stays false. The empty
 		// phase ID is what makes flowLaunchFailureUpdate refuse, which is what
 		// keeps a failed repair from ever mutating a phase.

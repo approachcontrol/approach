@@ -128,9 +128,16 @@ type flowLaunchPreparation struct {
 	// Pin is the approach binary this launch's agent must invoke. A zero Pin
 	// means the launch was not pinned and leaves the agent on ambient PATH.
 	Pin controlplane.Pin
+	// Control registers each launch with the launch controller. Nil leaves the
+	// agent on the direct path.
+	Control LaunchRegistrar
 	// VerifyPin is Pin.Verify, injectable so a test can fail the check without
 	// having to corrupt a real cached binary.
 	VerifyPin func(controlplane.Pin) error
+}
+
+func (l flowLaunchPreparation) stamp() launchStamp {
+	return launchStamp{Pin: l.Pin, Control: l.Control}
 }
 
 func (m Model) flowLaunchPreparation() flowLaunchPreparation {
@@ -152,6 +159,7 @@ func (m Model) flowLaunchPreparation() flowLaunchPreparation {
 		EnsureWorktree:           m.launchSeams.EnsureWorktree,
 		InspectWorktreeDirectory: m.launchSeams.inspectWorktreeDirectory,
 		Pin:                      m.launchPin,
+		Control:                  m.launchControl,
 	}
 }
 
@@ -378,7 +386,7 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 		FlowAutoLaunch:   req.AutoLaunch,
 		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates, l.Pin.ExecutablePath),
 	}
-	ctx = applyLaunchPin(ctx, l.Pin)
+	ctx = applyLaunchStamp(ctx, l.stamp())
 	route := flowPhaseLaunchEmbedded
 	fallbackNote := ""
 	ctx.FlowLaunchTracked = true

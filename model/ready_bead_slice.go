@@ -168,7 +168,7 @@ func (m Model) handleSliceSelectedEpic() (Model, tea.Cmd) {
 	// no Flow marker, which keeps flowLaunchContextRequiresLifecycle false and
 	// this launch outside the sealed Flow launch lifecycle.
 	launch := m.launchAgentSettings(m.agentCommand)
-	ctx := applyLaunchPin(actions.AgentLaunchContext{
+	ctx := applyLaunchStamp(actions.AgentLaunchContext{
 		Command:          m.agentCommand,
 		Model:            launch.Model,
 		ReasoningEffort:  launch.ReasoningEffort,
@@ -178,7 +178,7 @@ func (m Model) handleSliceSelectedEpic() (Model, tea.Cmd) {
 		WorkingDir:       repoPath,
 		SessionStateRoot: m.sessionStateRoot,
 		InitialPrompt:    sliceEpicPrompt(repoPath, epicID),
-	}, m.launchPin)
+	}, m.launchStamp())
 	// Record before launching: launchAgentForBackend's failure paths release
 	// through releaseSliceEpicLaunch synchronously.
 	m = m.recordSliceEpicLaunch(ctx.LaunchID, token, repoPath, epicID)

@@ -1096,6 +1096,15 @@ type AgentLaunchContext struct {
 	// compatibility refusal can name both binaries rather than one integer.
 	BuildVersion    string
 	DBSchemaVersion int
+	// ControlEndpoint and ControlToken are the launch's registration with the
+	// TUI's launch controller, exported as APPROACH_CONTROL_ENDPOINT and
+	// APPROACH_CONTROL_TOKEN only when set. With them the agent's `approach
+	// flow` writes are proxied over the per-root socket and logged before they
+	// are acknowledged; without them the CLI opens the store directly, which is
+	// the pre-controller behaviour. The token is per launch and lives only in
+	// the agent's environment and the controller's memory.
+	ControlEndpoint string
+	ControlToken    string
 }
 
 // AgentLaunch builds a supported coding-agent command for ctx and wraps it in a
@@ -1402,7 +1411,20 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		{key: "APPROACH_BUILD_VERSION", value: ctx.BuildVersion},
 		{key: "APPROACH_DB_SCHEMA", value: schemaVersionEnvValue(ctx.DBSchemaVersion)},
 	}
-	cmd.Env = envWithOverrides(overrides...)
+	// Only when non-empty. An empty endpoint would read as "an endpoint that
+	// is unreachable" and send every write down the fallback path; absent, the
+	// CLI opens the store directly with no detour. The parent's own value, if
+	// this TUI was itself started inside a launched agent, is stripped either
+	// way so a stale endpoint is never inherited.
+	controlKeys := []string{"APPROACH_CONTROL_ENDPOINT", "APPROACH_CONTROL_TOKEN"}
+	if ctx.ControlEndpoint != "" && ctx.ControlToken != "" {
+		overrides = append(overrides,
+			envVar{key: "APPROACH_CONTROL_ENDPOINT", value: ctx.ControlEndpoint},
+			envVar{key: "APPROACH_CONTROL_TOKEN", value: ctx.ControlToken},
+		)
+		controlKeys = nil
+	}
+	cmd.Env = envWithoutKeys(envWithOverrides(overrides...), controlKeys...)
 	return cmd, overrides, nil
 }
 
