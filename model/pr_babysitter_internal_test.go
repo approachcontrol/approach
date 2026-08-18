@@ -32,7 +32,7 @@ func babysitterFlow(id, repo string, phaseStatus, mergeStatus string) flowstore.
 }
 
 func TestTakeoverTransitionMatrixPreservesOneOriginalSnapshot(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
 	m.topMode = ui.ModeBeadsReady
 	m.bottomMode = ui.ModePlans
 	m.activePane = ui.PaneRepos
@@ -67,7 +67,7 @@ func TestTakeoverTransitionMatrixPreservesOneOriginalSnapshot(t *testing.T) {
 }
 
 func TestActiveFlowsToPRBabysitterInvalidatesOldRefresh(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)}, nil
 		},
@@ -103,7 +103,7 @@ func TestPRBabysitterRefreshFiltersOrdersAndReplacesPerRowFailures(t *testing.T)
 		babysitterFlow("flow-a", "/dev/alpha", flowstore.PhaseBlocked, flowstore.MergeBlocked),
 		{FlowID: "ineligible", RepoPath: "/dev/alpha"},
 	}
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}, {Path: "/dev/beta"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}, {Path: "/dev/beta"}}, Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return records, nil },
 		LookupPRStatus: func(_ context.Context, _ int, _ string) (actions.PullRequestStatus, error) {
 			return actions.PullRequestStatus{}, errors.New("lookup failed")
@@ -132,7 +132,7 @@ func TestPRBabysitterRefreshFiltersOrdersAndReplacesPerRowFailures(t *testing.T)
 
 func TestPRBabysitterTotalFailureRetainsCacheAndSkipsGitHub(t *testing.T) {
 	var lookups atomic.Int32
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("store unavailable")
 		},
@@ -160,7 +160,7 @@ func TestPRBabysitterTotalFailureRetainsCacheAndSkipsGitHub(t *testing.T) {
 func TestPRBabysitterAcceptsPartialListAndRejectsSupersededResult(t *testing.T) {
 	record := babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)
 	partial := &flowstore.PartialListError{Entries: []flowstore.PartialListEntry{{FlowID: "broken", Cause: errors.New("bad JSON")}}}
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{record}, partial
 		},
@@ -189,7 +189,7 @@ func TestPRBabysitterAcceptsPartialListAndRejectsSupersededResult(t *testing.T) 
 func TestPRBabysitterPreservesSelectionByFlowIDAcrossAcceptedRefresh(t *testing.T) {
 	first := babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)
 	second := babysitterFlow("flow-2", "/dev/beta", flowstore.PhaseReady, flowstore.MergePending)
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}, {Path: "/dev/beta"}}, Options{})
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}, {Path: "/dev/beta"}}, Options{})
 	m = m.setTakeover(takeoverPRBabysitter)
 	m.activePane = ui.PaneBottom
 	m.contentPane = ui.PaneBottom
@@ -213,7 +213,7 @@ func TestPRBabysitterFilterMatchesDisplayedDashboardFields(t *testing.T) {
 	first.Bead.ID = "bead-v8w7z6"
 	second := babysitterFlow("flow-2", "/dev/beta", flowstore.PhaseReady, flowstore.MergePending)
 	second.Bead.ID = "approach-other"
-	m := NewWithOptions([]scanner.Repo{
+	m := newModelForTest([]scanner.Repo{
 		{Path: "/dev/alpha", DisplayName: "repo-z9x8q7"},
 		{Path: "/dev/beta", DisplayName: "Other Repo"},
 	}, Options{})
@@ -273,7 +273,7 @@ func TestPRBabysitterRefreshCapsConcurrencyAndCancelsOnExit(t *testing.T) {
 			return actions.PullRequestStatus{Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing}, nil
 		}
 	}
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return records, nil }, LookupPRStatus: lookup,
 	})
 	m = m.setTakeover(takeoverPRBabysitter)
@@ -334,7 +334,7 @@ func TestPRBabysitterForcedExitCancelsInFlightLookups(t *testing.T) {
 					return actions.PullRequestStatus{Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing}, nil
 				}
 			}
-			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+			m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 					return []flowstore.FlowRecord{babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)}, nil
 				},
@@ -364,7 +364,7 @@ func TestPRBabysitterForcedExitCancelsInFlightLookups(t *testing.T) {
 }
 
 func TestRepoChangeClearsHiddenPRBabysitterCache(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{
+	m := newModelForTest([]scanner.Repo{
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/beta", DisplayName: "beta"},
 	}, Options{})
@@ -386,7 +386,7 @@ func TestRepoChangeClearsHiddenPRBabysitterCache(t *testing.T) {
 }
 
 func TestRepoChangeClearsHiddenPRBabysitterDegradation(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{
+	m := newModelForTest([]scanner.Repo{
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/beta", DisplayName: "beta"},
 	}, Options{})
@@ -441,7 +441,7 @@ func TestPRBabysitterQuitCancelsInFlightLookups(t *testing.T) {
 					return actions.PullRequestStatus{Mergeability: actions.PRMergeable, Checks: actions.PRChecksPassing}, nil
 				}
 			}
-			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+			m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 					return []flowstore.FlowRecord{babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)}, nil
 				},
@@ -471,7 +471,7 @@ func TestPRBabysitterQuitCancelsInFlightLookups(t *testing.T) {
 }
 
 func TestPRBabysitterMutationRemovesIneligibleRowImmediately(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{})
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{})
 	m = m.setTakeover(takeoverPRBabysitter)
 	record := babysitterFlow("flow-1", "/dev/alpha", flowstore.PhaseReady, flowstore.MergePending)
 	m.prBabysitterRecords = []flowstore.FlowRecord{record}
@@ -488,7 +488,7 @@ func TestPRBabysitterMutationRemovesIneligibleRowImmediately(t *testing.T) {
 func TestPRBabysitterReusesFlowActionsWithoutWideningBlockedMergeGates(t *testing.T) {
 	var opened []string
 	var copied string
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha"}}, Options{
 		OpenURL: func(target string) error {
 			opened = append(opened, target)
 			return nil

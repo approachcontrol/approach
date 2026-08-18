@@ -26,7 +26,7 @@ type tmuxResumeSpy struct {
 }
 
 func (s *tmuxResumeSpy) model(backend string, tmuxAvailable bool) Model {
-	return NewWithOptions(nil, Options{
+	return newModelForTest(nil, Options{
 		AgentCommand: "codex",
 		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
 			return flowlease.Free, nil
@@ -708,7 +708,7 @@ func TestWorktreeSessionResumeRoutesToTmux(t *testing.T) {
 // through to a detached external launch whose own result message would
 // otherwise overwrite the fallback note with the generic launch text.
 func TestResumeFallbackNoteSurvivesTheExternalFallthrough(t *testing.T) {
-	m := NewWithOptions(nil, Options{
+	m := newModelForTest(nil, Options{
 		AgentCommand:        "codex",
 		LaunchBackend:       "tmux",
 		TmuxLaunchAvailable: func() bool { return false },

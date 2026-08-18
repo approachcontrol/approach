@@ -292,7 +292,7 @@ func (h *manualLaunchHarness) model() Model {
 
 func (h *manualLaunchHarness) modelWith(repos []scanner.Repo, opts Options) Model {
 	h.t.Helper()
-	m := NewWithOptions(repos, opts)
+	m := newModelForTest(repos, opts)
 	m.launchSeams.EnsureWorktree = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 		h.ensureRecords = append(h.ensureRecords, record)
 		if h.ensureErr != nil {
@@ -373,6 +373,11 @@ func (h *manualLaunchHarness) drainMsg(m Model, msg tea.Msg, depth int) Model {
 	case embeddedTerminalTickMsg, flowRefreshTickMsg, autoAdvanceTickMsg:
 		// Periodic repaint and refresh ticks re-arm themselves forever and are
 		// not part of the launch chain.
+		return m
+	case StatusExpiredMsg, StatusFadeMsg:
+		// The transient-status fade and expiry timers only retire the message
+		// the launch already produced, so applying them here would clear the
+		// status these tests are about to assert on.
 		return m
 	}
 	next, cmd := m.Update(msg)
@@ -1533,7 +1538,7 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			h := newManualLaunchHarness(t, tc.record)
 			opts := h.options()
 			opts.AgentCommand = tc.agentCommand
-			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
 			m.contentPane = ui.PaneBottom
 			m.bottomMode = ui.ModeFlows
 			m.flows = m.flows.SetItems([]flowstore.FlowRecord{tc.record})
@@ -2598,7 +2603,7 @@ func TestFlowLaunchPreflightMessagesSurfaceVerbatim(t *testing.T) {
 			if tc.planPath != nil {
 				opts.PlanMarkdownPath = tc.planPath
 			}
-			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
 			m.contentPane = ui.PaneBottom
 			m.bottomMode = ui.ModeFlows
 			m.flows = m.flows.SetItems([]flowstore.FlowRecord{tc.record})

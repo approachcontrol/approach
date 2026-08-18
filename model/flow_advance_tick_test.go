@@ -67,7 +67,7 @@ func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = autoAdvanceTestReadFlow
 	}
-	m := NewWithOptions(repos, opts)
+	m := newModelForTest(repos, opts)
 	m.launchSeams.InspectWorktreeDirectory = func(string) error { return nil }
 	return m
 }
@@ -980,8 +980,19 @@ func hasAutoAdvanceTickMsg(t *testing.T, cmd tea.Cmd) bool {
 }
 
 func TestModel_AutoAdvanceTickIntervalIsOneSecond(t *testing.T) {
-	if autoAdvanceTickInterval != time.Second {
-		t.Fatalf("autoAdvanceTickInterval = %s, want %s", autoAdvanceTickInterval, time.Second)
+	if defaultAutoAdvanceTickInterval != time.Second {
+		t.Fatalf("defaultAutoAdvanceTickInterval = %s, want %s", defaultAutoAdvanceTickInterval, time.Second)
+	}
+	// Injection is a test seam, not a production default: a Model built without
+	// an explicit interval must still poll at 1 Hz.
+	if got := NewWithOptions(nil, Options{}).autoAdvanceTickDelay(); got != time.Second {
+		t.Fatalf("uninjected autoAdvanceTickDelay() = %s, want %s", got, time.Second)
+	}
+	if got := (Model{}).autoAdvanceTickDelay(); got != time.Second {
+		t.Fatalf("zero-value autoAdvanceTickDelay() = %s, want %s", got, time.Second)
+	}
+	if got := NewWithOptions(nil, Options{AutoAdvanceTickInterval: 5 * time.Millisecond}).autoAdvanceTickDelay(); got != 5*time.Millisecond {
+		t.Fatalf("injected autoAdvanceTickDelay() = %s, want %s", got, 5*time.Millisecond)
 	}
 }
 
@@ -997,7 +1008,7 @@ func TestModel_AutoAdvanceTickScheduledFromInitInFlowsMode(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceTickScheduledFromInitWithoutRepos(t *testing.T) {
-	m := NewWithOptions(nil, Options{})
+	m := newModelForTest(nil, Options{})
 	if !hasAutoAdvanceTickMsg(t, m.Init()) {
 		t.Fatal("Init() with no flows fetch should still schedule the auto-advance tick")
 	}

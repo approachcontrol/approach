@@ -54,7 +54,7 @@ func TestGenericAgentLaunchRequestRejectsEveryFlowContextMarker(t *testing.T) {
 	}
 	for name, mark := range tests {
 		t.Run(name, func(t *testing.T) {
-			m := NewWithOptions(nil, Options{})
+			m := newModelForTest(nil, Options{})
 			ctx := actions.AgentLaunchContext{LaunchID: "launch-1"}
 			mark(&ctx)
 			released := 0
