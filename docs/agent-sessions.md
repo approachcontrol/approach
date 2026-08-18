@@ -107,16 +107,19 @@ phase in the TUI makes the same call by hand after a confirmation — see
 `docs/tui-guide.md` — which is why a released session is indistinguishable from
 a cleanly exited one: it is the same write.
 
-A `SessionEnd`-class hook (Claude and Cursor always; Codex on `Stop`) for a
-tracked phase launch also reports the end to the launch controller (see
-"Launch directories" below): anything the launch spooled is replayed first.
-That record is not a death certificate — Codex `Stop` fires per turn and
-Claude's `SessionEnd` also fires on `/clear` while the agent keeps running —
-so a still-`running` phase is not demoted from the hook alone. The sweep
-treats an ended Claude session as evidence only after ten minutes and only
-when its end was not a `/clear` — never a Codex or Cursor one, whose `ended`
-records are per-turn — and a held Flow lease vetoes demotion either way. The hook reports what it did as a stderr
-warning and still exits 0.
+A Claude `SessionEnd` whose `reason` is not `clear`, for a tracked phase
+launch, also reports the end to the launch controller (see "Launch
+directories" below): anything the launch spooled is replayed first. Even that
+record is not a death certificate, so a still-`running` phase is not demoted
+from the hook alone: demotion waits the same ten-minute grace the sweep uses,
+and a held Flow lease vetoes it either way. Codex `Stop` fires per turn,
+Cursor's `stop` is the same shape, and Claude's `SessionEnd` also fires on
+`/clear` while the agent keeps running, so those hooks record the session as
+`ended` but never reach the controller at all — however old a timestamp they
+carry. The sweep likewise treats an ended Claude session as evidence only
+after ten minutes and only when its end was not a `/clear`, and never a
+Codex or Cursor one. The hook reports what it did as a stderr warning and
+still exits 0.
 
 `session-hook` loads the normal Approach config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
@@ -175,6 +178,11 @@ mutation log, and the two fail for different reasons. The files:
 - `FLOW-REPLAY-NOTICE.txt` — advisory, same shape as the migration notice.
 - `.seq.lock` — the per-launch flock every appender and replayer holds. Its
   owner line is rewritten on each acquisition, so retention ignores it.
+
+Every file carries `schema_version`. A build refuses to read a file whose
+version is above its own, so a launch directory written by a newer build stays
+pending until a controller that understands it replays it, rather than being
+applied under old semantics.
 
 The TUI hosts one Unix socket per state root
 (`$TMPDIR/approach-<uid>/<8 hex of sha256(root)>.sock`, falling back to

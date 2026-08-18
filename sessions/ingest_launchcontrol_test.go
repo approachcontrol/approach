@@ -262,3 +262,81 @@ func TestIngestHookRecordsTheSessionEndReason(t *testing.T) {
 		t.Fatalf("stored records = %#v, want the end reason persisted", records)
 	}
 }
+
+// A per-turn hook is not exit evidence however old its timestamp: a Codex
+// Stop, Cursor stop, or Claude /clear payload that carries an ended_at past
+// the session-end grace still may not demote a live launch's phase.
+func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider sessions.Provider
+		payload  string
+	}{
+		{name: "codex Stop", provider: sessions.ProviderCodex, payload: `{
+			"session_id": "codex-flow-1",
+			"cwd": %s,
+			"hook_event_name": "Stop",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude clear", provider: sessions.ProviderClaude, payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "SessionEnd",
+			"reason": "clear",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+			payload := strings.Replace(tc.payload, "%s", quoteJSON(flow.WorktreePath), 1)
+			result, err := sessions.IngestHookWithWarnings(tc.provider, bytes.NewReader([]byte(payload)), sessions.IngestOptions{
+				Env: map[string]string{
+					"APPROACH_LAUNCH_ID":          "launch-flow-1",
+					"APPROACH_SESSION_STATE_ROOT": root,
+					"APPROACH_FLOW_STATE_ROOT":    root,
+					"APPROACH_FLOW_ID":            flow.FlowID,
+					"APPROACH_FLOW_PHASE_ID":      "plan",
+				},
+			})
+			if err != nil {
+				t.Fatalf("IngestHookWithWarnings() error = %v", err)
+			}
+			if result.Record.Status != "ended" {
+				t.Fatalf("record status = %q, want ended", result.Record.Status)
+			}
+			read, _ := flowStore.Read(flow.FlowID)
+			if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
+				t.Fatalf("old per-turn hook demoted the phase: %#v", phase)
+			}
+		})
+	}
+	// A Claude SessionEnd that is a real end and is past the grace does demote.
+	root := t.TempDir()
+	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+	if _, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+		"session_id": "claude-flow-1",
+		"cwd": `+quoteJSON(flow.WorktreePath)+`,
+		"hook_event_name": "SessionEnd",
+		"reason": "prompt_input_exit",
+		"ended_at": "2020-01-01T00:00:00Z",
+		"timestamp": "2020-01-01T00:00:00Z"
+	}`)), sessions.IngestOptions{
+		Env: map[string]string{
+			"APPROACH_LAUNCH_ID":          "launch-flow-1",
+			"APPROACH_SESSION_STATE_ROOT": root,
+			"APPROACH_FLOW_STATE_ROOT":    root,
+			"APPROACH_FLOW_ID":            flow.FlowID,
+			"APPROACH_FLOW_PHASE_ID":      "plan",
+		},
+	}); err != nil {
+		t.Fatalf("IngestHookWithWarnings() error = %v", err)
+	}
+	read, _ := flowStore.Read(flow.FlowID)
+	if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("aged real SessionEnd did not demote: %#v", phase)
+	}
+}

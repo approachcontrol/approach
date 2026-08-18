@@ -304,6 +304,9 @@ func (l *Log) Requests() ([]RequestEnvelope, error) {
 		if err := readJSON(filepath.Join(l.dir, requestsDir, name), &env); err != nil {
 			return nil, err
 		}
+		if err := checkLogSchema(name, env.SchemaVersion); err != nil {
+			return nil, err
+		}
 		envelopes = append(envelopes, env)
 	}
 	slices.SortFunc(envelopes, func(a, b RequestEnvelope) int { return a.Seq - b.Seq })
@@ -337,6 +340,9 @@ func (l *Log) Pending() ([]RequestEnvelope, error) {
 func (l *Log) Applied() (AppliedState, bool, error) {
 	var state AppliedState
 	ok, err := readOptionalJSON(filepath.Join(l.dir, appliedFile), &state)
+	if err == nil && ok {
+		err = checkLogSchema(appliedFile, state.SchemaVersion)
+	}
 	return state, ok, err
 }
 
@@ -356,6 +362,9 @@ func (l *Log) WriteApplied(state AppliedState) error {
 func (l *Log) Rejected() (RejectedLog, bool, error) {
 	var log RejectedLog
 	ok, err := readOptionalJSON(filepath.Join(l.dir, rejectedFile), &log)
+	if err == nil && ok {
+		err = checkLogSchema(rejectedFile, log.SchemaVersion)
+	}
 	return log, ok, err
 }
 
@@ -380,6 +389,9 @@ func (l *Log) AppendRejected(batch RejectedBatch) error {
 func (l *Log) Baseline() (Baseline, bool, error) {
 	var baseline Baseline
 	ok, err := readOptionalJSON(filepath.Join(l.dir, baselineFile), &baseline)
+	if err == nil && ok {
+		err = checkLogSchema(baselineFile, baseline.SchemaVersion)
+	}
 	return baseline, ok, err
 }
 
@@ -396,6 +408,9 @@ func (l *Log) WriteBaseline(baseline Baseline) error {
 func (l *Log) Launch() (LaunchInfo, bool, error) {
 	var info LaunchInfo
 	ok, err := readOptionalJSON(filepath.Join(l.dir, launchFile), &info)
+	if err == nil && ok {
+		err = checkLogSchema(launchFile, info.SchemaVersion)
+	}
 	return info, ok, err
 }
 
@@ -416,6 +431,9 @@ func (l *Log) WriteLaunch(info LaunchInfo) error {
 func (l *Log) Exit() (ExitRecord, bool, error) {
 	var record ExitRecord
 	ok, err := readOptionalJSON(filepath.Join(l.dir, exitFile), &record)
+	if err == nil && ok {
+		err = checkLogSchema(exitFile, record.SchemaVersion)
+	}
 	return record, ok, err
 }
 
@@ -573,6 +591,19 @@ func syncDirectory(path string) error {
 		err = closeErr
 	}
 	return err
+}
+
+// checkLogSchema refuses a launch-directory file written under a schema this
+// build does not know. A newer build may have given a known field new
+// semantics or added one this build would ignore, so the safe reading is no
+// reading: the caller fails, the launch stays pending, and a controller that
+// understands the file replays it. Older versions (and the pre-versioned
+// zero) read fine.
+func checkLogSchema(name string, version int) error {
+	if version > LogSchemaVersion {
+		return fmt.Errorf("launch log %s uses schema %d, written by a newer build than this one (schema %d)", name, version, LogSchemaVersion)
+	}
+	return nil
 }
 
 func readJSON(path string, into any) error {

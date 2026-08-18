@@ -140,17 +140,36 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts, warnings)
 	// After the attach, and with its own store: the hook path holds one Flow
-	// store handle at a time.
-	reconcileFlowLaunchExit(record, opts, warnings)
+	// store handle at a time. Only a hook that can mean the agent process
+	// ended reaches the controller; a per-turn stop never does, however old
+	// the timestamp it carries.
+	if hookCanMeanProcessEnd(provider, payload) {
+		reconcileFlowLaunchExit(record, opts, warnings)
+	}
 	return record, nil
+}
+
+// hookCanMeanProcessEnd reports whether a hook payload can be evidence that
+// the agent process ended, as opposed to a record that merely says `ended`.
+// Codex fires `Stop` after every turn while the CLI stays open, Cursor's
+// `stop` hook is the same shape, and Claude's `SessionEnd` on `/clear` leaves
+// the agent alive on a new session; none of those may reach reconciliation,
+// which would otherwise demote on their age alone. Only a Claude `SessionEnd`
+// that is not a `/clear` can mean the process is exiting — and even that
+// still waits SessionEndGrace and the lease veto in Reconcile.
+func hookCanMeanProcessEnd(provider Provider, payload hookPayload) bool {
+	if provider != ProviderClaude {
+		return false
+	}
+	return strings.TrimSpace(payload.Reason) != "clear"
 }
 
 // reconcileFlowLaunchExit reports a session's end to the launch controller
 // so anything the launch spooled is replayed first. Session-end is not a
-// death certificate — Codex Stop is per-turn and Claude SessionEnd fires
-// on /clear — so demotion waits for SessionEndGrace; the Flow lease veto
-// still applies for tracked tmux launches. Failures are warnings: the
-// session record this hook exists to write was still captured.
+// death certificate even for the hooks hookCanMeanProcessEnd admits, so
+// demotion waits for SessionEndGrace; the Flow lease veto still applies for
+// tracked tmux launches. Failures are warnings: the session record this hook
+// exists to write was still captured.
 func reconcileFlowLaunchExit(record SessionRecord, opts IngestOptions, warnings *[]string) {
 	if record.Status != "ended" || record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.LaunchID) == "" {
 		return

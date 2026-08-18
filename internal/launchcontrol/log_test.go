@@ -1,6 +1,7 @@
 package launchcontrol
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -207,5 +208,78 @@ func TestLogRejectedAppendsBatches(t *testing.T) {
 	ids, err := ListLaunchIDs(root)
 	if err != nil || len(ids) != 1 || ids[0] != "launch-1" {
 		t.Fatalf("ListLaunchIDs = %v %v", ids, err)
+	}
+}
+
+// A launch directory written by a newer build is left alone: every reader
+// refuses a file whose schema_version is above this build's, so replay never
+// applies a request it cannot fully understand, and the directory stays
+// pending for a controller that can.
+func TestLogReadersRefuseFilesFromANewerSchema(t *testing.T) {
+	root := t.TempDir()
+	log, err := OpenLog(root, "launch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := mustRequest(t, VerbPhaseComplete, "flow-1", "plan", "launch-1", PhaseActionPayload{})
+	if _, err := log.Append(mustEnvelope(t, req, WrittenBySpool)); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteLaunch(LaunchInfo{FlowID: "flow-1", PhaseID: "plan"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteBaseline(Baseline{BaselineStatus: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	// Bump the schema of each file in turn, as a newer build would have.
+	bump := func(path string) {
+		t.Helper()
+		var raw map[string]any
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			t.Fatal(err)
+		}
+		raw["schema_version"] = LogSchemaVersion + 1
+		data, _ = json.Marshal(raw)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, _ := log.requestFiles()
+	requestPath := filepath.Join(log.Dir(), requestsDir, names[0])
+	bump(requestPath)
+	if _, err := log.Requests(); err == nil || !strings.Contains(err.Error(), "newer") {
+		t.Fatalf("Requests over a newer envelope = %v, want a newer-build refusal", err)
+	}
+	if _, err := log.Pending(); err == nil {
+		t.Fatal("Pending over a newer envelope succeeded")
+	}
+	// Restore the request; the sidecars refuse the same way.
+	if _, err := log.Append(mustEnvelope(t, req, WrittenBySpool)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(requestPath); err != nil {
+		t.Fatal(err)
+	}
+	bump(filepath.Join(log.Dir(), launchFile))
+	if _, _, err := log.Launch(); err == nil {
+		t.Fatal("Launch over a newer launch.json succeeded")
+	}
+	bump(filepath.Join(log.Dir(), baselineFile))
+	if _, _, err := log.Baseline(); err == nil {
+		t.Fatal("Baseline over a newer baseline.json succeeded")
+	}
+	// The controller leaves such a launch pending rather than replaying it.
+	store, storeRoot := newTestStore(t)
+	_ = storeRoot
+	c, err := New(Options{Root: root, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report := c.Sweep(); report.Replayed != 0 || report.Reconciled != 0 {
+		t.Fatalf("sweep replayed a newer-schema launch: %#v", report)
 	}
 }
