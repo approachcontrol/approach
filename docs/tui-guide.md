@@ -426,6 +426,17 @@ What changes in tmux mode:
   window in the repo's session and never switch your client, so use `T` or your
   own tmux keys to get there. If you rely on the old workflow, keep the default
   backend; it is untouched.
+- The first launch for a repo opens a terminal window attached to that repo's
+  session, so the agent is in front of you rather than only reachable by
+  command. Later launches add a window to the session that terminal is already
+  watching, and open no second window. Close the terminal and the next launch
+  opens a fresh one.
+- That window uses the same terminal `T` does — `$TERMINAL`, `[terminal].command`,
+  or the macOS Terminal fallback. If none resolves, the launch still succeeds
+  and the status line carries the attach command instead.
+- Nothing is opened when Approach itself is running inside tmux or Zellij: you
+  already have a multiplexer, and a nested `tmux attach` refuses to run. Use `T`
+  or your own tmux keys there.
 - Every launch reports the window, the session, and the exact
   `tmux attach -t <session>` command in the status line.
 - Press `T` from the repos pane or any content pane to open your configured
@@ -550,8 +561,8 @@ are rejected. `enter` still toggles phase rows, and `i` still opens plan
 launch instructions as compatibility aliases.
 
 Plans are persisted explicitly by agents through the `approach plan` CLI rather
-than captured from hooks; the canonical agent instructions are the
-`approach-plan-persist` skill (`agent-skills/approach-plan-persist/SKILL.md`).
+than captured from hooks; the canonical agent instructions are the unified
+`approach-flow` skill (`agent-skills/approach-flow/SKILL.md`).
 Plans share the agent-artifact root with sessions (see
 `docs/agent-sessions.md` for the storage layout); because plans live beside
 sessions, moving or cleaning the sessions root also moves or removes saved
@@ -834,10 +845,10 @@ existing launch-failure persistence and recovery behavior; the Flow remains
 available and the status line shows the failure.
 
 A Flow that has no worktree at all — one created by `approach flow create`
-without `--worktree-path`, or left behind by a failure before the start metadata
-was written — never launches in the repository root. Pressing `g` creates the
-worktree first, announcing it in the status line, and only then starts the
-agent.
+without `--worktree-path` or `--prepare-worktree`, or left behind by a failure
+before the start metadata was written — never launches in the repository root.
+Pressing `g` creates the worktree first, announcing it in the status line, and
+only then starts the agent.
 
 A Flow that records a non-empty worktree path takes a different route: Approach
 inspects that exact path before persisting a phase launch ID or preparing an
@@ -1376,11 +1387,10 @@ semantics, rejection rules, and phase gating are documented in
 
 The TUI can create a new Flow and record a launch for the next launchable
 phase; agents perform all other phase progression through the `approach flow`
-CLI. The canonical agent instructions are the `approach-flow` and
-`approach-flow-create` skills (`agent-skills/approach-flow/SKILL.md`,
-`agent-skills/approach-flow-create/SKILL.md`); phase transitions, derived
-readiness, gating, and merge requirements are documented in
-`docs/flow-phases.md`.
+CLI. The canonical agent instructions are the active-phase, plan, and creation
+references in the unified `approach-flow` skill
+(`agent-skills/approach-flow/SKILL.md`); phase transitions, derived readiness,
+gating, and merge requirements are documented in `docs/flow-phases.md`.
 
 ## Active Flows View (`ctrl+a`)
 

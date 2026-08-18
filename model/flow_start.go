@@ -53,6 +53,42 @@ type FlowStartResult struct {
 	Commit   string
 }
 
+// FlowPreparationOptions wires the UI-independent Flow preparation lifecycle
+// for callers such as the CLI. Preparation creates the record, provisions its
+// worktree, records start metadata, runs any bootstrap hook, and stamps the
+// preparation receipt without launching an agent.
+type FlowPreparationOptions struct {
+	Store                *flowstore.Store
+	Preset               *flowstore.Preset
+	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
+	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
+}
+
+// PrepareFlow runs the same persisted preparation lifecycle used by TUI Flow
+// creation, without reserving or starting an agent launch.
+func PrepareFlow(req FlowStartRequest, opts FlowPreparationOptions) (FlowStartResult, error) {
+	if opts.Store == nil {
+		return FlowStartResult{}, fmt.Errorf("flow preparation requires a store")
+	}
+	creator := newFlowCreator(flowCreatorOptions{
+		CreatePreparation: func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+			createOpts.Preset = opts.Preset
+			return opts.Store.CreatePreparation(record, createOpts)
+		},
+		CreateWorktree: actions.CreateFlowWorktree,
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return opts.Store.SetStartMetadata(update)
+		},
+		SetPhase:             opts.Store.SetPhase,
+		ReserveLaunch:        opts.Store.ReserveAgentLaunch,
+		ReadFlow:             opts.Store.Read,
+		BootstrapHookForRepo: opts.BootstrapHookForRepo,
+		RunBootstrapHook:     opts.RunBootstrapHook,
+		ResolveCommit:        actions.ResolveWorktreeCommit,
+	})
+	return creator.Create(req)
+}
+
 // flowCreatorOptions groups the persistence and provisioning adapters for
 // parked creation and lifecycle worktree recovery.
 type flowCreatorOptions struct {

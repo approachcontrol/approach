@@ -130,6 +130,65 @@ func RepoTmuxSessionExists(repoPath string) bool {
 	return tmuxProbeCommand(ctx, repoTmuxHasSessionArgs(repoPath)...).Run() == nil
 }
 
+// repoTmuxClientFormat names one attached client per row. The session target
+// already scopes the listing, so the row's content matters only as evidence
+// that a row exists at all.
+const repoTmuxClientFormat = "#{client_name}"
+
+// repoTmuxListClientsArgs pins the exact-match target the attach probe runs.
+func repoTmuxListClientsArgs(repoPath string) []string {
+	return []string{"list-clients", "-t", tmuxExactTarget(RepoAgentSessionName(repoPath)), "-F", repoTmuxClientFormat}
+}
+
+// RepoTmuxSessionAttached reports whether a terminal is already watching a
+// repo's agent session. tmux mode opens one terminal window per repo and adds
+// tmux windows to it afterwards; this is what distinguishes the two cases, and
+// it stays honest when the user closes that terminal or restarts the TUI, which
+// an in-process flag alone cannot.
+//
+// False means "no evidence of an attached client" — tmux missing, session gone,
+// probe failed or timed out — matching the existing probes' convention. Here
+// that error direction costs at most one extra terminal window, never a lost
+// agent, so it is the safe way to be wrong.
+//
+// It runs a tmux subprocess, so callers must keep it off the update loop.
+func RepoTmuxSessionAttached(repoPath string) bool {
+	if !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, repoTmuxListClientsArgs(repoPath)...).Output()
+	if err != nil {
+		return false
+	}
+	return sessionAttachedInListing(string(out))
+}
+
+// sessionAttachedInListing scans repoTmuxClientFormat output for at least one
+// client. It is split out because "tmux printed nothing" is the case worth
+// testing without a tmux server.
+func sessionAttachedInListing(listing string) bool {
+	for _, line := range strings.Split(listing, "\n") {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// InsideMultiplexer reports whether approach itself is running inside tmux or
+// Zellij. tmux mode opens no terminal window there: the user already has a
+// multiplexer in front of them, and a nested `tmux attach` refuses to run
+// anyway. The model reads no environment of its own, so the read lives here.
+func InsideMultiplexer() bool {
+	return insideMultiplexer(os.Getenv)
+}
+
+func insideMultiplexer(getenv func(string) string) bool {
+	return getenv("TMUX") != "" || getenv("ZELLIJ") != ""
+}
+
 // repoTmuxListWindowsArgs lists a repo's agent session windows with the liveness
 // field the launch probe needs.
 func repoTmuxListWindowsArgs(repoPath string) []string {

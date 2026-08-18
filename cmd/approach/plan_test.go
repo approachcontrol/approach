@@ -46,9 +46,10 @@ func TestRunPlanHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: approach plan <save|list|read|phase> [flags]",
+		"Usage: approach plan <save|list|read|status|phase> [flags]",
 		"approach plan save --title",
 		"approach plan read --plan-id",
+		"approach plan status set --plan-id",
 		"approach plan phase set --plan-id",
 	})
 }
@@ -73,6 +74,7 @@ func TestRunPlanSaveHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 		"--title TITLE",
 		"--file PATH",
 		"--state-root PATH",
+		"--json",
 	})
 }
 
@@ -107,6 +109,15 @@ func TestRunPlanLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 				"Usage: approach plan phase set [flags]",
 				"--plan-id PLAN_ID",
 				"--phase-id PHASE_ID",
+			},
+		},
+		{
+			name: "status set",
+			args: []string{"approach", "plan", "status", "set", "--help"},
+			wants: []string{
+				"Usage: approach plan status set [flags]",
+				"--plan-id PLAN_ID",
+				"--status STATUS",
 			},
 		},
 	} {
@@ -171,7 +182,7 @@ func TestRunPlanUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "reed"; did you mean "read"?`,
-		"Usage: approach plan <save|list|read|phase> [flags]",
+		"Usage: approach plan <save|list|read|status|phase> [flags]",
 	})
 }
 
@@ -219,6 +230,130 @@ func TestRunPlanSaveFromStdinPrintsPlanID(t *testing.T) {
 	}
 }
 
+func TestRunPlanSaveJSONPrintsPersistedPlanMetadata(t *testing.T) {
+	root := t.TempDir()
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "plan", "save",
+		"--title", "Structured Plan",
+		"--plan-id", "structured-plan",
+		"--status", "approved",
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		stdin:  strings.NewReader("# Structured Plan\n"),
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var result planCommandResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	wantPath := filepath.Join(root, "plans", "structured-plan", "plan.md")
+	if result.PlanID != "structured-plan" || result.Title != "Structured Plan" || result.Status != "approved" || result.PlanPath != wantPath {
+		t.Fatalf("result = %#v, want persisted metadata and path %q", result, wantPath)
+	}
+}
+
+func TestRunPlanReadJSONDefaultsPlanIDFromLaunchEnvironment(t *testing.T) {
+	root := t.TempDir()
+	var saveOutput bytes.Buffer
+	if err := run([]string{
+		"approach", "plan", "save",
+		"--title", "Launch Plan",
+		"--plan-id", "launch-plan",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		stdin:  strings.NewReader("# Launch Plan\n"),
+		stdout: &saveOutput,
+	})); err != nil {
+		t.Fatalf("save returned error: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err := run([]string{"approach", "plan", "read", "--json", "--state-root", root}, noScanDeps(t, runDeps{
+		getenv: func(key string) string {
+			if key == "APPROACH_PLAN_ID" {
+				return "launch-plan"
+			}
+			return ""
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("read returned error: %v", err)
+	}
+
+	var result planCommandResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result.PlanID != "launch-plan" || result.Markdown != "# Launch Plan\n" || result.PlanPath != filepath.Join(root, "plans", "launch-plan", "plan.md") {
+		t.Fatalf("result = %#v, want launch plan metadata, Markdown, and path", result)
+	}
+}
+
+func TestRunPlanStatusSetPreservesPlanContentAndPhases(t *testing.T) {
+	root := t.TempDir()
+	var output bytes.Buffer
+	if err := run([]string{
+		"approach", "plan", "save",
+		"--title", "Lifecycle Plan",
+		"--plan-id", "lifecycle-plan",
+		"--status", "approved",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdin: strings.NewReader("# Lifecycle Plan\n"), stdout: &output})); err != nil {
+		t.Fatalf("save returned error: %v", err)
+	}
+	if err := run([]string{
+		"approach", "plan", "phase", "set",
+		"--plan-id", "lifecycle-plan",
+		"--phase-id", "implementation",
+		"--title", "Implementation",
+		"--status", "pending",
+		"--order", "1",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{})); err != nil {
+		t.Fatalf("phase set returned error: %v", err)
+	}
+
+	output.Reset()
+	err := run([]string{
+		"approach", "plan", "status", "set",
+		"--status", "in_progress",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		getenv: func(key string) string {
+			if key == "APPROACH_PLAN_ID" {
+				return "lifecycle-plan"
+			}
+			return ""
+		},
+		stdout: &output,
+	}))
+	if err != nil {
+		t.Fatalf("status set returned error: %v", err)
+	}
+
+	var result planCommandResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, output.String())
+	}
+	if result.Status != "in_progress" || result.Title != "Lifecycle Plan" || len(result.Phases) != 1 || result.Phases[0].PhaseID != "implementation" {
+		t.Fatalf("result = %#v, want updated status with existing metadata", result)
+	}
+	markdown, err := os.ReadFile(filepath.Join(root, "plans", "lifecycle-plan", "plan.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(markdown) != "# Lifecycle Plan\n" {
+		t.Fatalf("Markdown changed to %q", markdown)
+	}
+}
+
 func TestRunPlanSaveFromFile(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "plan-input.md")
@@ -241,6 +376,7 @@ func TestRunPlanSaveFromFile(t *testing.T) {
 }
 
 func TestRunPlanSaveStateRootPrecedence(t *testing.T) {
+	flowRoot := t.TempDir()
 	planRoot := t.TempDir()
 	sessionRoot := t.TempDir()
 	configRoot := t.TempDir()
@@ -252,6 +388,8 @@ func TestRunPlanSaveStateRootPrecedence(t *testing.T) {
 			},
 			getenv: func(key string) string {
 				switch key {
+				case "APPROACH_FLOW_STATE_ROOT":
+					return flowRoot
 				case "APPROACH_PLAN_STATE_ROOT":
 					return planRoot
 				case "APPROACH_SESSION_STATE_ROOT":
@@ -265,8 +403,11 @@ func TestRunPlanSaveStateRootPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(planRoot, "plans", "p", "meta.json")); err != nil {
-		t.Fatalf("expected plan under APPROACH_PLAN_STATE_ROOT: %v", err)
+	if _, err := os.Stat(filepath.Join(flowRoot, "plans", "p", "meta.json")); err != nil {
+		t.Fatalf("expected plan under APPROACH_FLOW_STATE_ROOT: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(planRoot, "plans", "p", "meta.json")); !os.IsNotExist(err) {
+		t.Fatalf("plan should not be under plan root when Flow root is set")
 	}
 	if _, err := os.Stat(filepath.Join(sessionRoot, "plans", "p", "meta.json")); !os.IsNotExist(err) {
 		t.Fatalf("plan should not be under session root")

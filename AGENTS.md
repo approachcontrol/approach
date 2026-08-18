@@ -14,7 +14,7 @@ CLAUDE.md is a symlink to this file — edit here.
 - Flow phase semantics: `docs/flow-phases.md`
 - Read-only GraphQL API (`approach serve`): `docs/graphql-api.md`
 - Beads task tracking: `.agents/skills/beads/SKILL.md` (run `bd prime` for live session context)
-- Flow/plan skill recipes: `agent-skills/approach-flow/SKILL.md`, `agent-skills/approach-flow-create/SKILL.md`, `agent-skills/approach-plan-persist/SKILL.md`
+- Unified Flow/plan skill recipe: `agent-skills/approach-flow/SKILL.md`
 
 ## Non-negotiables
 
