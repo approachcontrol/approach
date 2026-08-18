@@ -101,6 +101,32 @@ func TestRepoTmuxAgentLaunchUnavailableWithoutTmux(t *testing.T) {
 	}
 }
 
+func TestRepoTmuxAgentLaunchAcceptsCursorAgent(t *testing.T) {
+	putAgentOnPath(t, "cursor-agent")
+	t.Setenv("HOME", t.TempDir())
+	ctx := tmuxModeContext(t)
+	ctx.Command = "cursor-agent"
+	ctx.WorktreePath = t.TempDir()
+
+	spec, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("repoTmuxAgentLaunch returned error: %v", err)
+	}
+	defer spec.Launch.Cleanup()
+	if spec.SessionName != RepoAgentSessionName("/repo") {
+		t.Fatalf("session name = %q, want %q", spec.SessionName, RepoAgentSessionName("/repo"))
+	}
+}
+
+func TestRepoTmuxAgentLaunchRejectsUnsupportedAgent(t *testing.T) {
+	ctx := tmuxModeContext(t)
+	ctx.Command = "gemini"
+	_, err := repoTmuxAgentLaunch(ctx, fakeLookPath("tmux"))
+	if err == nil || !strings.Contains(err.Error(), "supports only CLI agents") {
+		t.Fatalf("error = %v, want CLI-agent rejection", err)
+	}
+}
+
 func TestRepoTmuxAgentLaunchCreatesOrReusesRepoSession(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	ctx := tmuxModeContext(t)
