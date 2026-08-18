@@ -415,25 +415,46 @@ an unreadable row leaves it armed for retry. With no successor already owned by
 that edge, it intersects a fresh direct-child query with fresh `bd ready` order,
 indexes the complete repository Flow corpus by exact canonical repository plus
 `{child ID, epic ID}`, skips every ready child that already has such a Flow, and
-prepares the first unlinked child. Links for another repository or epic do not
-suppress the candidate. This path calls preparation only: it does not claim a
-Bead, create a launch intent, start a phase, or dispatch an agent.
+selects the first unlinked child. Links for another repository or epic do not
+suppress the candidate. Selection is where the advance worker stops: it creates
+nothing, claims no Bead, and starts no phase.
 
-Once preparation returns a Flow ID, that exact ID is owned in memory before any
-retry classification. Later polls reserve and reconcile it before consulting Beads,
-so a partial preparation, reservation failure, or reconciliation failure cannot
-skip ahead and create another child. Missing receipts, deliberate closure, and
-non-`pending` exact-linked successors are visible owned obstructions. They keep
-the source edge and ownership armed but fail closed against later selection;
-durable halt persistence remains a separate concern.
+The selected child is then submitted to the create-phase launch lifecycle as one
+create-then-launch intent whose origin is epic progression. That single admitted
+attempt owns everything the child needs — the exact-ID record, the worktree,
+start metadata, the preparation receipt, successor reconciliation, and the
+child's first phase agent — so an unattended chain never needs a key press. The
+advance's preparation admission is held for the whole attempt and released only
+when the create pipeline reaches a terminal, which is also what makes the advance
+single-flight across polls. Unlike the two key-press create origins, this one is
+not fenced on the displayed repository: the poll that submits it is unscoped. Its
+fence is the exact advance request plus the admission that request owns, so a
+superseded advance is refused before any side effect.
 
-While holding a successor-specific launch/close reservation that permits an
-absent or closed Flow, one writer transaction
+The created Flow ID is owned in memory at the write stage, before the worktree
+exists, and the advance edge skips a source that already owns an in-flight child.
+Every terminal of the create pipeline — success, compensated abort, or failure —
+clears that ownership. The halt edge is deliberately not fenced this way: a
+failing child must be able to stop the chain whatever the advance is doing.
+
+Successor reconciliation runs inside that pipeline, under the launch/close
+reservation the pipeline already holds, after the finalizer stamps the
+preparation receipt and before the first phase is made running — the only window
+in which the child is both prepared and still `pending`. One writer transaction
 revalidates progression before the Flow. Inactive progression wins over every
 simultaneous Flow condition; otherwise an absent or changed-link Flow is
 released, an incomplete/closed/non-pending exact Flow is an owned obstruction,
 an open prepared pending Flow is accepted, and storage uncertainty is
-retryable. Only acceptance replaces the runtime baseline. If the Ready/direct
+retryable. Only acceptance replaces the runtime baseline, with the accepted
+prepared child, and lets the pipeline continue to the launch. Every other
+outcome aborts the attempt. The abort is past the preparation receipt, so the
+one-shot finalizer is already consumed and compensation is unavailable: the
+attempt blocks the child's startup roots instead, exactly as any other
+post-receipt create failure does. That leaves a blocked exact-linked Flow, which
+later selection counts as a child that already has a Flow, so an abort also halts
+the epic rather than silently skipping the child it just consumed. Already
+inactive progression is the one exception: there is nothing left to halt, so it
+only drops the epic's runtime tracking. If the Ready/direct
 child intersection is empty, or every intersecting child already has an exact
 linked Flow, the TUI requests the atomic active→done transition. The stored row
 keeps `enabled:false` for compatibility, but `done:true` is the only completion
@@ -461,7 +482,27 @@ then repeats the same-actor idempotent claim before it adopts the prepared Flow
 or surfaces incomplete preparation instead of skipping to a sibling. Consumed
 `completed`/`merged` markers are ignored so a later Ready sibling can be
 selected; unmarked
-manual Ready `f`/`F` Flows do not enter this recovery path.
+manual Ready `f`/`F` Flows do not enter this recovery path. The enable edge
+prepares its first child only; it creates no launch intent, so that first child
+is started once by hand and the chain is unattended from its successor onward.
+
+Progression-created children are written headless, and the store enables AutoMode
+on every new Flow, which this path never opts out of. Those two together are what
+make the rest of a child's phases drain without a key press: the first phase is
+launched by the create attempt itself, and each later phase is armed for the
+AutoMode drain as its predecessor completes. The child's first phase is launched
+through the create pipeline's embedded route, like Ready-Bead create-and-start.
+
+Any terminal failure of a progression child's create attempt — a refusal before
+allocation, a create, reservation, worktree, metadata, bootstrap, launch-ID, or
+terminal failure, or a failed prompt prefill — halts the epic with a `blocked`
+tuple naming that child and the cause (`child Flow <id> could not launch its
+first phase: <cause>`, or `child Flow could not be created: <cause>` when no
+record exists yet). Halting is sticky and tears down the epic's runtime baseline
+and ownership, so no further child is created until the user re-enables
+progression. That is deliberate: a named stall is better than a pending child no
+one will ever start. The user-facing status keeps the failure's own message,
+which names the same cause more precisely than the halt announcement.
 
 ## Per-phase agent settings
 

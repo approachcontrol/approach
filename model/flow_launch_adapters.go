@@ -33,6 +33,10 @@ type flowLaunchSeams struct {
 	ReadPlan                 func(planID string) (string, error)
 	InspectWorktreeDirectory func(path string) error
 	NewLaunchID              func() string
+	// ReconcileEpicSuccessor is epic-progression-only. The create pipeline
+	// calls it under the launch/close reservation it already holds, so it must
+	// never be a seam that takes that reservation for itself.
+	ReconcileEpicSuccessor func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error)
 }
 
 // newFlowLaunchSeams wires the lifecycle onto the already-resolved Model seams.
