@@ -509,3 +509,47 @@ func TestReplayExecutesPRSetThatChangesOnlyTheBaseBranch(t *testing.T) {
 		t.Fatalf("PR after replay = %#v, want base release", after.PR)
 	}
 }
+
+// Case 1 must see the effect Execute would have, not the payload's spelling
+// of it: a phase action without --outcome derives the kind's default, and a
+// plan.set without --plan-path resolves the saved plan's path.
+func TestTargetReachedUsesTheEffectiveOutcomeAndNeverAssumesAPlanPath(t *testing.T) {
+	env := func(verb Verb, payload any) RequestEnvelope {
+		req, err := NewRequest(verb, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return RequestEnvelope{Verb: verb, Payload: req.Payload}
+	}
+	review := flowstore.FlowPhase{PhaseID: "plan-review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApprovedWithConcerns}
+	if targetReached(flowstore.FlowRecord{}, review, env(VerbPhaseComplete, PhaseActionPayload{})) {
+		t.Fatal("complete without --outcome on a plan review means approved; approved_with_concerns is not that")
+	}
+	review.Outcome = flowstore.OutcomeApproved
+	if !targetReached(flowstore.FlowRecord{}, review, env(VerbPhaseComplete, PhaseActionPayload{})) {
+		t.Fatal("completed/approved is exactly what a bare complete writes on a plan review")
+	}
+	autoreview := flowstore.FlowPhase{PhaseID: "autoreview", Kind: flowstore.KindAutoreview, Status: flowstore.PhaseNeedsAttention, Outcome: "needs_attention"}
+	if !targetReached(flowstore.FlowRecord{}, autoreview, env(VerbPhaseNeedsAttention, PhaseActionPayload{})) {
+		t.Fatal("needs_attention/needs_attention is what a bare needs-attention writes on autoreview")
+	}
+	autoreview.Outcome = "custom"
+	if targetReached(flowstore.FlowRecord{}, autoreview, env(VerbPhaseNeedsAttention, PhaseActionPayload{})) {
+		t.Fatal("a different outcome is not the default")
+	}
+	// A kind with no default outcome keeps the wildcard: any outcome matches.
+	plain := flowstore.FlowPhase{PhaseID: "implementation", Kind: "implementation", Status: flowstore.PhaseCompleted, Outcome: "implemented"}
+	if !targetReached(flowstore.FlowRecord{}, plain, env(VerbPhaseComplete, PhaseActionPayload{})) {
+		t.Fatal("bare complete on a kind without a default outcome reaches any completed outcome")
+	}
+	linked := flowstore.FlowRecord{PlanID: "plan-9", PlanPath: "/plans/plan-9/plan.md"}
+	if targetReached(linked, flowstore.FlowPhase{}, env(VerbPlanSet, PlanSetPayload{PlanID: "plan-9"})) {
+		t.Fatal("plan.set without --plan-path resolves a path Execute must write; it is never assumed reached")
+	}
+	if !targetReached(linked, flowstore.FlowPhase{}, env(VerbPlanSet, PlanSetPayload{PlanID: "plan-9", PlanPath: "/plans/plan-9/plan.md"})) {
+		t.Fatal("plan.set with the same id and path is reached")
+	}
+	if targetReached(linked, flowstore.FlowPhase{}, env(VerbPlanSet, PlanSetPayload{PlanID: "plan-9", PlanPath: "/elsewhere/plan.md"})) {
+		t.Fatal("plan.set with another path is not reached")
+	}
+}

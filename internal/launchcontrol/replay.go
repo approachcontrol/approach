@@ -254,8 +254,11 @@ func intendedStatus(env RequestEnvelope) string {
 }
 
 // targetReached reports whether the live record already shows everything the
-// request would write: the status and every field the payload names. It is
-// case 1 of replay — the request landed but its marker did not.
+// request would write: the status, every field the payload names, and the
+// effect Execute derives for what it leaves blank. It is case 1 of replay —
+// the request landed but its marker did not — and it errs toward false, since
+// a false negative only re-executes an idempotent request while a false
+// positive loses a write for good.
 func targetReached(record flowstore.FlowRecord, phase flowstore.FlowPhase, env RequestEnvelope) bool {
 	fieldsMatch := func(outcome, notes, summary string) bool {
 		if outcome != "" && phase.Outcome != outcome {
@@ -281,13 +284,27 @@ func targetReached(record flowstore.FlowRecord, phase flowstore.FlowPhase, env R
 		if json.Unmarshal(env.Payload, &payload) != nil {
 			return false
 		}
-		return phase.Status == phaseActions[env.Verb].status && fieldsMatch(payload.Outcome, payload.Notes, payload.Summary)
+		// The effect Execute would have, not the payload's spelling of it: an
+		// omitted outcome derives the kind's default, and only a kind with no
+		// default leaves the outcome a wildcard.
+		action := phaseActions[env.Verb]
+		outcome := strings.TrimSpace(payload.Outcome)
+		if outcome == "" {
+			outcome = defaultPhaseActionOutcome(flowstore.SemanticKind(phase), action)
+		}
+		return phase.Status == action.status && fieldsMatch(outcome, payload.Notes, payload.Summary)
 	case VerbPlanSet:
 		var payload PlanSetPayload
 		if json.Unmarshal(env.Payload, &payload) != nil {
 			return false
 		}
-		return record.PlanID == payload.PlanID && (payload.PlanPath == "" || record.PlanPath == payload.PlanPath)
+		// An omitted path is resolved by the store to the saved plan's own,
+		// which the log cannot know; the request is executed (idempotently)
+		// rather than assumed reached.
+		if payload.PlanPath == "" {
+			return false
+		}
+		return record.PlanID == payload.PlanID && record.PlanPath == payload.PlanPath
 	// The Flow-level verbs replace a whole struct, so every field the store
 	// would write is compared, normalized the way the store normalizes it. A
 	// request that differs in any field has not landed, and marking it applied
