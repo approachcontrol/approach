@@ -247,6 +247,13 @@ With `backend = "tmux"`:
   never terminates them.
 - The window closes when the agent exits; the session ends with its last
   window and is recreated by the next launch.
+- The first launch for a repo also opens a terminal window attached to that
+  session, using `$TERMINAL`, `[terminal].command`, or the macOS Terminal
+  fallback — the same resolution the `T` key uses. Later launches add a window
+  to the session that terminal is already watching. When no terminal resolves,
+  the launch still succeeds and the status line falls back to naming the
+  `tmux attach -t <session>` command. Approach running inside tmux or Zellij
+  opens no window at all.
 - If `tmux` is not on `PATH`, launches that would have taken the tmux route fall
   back to their default-backend behavior and say so in the status line. The
   availability check itself never refuses a launch, but a tmux launch that fails

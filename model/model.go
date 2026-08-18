@@ -223,17 +223,26 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
-	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
-	leaseInspectInjected      bool
-	tmuxAttachHint            bool
-	startEmbeddedTerminal     EmbeddedTerminalStarter
-	embeddedTerminals         []embeddedTerminalSlot
-	nextEmbeddedTerminalID    int
-	activeTerminalNum         int
-	terminalDockVisible       bool
-	terminalFocus             terminalFocus
-	autoAdvanceDrainFlows     map[string]struct{}
-	epicProgressionBaselines  map[string]flowstore.FlowRecord
+	repoTmuxSessionAttached   func(string) bool
+	insideMultiplexer         func() bool
+	// repoTmuxTerminalPending holds the repos whose first tmux-mode terminal
+	// window has been dispatched but has not reported back. It debounces two
+	// launches into one repo seconds apart, where the second would probe
+	// `list-clients` before the first terminal's client has registered. It is
+	// never the authority — RepoTmuxSessionAttached is — so it needs no expiry
+	// beyond the result message that clears it.
+	repoTmuxTerminalPending  map[string]bool
+	inspectFlowLease         func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected     bool
+	tmuxAttachHint           bool
+	startEmbeddedTerminal    EmbeddedTerminalStarter
+	embeddedTerminals        []embeddedTerminalSlot
+	nextEmbeddedTerminalID   int
+	activeTerminalNum        int
+	terminalDockVisible      bool
+	terminalFocus            terminalFocus
+	autoAdvanceDrainFlows    map[string]struct{}
+	epicProgressionBaselines map[string]flowstore.FlowRecord
 
 	epicProgressionBaselineMinimumRequests map[string]uint64
 
@@ -394,6 +403,13 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
+	// RepoTmuxSessionAttached probes whether a terminal is already watching a
+	// repo's tmux session. It decides whether a tmux-mode launch opens the
+	// repo's first terminal window, and runs only inside a command goroutine.
+	RepoTmuxSessionAttached func(repoPath string) bool
+	// InsideMultiplexer reports whether approach itself runs inside tmux or
+	// Zellij, where tmux mode opens no terminal window of its own.
+	InsideMultiplexer func() bool
 	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
 	// manual admission, and AutoMode. It must never invoke tmux or fork.
 	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
@@ -845,6 +861,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	repoTmuxSessionAttached := opts.RepoTmuxSessionAttached
+	if repoTmuxSessionAttached == nil {
+		repoTmuxSessionAttached = actions.RepoTmuxSessionAttached
+	}
+	insideMultiplexer := opts.InsideMultiplexer
+	if insideMultiplexer == nil {
+		insideMultiplexer = actions.InsideMultiplexer
+	}
 	leaseInspectInjected := opts.InspectFlowLease != nil
 	inspectFlowLease := opts.InspectFlowLease
 	if inspectFlowLease == nil {
@@ -1033,6 +1057,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		repoTmuxSessionAttached:   repoTmuxSessionAttached,
+		insideMultiplexer:         insideMultiplexer,
 		inspectFlowLease:          inspectFlowLease,
 		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
@@ -2236,6 +2262,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m = m.setStatus(statusOther, msg.Err)
 		}
 		return m, nil
+	case repoTmuxTerminalOpenedMsg:
+		return m.applyRepoTmuxTerminalOpened(msg), nil
 	case EmbeddedTerminalDetachHandoffResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, "Detached embedded terminal, but failed to open terminal: "+msg.Err)

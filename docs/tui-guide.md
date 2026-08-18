@@ -426,6 +426,17 @@ What changes in tmux mode:
   window in the repo's session and never switch your client, so use `T` or your
   own tmux keys to get there. If you rely on the old workflow, keep the default
   backend; it is untouched.
+- The first launch for a repo opens a terminal window attached to that repo's
+  session, so the agent is in front of you rather than only reachable by
+  command. Later launches add a window to the session that terminal is already
+  watching, and open no second window. Close the terminal and the next launch
+  opens a fresh one.
+- That window uses the same terminal `T` does — `$TERMINAL`, `[terminal].command`,
+  or the macOS Terminal fallback. If none resolves, the launch still succeeds
+  and the status line carries the attach command instead.
+- Nothing is opened when Approach itself is running inside tmux or Zellij: you
+  already have a multiplexer, and a nested `tmux attach` refuses to run. Use `T`
+  or your own tmux keys there.
 - Every launch reports the window, the session, and the exact
   `tmux attach -t <session>` command in the status line.
 - Press `T` from the repos pane or any content pane to open your configured

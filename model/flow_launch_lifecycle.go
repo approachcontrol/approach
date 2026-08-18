@@ -1220,11 +1220,26 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
 	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
+	// Placed after the handoffPending transition above, so a handoff canceled
+	// before its spawn opens no window. It is a sibling command: it touches no
+	// attempt token, reservation, or AgentResultMsg field.
+	m, terminalCmd := m.maybeOpenRepoTmuxTerminal(flowLaunchTmuxRepoPath(ctx, msg.RepoPath), spec.SessionName)
 	var fetchCmd tea.Cmd
 	if ctx.FlowID != "" && m.flowSurfaceVisible() {
 		m, fetchCmd = m.startFlowSurfaceFetch()
 	}
-	return m, batchNonNil(fetchCmd, launchCmd)
+	return m, batchNonNil(fetchCmd, launchCmd, terminalCmd)
+}
+
+// flowLaunchTmuxRepoPath resolves which repo's terminal a tracked Flow launch
+// should open. repoTmuxAgentLaunch keys the session on the context's RepoPath,
+// so that is what the terminal must follow; the event's repo path is only a
+// fallback for a context that carries none.
+func flowLaunchTmuxRepoPath(ctx actions.AgentLaunchContext, fallbackRepoPath string) string {
+	if repoPath := strings.TrimSpace(ctx.RepoPath); repoPath != "" {
+		return repoPath
+	}
+	return strings.TrimSpace(fallbackRepoPath)
 }
 
 // flowLaunchEmbeddedBackstop is the last occupancy check before a slot is
