@@ -64,7 +64,7 @@ func TestFlowStoreIsReusedAcrossFallbackMutations(t *testing.T) {
 
 	root := t.TempDir()
 	record := seedFlow(t, root)
-	m := NewWithOptions(nil, Options{SessionStateRoot: root})
+	m := newModelForTest(nil, Options{SessionStateRoot: root})
 
 	// The first write opens the Model's memoized store lazily; measure after it
 	// so the baseline already includes the shared store's own descriptors.
@@ -105,7 +105,7 @@ func TestFlowStoreIsSharedBetweenDistinctFallbackMutators(t *testing.T) {
 
 	root := t.TempDir()
 	record := seedFlow(t, root)
-	m := NewWithOptions(nil, Options{SessionStateRoot: root})
+	m := newModelForTest(nil, Options{SessionStateRoot: root})
 
 	// One mutator first, so the baseline already carries the shared store.
 	if _, err := m.setFlowAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: true}); err != nil {
@@ -151,7 +151,7 @@ func TestInjectedFlowStoreIsUsedByFallbackMutators(t *testing.T) {
 	}
 	defer injected.Close()
 
-	m := NewWithOptions(nil, Options{SessionStateRoot: root, FlowStore: injected})
+	m := newModelForTest(nil, Options{SessionStateRoot: root, FlowStore: injected})
 	if _, err := m.setFlowAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: false}); err != nil {
 		t.Fatalf("setFlowAutoMode() error = %v", err)
 	}

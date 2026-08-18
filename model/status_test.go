@@ -44,7 +44,7 @@ func TestStatusTransientExpiryUsesSequence(t *testing.T) {
 	if len(m.pendingStatusCmds) != 1 {
 		t.Fatalf("pending status commands = %d, want 1", len(m.pendingStatusCmds))
 	}
-	if len(events) != 1 || events[0].kind != "expire" || events[0].delay != statusLifetime {
+	if len(events) != 1 || events[0].kind != "expire" || events[0].delay != defaultStatusLifetime {
 		t.Fatalf("timer events = %#v, want one 3s expiry", events)
 	}
 
@@ -93,7 +93,7 @@ func TestVisibleRepoSummaryStatusSchedulesFadeAndExpiry(t *testing.T) {
 	want := []recordedStatusTimerEvent{
 		{kind: "fade", seq: m.status.Seq, step: 1, delay: time.Second},
 		{kind: "fade", seq: m.status.Seq, step: 2, delay: 2 * time.Second},
-		{kind: "expire", seq: m.status.Seq, delay: statusLifetime},
+		{kind: "expire", seq: m.status.Seq, delay: defaultStatusLifetime},
 	}
 	for i := range want {
 		if events[i] != want[i] {
@@ -236,5 +236,26 @@ func TestStatusCommandDrainsFromUpdate(t *testing.T) {
 	modelNext := next.(Model)
 	if modelNext.status.Text != "Opened PR #1" {
 		t.Fatalf("status = %#v, want Opened PR #1", modelNext.status)
+	}
+}
+
+func TestStatusTimingsDefaultToTheProductionSchedule(t *testing.T) {
+	want := StatusTimings{FadeStep1: time.Second, FadeStep2: 2 * time.Second, Lifetime: 3 * time.Second}
+	// Injection is a test seam, not a production default: a Model built without
+	// explicit timings must keep the 1s/2s/3s schedule.
+	if got := New(nil).statusTimings(); got != want {
+		t.Fatalf("uninjected statusTimings() = %#v, want %#v", got, want)
+	}
+	if got := (Model{}).statusTimings(); got != want {
+		t.Fatalf("zero-value statusTimings() = %#v, want %#v", got, want)
+	}
+	injected := StatusTimings{FadeStep1: time.Millisecond, FadeStep2: 2 * time.Millisecond, Lifetime: 3 * time.Millisecond}
+	if got := NewWithOptions(nil, Options{StatusTimings: injected}).statusTimings(); got != injected {
+		t.Fatalf("injected statusTimings() = %#v, want %#v", got, injected)
+	}
+	// A partially set schedule fills only its unset steps from production.
+	partial := NewWithOptions(nil, Options{StatusTimings: StatusTimings{Lifetime: time.Millisecond}}).statusTimings()
+	if partial != (StatusTimings{FadeStep1: time.Second, FadeStep2: 2 * time.Second, Lifetime: time.Millisecond}) {
+		t.Fatalf("partial statusTimings() = %#v", partial)
 	}
 }

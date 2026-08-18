@@ -57,8 +57,10 @@ func activeFlowResultFromCommand(t *testing.T, cmd tea.Cmd) model.ActiveFlowResu
 	return model.ActiveFlowResultMsg{}
 }
 
-// testCommandSettleTimeout stays short so settleModelCommands does not
-// consume status-fade timers (1s+) and clear the error under test.
+// testCommandSettleTimeout bounds how long a settle helper waits on any one
+// command. Status fade and expiry timers are excluded by type rather than by
+// outrunning them (see isStatusTimerMsg), so this no longer has to stay under
+// the status schedule to keep the error under test from being cleared.
 const testCommandSettleTimeout = 20 * time.Millisecond
 
 func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) model.Model {
@@ -72,6 +74,9 @@ func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) m
 			}
 			messages := immediateTestCommandMessages(current)
 			for _, msg := range messages {
+				if isStatusTimerMsg(msg) {
+					continue
+				}
 				var next tea.Cmd
 				m, next = update(m, msg)
 				if next != nil {
@@ -94,6 +99,9 @@ func settleModelCommandsWithin(t *testing.T, m model.Model, cmd tea.Cmd, rounds 
 		var nextPending []tea.Cmd
 		for _, current := range pending {
 			for _, msg := range testCommandMessagesWithin(current, timeout) {
+				if isStatusTimerMsg(msg) {
+					continue
+				}
 				var next tea.Cmd
 				m, next = update(m, msg)
 				if next != nil {
@@ -156,6 +164,17 @@ func immediateTestCommandMessages(cmd tea.Cmd) []tea.Msg {
 		messages = append(messages, immediateTestCommandMessages(child)...)
 	}
 	return messages
+}
+
+// isStatusTimerMsg reports whether a command produced nothing but a
+// transient-status fade or expiry. Those carry no launch work, and the helpers
+// below must not feed them back into Update as if they did.
+func isStatusTimerMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case model.StatusExpiredMsg, model.StatusFadeMsg:
+		return true
+	}
+	return false
 }
 
 func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
@@ -1565,7 +1584,7 @@ func advanceFlowLaunchRead(t *testing.T, m model.Model, cmd tea.Cmd) (model.Mode
 		return m, nil
 	}
 	msg, ok := runImmediateTestCommand(cmd)
-	if !ok {
+	if !ok || isStatusTimerMsg(msg) {
 		// A refused launch returns no asynchronous work, only the status timer.
 		return m, cmd
 	}
@@ -11917,13 +11936,16 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 	var started actions.AgentLaunchContext
 	var startWidth, startHeight int
 	m := model.NewWithOptions([]scanner.Repo{{Path: repoPath, DisplayName: "repo"}}, model.Options{
-		AgentCommand:         "codex",
-		CodexModel:           "gpt-5.6-sol",
-		CodexReasoningEffort: "high",
-		SessionStateRoot:     sessionRoot,
-		FlowStore:            store,
-		LaunchBackend:        "tmux",
-		TmuxLaunchAvailable:  func() bool { return true },
+		AutoAdvanceTickInterval: testTickInterval,
+		FlowRefreshTickInterval: testTickInterval,
+		StatusTimings:           fastTickStatusTimings,
+		AgentCommand:            "codex",
+		CodexModel:              "gpt-5.6-sol",
+		CodexReasoningEffort:    "high",
+		SessionStateRoot:        sessionRoot,
+		FlowStore:               store,
+		LaunchBackend:           "tmux",
+		TmuxLaunchAvailable:     func() bool { return true },
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			t.Fatal("Plan Now must stay embedded when tmux is configured")
 			return actions.TerminalLaunchSpec{}, nil
@@ -12303,11 +12325,14 @@ func fillNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef s
 func TestModel_NewFlowParkedCreateCapturesAgentSettings(t *testing.T) {
 	var createRequest model.FlowStartRequest
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:          "claude",
-		ClaudeModel:           "claude-opus-5",
-		ClaudeReasoningEffort: "high",
-		CodexModel:            "gpt-5.5",
-		CodexReasoningEffort:  "medium",
+		AutoAdvanceTickInterval: testTickInterval,
+		FlowRefreshTickInterval: testTickInterval,
+		StatusTimings:           fastTickStatusTimings,
+		AgentCommand:            "claude",
+		ClaudeModel:             "claude-opus-5",
+		ClaudeReasoningEffort:   "high",
+		CodexModel:              "gpt-5.5",
+		CodexReasoningEffort:    "medium",
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			createRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil

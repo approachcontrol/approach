@@ -145,13 +145,24 @@ func assertFlowRefreshTickSuppressed(t *testing.T, m Model) Model {
 }
 
 func TestModel_FlowRefreshTickIntervalIsOneSecond(t *testing.T) {
-	if flowRefreshTickInterval != time.Second {
-		t.Fatalf("flowRefreshTickInterval = %s, want %s", flowRefreshTickInterval, time.Second)
+	if defaultFlowRefreshTickInterval != time.Second {
+		t.Fatalf("defaultFlowRefreshTickInterval = %s, want %s", defaultFlowRefreshTickInterval, time.Second)
+	}
+	// Injection is a test seam, not a production default: a Model built without
+	// an explicit interval must still refresh at 1 Hz.
+	if got := NewWithOptions(nil, Options{}).flowRefreshTickDelay(); got != time.Second {
+		t.Fatalf("uninjected flowRefreshTickDelay() = %s, want %s", got, time.Second)
+	}
+	if got := (Model{}).flowRefreshTickDelay(); got != time.Second {
+		t.Fatalf("zero-value flowRefreshTickDelay() = %s, want %s", got, time.Second)
+	}
+	if got := NewWithOptions(nil, Options{FlowRefreshTickInterval: 5 * time.Millisecond}).flowRefreshTickDelay(); got != 5*time.Millisecond {
+		t.Fatalf("injected flowRefreshTickDelay() = %s, want %s", got, 5*time.Millisecond)
 	}
 }
 
 func TestModel_FlowRefreshTickScheduledOnStartupInFlowsMode(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -221,7 +232,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := NewWithOptions(flowRefreshTestRepos(), Options{
+			m := newModelForTest(flowRefreshTestRepos(), Options{
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 					return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 				},
@@ -264,7 +275,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 
 func TestModel_FlowRefreshTickFetchesAndSchedulesNextTick(t *testing.T) {
 	var calls int
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			calls++
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
@@ -307,7 +318,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 	bravoFlow := flowForRefreshTest("bravo-flow")
 	bravoFlow.RepoPath = "/dev/bravo"
 	var filters []flowstore.FlowFilter
-	m := NewWithOptions(repos, Options{
+	m := newModelForTest(repos, Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
 			if filter.RepoPath != "" {
@@ -347,7 +358,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 }
 
 func TestModel_FlowRefreshTickDoesNotOverlapInFlightFetch(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -386,7 +397,7 @@ func TestModel_FlowRefreshTickDoesNotOverlapInFlightFetch(t *testing.T) {
 
 func TestModel_FlowRefreshTracksF5RefetchBeforePendingTick(t *testing.T) {
 	var scans int
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			scans++
 			return flowRefreshTestRepos(), nil
@@ -429,7 +440,7 @@ func TestModel_FlowRefreshTracksRepoChangeRefetchBeforePendingTick(t *testing.T)
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/bravo", DisplayName: "bravo"},
 	}
-	m := NewWithOptions(repos, Options{
+	m := newModelForTest(repos, Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
 		},
@@ -469,7 +480,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/bravo", DisplayName: "bravo"},
 	}
-	m := NewWithOptions(repos, Options{
+	m := newModelForTest(repos, Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
 		},
@@ -512,7 +523,7 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/bravo", DisplayName: "bravo"},
 	}
-	m := NewWithOptions(repos, Options{
+	m := newModelForTest(repos, Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
 		},
@@ -553,7 +564,7 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 }
 
 func TestModel_FlowRefreshTracksActionRefetchBeforePendingTick(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -596,7 +607,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 		{
 			name: "f5",
 			model: func() Model {
-				return NewWithOptions(flowRefreshTestRepos(), Options{
+				return newModelForTest(flowRefreshTestRepos(), Options{
 					ScanRepos: func() ([]scanner.Repo, error) {
 						return flowRefreshTestRepos(), nil
 					},
@@ -617,7 +628,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 					{Path: "/dev/alpha", DisplayName: "alpha"},
 					{Path: "/dev/bravo", DisplayName: "bravo"},
 				}
-				return NewWithOptions(repos, Options{
+				return newModelForTest(repos, Options{
 					ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 						return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
 					},
@@ -635,7 +646,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 		{
 			name: "action-refetch",
 			model: func() Model {
-				return NewWithOptions(flowRefreshTestRepos(), Options{
+				return newModelForTest(flowRefreshTestRepos(), Options{
 					ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 						return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 					},
@@ -694,7 +705,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 }
 
 func TestModel_FlowRefreshOldTrackedResultDoesNotScheduleAfterNewerRefetch(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return flowRefreshTestRepos(), nil
 		},
@@ -737,7 +748,7 @@ func TestModel_FlowRefreshOldTrackedResultDoesNotScheduleAfterNewerRefetch(t *te
 }
 
 func TestModel_ActiveFlowsExitCancelsRefreshOwnershipWithoutRefreshingHiddenStoredFlows(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -795,7 +806,7 @@ func TestModel_FlowCreationCompletionRefreshesVisibleBackgroundFlowsPane(t *test
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := NewWithOptions(flowRefreshTestRepos(), Options{
+			m := newModelForTest(flowRefreshTestRepos(), Options{
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 					return []flowstore.FlowRecord{flowForRefreshTest("flow-new")}, nil
 				},
@@ -824,7 +835,7 @@ func TestModel_FlowCreationCompletionRefreshesVisibleBackgroundFlowsPane(t *test
 }
 
 func TestModel_HiddenStoredFlowsCompletionDoesNotScheduleTick(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	m.height = 20
 	m.activePane = ui.PaneTop
 	m.contentPane = ui.PaneTop
@@ -845,7 +856,7 @@ func TestModel_HiddenStoredFlowsCompletionDoesNotScheduleTick(t *testing.T) {
 }
 
 func TestModel_FocusingDegradedStoredFlowsRestartsRefresh(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -915,7 +926,7 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := tt.setup(NewWithOptions(nil, Options{}))
+			m := tt.setup(newModelForTest(nil, Options{}))
 			m.height = 20
 			beforeRequest := m.ListRequest(ui.ModeFlows)
 			beforeGeneration := m.flowRefreshTickGen
@@ -943,7 +954,7 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 }
 
 func TestModel_FlowRefreshFetchErrorClearsInFlightAndSchedulesNextTick(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, errors.New("boom")
 		},
@@ -964,7 +975,7 @@ func TestModel_FlowRefreshFetchErrorClearsInFlightAndSchedulesNextTick(t *testin
 }
 
 func TestModel_FlowRefreshTickIgnoresStaleGeneration(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	before := m.ListRequest(ui.ModeFlows)
 
 	m, cmd := updateFlowRefreshTest(m, flowRefreshTickMsg{Generation: m.flowRefreshTickGen + 1})
@@ -977,7 +988,7 @@ func TestModel_FlowRefreshTickIgnoresStaleGeneration(t *testing.T) {
 }
 
 func TestModel_FlowRefreshTickIgnoresOldLoopAfterReenteringFlows(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	m.bottomMode = ui.ModePlans
 	m.contentPane = ui.PaneBottom
 	m.activePane = ui.PaneBottom
@@ -1003,7 +1014,7 @@ func TestModel_FlowRefreshTickIgnoresOldLoopAfterReenteringFlows(t *testing.T) {
 
 func TestModel_FlowRefreshTickIgnoredOutsideFlowsMode(t *testing.T) {
 	var calls int
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			calls++
 			return nil, nil
@@ -1028,7 +1039,7 @@ func TestModel_FlowRefreshTickIgnoredOutsideFlowsMode(t *testing.T) {
 }
 
 func TestModel_FlowRefreshStaleResultStillIgnored(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	startup := flowResultFromCommand(t, m.Init())
 	m, _ = updateFlowRefreshTest(m, startup)
 	staleRequest := m.ListRequest(ui.ModeFlows)
@@ -1058,7 +1069,7 @@ func TestModel_FlowRefreshStaleResultStillIgnored(t *testing.T) {
 
 func TestModel_FlowRefreshPreservesExpandedPhaseSelection(t *testing.T) {
 	implementation := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning}
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	m, _ = updateFlowRefreshTest(m, FlowResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeFlows),
@@ -1086,7 +1097,7 @@ func TestModel_FlowRefreshPreservesExpandedPhaseSelection(t *testing.T) {
 }
 
 func TestModel_FlowRefreshClearsExpansionWhenSelectedPhaseDisappears(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	m, _ = updateFlowRefreshTest(m, FlowResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeFlows),
@@ -1107,7 +1118,7 @@ func TestModel_FlowRefreshClearsExpansionWhenSelectedPhaseDisappears(t *testing.
 }
 
 func TestModel_FlowRefreshClearsExpansionWhenExpandedFlowDisappears(t *testing.T) {
-	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m := newModelForTest(flowRefreshTestRepos(), Options{})
 	m, _ = updateFlowRefreshTest(m, FlowResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeFlows),

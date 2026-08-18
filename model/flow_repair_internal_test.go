@@ -189,7 +189,7 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *testing.T) {
 	record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseBlocked})
 	newModel := func(mode ui.Mode) Model {
-		m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}, Options{
+		m := modelWithModeForTest(newModelForTest([]scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}, Options{
 			InspectFlowLease: func(string, string) (flowlease.LeaseState, error) { return flowlease.Free, nil },
 		}), mode)
 		m.activePane = 1

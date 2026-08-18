@@ -14,7 +14,7 @@ import (
 func TestFlowFetchCarriesTypedPartialResultInsteadOfFatalError(t *testing.T) {
 	healthy := flowForRefreshTest("healthy")
 	partial := testPartialList("corrupt")
-	m := NewWithOptions(flowRefreshTestRepos(), Options{
+	m := newModelForTest(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{healthy}, partial
 		},
@@ -182,7 +182,7 @@ func TestAutoAdvancePartialPollRetainsCompleteSnapshotAndDoesNotLaunch(t *testin
 	})
 	partial := testPartialList("missing-flow")
 	var launches int
-	m := NewWithOptions([]scanner.Repo{{Path: "/repo/a"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/repo/a"}}, Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{incomplete}, partial
 		},

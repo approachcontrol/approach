@@ -154,6 +154,7 @@ type Model struct {
 	status                    statusError
 	statusSeq                 uint64
 	statusTimer               statusTimerFactory
+	statusSchedule            StatusTimings
 	pendingStatusCmds         []tea.Cmd
 	visibleRepoFetchSeq       uint64
 	visibleRepoFetch          visibleRepoFetchState
@@ -277,6 +278,10 @@ type Model struct {
 	launchSeams              flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
+	// Tick cadences for the two 1 Hz poll loops. Zero means the production
+	// default; Options injects a faster value so tests never wait on wall time.
+	autoAdvanceTickInterval time.Duration
+	flowRefreshTickInterval time.Duration
 	flowRefreshTickGen      uint64
 	flowRefreshInFlight     uint64
 	flowRefreshInFlightMode ui.Mode
@@ -430,6 +435,14 @@ type Options struct {
 	// model construction stays free of filesystem work: a zero Pin means "no
 	// pin", which leaves agents on ambient PATH exactly as before.
 	LaunchPin controlplane.Pin
+	// AutoAdvanceTickInterval and FlowRefreshTickInterval override the two 1 Hz
+	// poll cadences. Zero leaves each at its production default; tests set a
+	// tiny value so driving a loop costs no real time.
+	AutoAdvanceTickInterval time.Duration
+	FlowRefreshTickInterval time.Duration
+	// StatusTimings overrides the transient-status fade and expiry schedule.
+	// Zero fields keep production timing.
+	StatusTimings StatusTimings
 	// LaunchPinNotice is context, never a gate: a degraded binary cache, or an
 	// `approach` on PATH that is a different build from the one launching
 	// agents. It is shown once at startup and changes nothing about routing.
@@ -966,43 +979,46 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(ui.ModeBeadsReady)
 	m := Model{
-		repos:                 newRepoPane().SetItems(repos),
-		rows:                  newBranchPane(),
-		stashes:               newStashPane(),
-		worktrees:             newWorktreePane(),
-		worktreeSessions:      newSessionPane(),
-		commits:               newCommitPane(),
-		reflogs:               newReflogPane(),
-		sessions:              newSessionPane(),
-		plans:                 newPlanPane(),
-		flows:                 newFlowPane(),
-		activeFlows:           newFlowPane(),
-		prBabysitterFlows:     newPRBabysitterFlowPane(nil),
-		prBabysitterStatuses:  make(map[string]actions.PullRequestStatus),
-		beads:                 newBeadSubviews(),
-		terminalDockVisible:   true,
-		flowRefreshTickGen:    1,
-		topMode:               topMode,
-		bottomMode:            bottomMode,
-		contentPane:           contentPane,
-		activeFlowSurface:     activeFlowSurface,
-		takeover:              takeoverFromStartup(activeFlowSurface),
-		agentCommand:          agent.NormalizeStored(opts.AgentCommand),
-		codexModel:            agent.NormalizeModel(opts.CodexModel),
-		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
-		cursorModel:           agent.NormalizeModel(opts.CursorModel),
-		codexReasoningEffort:  agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
-		claudeReasoningEffort: agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
-		planPromptTemplate:    opts.PlanPromptTemplate,
-		flowPromptTemplates:   opts.FlowPromptTemplates,
-		repoCreateRoot:        opts.RepoCreateRoot,
-		scanRepos:             opts.ScanRepos,
-		createRepo:            createRepo,
-		fetchRepo:             fetchRepo,
-		listSessions:          listSessions,
-		readTranscript:        readTranscript,
-		listPlans:             listPlans,
-		listFlows:             listFlows,
+		repos:                   newRepoPane().SetItems(repos),
+		rows:                    newBranchPane(),
+		stashes:                 newStashPane(),
+		worktrees:               newWorktreePane(),
+		worktreeSessions:        newSessionPane(),
+		commits:                 newCommitPane(),
+		reflogs:                 newReflogPane(),
+		sessions:                newSessionPane(),
+		plans:                   newPlanPane(),
+		flows:                   newFlowPane(),
+		activeFlows:             newFlowPane(),
+		prBabysitterFlows:       newPRBabysitterFlowPane(nil),
+		prBabysitterStatuses:    make(map[string]actions.PullRequestStatus),
+		beads:                   newBeadSubviews(),
+		terminalDockVisible:     true,
+		flowRefreshTickGen:      1,
+		autoAdvanceTickInterval: opts.AutoAdvanceTickInterval,
+		flowRefreshTickInterval: opts.FlowRefreshTickInterval,
+		statusSchedule:          opts.StatusTimings,
+		topMode:                 topMode,
+		bottomMode:              bottomMode,
+		contentPane:             contentPane,
+		activeFlowSurface:       activeFlowSurface,
+		takeover:                takeoverFromStartup(activeFlowSurface),
+		agentCommand:            agent.NormalizeStored(opts.AgentCommand),
+		codexModel:              agent.NormalizeModel(opts.CodexModel),
+		claudeModel:             agent.NormalizeModel(opts.ClaudeModel),
+		cursorModel:             agent.NormalizeModel(opts.CursorModel),
+		codexReasoningEffort:    agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
+		claudeReasoningEffort:   agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
+		planPromptTemplate:      opts.PlanPromptTemplate,
+		flowPromptTemplates:     opts.FlowPromptTemplates,
+		repoCreateRoot:          opts.RepoCreateRoot,
+		scanRepos:               opts.ScanRepos,
+		createRepo:              createRepo,
+		fetchRepo:               fetchRepo,
+		listSessions:            listSessions,
+		readTranscript:          readTranscript,
+		listPlans:               listPlans,
+		listFlows:               listFlows,
 		listBeads: [beadSubviewCount]func(string) ([]beadsquery.Bead, error){
 			listReadyBeads,
 			listBlockedBeads,
@@ -1408,7 +1424,7 @@ func (m Model) withReasoningEffort(command, effort string) Model {
 func (m Model) RepoCreateRoot() string { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
-	return batchNonNil(m.fetchStoredModes(), autoAdvanceTickCmd())
+	return batchNonNil(m.fetchStoredModes(), m.autoAdvanceTickCmd())
 }
 
 func (m Model) View() string {

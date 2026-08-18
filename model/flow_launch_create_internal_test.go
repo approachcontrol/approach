@@ -108,7 +108,7 @@ func (f createLaunchPreparationFinalizer) Compensate(notes string) (flowstore.Fl
 }
 
 func TestBeadsReadyStartRoutesCreatePhaseBeforeSideEffects(t *testing.T) {
-	m := NewWithOptions(nil, Options{
+	m := newModelForTest(nil, Options{
 		AgentCommand: "codex",
 	})
 	cmd := m.requestReadyBeadFlowLaunch(
@@ -180,7 +180,7 @@ func TestCreateFlowLaunchCustomPhasePersistenceRereadsAuthoritativeReservationRe
 		t.Fatal("test Flow has no startup phases")
 	}
 
-	m := NewWithOptions(nil, Options{
+	m := newModelForTest(nil, Options{
 		FlowStore: store,
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return store.AddPhaseLaunchID(update)
@@ -238,7 +238,7 @@ func newCreateLaunchHarness(phases []flowstore.FlowPhase) *createLaunchHarness {
 
 func (h *createLaunchHarness) model(t *testing.T) Model {
 	t.Helper()
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
 		AgentCommand: "codex", LaunchBackend: "tmux", TmuxLaunchAvailable: func() bool { return true },
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
 			h.order = append(h.order, "terminal")
