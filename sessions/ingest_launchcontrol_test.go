@@ -46,7 +46,7 @@ func sessionEndPayload(worktreePath string) []byte {
 	}`)
 }
 
-func TestIngestHookSessionEndDemotesRunningPhaseLeftWithoutAResult(t *testing.T) {
+func TestIngestHookSessionEndDoesNotDemoteAStillRunningPhase(t *testing.T) {
 	root := t.TempDir()
 	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
 	result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader(sessionEndPayload(flow.WorktreePath)), sessions.IngestOptions{
@@ -69,17 +69,41 @@ func TestIngestHookSessionEndDemotesRunningPhaseLeftWithoutAResult(t *testing.T)
 		t.Fatal(err)
 	}
 	phase := flowPhaseByID(t, read, "plan")
-	if phase.Status != flowstore.PhaseNeedsAttention || phase.Outcome != launchcontrol.ReasonPhaseResultMissing {
-		t.Fatalf("plan phase = %#v", phase)
-	}
-	if !strings.Contains(phase.Notes, "exited (session_end, exit code unknown)") {
-		t.Fatalf("notes = %q", phase.Notes)
+	if phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("fresh SessionEnd demoted a live phase: %#v", phase)
 	}
 	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" {
 		t.Fatalf("session still attached: %#v", phase.Sessions)
 	}
-	if !strings.Contains(strings.Join(result.Warnings, "\n"), "marked needs_attention") {
-		t.Fatalf("warnings = %v", result.Warnings)
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "marked needs_attention") || strings.Contains(warning, "could not reconcile") {
+			t.Fatalf("unexpected warning: %q", warning)
+		}
+	}
+}
+
+func TestIngestHookCodexStopDoesNotDemoteAStillRunningPhase(t *testing.T) {
+	root := t.TempDir()
+	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+	if _, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "codex-flow-1",
+		"cwd": `+quoteJSON(flow.WorktreePath)+`,
+		"hook_event_name": "Stop",
+		"timestamp": "2026-06-06T14:10:00Z"
+	}`)), sessions.IngestOptions{
+		Env: map[string]string{
+			"APPROACH_LAUNCH_ID":          "launch-flow-1",
+			"APPROACH_SESSION_STATE_ROOT": root,
+			"APPROACH_FLOW_STATE_ROOT":    root,
+			"APPROACH_FLOW_ID":            flow.FlowID,
+			"APPROACH_FLOW_PHASE_ID":      "plan",
+		},
+	}); err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	read, _ := flowStore.Read(flow.FlowID)
+	if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("Codex Stop demoted a live phase: %#v", phase)
 	}
 }
 

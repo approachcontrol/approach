@@ -165,10 +165,10 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	if phase.Status != flowstore.PhaseBlocked || phase.Outcome != flowstore.OutcomeBlocked || !strings.HasPrefix(phase.Notes, "phase_result_missing: launch launch-1 exited (terminal_exit, exit code 1)") {
 		t.Fatalf("plan-review = %#v", phase)
 	}
-	// session_end respects the lease veto.
+	// session_end respects the lease veto even with a recent EndedAt.
 	other := createFlow(t, store, "Session End")
 	launchWithBaseline(t, store, root, other.FlowID, "plan", "launch-2")
-	outcome, err = c.Reconcile(other.FlowID, "plan", "launch-2", ExitEvidence{Source: SourceSessionEnd})
+	outcome, err = c.Reconcile(other.FlowID, "plan", "launch-2", ExitEvidence{Source: SourceSessionEnd, EndedAt: time.Now().UTC()})
 	if err != nil || outcome.Action != ActionVetoed {
 		t.Fatalf("vetoed outcome = %#v %v", outcome, err)
 	}
@@ -178,6 +178,38 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	// Unsafe launch ids are refused before any lock is taken.
 	if _, err := c.Reconcile(other.FlowID, "plan", "../x", ExitEvidence{}); err == nil {
 		t.Fatal("unsafe launch id accepted")
+	}
+}
+
+func TestReconcileSessionEndWaitsForGraceWithoutLease(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Session End Grace")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	now := time.Now().UTC()
+	c := newTestController(t, store, root, func(o *Options) {
+		o.InspectLease = freeLease
+		o.Now = func() time.Time { return now }
+	})
+	outcome, err := c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{Source: SourceSessionEnd, EndedAt: now})
+	if err != nil || outcome.Action != ActionNone {
+		t.Fatalf("fresh session_end outcome = %#v %v", outcome, err)
+	}
+	if phaseOf(t, store, created.FlowID, "plan").Status != flowstore.PhaseRunning {
+		t.Fatal("fresh session_end demoted a live phase")
+	}
+	outcome, err = c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{Source: SourceSessionEnd})
+	if err != nil || outcome.Action != ActionNone {
+		t.Fatalf("zero EndedAt outcome = %#v %v", outcome, err)
+	}
+	outcome, err = c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{
+		Source: SourceSessionEnd, EndedAt: now.Add(-SessionEndGrace),
+	})
+	if err != nil || outcome.Action != ActionDemoted || outcome.Reason != ReasonPhaseResultMissing {
+		t.Fatalf("aged session_end outcome = %#v %v", outcome, err)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Status != flowstore.PhaseNeedsAttention || phase.Outcome != ReasonPhaseResultMissing {
+		t.Fatalf("aged session_end phase = %#v", phase)
 	}
 }
 

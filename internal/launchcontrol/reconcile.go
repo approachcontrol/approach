@@ -33,10 +33,12 @@ type ExitEvidence struct {
 	Detail    string
 }
 
-// SessionEndGrace is how long after a session record ended the sweep waits
-// before treating that record alone as exit evidence. Claude's SessionEnd
-// fires on /clear with the agent still alive; the lease veto covers tracked
-// tmux launches, and the grace covers the rest.
+// SessionEndGrace is how long after a session record ended Reconcile and
+// the sweep wait before treating that record alone as exit evidence. Codex
+// Stop is per-turn and Claude's SessionEnd fires on /clear with the agent
+// still alive; the lease veto covers tracked tmux launches, and the grace
+// covers the rest — including the default embedded backend, which never
+// acquires a lease.
 const SessionEndGrace = 10 * time.Minute
 
 // Outcome reports what Reconcile did.
@@ -60,7 +62,10 @@ const (
 // Reconcile is the exit-evidence entry point. It replays the launch's
 // pending requests first (a landed result means no demotion), then demotes
 // the phase only when it is still `running` under this exact launch and the
-// Flow lease is not held. Everything goes through Execute.
+// Flow lease is not held. Session-end evidence additionally waits
+// SessionEndGrace: a hook is not a death certificate, and ordinary tmux
+// plus the default embedded backend never hold the lease that would
+// otherwise veto them. Everything goes through Execute.
 func (c *Controller) Reconcile(flowID, phaseID, launchID string, ev ExitEvidence) (Outcome, error) {
 	if !artifacts.IsSafeID(launchID) {
 		return Outcome{Action: ActionNone}, fmt.Errorf("launch control refuses unsafe launch id %q", launchID)
@@ -115,6 +120,9 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 			outcome.Action = ActionVetoed
 			return outcome, nil
 		}
+	}
+	if ev.Source == SourceSessionEnd && !sessionEndAged(c.now(), ev.EndedAt) {
+		return outcome, nil
 	}
 	update := reconcileUpdate(phase, ReasonPhaseResultMissing, &ev, flowID, launchID, "")
 	seq := 0
@@ -308,8 +316,16 @@ func (c *Controller) exitEvidence(log *Log, launchID string, source ExitSource) 
 	if err != nil || !liveness.RecordKnown || !liveness.Ended || liveness.EndedAt.IsZero() {
 		return ExitEvidence{}, false
 	}
-	if c.now().Sub(liveness.EndedAt) < SessionEndGrace {
+	if !sessionEndAged(c.now(), liveness.EndedAt) {
 		return ExitEvidence{}, false
 	}
 	return ExitEvidence{Source: source, CodeKnown: false, EndedAt: liveness.EndedAt, Detail: "session record ended"}, true
+}
+
+// sessionEndAged reports whether a session-end timestamp is old enough to
+// treat as exit evidence. A zero EndedAt is not evidence: Codex Stop and
+// Claude SessionEnd can fire while the agent is still alive, and a missing
+// timestamp cannot distinguish those from a real exit.
+func sessionEndAged(now, endedAt time.Time) bool {
+	return !endedAt.IsZero() && now.Sub(endedAt) >= SessionEndGrace
 }

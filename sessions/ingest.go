@@ -145,11 +145,11 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 }
 
 // reconcileFlowLaunchExit reports a session's end to the launch controller
-// so a tracked phase the agent left running without a result is marked, and
-// anything the launch spooled is replayed first. It is direct evidence, so no
-// grace applies; the Flow lease veto does, because Claude's SessionEnd fires
-// on /clear with the agent still alive. Failures are warnings: the session
-// record this hook exists to write was still captured.
+// so anything the launch spooled is replayed first. Session-end is not a
+// death certificate — Codex Stop is per-turn and Claude SessionEnd fires
+// on /clear — so demotion waits for SessionEndGrace; the Flow lease veto
+// still applies for tracked tmux launches. Failures are warnings: the
+// session record this hook exists to write was still captured.
 func reconcileFlowLaunchExit(record SessionRecord, opts IngestOptions, warnings *[]string) {
 	if record.Status != "ended" || record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.LaunchID) == "" {
 		return
