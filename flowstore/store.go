@@ -861,8 +861,24 @@ func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, prepara
 				// projected verbatim, so a stored " x " must still match a
 				// requested "x". Pushing a trimmed value into the WHERE clause
 				// would filter such rows out before this comparison could run.
-				if strings.TrimSpace(candidate.record.Bead.ID) != requested {
+				// The projection is used rather than the decoded link because
+				// it is the one field an undecodable row still reports; decode
+				// already proves the two agree for every other row.
+				if strings.TrimSpace(candidate.beadID) != requested {
 					continue
+				}
+				// An unreadable row for some other Bead stays ignorable, but
+				// this one claims the requested Bead and its status cannot be
+				// derived. Skipping it would admit exactly the duplicate Flow
+				// and duplicate worktree this guard exists to refuse, so the
+				// creation is refused with a repair target instead.
+				if candidate.decodeErr != nil {
+					return FlowRecord{}, &BeadFlowUnreadableError{
+						RepoPath: record.RepoPath,
+						BeadID:   requested,
+						FlowID:   candidate.flowID,
+						Err:      candidate.decodeErr,
+					}
 				}
 				if !BeadFlowSlotOccupied(candidate.record) {
 					continue

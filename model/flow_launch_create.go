@@ -163,13 +163,19 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 
 	case flowLaunchStageCreateWritten:
 		if msg.Err != "" {
-			// A duplicate-Bead refusal wrote nothing: no record, no worktree,
+			// A Bead-slot refusal wrote nothing: no record, no worktree,
 			// no reservation, no finalizer. finishCreateBeforeWrite releases
 			// the launch attempt and the Ready admission, but — unlike
 			// finishCreateAfterWrite — it does not refresh the Flow surface,
-			// so the conflict branch chains that fetch itself.
-			if strings.TrimSpace(msg.BeadFlowConflict.FlowID) != "" {
-				next, cmd := m.finishCreateBeforeWrite(attempt, conflictStatus(msg.BeadFlowConflict, true))
+			// so the refusal branch chains that fetch itself. The unreadable
+			// variant names no decodable Flow, so it surfaces the store's own
+			// text, which already names the row to repair.
+			if msg.BeadFlowRefused {
+				status := msg.Err
+				if strings.TrimSpace(msg.BeadFlowConflict.FlowID) != "" {
+					status = conflictStatus(msg.BeadFlowConflict, true)
+				}
+				next, cmd := m.finishCreateBeforeWrite(attempt, status)
 				if next.flowRefreshSurfaceVisible() {
 					refreshed, refreshCmd := next.startFlowSurfaceFetch()
 					return refreshed, tea.Batch(cmd, refreshCmd)
@@ -442,6 +448,7 @@ func createFlowLaunchWriteCmd(seams flowLaunchSeams, attempt flowLaunchAttempt, 
 		if err != nil {
 			event.Err = err.Error()
 			event.BeadFlowConflict, _ = flowstore.ActiveBeadFlow(err)
+			event.BeadFlowRefused = flowstore.IsBeadFlowRefusal(err)
 		}
 		return event
 	}

@@ -1048,7 +1048,7 @@ func (s sqliteSession) exists() (bool, error) {
 // beadLinkedFlows reads through the session's own transaction, never through
 // b.db: sqliteBackend.queryListRows would read outside the writer transaction
 // and reopen the race the guard exists to close.
-func (s sqliteSession) beadLinkedFlows(repoPath string) ([]storedFlow, error) {
+func (s sqliteSession) beadLinkedFlows(repoPath string) ([]beadFlowCandidate, error) {
 	rows, err := s.tx.Query(`
 SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record
 FROM flows
@@ -1058,19 +1058,25 @@ ORDER BY updated_at DESC, flow_id ASC`, filepath.Clean(repoPath), s.flowID)
 		return nil, fmt.Errorf("list bead-linked flows for %q: %w", repoPath, err)
 	}
 	defer func() { _ = rows.Close() }()
-	flows := make([]storedFlow, 0)
+	flows := make([]beadFlowCandidate, 0)
 	for rows.Next() {
 		var flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
 		var record []byte
 		if err := rows.Scan(&flowID, &rowRepoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
 			return nil, fmt.Errorf("scan bead-linked flow row: %w", err)
 		}
+		candidate := beadFlowCandidate{flowID: flowID, beadID: beadID}
 		decoded, err := decodeStoredFlowWithPreparation(flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
 		if err != nil {
-			// Skipped, not fatal — see the interface contract.
-			continue
+			// Reported, not fatal and not dropped — see the interface
+			// contract. The bead_id projection above is what lets the store
+			// tell an unrelated corrupt row from one that may still hold the
+			// requested Bead.
+			candidate.decodeErr = err
+		} else {
+			candidate.record = decoded.record
 		}
-		flows = append(flows, decoded)
+		flows = append(flows, candidate)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate bead-linked flows: %w", err)

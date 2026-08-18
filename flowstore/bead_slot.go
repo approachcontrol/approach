@@ -24,9 +24,47 @@ func (e *BeadFlowActiveError) Error() string {
 
 func (e *BeadFlowActiveError) Unwrap() error { return ErrBeadFlowActive }
 
+// ErrBeadFlowUnreadable is the sentinel for a refusal caused by a row that
+// claims the requested Bead but whose stored record cannot be decoded.
+var ErrBeadFlowUnreadable = errors.New("bead may have an unreadable flow")
+
+// BeadFlowUnreadableError names the Flow whose record could not be decoded, so
+// the caller can point a human at the row that needs repair.
+//
+// Such a row cannot report a derived status, so the guard cannot tell whether
+// it still holds the Bead slot. Creating anyway is the worse answer: it is
+// precisely how a duplicate Flow and a duplicate worktree get made. Unreadable
+// rows for other Beads remain ignorable, so this never becomes a
+// whole-repository outage.
+type BeadFlowUnreadableError struct {
+	RepoPath string
+	BeadID   string
+	FlowID   string
+	Err      error
+}
+
+func (e *BeadFlowUnreadableError) Error() string {
+	return fmt.Sprintf("flow %q may still track bead %q in %s, but its stored record is unreadable: %v", e.FlowID, e.BeadID, e.RepoPath, e.Err)
+}
+
+func (e *BeadFlowUnreadableError) Unwrap() error { return ErrBeadFlowUnreadable }
+
 // IsBeadFlowActive reports the duplicate refusal.
 func IsBeadFlowActive(err error) bool {
 	return errors.Is(err, ErrBeadFlowActive)
+}
+
+// IsBeadFlowUnreadable reports the unreadable-candidate refusal.
+func IsBeadFlowUnreadable(err error) bool {
+	return errors.Is(err, ErrBeadFlowUnreadable)
+}
+
+// IsBeadFlowRefusal reports whether the Bead-slot guard refused a creation, in
+// either of its two forms. Both refusals are raised before anything is written,
+// so a caller can use this to distinguish "nothing was created" from a Flow
+// that exists but failed later preparation.
+func IsBeadFlowRefusal(err error) bool {
+	return IsBeadFlowActive(err) || IsBeadFlowUnreadable(err)
 }
 
 // ActiveBeadFlow returns the Flow named by a duplicate refusal.

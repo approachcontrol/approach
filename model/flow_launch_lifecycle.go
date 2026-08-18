@@ -117,6 +117,11 @@ type flowLaunchEventMsg struct {
 	// write because the Bead already has a non-terminal Flow. Nothing was
 	// created, so the generic "create flow %s" failure text would be wrong.
 	BeadFlowConflict flowstore.FlowRecord
+	// BeadFlowRefused is create-phase-only and reports that the store's
+	// Bead-slot guard refused before writing anything. It is set for the
+	// unreadable-row refusal too, where no decodable Flow exists to name in
+	// BeadFlowConflict but the write still never happened.
+	BeadFlowRefused bool
 	// PreparationFinalizer is create-phase-only and present only for Ready-Bead
 	// launches. It is the one-shot capability that stamps PreparedAt after the
 	// worktree metadata and bootstrap hook succeed, before launch persistence.

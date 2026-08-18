@@ -602,7 +602,7 @@ func TestBeadLinkedFlowsScopesToRepositoryAndOrdersDeterministically(t *testing.
 			return FlowRecord{}, err
 		}
 		for _, flow := range flows {
-			got = append(got, flow.record.FlowID)
+			got = append(got, flow.flowID)
 		}
 		return FlowRecord{}, nil
 	}); err != nil {
@@ -677,7 +677,14 @@ func TestCreateRefusalNamesMostRecentlyUpdatedOccupyingFlow(t *testing.T) {
 	}
 }
 
-func TestBeadSlotGuardSkipsUndecodableRowsInsteadOfFailing(t *testing.T) {
+// TestBeadSlotGuardHandlesUndecodableRowsByBead pins the two halves of the
+// unreadable-row rule. A row that cannot be decoded reports no derived status,
+// so the guard cannot tell whether it still holds its Bead. Dropping every such
+// row would admit the duplicate Flow and duplicate worktree this guard exists to
+// refuse; refusing on every such row would make one unrelated corrupt record a
+// repository-wide outage. The bead_id projection stays readable either way, so
+// it decides which of the two applies.
+func TestBeadSlotGuardHandlesUndecodableRowsByBead(t *testing.T) {
 	repoPath := func(root string) string { return filepath.Join(root, "repo") }
 	corrupt := func(t *testing.T, store *Store, flowID string) {
 		t.Helper()
@@ -700,7 +707,7 @@ func TestBeadSlotGuardSkipsUndecodableRowsInsteadOfFailing(t *testing.T) {
 		}
 	}
 
-	t.Run("healthy occupying row still refuses", func(t *testing.T) {
+	t.Run("healthy occupying row still refuses past an unrelated bad row", func(t *testing.T) {
 		root := t.TempDir()
 		store, err := NewStore(StoreOptions{Root: root})
 		if err != nil {
@@ -713,7 +720,7 @@ func TestBeadSlotGuardSkipsUndecodableRowsInsteadOfFailing(t *testing.T) {
 		if err := store.write(beadSlotSeedRecord("20260816T030000Z-healthy", repoPath(root), "child", base)); err != nil {
 			t.Fatalf("write() error = %v", err)
 		}
-		if err := store.write(beadSlotSeedRecord("20260816T030001Z-bad", repoPath(root), "child", base.Add(time.Minute))); err != nil {
+		if err := store.write(beadSlotSeedRecord("20260816T030001Z-bad", repoPath(root), "unrelated", base.Add(time.Minute))); err != nil {
 			t.Fatalf("write() error = %v", err)
 		}
 		corrupt(t, store, "20260816T030001Z-bad")
@@ -730,7 +737,32 @@ func TestBeadSlotGuardSkipsUndecodableRowsInsteadOfFailing(t *testing.T) {
 		}
 	})
 
-	t.Run("only an undecodable row permits creation", func(t *testing.T) {
+	t.Run("an unreadable row for another bead never blocks creation", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := NewStore(StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+
+		base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+		if err := store.write(beadSlotSeedRecord("20260816T030001Z-bad", repoPath(root), "unrelated", base)); err != nil {
+			t.Fatalf("write() error = %v", err)
+		}
+		corrupt(t, store, "20260816T030001Z-bad")
+
+		created, err := store.Create(FlowRecord{
+			Title: "Second", Instructions: "Allowed.", RepoPath: repoPath(root), Bead: BeadLink{ID: "child"},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v, want success when the unreadable row tracks another bead", err)
+		}
+		if created.FlowID == "" {
+			t.Fatal("Create() returned an empty flow id")
+		}
+	})
+
+	t.Run("an unreadable row for the requested bead refuses and names it", func(t *testing.T) {
 		root := t.TempDir()
 		store, err := NewStore(StoreOptions{Root: root})
 		if err != nil {
@@ -744,14 +776,58 @@ func TestBeadSlotGuardSkipsUndecodableRowsInsteadOfFailing(t *testing.T) {
 		}
 		corrupt(t, store, "20260816T030001Z-bad")
 
-		created, err := store.Create(FlowRecord{
-			Title: "Second", Instructions: "Allowed.", RepoPath: repoPath(root), Bead: BeadLink{ID: "child"},
+		_, err = store.Create(FlowRecord{
+			Title: "Second", Instructions: "Duplicate.", RepoPath: repoPath(root), Bead: BeadLink{ID: "child"},
 		})
-		if err != nil {
-			t.Fatalf("Create() error = %v, want success when the only candidate row is unreadable", err)
+		if !IsBeadFlowUnreadable(err) {
+			t.Fatalf("Create() error = %v, want IsBeadFlowUnreadable", err)
 		}
-		if created.FlowID == "" {
-			t.Fatal("Create() returned an empty flow id")
+		if !IsBeadFlowRefusal(err) {
+			t.Fatalf("IsBeadFlowRefusal(%v) = false, want true", err)
+		}
+		if IsBeadFlowActive(err) {
+			t.Fatalf("IsBeadFlowActive(%v) = true, want false: no readable Flow can be named", err)
+		}
+		var unreadable *BeadFlowUnreadableError
+		if !errors.As(err, &unreadable) {
+			t.Fatalf("Create() error = %v, want a *BeadFlowUnreadableError", err)
+		}
+		if unreadable.FlowID != "20260816T030001Z-bad" {
+			t.Fatalf("refusal named %q, want %q", unreadable.FlowID, "20260816T030001Z-bad")
+		}
+		if unreadable.BeadID != "child" {
+			t.Fatalf("refusal bead = %q, want %q", unreadable.BeadID, "child")
+		}
+
+		// The refusal must write nothing, exactly like the readable one.
+		var rows int
+		if err := store.backend.(*sqliteBackend).db.QueryRow("SELECT COUNT(*) FROM flows").Scan(&rows); err != nil {
+			t.Fatalf("count rows: %v", err)
+		}
+		if rows != 1 {
+			t.Fatalf("flows table holds %d rows, want the single unreadable row", rows)
+		}
+	})
+
+	t.Run("an unreadable untrimmed projection still matches a trimmed request", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := NewStore(StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+
+		base := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+		if err := store.write(beadSlotSeedRecord("20260816T030001Z-bad", repoPath(root), " child ", base)); err != nil {
+			t.Fatalf("write() error = %v", err)
+		}
+		corrupt(t, store, "20260816T030001Z-bad")
+
+		_, err = store.Create(FlowRecord{
+			Title: "Second", Instructions: "Duplicate.", RepoPath: repoPath(root), Bead: BeadLink{ID: "child"},
+		})
+		if !IsBeadFlowUnreadable(err) {
+			t.Fatalf("Create() error = %v, want IsBeadFlowUnreadable", err)
 		}
 	})
 }

@@ -685,7 +685,10 @@ a needs attention flow 20260816T025735Z-approach-cwk: close it from the Flows
 view with C`. Closing that Flow with `C` on a Flow surface releases the Bead, and
 `f`/`F` then succeed. Note that a Ready-Bead Flow whose preparation failed
 derives `blocked` and still holds its Bead, so repairing or closing it is the way
-forward rather than pressing the key again.
+forward rather than pressing the key again. If a stored Flow claims the Bead but
+its record cannot be read at all — for example one written by a newer version of
+Approach — the keys are refused too, and the status bar names that Flow and the
+decode failure instead of a derived status.
 
 The two keys share one Ready admission token. Repeated or mixed presses cannot
 create duplicate Flows. A repository change — cursor move or rescan —

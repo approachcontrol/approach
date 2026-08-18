@@ -708,7 +708,7 @@ func (m Model) createReadyBeadFlowOnly(repoPath, title, instructions string, bea
 		})
 		if err != nil {
 			existing, _ := flowstore.ActiveBeadFlow(err)
-			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), ExistingFlow: existing, Request: request, preparationToken: preparationToken}
+			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error(), ExistingFlow: existing, Refused: flowstore.IsBeadFlowRefusal(err), Request: request, preparationToken: preparationToken}
 		}
 		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request, preparationToken: preparationToken}
 	}

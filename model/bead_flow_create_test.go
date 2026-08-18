@@ -2520,3 +2520,52 @@ func TestBeadsReadyCreateFlowRefusesDuplicateBeadFlow(t *testing.T) {
 		t.Fatal("duplicate-Bead refusal did not release Ready create readiness")
 	}
 }
+
+// TestBeadsReadyCreateFlowSurfacesUnreadableBeadRefusal pins the second refusal
+// shape. The store found a row that claims this Bead but cannot decode it, so
+// there is no Flow to name a derived status for — yet nothing was written
+// either, so the "was created, but preparation failed" wrapper would still be
+// a lie. The store's own text, which names the row to repair, must stand.
+func TestBeadsReadyCreateFlowSurfacesUnreadableBeadRefusal(t *testing.T) {
+	refusal := &flowstore.BeadFlowUnreadableError{
+		RepoPath: "/dev/alpha", BeadID: "bd-1", FlowID: "20260816T025735Z-bd-1",
+		Err: errors.New("unsupported schema version 9999"),
+	}
+	m := inBeadsPane(newTestModel(testRepos(), model.Options{
+		AgentCommand:   "codex",
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlow: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{}, refusal
+		},
+		FetchRepo: func(string) error { return nil },
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-1", Title: "One"}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	failed, ok := cmd().(model.ReadyBeadFlowCreateFailedMsg)
+	if !ok {
+		t.Fatal("Ready create did not report a create failure")
+	}
+	if !failed.Refused {
+		t.Fatal("unreadable refusal did not set Refused; it would be reported as a created Flow")
+	}
+	if failed.ExistingFlow.FlowID != "" {
+		t.Fatalf("ExistingFlow.FlowID = %q, want empty: no readable Flow can be named", failed.ExistingFlow.FlowID)
+	}
+	m, _ = update(m, failed)
+
+	got := m.TransientError()
+	if got != refusal.Error() {
+		t.Fatalf("status = %q, want the store refusal %q", got, refusal.Error())
+	}
+	if strings.Contains(got, "was created") {
+		t.Fatalf("status = %q, but the refusal wrote nothing", got)
+	}
+	if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); retry == nil {
+		t.Fatal("unreadable refusal did not release Ready create readiness")
+	}
+}
