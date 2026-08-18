@@ -468,6 +468,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	}{
 		{name: "createFlowAndLaunchPlanForRepo", origin: "flowLaunchOriginNewFlow"},
 		{name: "requestReadyBeadFlowLaunch", origin: "flowLaunchOriginReadyBead"},
+		{name: "requestEpicProgressionChildLaunch", origin: "flowLaunchOriginEpicProgression"},
 	}
 	for _, source := range createSources {
 		sourceKey := modelFlowLaunchFunction(source.name)

@@ -200,7 +200,6 @@ type Model struct {
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowPreparation    func(string) (flowstore.FlowRecord, func(), error)
-	reserveEpicSuccessor      func(string) (func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -367,7 +366,6 @@ type Options struct {
 	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
 	ReserveFlowRepairLaunch   func(flowID string) (flowstore.FlowRecord, func(), error)
 	ReserveFlowLaunch         func(flowID string) (flowstore.FlowRecord, func(), error)
-	ReserveEpicSuccessor      func(flowID string) (func(), error)
 	AddFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow                func(flowID string) error
@@ -430,7 +428,6 @@ func New(repos []scanner.Repo) Model {
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
-	customEpicSuccessorPersistence := opts.ReconcileEpicSuccessor != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -739,24 +736,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
-	reserveEpicSuccessor := opts.ReserveEpicSuccessor
-	if reserveEpicSuccessor == nil {
-		if customEpicSuccessorPersistence {
-			// A caller that replaces successor reconciliation owns its storage
-			// boundary; opening the default store here would reserve another backend.
-			reserveEpicSuccessor = func(string) (func(), error) {
-				return func() {}, nil
-			}
-		} else {
-			reserveEpicSuccessor = func(flowID string) (func(), error) {
-				store, err := newFlowStore()
-				if err != nil {
-					return nil, err
-				}
-				return store.ReserveEpicProgressionSuccessor(flowID)
-			}
-		}
-	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
 		// Custom phase persistence may belong to a different backend, so its
@@ -956,6 +935,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
 	launchSeams.RunBootstrapHook = runBootstrapHook
 	launchSeams.SetStartMetadata = setFlowStartMetadata
+	launchSeams.ReconcileEpicSuccessor = reconcileEpicSuccessor
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
@@ -1030,7 +1010,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
 		reserveFlowPreparation:    reserveFlowPreparation,
-		reserveEpicSuccessor:      reserveEpicSuccessor,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,
 		deleteFlow:                deleteFlow,

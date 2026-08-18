@@ -52,13 +52,11 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
 	linked := progressionAdvanceFlow("linked-a", repo, "epic.a", epic, flowstore.StatusCompleted)
-	successor := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	var requests []FlowStartRequest
 	beadQueries := 0
-	releases := 0
 	m := Model{
 		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		agentCommand:             "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -73,102 +71,58 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{terminal, linked}, nil
 		},
-		createFlow: func(request FlowStartRequest) (FlowStartResult, error) {
-			requests = append(requests, request)
-			return FlowStartResult{Flow: successor}, nil
-		},
-		reserveEpicSuccessor: func(string) (func(), error) {
-			return func() { releases++ }, nil
-		},
-		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
-		},
 	}
 
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
-	var result epicProgressionAdvanceResultMsg
-	for _, msg := range immediateFlowRefreshMessages(cmd) {
-		if candidate, ok := msg.(epicProgressionAdvanceResultMsg); ok {
-			result = candidate
-		}
-	}
-	if result.request == 0 {
-		t.Fatal("success-terminal edge did not schedule epic progression")
-	}
-	if len(requests) != 1 || requests[0].Bead != (flowstore.BeadLink{ID: "epic.b", EpicID: epic}) ||
-		!strings.Contains(requests[0].Instructions, "bd show epic.b") {
-		t.Fatalf("FlowStartRequest = %#v", requests)
+	result := epicProgressionAdvanceMessage(t, cmd)
+	if result.disposition != epicProgressionAdvanceSelected || result.owned.ChildID != "epic.b" {
+		t.Fatalf("advance result = %#v, want the first unlinked ready child selected", result)
 	}
 	if beadQueries != 2 {
 		t.Fatalf("Beads queries = %d, want direct children and ready", beadQueries)
 	}
-	next, _ = updateFlowRefreshTest(next, result)
-	if got := next.epicProgressionBaselines[key]; got.FlowID != successor.FlowID {
-		t.Fatalf("baseline = %#v, want accepted successor", got)
+	next, selectedCmd := updateFlowRefreshTest(next, result)
+	create := epicProgressionCreateRequest(t, selectedCmd).Create
+	if create.Presentation != (flowLaunchCreatePresentation{Origin: flowLaunchOriginEpicProgression, Request: result.request}) ||
+		create.Bead != (flowstore.BeadLink{ID: "epic.b", EpicID: epic}) || create.RepoPath != repo ||
+		create.Title != "epic.b: B" || !strings.Contains(create.Instructions, "bd show epic.b") || !create.Headless {
+		t.Fatalf("create request = %#v", create)
 	}
-	if releases != 1 || next.flowPreparationAdmission {
-		t.Fatalf("reservation releases = %d, admission = %t", releases, next.flowPreparationAdmission)
+	// Selection is only the first half of one attempt: the admission stays held
+	// for the create pipeline that launches the child.
+	if !next.flowPreparationAdmission || next.activeEpicProgressionAdvance.Request != result.request {
+		t.Fatalf("selection released admission: admission=%t active=%#v", next.flowPreparationAdmission, next.activeEpicProgressionAdvance)
+	}
+	if got := next.epicProgressionBaselines[key]; got.FlowID != source.FlowID {
+		t.Fatalf("selection replaced the baseline: %#v", got)
 	}
 }
 
-func TestEpicProgressionAdvanceRetriesOwnedSuccessorBeforeLaterReadyChild(t *testing.T) {
+func TestEpicProgressionAdvanceSkipsAnEpicWhoseChildIsAlreadyInFlight(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
-	terminal.Status = flowstore.StatusMerged
-	owned := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	createCalls, beadQueries, reserves := 0, 0, 0
+	terminal.Status = flowstore.StatusCompleted
 	m := Model{
 		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
+			key: {SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: "flow-b"},
+		},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
-			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
-		},
-		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
-			beadQueries++
-			return []beadsquery.Bead{{ID: "epic.b"}, {ID: "epic.c"}}, nil
-		},
-		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
-			beadQueries++
-			return []beadsquery.Bead{{ID: "epic.b"}, {ID: "epic.c"}}, nil
-		},
-		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return []flowstore.FlowRecord{terminal}, nil
-		},
-		createFlow: func(FlowStartRequest) (FlowStartResult, error) {
-			createCalls++
-			return FlowStartResult{Flow: owned}, errors.New("finalize failed")
-		},
-		reserveEpicSuccessor: func(string) (func(), error) {
-			reserves++
-			if reserves == 1 {
-				return nil, errors.New("busy")
-			}
-			return func() {}, nil
-		},
-		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: owned}, nil
+			t.Fatal("advance ran for an epic with a child already in flight")
+			return flowstore.EpicProgression{}, false, nil
 		},
 	}
-	m.launchSeams.ReadFlow = func(string) (flowstore.FlowRecord, error) { return owned, nil }
-
-	next, firstCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
-	first := epicProgressionAdvanceMessage(t, firstCmd)
-	next, _ = updateFlowRefreshTest(next, first)
-	if got := next.epicProgressionOwnedSuccessors[key]; got.FlowID != owned.FlowID {
-		t.Fatalf("owned successor = %#v", got)
+	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+	for _, msg := range immediateFlowRefreshMessages(cmd) {
+		if _, ok := msg.(epicProgressionAdvanceResultMsg); ok {
+			t.Fatal("owned in-flight child did not fence the advance edge")
+		}
 	}
-
-	next.autoAdvanceInFlight = 2
-	next, secondCmd := updateFlowRefreshTest(next, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 2})
-	second := epicProgressionAdvanceMessage(t, secondCmd)
-	next, _ = updateFlowRefreshTest(next, second)
-	if createCalls != 1 || beadQueries != 2 || reserves != 2 {
-		t.Fatalf("create=%d beadQueries=%d reserves=%d; owned retry queried or created past successor", createCalls, beadQueries, reserves)
-	}
-	if got := next.epicProgressionBaselines[key]; got.FlowID != owned.FlowID {
-		t.Fatalf("retry baseline = %#v", got)
+	if next.flowPreparationAdmission {
+		t.Fatal("fenced advance took preparation admission")
 	}
 }
 
@@ -288,7 +242,6 @@ func TestEpicProgressionAdvanceChecksAuthoritativeStateBeforeSideEffects(t *test
 				listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { sideEffects++; return nil, nil },
 				listReadyBeads:    func(string) ([]beadsquery.Bead, error) { sideEffects++; return nil, nil },
 				listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { sideEffects++; return nil, nil },
-				createFlow:        func(FlowStartRequest) (FlowStartResult, error) { sideEffects++; return FlowStartResult{}, nil },
 			}
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 			result := epicProgressionAdvanceMessage(t, cmd)
@@ -301,144 +254,6 @@ func TestEpicProgressionAdvanceChecksAuthoritativeStateBeforeSideEffects(t *test
 				t.Fatalf("baseline present = %t, want %t", present, tt.wantBaseline)
 			}
 		})
-	}
-}
-
-func TestEpicProgressionOwnedObstructionForbidsBeadQueriesAndLaterSelection(t *testing.T) {
-	repo, epic := "/repo", "epic"
-	key := epicProgressionBaselineKey(repo, epic)
-	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
-	terminal := cloneFlowRecord(source)
-	terminal.Status = flowstore.StatusCompleted
-	for _, state := range []string{"missing-receipt", "blocked", "closed"} {
-		t.Run(state, func(t *testing.T) {
-			ownedFlow := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-			switch state {
-			case "missing-receipt":
-				ownedFlow.PreparedAt = nil
-			case "blocked":
-				ownedFlow.Status = flowstore.StatusBlocked
-			case "closed":
-				stamp := time.Date(2026, 8, 14, 19, 0, 0, 0, time.UTC)
-				ownedFlow.Closed = flowstore.Closure{Reason: "closed", ClosedAt: &stamp}
-			}
-			beadQueries := 0
-			reserves := 0
-			reconciles := 0
-			m := Model{
-				autoAdvanceInFlight:      1,
-				epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-				epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
-					key: {SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: ownedFlow.FlowID},
-				},
-				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
-					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
-				},
-				listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
-					beadQueries++
-					return []beadsquery.Bead{{ID: "epic.c"}}, nil
-				},
-				listReadyBeads: func(string) ([]beadsquery.Bead, error) { beadQueries++; return []beadsquery.Bead{{ID: "epic.c"}}, nil },
-				setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
-					t.Fatal("owned obstruction attempted exhaustion")
-					return flowstore.EpicProgression{}, nil
-				},
-				reserveEpicSuccessor: func(string) (func(), error) {
-					reserves++
-					return func() {}, nil
-				},
-				reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-					reconciles++
-					return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorOwnedObstruction, Flow: ownedFlow}, nil
-				},
-			}
-			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
-			result := epicProgressionAdvanceMessage(t, cmd)
-			next, _ = updateFlowRefreshTest(next, result)
-			if beadQueries != 0 || reserves != 1 || reconciles != 1 || !strings.Contains(next.status.Text, "blocks auto-progression") {
-				t.Fatalf("queries=%d reserves=%d reconciles=%d status=%q", beadQueries, reserves, reconciles, next.status.Text)
-			}
-			if got := next.epicProgressionOwnedSuccessors[key]; got.FlowID != ownedFlow.FlowID {
-				t.Fatalf("obstruction ownership = %#v", got)
-			}
-		})
-	}
-}
-
-func TestEpicProgressionAuthoritativeInactiveWinsOverOwnedFlowCondition(t *testing.T) {
-	repo, epic := "/repo", "epic"
-	key := epicProgressionBaselineKey(repo, epic)
-	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
-	terminal := cloneFlowRecord(source)
-	terminal.Status = flowstore.StatusCompleted
-	ownedFlow := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusBlocked)
-	owned := epicProgressionOwnedSuccessor{SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: ownedFlow.FlowID}
-	releases := 0
-	m := Model{
-		autoAdvanceInFlight:      1,
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
-			key: owned,
-		},
-		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
-			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
-		},
-		reserveEpicSuccessor: func(string) (func(), error) {
-			return func() { releases++ }, nil
-		},
-		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorInactive}, nil
-		},
-		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
-			t.Fatal("owned successor queried Beads")
-			return nil, nil
-		},
-	}
-
-	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
-	result := epicProgressionAdvanceMessage(t, cmd)
-	next, _ = updateFlowRefreshTest(next, result)
-	if _, present := next.epicProgressionBaselines[key]; present {
-		t.Fatal("authoritative inactive result retained source baseline")
-	}
-	if _, present := next.epicProgressionOwnedSuccessors[key]; present {
-		t.Fatal("authoritative inactive result retained owned successor")
-	}
-	if releases != 1 {
-		t.Fatalf("reservation releases = %d, want 1", releases)
-	}
-}
-
-func TestEpicProgressionAdvanceRefreshesVisibleFlowSurfaceFromPersistedOwnedID(t *testing.T) {
-	repo, epic := "/repo", "epic"
-	key := epicProgressionBaselineKey(repo, epic)
-	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
-	owned := epicProgressionOwnedSuccessor{SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: "flow-b"}
-	const ownerToken = 7
-	listCalls := 0
-	m := Model{
-		activeFlowSurface:        true,
-		flowPreparationAdmission: true,
-		flowPreparationOwner:     flowPreparationOwner{Kind: flowPreparationEpicAdvance, Token: ownerToken},
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		activeEpicProgressionAdvance: epicProgressionAdvanceRequest{
-			Request: 1, OwnerToken: ownerToken, EpicKey: key, SourceFlowID: source.FlowID,
-		},
-		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			listCalls++
-			return nil, nil
-		},
-	}
-	next, cmd := m.handleEpicProgressionAdvanceResult(epicProgressionAdvanceResultMsg{
-		request: 1, ownerToken: ownerToken, epicKey: key, sourceFlowID: source.FlowID,
-		disposition: epicProgressionAdvanceInactive, owned: owned, hasOwned: true,
-	})
-	_ = epicProgressionTestCommandMessages(cmd)
-	if listCalls != 1 {
-		t.Fatalf("Flow refresh calls = %d, want 1 for persisted owned successor", listCalls)
-	}
-	if _, present := next.epicProgressionBaselines[key]; present {
-		t.Fatal("inactive result retained source baseline")
 	}
 }
 
@@ -509,11 +324,9 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
-	successor := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	createCalls := 0
-	releases := 0
 	m := Model{
 		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		agentCommand: "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -521,16 +334,6 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 		listReadyBeads:    func(string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "epic.b"}}, nil },
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{terminal}, nil
-		},
-		createFlow: func(FlowStartRequest) (FlowStartResult, error) {
-			createCalls++
-			return FlowStartResult{Flow: successor}, nil
-		},
-		reserveEpicSuccessor: func(string) (func(), error) {
-			return func() { releases++ }, nil
-		},
-		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
 		},
 	}
 
@@ -545,29 +348,28 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 			t.Fatal("second poll admitted a concurrent progression preparation")
 		}
 	}
-	if createCalls != 0 {
-		t.Fatalf("create calls before first command ran = %d", createCalls)
-	}
 
 	stale := epicProgressionAdvanceMessage(t, firstCmd)
-	// Simulate a newer owner before replaying the delayed completion. The stale
-	// result may release its reservation, but cannot install its successor or
-	// release the newer admission.
+	// Simulate a newer owner before replaying the delayed selection. The stale
+	// result may not submit a create request or release the newer admission.
 	next.flowPreparationSeq++
 	next.flowPreparationOwner = flowPreparationOwner{Kind: flowPreparationEpicAdvance, Token: next.flowPreparationSeq}
 	next.flowPreparationAdmission = true
-	next.activeEpicProgressionAdvance = epicProgressionAdvanceRequest{
+	newer := epicProgressionAdvanceRequest{
 		Request: stale.request + 1, OwnerToken: next.flowPreparationSeq, EpicKey: key, SourceFlowID: source.FlowID,
 	}
-	next, _ = updateFlowRefreshTest(next, stale)
+	next.activeEpicProgressionAdvance = newer
+	next, staleCmd := updateFlowRefreshTest(next, stale)
+	for _, msg := range immediateFlowRefreshMessages(staleCmd) {
+		if _, ok := msg.(flowLaunchCreateRequestedMsg); ok {
+			t.Fatal("stale selection submitted a create request")
+		}
+	}
+	if !next.flowPreparationAdmission || next.activeEpicProgressionAdvance != newer {
+		t.Fatalf("stale result disturbed the newer owner: admission=%t active=%#v", next.flowPreparationAdmission, next.activeEpicProgressionAdvance)
+	}
 	if got := next.epicProgressionBaselines[key]; got.FlowID != source.FlowID {
 		t.Fatalf("stale result replaced baseline with %#v", got)
-	}
-	if !next.flowPreparationAdmission || next.flowPreparationOwner.Token != next.flowPreparationSeq {
-		t.Fatalf("stale result released newer owner: %#v", next.flowPreparationOwner)
-	}
-	if releases != 1 {
-		t.Fatalf("stale reservation releases = %d, want 1", releases)
 	}
 }
 
@@ -577,10 +379,9 @@ func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryEpicOrNoncan
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
-	successor := progressionAdvanceFlow("flow-new-a", repo, "epic.a", epic, flowstore.StatusPending)
-	var request FlowStartRequest
 	m := Model{
 		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		agentCommand: "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -593,60 +394,20 @@ func TestEpicProgressionExactLinkScopeDoesNotSuppressOtherRepositoryEpicOrNoncan
 			noncanonicalEpic := progressionAdvanceFlow("noncanonical-epic", repo, "epic.a", " "+epic, flowstore.StatusPending)
 			return []flowstore.FlowRecord{otherEpic, otherRepo, noncanonicalChild, noncanonicalEpic}, nil
 		},
-		createFlow: func(candidate FlowStartRequest) (FlowStartResult, error) {
-			request = candidate
-			return FlowStartResult{Flow: successor}, nil
-		},
-		reserveEpicSuccessor: func(string) (func(), error) {
-			return func() {}, nil
-		},
-		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: successor}, nil
-		},
 		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
-			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, nil
+			t.Fatal("noncanonical or foreign links exhausted the epic")
+			return flowstore.EpicProgression{}, nil
 		},
 	}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
-	next, _ = updateFlowRefreshTest(next, result)
-	if request.Bead != (flowstore.BeadLink{ID: "epic.a", EpicID: epic}) || next.epicProgressionBaselines[key].FlowID != successor.FlowID {
-		t.Fatalf("request=%#v baseline=%#v", request, next.epicProgressionBaselines[key])
+	next, selectedCmd := updateFlowRefreshTest(next, result)
+	create := epicProgressionCreateRequest(t, selectedCmd).Create
+	if create.Bead != (flowstore.BeadLink{ID: "epic.a", EpicID: epic}) {
+		t.Fatalf("create request = %#v", create)
 	}
-}
-
-func TestEpicProgressionPreparationFailureWithoutFlowIDRetriesFreshSelection(t *testing.T) {
-	repo, epic := "/repo", "epic"
-	key := epicProgressionBaselineKey(repo, epic)
-	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
-	terminal := cloneFlowRecord(source)
-	terminal.Status = flowstore.StatusCompleted
-	queries, creates := 0, 0
-	m := Model{
-		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
-			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
-		},
-		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
-			queries++
-			return []beadsquery.Bead{{ID: "epic.b"}}, nil
-		},
-		listReadyBeads: func(string) ([]beadsquery.Bead, error) { queries++; return []beadsquery.Bead{{ID: "epic.b"}}, nil },
-		listFlows:      func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
-		createFlow: func(FlowStartRequest) (FlowStartResult, error) {
-			creates++
-			return FlowStartResult{}, errors.New("prepare failed")
-		},
-	}
-	for request := uint64(1); request <= 2; request++ {
-		m.autoAdvanceInFlight = request
-		next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: request})
-		result := epicProgressionAdvanceMessage(t, cmd)
-		m, _ = updateFlowRefreshTest(next, result)
-	}
-	if queries != 4 || creates != 2 || len(m.epicProgressionOwnedSuccessors) != 0 {
-		t.Fatalf("queries=%d creates=%d owned=%#v", queries, creates, m.epicProgressionOwnedSuccessors)
-	}
+	_ = key
+	_ = next
 }
 
 func TestEpicProgressionExhaustionReportsAllReadyChildrenAlreadyLinked(t *testing.T) {
@@ -656,7 +417,6 @@ func TestEpicProgressionExhaustionReportsAllReadyChildrenAlreadyLinked(t *testin
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
 	linked := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	creates := 0
 	m := Model{
 		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
@@ -665,65 +425,33 @@ func TestEpicProgressionExhaustionReportsAllReadyChildrenAlreadyLinked(t *testin
 		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "epic.b"}}, nil },
 		listReadyBeads:    func(string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "epic.b"}}, nil },
 		listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return []flowstore.FlowRecord{linked}, nil },
-		createFlow:        func(FlowStartRequest) (FlowStartResult, error) { creates++; return FlowStartResult{}, nil },
 		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, nil
 		},
 	}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
+	if result.disposition == epicProgressionAdvanceSelected {
+		t.Fatalf("linked-only epic selected child %q", result.owned.ChildID)
+	}
 	next, _ = updateFlowRefreshTest(next, result)
-	if creates != 0 || !strings.Contains(next.status.Text, "every ready child already has a Flow") {
-		t.Fatalf("creates=%d status=%q", creates, next.status.Text)
+	if !strings.Contains(next.status.Text, "every ready child already has a Flow") {
+		t.Fatalf("status=%q", next.status.Text)
 	}
 	if _, present := next.epicProgressionBaselines[key]; present {
 		t.Fatal("linked-only exhaustion retained baseline")
 	}
 }
 
-func TestEpicProgressionReconciliationFailureRetriesOwnedFlowWithoutReselection(t *testing.T) {
-	repo, epic := "/repo", "epic"
-	key := epicProgressionBaselineKey(repo, epic)
-	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
-	terminal := cloneFlowRecord(source)
-	terminal.Status = flowstore.StatusCompleted
-	ownedFlow := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	beadQueries, reconciles, releases := 0, 0, 0
-	m := Model{
-		autoAdvanceInFlight:      1,
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
-			key: {SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: ownedFlow.FlowID},
-		},
-		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
-			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
-		},
-		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { beadQueries++; return nil, nil },
-		listReadyBeads:    func(string) ([]beadsquery.Bead, error) { beadQueries++; return nil, nil },
-		reserveEpicSuccessor: func(string) (func(), error) {
-			return func() { releases++ }, nil
-		},
-		reconcileEpicSuccessor: func(flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
-			reconciles++
-			if reconciles == 1 {
-				return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorRetryable}, errors.New("store busy")
-			}
-			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorAccepted, Flow: ownedFlow}, nil
-		},
+func epicProgressionCreateRequest(t *testing.T, cmd tea.Cmd) flowLaunchCreateRequestedMsg {
+	t.Helper()
+	for _, msg := range immediateFlowRefreshMessages(cmd) {
+		if request, ok := msg.(flowLaunchCreateRequestedMsg); ok {
+			return request
+		}
 	}
-	m.launchSeams.ReadFlow = func(string) (flowstore.FlowRecord, error) { return ownedFlow, nil }
-	for request := uint64(1); request <= 2; request++ {
-		m.autoAdvanceInFlight = request
-		next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: request})
-		result := epicProgressionAdvanceMessage(t, cmd)
-		m, _ = updateFlowRefreshTest(next, result)
-	}
-	if beadQueries != 0 || reconciles != 2 || releases != 2 {
-		t.Fatalf("queries=%d reconciles=%d releases=%d", beadQueries, reconciles, releases)
-	}
-	if m.epicProgressionBaselines[key].FlowID != ownedFlow.FlowID || len(m.epicProgressionOwnedSuccessors) != 0 {
-		t.Fatalf("baseline=%#v owned=%#v", m.epicProgressionBaselines[key], m.epicProgressionOwnedSuccessors)
-	}
+	t.Fatal("selected advance submitted no create-then-launch request")
+	return flowLaunchCreateRequestedMsg{}
 }
 
 func epicProgressionAdvanceMessage(t *testing.T, cmd tea.Cmd) epicProgressionAdvanceResultMsg {
