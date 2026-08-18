@@ -731,14 +731,21 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			}
 			// The pre-check above matches flow.Bead == link exactly, so a Flow
 			// for this Bead under a different (or empty) epic slips past it and
-			// reaches the guard. Without this branch the refusal would surface
-			// through the !claimAttempted arm as a Bead-admission message —
-			// AfterFlowPersisted never runs on a guard refusal — which
-			// describes the wrong failure. Enabling still declines; the user is
-			// just told why.
-			if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
+			// reaches the guard. A newer-schema row for the same Bead can also
+			// land between listFlows and create. Without this branch either
+			// refusal would surface through the !claimAttempted arm as a
+			// Bead-admission message — AfterFlowPersisted never runs on a
+			// guard refusal — which describes the wrong failure. Enabling
+			// still declines; the user is just told why. The unreadable
+			// variant names no decodable Flow, so it surfaces the store's own
+			// text, which already names the row to repair.
+			if flowstore.IsBeadFlowRefusal(createErr) {
+				status := createErr.Error()
+				if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
+					status = conflictStatus(existing, false)
+				}
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
-					status: conflictStatus(existing, false)}
+					status: status}
 			}
 			if claimErr != nil {
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,

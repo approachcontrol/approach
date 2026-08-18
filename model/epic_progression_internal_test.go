@@ -418,3 +418,57 @@ func TestEnableEpicProgressionReportsBeadSlotRefusalNotBeadAdmission(t *testing.
 		t.Fatalf("claimBead calls = %d, want 0; AfterFlowPersisted never runs on a guard refusal", claims)
 	}
 }
+
+// TestEnableEpicProgressionSurfacesUnreadableBeadRefusal pins the second
+// refusal shape on path 4. Another process can commit a newer-schema row for
+// the same Bead between listFlows and create; the store then refuses with
+// BeadFlowUnreadableError and writes nothing. Left unhandled, that surfaces
+// through the !claimAttempted arm as a Bead-admission message.
+func TestEnableEpicProgressionSurfacesUnreadableBeadRefusal(t *testing.T) {
+	refusal := &flowstore.BeadFlowUnreadableError{
+		RepoPath: "/repo", BeadID: "epic.1", FlowID: "flow-skew",
+		Err: errors.New("unsupported schema version 9999"),
+	}
+	claims := 0
+	m := Model{
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.1", Title: "Child"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.1", Title: "Child"}}, nil
+		},
+		claimBead: func(string, string) error { claims++; return nil },
+		createFlow: func(FlowStartRequest) (FlowStartResult, error) {
+			return FlowStartResult{}, refusal
+		},
+		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID}, false, nil
+		},
+	}
+	target := beadExpansionTarget{token: 1, repoPath: "/repo", mode: ui.ModeBeadsOpen, epicID: "epic"}
+	msg, ok := m.enableEpicProgressionCmd(target, ui.BeadExpansion{
+		Children: []beadsquery.Bead{{ID: "epic.1", Title: "Child"}},
+		ReadyIDs: map[string]bool{"epic.1": true},
+	})().(epicProgressionToggleResultMsg)
+	if !ok {
+		t.Fatal("enable command returned unexpected message")
+	}
+	if msg.status != refusal.Error() {
+		t.Fatalf("status = %q, want the store refusal %q", msg.status, refusal.Error())
+	}
+	if strings.Contains(msg.status, "Could not admit child") {
+		t.Fatalf("status = %q, want the unreadable refusal rather than the Bead-admission message", msg.status)
+	}
+	if msg.baselineDisposition != epicProgressionBaselineRemove {
+		t.Fatalf("baselineDisposition = %v, want remove", msg.baselineDisposition)
+	}
+	if msg.enabled {
+		t.Fatal("enable succeeded despite the unreadable refusal")
+	}
+	if claims != 0 {
+		t.Fatalf("claimBead calls = %d, want 0; AfterFlowPersisted never runs on a guard refusal", claims)
+	}
+}
