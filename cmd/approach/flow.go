@@ -966,24 +966,39 @@ type flowPlanSaveResult struct {
 	Linked   bool   `json:"linked"`
 }
 
-func flowPlanLinkFailure(planID, planPath string, err error) error {
-	return fmt.Errorf("plan %q persisted at %q, but Flow link failed: %w", planID, planPath, err)
+func flowPlanPersistenceFailure(planID, planPath, operation string, err error) error {
+	return fmt.Errorf("plan %q persisted at %q, but %s failed: %w", planID, planPath, operation, err)
 }
 
 func runFlowPlanSave(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow plan save", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printFlowPlanSaveHelp(deps.stdout) }
-	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
-	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
+	launchFlowID := deps.getenv("APPROACH_FLOW_ID")
+	launchPlanID := deps.getenv("APPROACH_PLAN_ID")
+	flowID := flags.String("flow-id", launchFlowID, "flow id")
+	planID := flags.String("plan-id", launchPlanID, "plan id")
 	title := flags.String("title", "", "plan title")
 	status := flags.String("status", "", "plan status")
 	summary := flags.String("summary", "", "plan summary")
 	file := flags.String("file", "", "read markdown from file instead of stdin")
 	stateRoot := flags.String("state-root", "", "artifact state root")
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowPlanSaveHelp(deps.stdout)
+		return nil
+	}
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		return err
 	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q\n\n%s", flags.Arg(0), flowPlanHelpText)
+	}
+	planIDExplicit := false
+	flags.Visit(func(flag *flag.Flag) {
+		if flag.Name == "plan-id" {
+			planIDExplicit = true
+		}
+	})
 	if *flowID == "" {
 		return fmt.Errorf("flow plan save requires --flow-id")
 	}
@@ -1003,10 +1018,16 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if *title == "" {
 		*title = flow.Title
 	}
-	if *planID == "" {
+	if !planIDExplicit && *flowID != launchFlowID {
+		*planID = flow.PlanID
+	} else if *planID == "" {
 		*planID = flow.PlanID
 	}
-	planStore, err := newPlanStore(*stateRoot, deps)
+	root, err := resolvePlanRoot(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
 	if err != nil {
 		return err
 	}
@@ -1026,43 +1047,29 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	savedMetadata, err := planStore.ReadMetadata(savedID)
+	planPath, err := planstore.MarkdownPath(root, savedID)
 	if err != nil {
-		return err
-	}
-	existingPhases := make(map[string]bool, len(savedMetadata.Phases))
-	for _, phase := range savedMetadata.Phases {
-		existingPhases[artifacts.NormalizePhaseID(phase.PhaseID)] = true
+		expectedPath := filepath.Join(root, "plans", savedID, "plan.md")
+		return flowPlanPersistenceFailure(savedID, expectedPath, "plan path resolution", err)
 	}
 	for _, phase := range flow.Phases {
 		if flowstore.SemanticKind(phase) != flowstore.KindImplementation || phase.ParentPhaseID != "" {
 			continue
 		}
-		if existingPhases[artifacts.NormalizePhaseID(phase.PhaseID)] {
-			continue
-		}
-		if err := planStore.SetPhase(savedID, planstore.PlanPhase{
+		if err := planStore.SetPhaseIfMissing(savedID, planstore.PlanPhase{
 			PhaseID: phase.PhaseID,
 			Title:   phase.Title,
 			Status:  "pending",
 			Order:   phase.Order,
 		}); err != nil {
-			return err
+			return flowPlanPersistenceFailure(savedID, planPath, "phase seeding", err)
 		}
 	}
-	root, err := resolvePlanRoot(*stateRoot, deps)
-	if err != nil {
-		return err
-	}
-	planPath, err := planstore.MarkdownPath(root, savedID)
-	if err != nil {
-		return err
-	}
 	if _, err := planStore.ReadPlan(savedID); err != nil {
-		return err
+		return flowPlanPersistenceFailure(savedID, planPath, "plan readback", err)
 	}
 	if _, err := flowStore.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: *flowID, PlanID: savedID, PlanPath: planPath}); err != nil {
-		return flowPlanLinkFailure(savedID, planPath, err)
+		return flowPlanPersistenceFailure(savedID, planPath, "Flow link", err)
 	}
 	data, err := json.Marshal(flowPlanSaveResult{FlowID: *flowID, PlanID: savedID, PlanPath: planPath, Linked: true})
 	if err != nil {

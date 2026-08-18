@@ -565,8 +565,12 @@ func TestRunFlowCreatePrepareWorktreeReportsPersistedFlowOnBootstrapFailure(t *t
 	}
 	testgit.Run(t, repoPath, "add", ".")
 	testgit.Run(t, repoPath, "commit", "-m", "seed")
+	configuredRepoPath, err := filepath.EvalSymlinks(repoPath)
+	if err != nil {
+		t.Fatalf("resolve configured repo path: %v", err)
+	}
 
-	err := run([]string{
+	err = run([]string{
 		"approach", "flow", "create",
 		"--title", "Bootstrap Failure",
 		"--instructions", "preserve the flow",
@@ -577,7 +581,7 @@ func TestRunFlowCreatePrepareWorktreeReportsPersistedFlowOnBootstrapFailure(t *t
 	}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Bootstrap: config.BootstrapConfig{
-				Hooks: []config.BootstrapHookConfig{{RepoPath: repoPath, Script: ".approach/bootstrap"}},
+				Hooks: []config.BootstrapHookConfig{{RepoPath: configuredRepoPath, Script: ".approach/bootstrap"}},
 			}}, nil
 		},
 		stdout: &bytes.Buffer{},
@@ -1092,14 +1096,126 @@ func TestRunFlowPlanSavePreservesExistingPhaseProgress(t *testing.T) {
 	}
 }
 
-func TestFlowPlanLinkFailureReportsPersistedPlanForRecovery(t *testing.T) {
-	err := flowPlanLinkFailure("plan-1", "/state/plans/plan-1/plan.md", errors.New("database busy"))
-	requireContainsAll(t, err.Error(), []string{
-		`plan "plan-1" persisted`,
-		`/state/plans/plan-1/plan.md`,
-		"Flow link failed",
-		"database busy",
+func TestRunFlowPlanSaveExplicitOtherFlowDoesNotInheritLaunchPlanID(t *testing.T) {
+	root := t.TempDir()
+	launchFlow := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Launch", "--instructions", "launch", "--repo-path", filepath.Join(root, "launch"), "--json", "--state-root", root})
+	targetFlow := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Target", "--instructions", "target", "--repo-path", filepath.Join(root, "target"), "--json", "--state-root", root})
+	save := func(flowID, planID, markdown string, deps runDeps) {
+		t.Helper()
+		if err := run([]string{"approach", "flow", "plan", "save", "--flow-id", flowID, "--plan-id", planID, "--title", planID, "--state-root", root}, noScanDeps(t, runDeps{stdin: strings.NewReader(markdown), stdout: &bytes.Buffer{}, getenv: deps.getenv})); err != nil {
+			t.Fatalf("seed flow plan %s: %v", planID, err)
+		}
+	}
+	save(launchFlow.FlowID, "launch-plan", "# Launch\n", runDeps{})
+	save(targetFlow.FlowID, "target-plan", "# Target\n", runDeps{})
+
+	err := run([]string{"approach", "flow", "plan", "save", "--flow-id", targetFlow.FlowID, "--title", "Target revised", "--state-root", root}, noScanDeps(t, runDeps{
+		stdin: strings.NewReader("# Target revised\n"),
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return launchFlow.FlowID
+			case "APPROACH_PLAN_ID":
+				return "launch-plan"
+			default:
+				return ""
+			}
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err != nil {
+		t.Fatalf("cross-Flow plan save: %v", err)
+	}
+
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.ReadPlan("launch-plan"); err != nil || got != "# Launch\n" {
+		t.Fatalf("launch plan = %q, %v; want unchanged", got, err)
+	}
+	if got, err := store.ReadPlan("target-plan"); err != nil || got != "# Target revised\n" {
+		t.Fatalf("target plan = %q, %v; want revised", got, err)
+	}
+	flow, err := mustFlowStore(t, root).Read(targetFlow.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.PlanID != "target-plan" {
+		t.Fatalf("target Flow plan = %q, want target-plan", flow.PlanID)
+	}
+}
+
+func TestRunFlowPlanSaveRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"approach", "flow", "create",
+		"--title", "Positional Guard",
+		"--instructions", "plan it",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--json",
+		"--state-root", root,
 	})
+	launchEnv := func(key string) string {
+		switch key {
+		case "APPROACH_FLOW_ID":
+			return created.FlowID
+		case "APPROACH_PLAN_ID":
+			return "launch-plan"
+		default:
+			return ""
+		}
+	}
+
+	t.Run("bare help", func(t *testing.T) {
+		var stdout bytes.Buffer
+		err := run([]string{"approach", "flow", "plan", "save", "help"}, noScanDeps(t, runDeps{
+			getenv: launchEnv,
+			stdin:  strings.NewReader("# should not persist\n"),
+			stdout: &stdout,
+		}))
+		if err != nil {
+			t.Fatalf("flow plan save help returned an error: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Usage: approach flow plan save") {
+			t.Fatalf("flow plan save help = %s", stdout.String())
+		}
+	})
+
+	t.Run("stray argument", func(t *testing.T) {
+		var stdout bytes.Buffer
+		err := run([]string{"approach", "flow", "plan", "save", "help", "--state-root", root, "--file", "plan.md"}, noScanDeps(t, runDeps{
+			getenv: launchEnv,
+			stdin:  strings.NewReader("# should not persist\n"),
+			stdout: &stdout,
+		}))
+		if err == nil || !strings.Contains(err.Error(), `unexpected argument "help"`) {
+			t.Fatalf("flow plan save error = %v, want the unexpected-argument refusal", err)
+		}
+	})
+
+	if _, err := os.Stat(filepath.Join(root, "plans")); !os.IsNotExist(err) {
+		t.Fatalf("flow plan save touched plans under %q: stat err = %v", root, err)
+	}
+	flow, err := mustFlowStore(t, root).Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.PlanID != "" || flow.PlanPath != "" {
+		t.Fatalf("flow plan link mutated to (%q, %q)", flow.PlanID, flow.PlanPath)
+	}
+}
+
+func TestFlowPlanPersistenceFailureReportsPersistedPlanForRecovery(t *testing.T) {
+	for _, operation := range []string{"phase seeding", "plan readback", "Flow link"} {
+		err := flowPlanPersistenceFailure("plan-1", "/state/plans/plan-1/plan.md", operation, errors.New("database busy"))
+		requireContainsAll(t, err.Error(), []string{
+			`plan "plan-1" persisted`,
+			`/state/plans/plan-1/plan.md`,
+			operation + " failed",
+			"database busy",
+		})
+	}
 }
 
 func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {

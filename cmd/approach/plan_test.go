@@ -354,6 +354,55 @@ func TestRunPlanStatusSetPreservesPlanContentAndPhases(t *testing.T) {
 	}
 }
 
+func TestRunPlanStatusSetRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
+	root := t.TempDir()
+	if err := run([]string{
+		"approach", "plan", "save",
+		"--title", "Lifecycle Plan",
+		"--plan-id", "lifecycle-plan",
+		"--status", "approved",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdin: strings.NewReader("# Lifecycle Plan\n"), stdout: &bytes.Buffer{}})); err != nil {
+		t.Fatalf("save returned error: %v", err)
+	}
+	launchEnv := func(key string) string {
+		if key == "APPROACH_PLAN_ID" {
+			return "lifecycle-plan"
+		}
+		return ""
+	}
+
+	t.Run("bare help", func(t *testing.T) {
+		var stdout bytes.Buffer
+		err := run([]string{"approach", "plan", "status", "set", "help"}, noScanDeps(t, runDeps{
+			getenv: launchEnv,
+			stdout: &stdout,
+		}))
+		if err != nil {
+			t.Fatalf("plan status set help returned an error: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Usage: approach plan status set") {
+			t.Fatalf("plan status set help = %s", stdout.String())
+		}
+	})
+
+	t.Run("stray argument", func(t *testing.T) {
+		var stdout bytes.Buffer
+		err := run([]string{"approach", "plan", "status", "set", "help", "--status", "in_progress", "--state-root", root}, noScanDeps(t, runDeps{
+			getenv: launchEnv,
+			stdout: &stdout,
+		}))
+		if err == nil || !strings.Contains(err.Error(), `unexpected argument "help"`) {
+			t.Fatalf("plan status set error = %v, want the unexpected-argument refusal", err)
+		}
+	})
+
+	record := readPlanRecord(t, root, "lifecycle-plan")
+	if record.Status != "approved" {
+		t.Fatalf("plan status mutated to %q, want approved", record.Status)
+	}
+}
+
 func TestRunPlanSaveFromFile(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "plan-input.md")

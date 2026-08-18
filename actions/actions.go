@@ -392,16 +392,35 @@ type FlowWorktreeCreateResult struct {
 // path. Git always lists the primary worktree first, including when path is a
 // linked worktree.
 func MainWorktreePath(path string) (string, error) {
-	out, err := exec.Command("git", "-C", path, "worktree", "list", "--porcelain").CombinedOutput()
+	out, err := exec.Command("git", "-C", path, "worktree", "list", "--porcelain", "-z").Output()
+	nulDelimited := err == nil
+	if err != nil {
+		// Git added -z support to `worktree list` after the project's minimum
+		// supported version. Retry the legacy format so ordinary paths continue
+		// to work there; modern Git keeps the unambiguous path representation.
+		out, err = exec.Command("git", "-C", path, "worktree", "list", "--porcelain").Output()
+	}
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+				msg = stderr
+			}
+		}
 		if msg != "" {
 			return "", fmt.Errorf("%s: %w", msg, err)
 		}
 		return "", err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if mainPath, ok := strings.CutPrefix(strings.TrimSpace(line), "worktree "); ok {
+	delimiter := "\x00"
+	if !nulDelimited {
+		delimiter = "\n"
+	}
+	for _, field := range strings.Split(string(out), delimiter) {
+		if !nulDelimited {
+			field = strings.TrimSpace(field)
+		}
+		if mainPath, ok := strings.CutPrefix(field, "worktree "); ok {
 			if !filepath.IsAbs(mainPath) {
 				return "", fmt.Errorf("git returned non-absolute main worktree path %q", mainPath)
 			}

@@ -716,6 +716,9 @@ from `APPROACH_FLOW_ID` and `APPROACH_FLOW_PHASE_ID`; plan commands default
 `--plan-id` from `APPROACH_PLAN_ID`, and plan phase updates prefer
 `APPROACH_PLAN_PHASE_ID` before falling back to the Flow phase. The explicit
 flags above remain available for ad hoc commands and cross-Flow updates.
+When `flow plan save` explicitly targets a Flow other than the launched one,
+an omitted `--plan-id` uses that target Flow's linked plan rather than
+`APPROACH_PLAN_ID`; pass `--plan-id` to override it deliberately.
 `approach flow plan save` reads Markdown from `--file` or stdin, saves and
 reads back the plan, seeds any missing top-level implementation phases without
 regressing existing progress, links the plan to the Flow, and prints JSON. It

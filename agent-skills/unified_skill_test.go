@@ -31,7 +31,8 @@ func TestApproachFlowIsCanonicalUnifiedSkill(t *testing.T) {
 	for _, reference := range []string{"active-phase.md", "create-flow.md", "plans.md", "persistence.md"} {
 		combined += "\n" + readFile(t, filepath.Join(root, "approach-flow", "references", reference))
 	}
-	requireContainsAll(t, "unified CLI workflow", combined, []string{
+	documentedCommands := strings.ReplaceAll(combined, `"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"`, "approach")
+	requireContainsAll(t, "unified CLI workflow", documentedCommands, []string{
 		"approach flow read",
 		"approach flow create --prepare-worktree",
 		"approach flow plan save",
@@ -42,6 +43,16 @@ func TestApproachFlowIsCanonicalUnifiedSkill(t *testing.T) {
 		"APPROACH_EXECUTABLE",
 		"persistence failure",
 	})
+	for _, line := range strings.Split(combined, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "approach ") {
+			t.Fatalf("runnable command bypasses the pinned executable: %q", line)
+		}
+	}
+	for _, bareInline := range []string{"`approach flow", "`approach plan"} {
+		if strings.Contains(combined, bareInline) {
+			t.Fatalf("inline command bypasses the pinned executable: %q", bareInline)
+		}
+	}
 	// The spooled contract: a deferred write is exit 0 with a fixed message,
 	// reported as deferred and never retried.
 	requireContainsAll(t, "spooled writes", combined, []string{

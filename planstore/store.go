@@ -310,6 +310,49 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 	return s.write(record)
 }
 
+// SetPhaseIfMissing creates a phase only when no normalized match exists. The
+// existence check and insert share the mutation lock so callers can seed
+// defaults without overwriting progress recorded concurrently.
+func (s *Store) SetPhaseIfMissing(planID string, phase PlanPhase) error {
+	if err := validatePlanID(planID); err != nil {
+		return err
+	}
+	if phase.Status == "" {
+		phase.Status = "pending"
+	}
+	if !validPhaseStatuses[phase.Status] {
+		return fmt.Errorf("invalid phase status %q", phase.Status)
+	}
+	if strings.TrimSpace(phase.Title) == "" {
+		return fmt.Errorf("phase title is required")
+	}
+	phase.PhaseID = artifacts.NormalizePhaseID(phase.PhaseID)
+	if phase.PhaseID == "" {
+		return fmt.Errorf("phase id is required")
+	}
+
+	release, err := s.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	record, ok := s.readRecord(planID)
+	if !ok {
+		return fmt.Errorf("plan %q not found", planID)
+	}
+	for _, existing := range record.Phases {
+		if artifacts.NormalizePhaseID(existing.PhaseID) == phase.PhaseID {
+			return nil
+		}
+	}
+	record.Phases = append(record.Phases, phase)
+	sort.SliceStable(record.Phases, func(i, j int) bool {
+		return record.Phases[i].Order < record.Phases[j].Order
+	})
+	record.UpdatedAt = s.now()
+	return s.write(record)
+}
+
 // SetPhaseStatus updates only the status of an existing normalized phase while
 // holding the plan mutation lock. A missing phase is an intentional no-op; a
 // missing plan remains an error. Legacy duplicate spellings collapse to the

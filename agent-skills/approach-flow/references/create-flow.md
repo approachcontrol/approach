@@ -23,7 +23,7 @@ worktree, create the Flow, reserve a branch, prepare a dedicated worktree, and
 persist the result:
 
 ```bash
-approach flow create --prepare-worktree \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow create --prepare-worktree \
   --title "$FLOW_TITLE" \
   --instructions-file "$FLOW_INSTRUCTIONS_FILE" \
   --json
@@ -39,7 +39,7 @@ reimplement the preparation lifecycle with `git worktree` commands.
 Parse `flow_id` from the JSON response, then verify it:
 
 ```bash
-approach flow read --flow-id "$FLOW_ID"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read --flow-id "$FLOW_ID"
 ```
 
 Treat either command failure, invalid JSON, or failed readback as a persistence
@@ -50,7 +50,7 @@ failure and stop.
 Save, verify, and link plan Markdown in one operation:
 
 ```bash
-approach flow plan save --flow-id "$FLOW_ID" \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow plan save --flow-id "$FLOW_ID" \
   --title "$PLAN_TITLE" \
   --status draft \
   --file "$PLAN_FILE"
@@ -60,8 +60,8 @@ The JSON response contains `plan_id`, `plan_path`, and `linked`. Verify the
 Flow and plan with explicit IDs:
 
 ```bash
-approach flow read --flow-id "$FLOW_ID"
-approach plan read --plan-id "$PLAN_ID" --json
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow read --flow-id "$FLOW_ID"
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" plan read --plan-id "$PLAN_ID" --json
 ```
 
 `flow plan save` seeds missing top-level implementation phases without
@@ -70,7 +70,7 @@ Flow's plan phase. Complete that phase explicitly only when the imported plan
 actually satisfies its goal:
 
 ```bash
-approach flow phase complete --flow-id "$FLOW_ID" \
+"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}" flow phase complete --flow-id "$FLOW_ID" \
   --phase-id "$FLOW_PLAN_PHASE_ID" \
   --outcome approved \
   --summary "Imported and linked the implementation plan"

@@ -55,6 +55,41 @@ func TestSetPhaseCreatesAndUpdatesOrderedPhase(t *testing.T) {
 	}
 }
 
+func TestSetPhaseIfMissingNeverRegressesExistingProgress(t *testing.T) {
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	savePlan(t, store, "seeded")
+	if err := store.SetPhase("seeded", planstore.PlanPhase{PhaseID: "Implementation", Title: "Existing", Status: "completed", Order: 7}); err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+
+	if err := store.SetPhaseIfMissing("seeded", planstore.PlanPhase{PhaseID: " implementation ", Title: "Seeded", Status: "pending", Order: 1}); err != nil {
+		t.Fatalf("SetPhaseIfMissing(existing) error = %v", err)
+	}
+	if err := store.SetPhaseIfMissing("seeded", planstore.PlanPhase{PhaseID: "verify", Title: "Verify", Status: "pending", Order: 8}); err != nil {
+		t.Fatalf("SetPhaseIfMissing(new) error = %v", err)
+	}
+
+	got, err := store.ReadMetadata("seeded")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	want := []planstore.PlanPhase{
+		{PhaseID: "implementation", Title: "Existing", Status: "completed", Order: 7},
+		{PhaseID: "verify", Title: "Verify", Status: "pending", Order: 8},
+	}
+	if len(got.Phases) != len(want) {
+		t.Fatalf("phases = %#v, want %#v", got.Phases, want)
+	}
+	for i := range want {
+		if got.Phases[i] != want[i] {
+			t.Fatalf("phase[%d] = %#v, want %#v", i, got.Phases[i], want[i])
+		}
+	}
+}
+
 func TestSetPhaseUpsertsNormalizedPhaseIDVariants(t *testing.T) {
 	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
 	if err != nil {
