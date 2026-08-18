@@ -338,8 +338,15 @@ func runPlanStatus(args []string, deps runDeps) error {
 	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
 	status := flags.String("status", "", "plan status")
 	stateRoot := flags.String("state-root", "", "artifact state root")
+	if len(args) == 2 && isHelpArg(args[1]) {
+		printPlanStatusSetHelp(deps.stdout)
+		return nil
+	}
 	if help, err := parseCommandFlags(flags, args[1:]); help || err != nil {
 		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q\n\n%s", flags.Arg(0), planHelpText)
 	}
 	if *planID == "" || *status == "" {
 		return fmt.Errorf("plan status set requires --plan-id and --status")

@@ -1143,6 +1143,66 @@ func TestRunFlowPlanSaveExplicitOtherFlowDoesNotInheritLaunchPlanID(t *testing.T
 	}
 }
 
+func TestRunFlowPlanSaveRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"approach", "flow", "create",
+		"--title", "Positional Guard",
+		"--instructions", "plan it",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--json",
+		"--state-root", root,
+	})
+	launchEnv := func(key string) string {
+		switch key {
+		case "APPROACH_FLOW_ID":
+			return created.FlowID
+		case "APPROACH_PLAN_ID":
+			return "launch-plan"
+		default:
+			return ""
+		}
+	}
+
+	t.Run("bare help", func(t *testing.T) {
+		var stdout bytes.Buffer
+		err := run([]string{"approach", "flow", "plan", "save", "help"}, noScanDeps(t, runDeps{
+			getenv: launchEnv,
+			stdin:  strings.NewReader("# should not persist\n"),
+			stdout: &stdout,
+		}))
+		if err != nil {
+			t.Fatalf("flow plan save help returned an error: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Usage: approach flow plan save") {
+			t.Fatalf("flow plan save help = %s", stdout.String())
+		}
+	})
+
+	t.Run("stray argument", func(t *testing.T) {
+		var stdout bytes.Buffer
+		err := run([]string{"approach", "flow", "plan", "save", "help", "--state-root", root, "--file", "plan.md"}, noScanDeps(t, runDeps{
+			getenv: launchEnv,
+			stdin:  strings.NewReader("# should not persist\n"),
+			stdout: &stdout,
+		}))
+		if err == nil || !strings.Contains(err.Error(), `unexpected argument "help"`) {
+			t.Fatalf("flow plan save error = %v, want the unexpected-argument refusal", err)
+		}
+	})
+
+	if _, err := os.Stat(filepath.Join(root, "plans")); !os.IsNotExist(err) {
+		t.Fatalf("flow plan save touched plans under %q: stat err = %v", root, err)
+	}
+	flow, err := mustFlowStore(t, root).Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.PlanID != "" || flow.PlanPath != "" {
+		t.Fatalf("flow plan link mutated to (%q, %q)", flow.PlanID, flow.PlanPath)
+	}
+}
+
 func TestFlowPlanPersistenceFailureReportsPersistedPlanForRecovery(t *testing.T) {
 	for _, operation := range []string{"phase seeding", "plan readback", "Flow link"} {
 		err := flowPlanPersistenceFailure("plan-1", "/state/plans/plan-1/plan.md", operation, errors.New("database busy"))

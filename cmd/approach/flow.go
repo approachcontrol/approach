@@ -1160,8 +1160,15 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	summary := flags.String("summary", "", "plan summary")
 	file := flags.String("file", "", "read markdown from file instead of stdin")
 	stateRoot := flags.String("state-root", "", "artifact state root")
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowPlanSaveHelp(deps.stdout)
+		return nil
+	}
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q\n\n%s", flags.Arg(0), flowPlanHelpText)
 	}
 	planIDExplicit := false
 	flags.Visit(func(flag *flag.Flag) {
