@@ -389,3 +389,66 @@ func TestNotifyBeforeSetAppliedNotifierNeitherPanicsNorBlocks(t *testing.T) {
 		t.Fatalf("event = %#v", e)
 	}
 }
+
+// The endpoint's ownership lock is what makes "is the socket stale" and
+// "replace it" one step. While another process holds it — it may be between
+// its liveness probe and its bind — Listen reports the endpoint owned without
+// unlinking anything, and ReapStale leaves the socket alone even though
+// nothing answers on it yet.
+func TestListenAndReapStaleRespectTheEndpointOwnershipLock(t *testing.T) {
+	dir := shortTempDir(t)
+	path := filepath.Join(dir, "deadbeef.sock")
+	// A socket file nothing answers on, as a crashed owner leaves behind.
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = l.Close()
+	release, held, err := lockEndpoint(path)
+	if err != nil || held {
+		t.Fatalf("lockEndpoint = held %v, %v", held, err)
+	}
+	if _, err := Listen(path); !errors.Is(err, ErrEndpointOwned) {
+		t.Fatalf("Listen under a held lock = %v, want ErrEndpointOwned", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("Listen unlinked a socket it does not own: %v", err)
+	}
+	ReapStale(dir)
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("ReapStale unlinked a socket whose lock is held: %v", err)
+	}
+	release()
+	// Released: the dead socket is replaced, and the new listener owns the
+	// lock until it closes.
+	listener, err := Listen(path)
+	if err != nil {
+		t.Fatalf("Listen after release: %v", err)
+	}
+	if _, held, err := lockEndpoint(path); err != nil || !held {
+		t.Fatalf("lock not held by the listener: held %v, %v", held, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("closed listener left its socket behind: %v", err)
+	}
+	release, held, err = lockEndpoint(path)
+	if err != nil || held {
+		t.Fatalf("lock not released on close: held %v, %v", held, err)
+	}
+	release()
+	// A dead socket with no owner is reaped.
+	l, err = net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = l.Close()
+	ReapStale(dir)
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unowned dead socket not reaped: %v", err)
+	}
+}

@@ -2,6 +2,7 @@ package launchcontrol
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -420,3 +421,91 @@ func TestReplayWaitsForAnotherProcessHoldingTheSequenceLock(t *testing.T) {
 
 func heldLease(string, string) (flowlease.LeaseState, error) { return flowlease.Held, nil }
 func freeLease(string, string) (flowlease.LeaseState, error) { return flowlease.Free, nil }
+
+// Case 1 marks a request applied without executing it, so it must see every
+// field the request would write. A live record that matches only the fields
+// an agent is likeliest to repeat (number, URL) is not proof the request
+// landed: the branch or timestamp it changes would be lost forever.
+func TestTargetReachedComparesEveryFieldOfFlowLevelPayloads(t *testing.T) {
+	mergedAt := time.Date(2026, 6, 6, 14, 0, 0, 0, time.UTC)
+	later := mergedAt.Add(time.Hour)
+	record := flowstore.FlowRecord{
+		PR:    flowstore.PullRequest{Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", HeadBranch: "flow/x", BaseBranch: "main", Status: "open"},
+		Issue: flowstore.Issue{Provider: "github", Number: 3, URL: "https://github.com/o/r/issues/3"},
+		Merge: flowstore.Merge{Status: flowstore.MergeMerged, Commit: "abc123", MergedAt: &mergedAt},
+	}
+	env := func(verb Verb, payload any) RequestEnvelope {
+		req, err := NewRequest(verb, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return RequestEnvelope{Verb: verb, Payload: req.Payload}
+	}
+	cases := []struct {
+		name string
+		env  RequestEnvelope
+		want bool
+	}{
+		{"pr identical", env(VerbPRSet, PRSetPayload{Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", Head: "flow/x", Base: "main", Status: "open"}), true},
+		{"pr normalized identical", env(VerbPRSet, PRSetPayload{Provider: " GitHub ", Number: 7, URL: " https://github.com/o/r/pull/7 ", Head: "flow/x ", Base: " main", Status: "open "}), true},
+		{"pr base differs", env(VerbPRSet, PRSetPayload{Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", Head: "flow/x", Base: "release", Status: "open"}), false},
+		{"pr head differs", env(VerbPRSet, PRSetPayload{Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", Head: "flow/y", Base: "main", Status: "open"}), false},
+		{"pr status cleared", env(VerbPRSet, PRSetPayload{Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", Head: "flow/x", Base: "main"}), false},
+		{"issue identical", env(VerbIssueSet, IssueSetPayload{Provider: "github", Number: 3, URL: "https://github.com/o/r/issues/3"}), true},
+		{"issue provider differs", env(VerbIssueSet, IssueSetPayload{Provider: "gitlab", Number: 3, URL: "https://github.com/o/r/issues/3"}), false},
+		{"merge identical", env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeMerged, Commit: "abc123", MergedAt: mergedAt.Format(time.RFC3339)}), true},
+		{"merge identical in another zone", env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeMerged, Commit: "abc123", MergedAt: mergedAt.In(time.FixedZone("x", 3600)).Format(time.RFC3339)}), true},
+		{"merge timestamp differs", env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeMerged, Commit: "abc123", MergedAt: later.Format(time.RFC3339)}), false},
+		{"merge commit differs", env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeMerged, Commit: "def456", MergedAt: mergedAt.Format(time.RFC3339)}), false},
+		{"merge status differs", env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeBlocked}), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := targetReached(record, flowstore.FlowPhase{}, tc.env); got != tc.want {
+				t.Fatalf("targetReached = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	blocked := flowstore.FlowRecord{Merge: flowstore.Merge{Status: flowstore.MergeBlocked}}
+	if !targetReached(blocked, flowstore.FlowPhase{}, env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeBlocked})) {
+		t.Fatal("blocked merge without a timestamp should be reached")
+	}
+	if targetReached(flowstore.FlowRecord{}, flowstore.FlowPhase{}, env(VerbMergeSet, MergeSetPayload{Status: flowstore.MergeBlocked})) {
+		t.Fatal("unset merge must not be reached")
+	}
+}
+
+// End to end: a spooled pr.set that changes only the base branch of the PR the
+// Flow already references is executed on replay, not marked applied.
+func TestReplayExecutesPRSetThatChangesOnlyTheBaseBranch(t *testing.T) {
+	store, root := newTestStore(t)
+	created, err := store.Create(flowstore.FlowRecord{
+		Title:        "PR Base",
+		Instructions: "test flow",
+		RepoPath:     filepath.Join(t.TempDir(), "repo"),
+		Branch:       "flow/pr-base",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	if _, err := store.SetPR(flowstore.PRUpdate{FlowID: created.FlowID, Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", HeadBranch: "flow/pr-base", BaseBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	req := mustRequest(t, VerbPRSet, created.FlowID, "plan", "launch-1", PRSetPayload{Provider: "github", Number: 7, URL: "https://github.com/o/r/pull/7", Head: "flow/pr-base", Base: "release"})
+	log, _ := OpenLog(root, "launch-1")
+	if _, err := log.Append(mustEnvelope(t, req, WrittenBySpool)); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestController(t, store, root)
+	if report := c.Sweep(); report.Replayed != 1 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	after, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PR.BaseBranch != "release" {
+		t.Fatalf("PR after replay = %#v, want base release", after.PR)
+	}
+}

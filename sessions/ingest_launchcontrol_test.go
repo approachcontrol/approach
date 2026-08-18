@@ -161,3 +161,67 @@ func TestIngestHookLastSeenDoesNotReconcile(t *testing.T) {
 		t.Fatalf("last_seen hook demoted the phase: %#v", phase)
 	}
 }
+
+// A per-turn stop hook is not exit evidence. Codex fires Stop after every turn
+// while the CLI stays open, Cursor's stop hook is the same shape, and Claude's
+// SessionEnd fires on /clear with the agent still alive: none may demote a
+// running phase at hook time, even though each records the session as ended,
+// and no lease is held on the default embedded route to veto them.
+func TestIngestHookPerTurnStopsDoNotDemoteRunningPhase(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider sessions.Provider
+		payload  string
+	}{
+		{name: "codex Stop", provider: sessions.ProviderCodex, payload: `{
+			"session_id": "codex-flow-1",
+			"cwd": %s,
+			"hook_event_name": "Stop",
+			"timestamp": "2026-06-06T14:10:00Z"
+		}`},
+		{name: "cursor stop", provider: sessions.ProviderCursor, payload: `{
+			"conversation_id": "cursor-flow-1",
+			"cwd": %s,
+			"hook_event_name": "stop",
+			"timestamp": "2026-06-06T14:10:00Z"
+		}`},
+		{name: "claude clear", provider: sessions.ProviderClaude, payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "SessionEnd",
+			"reason": "clear",
+			"timestamp": "2026-06-06T14:10:00Z"
+		}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+			payload := strings.Replace(tc.payload, "%s", quoteJSON(flow.WorktreePath), 1)
+			result, err := sessions.IngestHookWithWarnings(tc.provider, bytes.NewReader([]byte(payload)), sessions.IngestOptions{
+				Env: map[string]string{
+					"APPROACH_LAUNCH_ID":          "launch-flow-1",
+					"APPROACH_SESSION_STATE_ROOT": root,
+					"APPROACH_FLOW_STATE_ROOT":    root,
+					"APPROACH_FLOW_ID":            flow.FlowID,
+					"APPROACH_FLOW_PHASE_ID":      "plan",
+				},
+			})
+			if err != nil {
+				t.Fatalf("IngestHookWithWarnings() error = %v", err)
+			}
+			if result.Record.Status != "ended" {
+				t.Fatalf("record status = %q, want ended", result.Record.Status)
+			}
+			read, _ := flowStore.Read(flow.FlowID)
+			if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
+				t.Fatalf("per-turn hook demoted the phase: %#v", phase)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "marked") || strings.Contains(warning, "could not reconcile") {
+					t.Fatalf("unexpected reconciliation warning: %q", warning)
+				}
+			}
+		})
+	}
+}

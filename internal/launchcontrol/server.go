@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -273,7 +272,6 @@ func (c *Controller) Listen() error {
 	if c.closed {
 		c.mu.Unlock()
 		_ = listener.Close()
-		_ = os.Remove(path)
 		return errors.New("launch controller is closed")
 	}
 	c.listener = listener
@@ -299,21 +297,19 @@ func (c *Controller) serve(listener net.Listener) {
 	}
 }
 
-// Close stops serving and removes the socket file. Launch directories are
+// Close stops serving. Closing the listener unlinks the socket file under the
+// endpoint lock and then releases it — never the other way round, so a
+// successor's socket is never the one unlinked. Launch directories are
 // untouched; the next controller on this root recovers them.
 func (c *Controller) Close() error {
 	c.mu.Lock()
 	c.closed = true
 	listener := c.listener
-	path := c.socketPath
 	c.listener = nil
 	c.socketPath = ""
 	c.mu.Unlock()
 	if listener != nil {
 		_ = listener.Close()
-	}
-	if path != "" {
-		_ = os.Remove(path)
 	}
 	c.serving.Wait()
 	return nil

@@ -529,9 +529,17 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 }
 
 // sessionLivenessProbe answers the launch controller's "did this launch's
-// session end" from the session store. Status is authoritative over EndedAt;
-// several records for one launch count as ended only when all of them are,
-// with the latest end time.
+// agent process end" from the session store. Status is authoritative over
+// EndedAt; several records for one launch count as ended only when all of
+// them are, with the latest end time.
+//
+// An `ended` record is exit evidence only when the provider's hook means the
+// process ended. Codex records `ended` after every turn (its Stop hook fires
+// while the CLI stays open) and Cursor's stop hook is the same shape, so for
+// those providers an ended record is a turn boundary: the launch is known but
+// never reported ended, and its phase is left to authoritative evidence — the
+// embedded terminal's exit or the lease runner's exit.json. Only Claude's
+// SessionEnd-backed records count.
 func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 	return func(launchID string) (launchcontrol.LaunchLiveness, error) {
 		records, err := store.List(sessions.SessionFilter{})
@@ -544,7 +552,7 @@ func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 				continue
 			}
 			liveness.RecordKnown = true
-			if sessions.IsActive(record.Status, record.EndedAt) {
+			if sessions.IsActive(record.Status, record.EndedAt) || !sessionEndIsProcessEnd(record.Provider) {
 				liveness.Ended = false
 				continue
 			}
@@ -557,6 +565,12 @@ func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 		}
 		return liveness, nil
 	}
+}
+
+// sessionEndIsProcessEnd reports whether an `ended` session record from
+// provider means its agent process ended rather than a turn.
+func sessionEndIsProcessEnd(provider sessions.Provider) bool {
+	return provider == sessions.ProviderClaude
 }
 
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {

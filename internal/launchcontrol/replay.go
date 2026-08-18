@@ -288,25 +288,52 @@ func targetReached(record flowstore.FlowRecord, phase flowstore.FlowPhase, env R
 			return false
 		}
 		return record.PlanID == payload.PlanID && (payload.PlanPath == "" || record.PlanPath == payload.PlanPath)
+	// The Flow-level verbs replace a whole struct, so every field the store
+	// would write is compared, normalized the way the store normalizes it. A
+	// request that differs in any field has not landed, and marking it applied
+	// would lose that field for good.
 	case VerbIssueSet:
 		var payload IssueSetPayload
 		if json.Unmarshal(env.Payload, &payload) != nil {
 			return false
 		}
-		return record.Issue.Number == payload.Number && record.Issue.URL == payload.URL
+		return record.Issue == flowstore.Issue{
+			Provider: strings.ToLower(strings.TrimSpace(payload.Provider)),
+			Number:   payload.Number,
+			URL:      strings.TrimSpace(payload.URL),
+		}
 	case VerbPRSet:
 		var payload PRSetPayload
 		if json.Unmarshal(env.Payload, &payload) != nil {
 			return false
 		}
-		return record.PR.Number == payload.Number && record.PR.URL == payload.URL &&
-			(payload.Status == "" || record.PR.Status == payload.Status)
+		return record.PR == flowstore.PullRequest{
+			Provider:   strings.ToLower(strings.TrimSpace(payload.Provider)),
+			Number:     payload.Number,
+			URL:        strings.TrimSpace(payload.URL),
+			HeadBranch: strings.TrimSpace(payload.Head),
+			BaseBranch: strings.TrimSpace(payload.Base),
+			Status:     strings.TrimSpace(payload.Status),
+		}
 	case VerbMergeSet:
 		var payload MergeSetPayload
 		if json.Unmarshal(env.Payload, &payload) != nil {
 			return false
 		}
-		return record.Merge.Status == payload.Status && (payload.Commit == "" || record.Merge.Commit == payload.Commit)
+		status := strings.TrimSpace(payload.Status)
+		if status == "" || record.Merge.Status != status {
+			return false
+		}
+		if status != flowstore.MergeMerged {
+			// A non-merged status carries no commit or timestamp.
+			return record.Merge.Commit == "" && record.Merge.MergedAt == nil
+		}
+		mergedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(payload.MergedAt))
+		if err != nil {
+			return false
+		}
+		return record.Merge.Commit == strings.TrimSpace(payload.Commit) &&
+			record.Merge.MergedAt != nil && record.Merge.MergedAt.Equal(mergedAt)
 	}
 	return false
 }

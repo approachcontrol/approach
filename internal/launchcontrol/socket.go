@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -110,10 +111,33 @@ func ensureOwnedDir(dir string) error {
 	return nil
 }
 
-// Listen binds path. A live listener there means another process owns this
-// root's endpoint (ErrEndpointOwned); a dead socket file is unlinked and
+// Listen binds path. The endpoint's ownership lock — a flock on the socket's
+// sibling `.lock` file, held for the listener's whole lifetime — is what
+// makes "is the socket stale" and "replace it" one step: a process that
+// cannot take the lock is told another owns the endpoint (ErrEndpointOwned)
+// and unlinks nothing, so a concurrent starter can never steal a path that
+// was bound between its liveness probe and its own bind, and Close can never
+// unlink a successor's socket because no successor binds until Close has
+// released the lock. Under the lock, a live listener still means owned (an
+// owner that predates the lock file), and a dead socket file is unlinked and
 // replaced. The socket is chmod'd 0600 after bind.
 func Listen(path string) (net.Listener, error) {
+	release, held, err := lockEndpoint(path)
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		return nil, ErrEndpointOwned
+	}
+	listener, err := listenLocked(path)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &ownedListener{Listener: listener, path: path, release: release}, nil
+}
+
+func listenLocked(path string) (net.Listener, error) {
 	if socketAlive(path) {
 		return nil, ErrEndpointOwned
 	}
@@ -131,6 +155,67 @@ func Listen(path string) (net.Listener, error) {
 	return listener, nil
 }
 
+// ownedListener unlinks its socket and releases the endpoint lock on Close,
+// in that order and under the lock, so the unlink can only ever hit the
+// socket this listener bound.
+type ownedListener struct {
+	net.Listener
+	path    string
+	release func()
+	once    sync.Once
+}
+
+func (l *ownedListener) Close() error {
+	var err error
+	l.once.Do(func() {
+		err = l.Listener.Close()
+		_ = os.Remove(l.path)
+		l.release()
+	})
+	return err
+}
+
+// endpointLockPath is the ownership lock beside a socket: `<name>.lock` for
+// `<name>.sock`, in the same owner-only directory.
+func endpointLockPath(socketPath string) string {
+	return strings.TrimSuffix(socketPath, ".sock") + ".lock"
+}
+
+// lockEndpoint tries the endpoint's ownership lock without waiting. held
+// reports that another holder has it (nothing was acquired); otherwise the
+// caller owns it until release.
+func lockEndpoint(socketPath string) (release func(), held bool, err error) {
+	path := endpointLockPath(socketPath)
+	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, uint32(artifacts.FilePerm))
+	if err != nil {
+		return nil, false, fmt.Errorf("open launch control endpoint lock: %w", err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, false, fmt.Errorf("inspect launch control endpoint lock: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, false, errors.New("launch control endpoint lock must be a regular file")
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("acquire launch control endpoint lock: %w", err)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+			_ = file.Close()
+		})
+	}, false, nil
+}
+
 // socketAlive reports whether something accepts connections at path.
 func socketAlive(path string) bool {
 	conn, err := net.DialTimeout("unix", path, dialTimeout)
@@ -141,8 +226,10 @@ func socketAlive(path string) bool {
 	return true
 }
 
-// ReapStale unlinks every *.sock in dir that nothing accepts on. Only files
-// this user owns in a directory this user owns are touched.
+// ReapStale unlinks every *.sock in dir that nothing accepts on and whose
+// endpoint lock is free: a held lock means an owner is alive (or between its
+// probe and its bind), and its socket is not stale however it answers. Only
+// files this user owns in a directory this user owns are touched.
 func ReapStale(dir string) {
 	if err := ensureOwnedDir(dir); err != nil {
 		return
@@ -156,10 +243,14 @@ func ReapStale(dir string) {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		if socketAlive(path) {
+		release, held, err := lockEndpoint(path)
+		if err != nil || held {
 			continue
 		}
-		_ = os.Remove(path)
+		if !socketAlive(path) {
+			_ = os.Remove(path)
+		}
+		release()
 	}
 }
 
