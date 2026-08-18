@@ -1267,16 +1267,55 @@ type flowControlContext struct {
 	launchID string
 	flowID   string
 	phaseID  string
+	// root is the state root the endpoint serves: the launcher's, exported to
+	// the launch as APPROACH_FLOW_STATE_ROOT (and the plan and session roots,
+	// which name the same directory).
+	root string
 }
 
 func flowControlContextFromEnv(deps runDeps) flowControlContext {
+	root := strings.TrimSpace(deps.getenv("APPROACH_FLOW_STATE_ROOT"))
+	if root == "" {
+		root = strings.TrimSpace(deps.getenv("APPROACH_PLAN_STATE_ROOT"))
+	}
+	if root == "" {
+		root = strings.TrimSpace(deps.getenv("APPROACH_SESSION_STATE_ROOT"))
+	}
 	return flowControlContext{
 		endpoint: strings.TrimSpace(deps.getenv("APPROACH_CONTROL_ENDPOINT")),
 		token:    strings.TrimSpace(deps.getenv("APPROACH_CONTROL_TOKEN")),
 		launchID: strings.TrimSpace(deps.getenv("APPROACH_LAUNCH_ID")),
 		flowID:   strings.TrimSpace(deps.getenv("APPROACH_FLOW_ID")),
 		phaseID:  strings.TrimSpace(deps.getenv("APPROACH_FLOW_PHASE_ID")),
+		root:     root,
 	}
+}
+
+// servesRoot reports whether the endpoint is the right place for a command
+// that names stateRoot (or, when blank, the launch's own root). The endpoint
+// serves exactly the launcher's root: a command that names another root — a
+// scratch root under test — must open that root itself and never be proxied
+// into the launcher's database, and an endpoint whose root is unknown is not
+// trusted for any root.
+func (c flowControlContext) servesRoot(stateRoot string) bool {
+	if c.root == "" {
+		return false
+	}
+	requested := strings.TrimSpace(stateRoot)
+	if requested == "" {
+		requested = c.root
+	}
+	return canonicalStateRoot(requested) == canonicalStateRoot(c.root)
+}
+
+// canonicalStateRoot compares roots by where they point, so a symlinked
+// spelling of the launcher's root is still the launcher's root.
+func canonicalStateRoot(root string) string {
+	cleaned := filepath.Clean(root)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return resolved
+	}
+	return cleaned
 }
 
 // flowRequestSpooled reports a replayable write that could neither reach the
@@ -1301,7 +1340,8 @@ const (
 // runFlowRequest dispatches req by verb class and by what the environment
 // says about the launch:
 //
-//   - a direct verb, or no endpoint: open the store with role, execute;
+//   - a direct verb, no endpoint, or a command naming a root other than the
+//     endpoint's: open the store with role, execute;
 //   - an endpoint that answers: that answer is final, OK or refused;
 //   - an endpoint that does not answer: reads open the store read-only or fail
 //     loudly (a read never exits 0 without data); non-replayable writes open
@@ -1314,7 +1354,7 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		return launchcontrol.Response{}, fmt.Errorf("unknown launch control verb %q", req.Verb)
 	}
 	control := flowControlContextFromEnv(deps)
-	if class == launchcontrol.ClassDirect || control.endpoint == "" {
+	if class == launchcontrol.ClassDirect || control.endpoint == "" || !control.servesRoot(stateRoot) {
 		return runFlowRequestDirect(deps, stateRoot, req, role)
 	}
 	client := launchcontrol.Client{

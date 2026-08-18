@@ -14,14 +14,19 @@ import (
 	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
 
-// controlEnv builds the getenv a launched agent sees.
-func controlEnv(endpoint, token, launchID, flowID, phaseID string) func(string) string {
+// controlEnv builds the getenv a launched agent sees: the registration and,
+// as the launcher exports them, the state roots — the endpoint serves exactly
+// that root.
+func controlEnv(root, endpoint, token, launchID, flowID, phaseID string) func(string) string {
 	values := map[string]string{
-		"APPROACH_CONTROL_ENDPOINT": endpoint,
-		"APPROACH_CONTROL_TOKEN":    token,
-		"APPROACH_LAUNCH_ID":        launchID,
-		"APPROACH_FLOW_ID":          flowID,
-		"APPROACH_FLOW_PHASE_ID":    phaseID,
+		"APPROACH_CONTROL_ENDPOINT":   endpoint,
+		"APPROACH_CONTROL_TOKEN":      token,
+		"APPROACH_LAUNCH_ID":          launchID,
+		"APPROACH_FLOW_ID":            flowID,
+		"APPROACH_FLOW_PHASE_ID":      phaseID,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_PLAN_STATE_ROOT":    root,
+		"APPROACH_SESSION_STATE_ROOT": root,
 	}
 	return func(key string) string { return values[key] }
 }
@@ -70,16 +75,12 @@ func TestFlowLeavesProxyThroughEndpointWithoutOpeningTheDatabase(t *testing.T) {
 	recordLaunch(t, controllerRoot, created.FlowID, "plan", "launch-1")
 	_, endpoint := controllerFor(t, controllerRoot, created.FlowID, "plan", "launch-1")
 
-	// The agent's own view of the state root is garbage: a regular file where
-	// approach.db should be. Any direct open would fail loudly.
-	agentRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(agentRoot, "approach.db"), []byte("not a database"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// A proxied leaf never loads config or opens a database: the direct path
+	// needs both, so a fatal loadConfig proves the request went to the socket.
 	deps := func(stdout, stderr *bytes.Buffer) runDeps {
 		return noScanDeps(t, runDeps{
 			stdout: stdout, stderr: stderr,
-			getenv: controlEnv(endpoint.Path, endpoint.Token, "launch-1", created.FlowID, "plan"),
+			getenv: controlEnv(controllerRoot, endpoint.Path, endpoint.Token, "launch-1", created.FlowID, "plan"),
 			loadConfig: func() (config.Config, error) {
 				t.Fatal("loadConfig must not run for a proxied leaf")
 				return config.Config{}, nil
@@ -87,7 +88,8 @@ func TestFlowLeavesProxyThroughEndpointWithoutOpeningTheDatabase(t *testing.T) {
 		})
 	}
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", agentRoot}, deps(&stdout, &stderr)); err != nil {
+	// No --state-root: the launch's exported root is the endpoint's root.
+	if err := run([]string{"approach", "flow", "read", "--flow-id", created.FlowID}, deps(&stdout, &stderr)); err != nil {
 		t.Fatalf("proxied read: %v (%s)", err, stderr.String())
 	}
 	var read flowstore.FlowRecord
@@ -95,7 +97,8 @@ func TestFlowLeavesProxyThroughEndpointWithoutOpeningTheDatabase(t *testing.T) {
 		t.Fatalf("read output = %s (%v)", stdout.String(), err)
 	}
 	stdout.Reset()
-	if err := run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "via socket", "--state-root", agentRoot}, deps(&stdout, &stderr)); err != nil {
+	// An explicit --state-root naming the same root is proxied too.
+	if err := run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "via socket", "--state-root", controllerRoot}, deps(&stdout, &stderr)); err != nil {
 		t.Fatalf("proxied complete: %v (%s)", err, stderr.String())
 	}
 	var result flowPhaseActionResult
@@ -107,14 +110,72 @@ func TestFlowLeavesProxyThroughEndpointWithoutOpeningTheDatabase(t *testing.T) {
 	if !ok || applied.AppliedSeq != 1 || applied.Status != flowstore.PhaseCompleted {
 		t.Fatalf("applied = %#v", applied)
 	}
-	if data, _ := os.ReadFile(filepath.Join(agentRoot, "approach.db")); string(data) != "not a database" {
-		t.Fatal("agent-side database was touched")
-	}
 	// A refused write is final: exit non-zero, nothing spooled.
 	stdout.Reset()
-	err := run([]string{"approach", "flow", "phase", "set", "--flow-id", created.FlowID, "--phase-id", "plan", "--status", "skipped", "--state-root", agentRoot}, deps(&stdout, &stderr))
+	err := run([]string{"approach", "flow", "phase", "set", "--flow-id", created.FlowID, "--phase-id", "plan", "--status", "skipped"}, deps(&stdout, &stderr))
 	if err == nil || !strings.Contains(err.Error(), "skipped phase requires notes") {
 		t.Fatalf("refused set error = %v", err)
+	}
+}
+
+// The endpoint serves exactly the launch's root. A command that names another
+// root — a scratch root under test, say — is never proxied into the
+// launcher's database; it opens the root it named, directly, as before.
+func TestFlowLeavesWithAnotherStateRootBypassTheEndpoint(t *testing.T) {
+	controllerRoot := t.TempDir()
+	repoPath := filepath.Join(controllerRoot, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Proxied", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", controllerRoot})
+	recordLaunch(t, controllerRoot, created.FlowID, "plan", "launch-1")
+	_, endpoint := controllerFor(t, controllerRoot, created.FlowID, "plan", "launch-1")
+	scratch := t.TempDir()
+	other := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Scratch", "--instructions", "x", "--repo-path", filepath.Join(scratch, "repo"), "--json", "--state-root", scratch})
+	getenv := controlEnv(controllerRoot, endpoint.Path, endpoint.Token, "launch-1", created.FlowID, "plan")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"approach", "flow", "read", "--flow-id", other.FlowID, "--state-root", scratch}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv})); err != nil {
+		t.Fatalf("scratch read: %v (%s)", err, stderr.String())
+	}
+	var read flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &read); err != nil || read.FlowID != other.FlowID {
+		t.Fatalf("scratch read output = %s (%v)", stdout.String(), err)
+	}
+	stdout.Reset()
+	if err := run([]string{"approach", "flow", "phase", "set", "--flow-id", other.FlowID, "--phase-id", "plan", "--status", "completed", "--summary", "scratch only", "--state-root", scratch}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv})); err != nil {
+		t.Fatalf("scratch write: %v (%s)", err, stderr.String())
+	}
+	// The launcher's database and launch log are untouched.
+	live, err := flowstore.NewStore(flowstore.StoreOptions{Root: controllerRoot, Role: flowstore.RoleReader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	record, err := live.Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase := phaseByID(record, "plan"); phase.Status != flowstore.PhaseRunning || phase.Summary != "" {
+		t.Fatalf("live phase written through the endpoint: %#v", phase)
+	}
+	if _, err := live.Read(other.FlowID); err == nil {
+		t.Fatal("scratch flow appeared in the live database")
+	}
+	log, _ := launchcontrol.OpenLog(controllerRoot, "launch-1")
+	if requests, _ := log.Requests(); len(requests) != 0 {
+		t.Fatalf("scratch write was logged against the launch: %#v", requests)
+	}
+	// Same root, spelled through a symlink, is still the endpoint's root.
+	link := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(controllerRoot, link); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", link}, noScanDeps(t, runDeps{
+		stdout: &stdout, stderr: &stderr, getenv: getenv,
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig must not run for a proxied leaf")
+			return config.Config{}, nil
+		},
+	})); err != nil {
+		t.Fatalf("symlinked-root read: %v (%s)", err, stderr.String())
 	}
 }
 
@@ -126,7 +187,7 @@ func TestReplayableWriteFallsBackToLoggedDirectOpenWhenEndpointUnreachable(t *te
 	dead := filepath.Join(t.TempDir(), "dead.sock")
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")}))
 	if err != nil {
 		t.Fatalf("fallback complete: %v (%s)", err, stderr.String())
 	}
@@ -161,7 +222,7 @@ func TestReplayableWriteSpoolsWhenEndpointUnreachableAndDatabaseIncompatible(t *
 	dead := filepath.Join(t.TempDir(), "dead.sock")
 	var stdout, stderr bytes.Buffer
 	err = run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "later", "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")}))
 	if err != nil {
 		t.Fatalf("spooled complete exit = %v, want 0", err)
 	}
@@ -182,13 +243,13 @@ func TestReplayableWriteSpoolsWhenEndpointUnreachableAndDatabaseIncompatible(t *
 	}
 	// Non-replayable writes and reads cannot spool.
 	err = run([]string{"approach", "flow", "phase", "restart", "--flow-id", created.FlowID, "--phase-id", "plan", "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")}))
 	if err == nil || !strings.HasPrefix(err.Error(), "cannot be deferred: phase.restart is not replayable; control endpoint "+dead+" unreachable and the flow database could not be opened: ") {
 		t.Fatalf("restart error = %v", err)
 	}
 	stdout.Reset()
 	err = run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")}))
 	if err == nil || !strings.HasPrefix(err.Error(), "control endpoint "+dead+" unreachable; direct read failed: ") {
 		t.Fatalf("read error = %v", err)
 	}
@@ -206,7 +267,7 @@ func TestFlowCreateIgnoresEndpointAndOpensDirectly(t *testing.T) {
 	dead := filepath.Join(t.TempDir(), "dead.sock")
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"approach", "flow", "create", "--title", "Direct", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", "", "")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", "", "")}))
 	if err != nil {
 		t.Fatalf("create with endpoint: %v", err)
 	}
@@ -218,7 +279,7 @@ func TestFlowCreateIgnoresEndpointAndOpensDirectly(t *testing.T) {
 	recordLaunch(t, root, record.FlowID, "plan", "launch-1")
 	stdout.Reset()
 	err = run([]string{"approach", "flow", "phase", "reset", "--flow-id", record.FlowID, "--phase-id", "plan", "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", record.FlowID, "plan")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", record.FlowID, "plan")}))
 	if err != nil {
 		t.Fatalf("reset with endpoint: %v", err)
 	}
@@ -257,7 +318,7 @@ func TestSpoolRefusesRequestsNoReplayCanApply(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			err := run(append([]string{"approach", "flow"}, append(tc.args, "--state-root", root)...),
-				noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, tc.phaseEnv)}))
+				noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, tc.phaseEnv)}))
 			if err == nil || !strings.HasPrefix(err.Error(), "cannot be deferred: ") {
 				t.Fatalf("exit = %v, want a cannot-be-deferred error", err)
 			}
@@ -277,7 +338,7 @@ func TestSpoolRefusesRequestsNoReplayCanApply(t *testing.T) {
 	} {
 		var stdout, stderr bytes.Buffer
 		err := run(append([]string{"approach", "flow"}, append(args, "--state-root", root)...),
-			noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+			noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")}))
 		if err != nil || !strings.Contains(stderr.String(), flowSpooledMessage) {
 			t.Fatalf("%v: exit = %v stderr = %q, want spooled", args, err, stderr.String())
 		}
@@ -317,7 +378,7 @@ func TestSpoolRefusesLaunchWithoutABaseline(t *testing.T) {
 	dead := filepath.Join(t.TempDir(), "dead.sock")
 	var stdout, stderr bytes.Buffer
 	err = run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "later", "--state-root", root},
-		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(dead, "tok", "launch-1", created.FlowID, "plan")}))
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")}))
 	if err == nil || !strings.HasPrefix(err.Error(), "cannot be deferred: ") || !strings.Contains(err.Error(), "baseline") {
 		t.Fatalf("exit = %v, want a cannot-be-deferred error naming the baseline", err)
 	}

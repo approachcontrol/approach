@@ -185,6 +185,10 @@ socket for liveness and replacing a dead one are one step) and exports
 launch. With them, `approach flow` writes are proxied over the socket and
 applied through the TUI's one store — which is how an agent whose `approach`
 on PATH is a schema-(N-1) build completes a phase a schema-N TUI launched.
+The endpoint serves exactly the launcher's root (the exported
+`APPROACH_FLOW_STATE_ROOT`): a `flow` command that names another
+`--state-root` — a scratch root under test — is never proxied into the
+launcher's database and opens the root it named directly, as before.
 When the socket does not answer, reads open the database read-only or exit
 non-zero (a read never exits 0 without data); `phase restart`, `add-child`,
 and `agent set` open the database or exit non-zero (`cannot be deferred`);
