@@ -29,8 +29,7 @@ type EpicProgressionKey struct {
 	EpicID   string
 }
 
-// EpicProgressionHalt is the durable reason progression stopped. Halt writes
-// are reserved for later epic slices, but v1 pins their validation now.
+// EpicProgressionHalt is the durable reason progression stopped.
 type EpicProgressionHalt struct {
 	ChildBeadID string `json:"child_bead_id"`
 	Status      string `json:"status"`
@@ -56,6 +55,13 @@ type EpicProgressionUpdate struct {
 	Key     EpicProgressionKey
 	Enabled bool
 	Done    bool
+}
+
+// EpicProgressionHaltUpdate records why progression stopped. Only authoritative
+// active state may halt, and the first halt tuple is the one that sticks.
+type EpicProgressionHaltUpdate struct {
+	Key  EpicProgressionKey
+	Halt EpicProgressionHalt
 }
 
 // PreparedEpicProgressionUpdate binds enablement to one exact prepared child
@@ -109,6 +115,7 @@ type storedEpicProgressionDTO struct {
 type epicProgressionBackend interface {
 	readEpicProgression(EpicProgressionKey) (EpicProgression, bool, error)
 	setEpicProgression(EpicProgressionUpdate, func() time.Time) (EpicProgression, error)
+	haltEpicProgression(EpicProgressionHaltUpdate, func() time.Time) (EpicProgression, error)
 }
 
 // ReadEpicProgression distinguishes a missing row from a malformed or
@@ -138,6 +145,25 @@ func (s *Store) SetEpicProgression(update EpicProgressionUpdate) (EpicProgressio
 		return EpicProgression{}, errors.New("flow backend does not support epic progression")
 	}
 	return backend.setEpicProgression(update, s.now)
+}
+
+// HaltEpicProgression atomically moves authoritative active progression to
+// halted. Only active state may halt; an already-halted record retains its
+// first halt tuple and both timestamps, so the original cause always wins.
+func (s *Store) HaltEpicProgression(update EpicProgressionHaltUpdate) (EpicProgression, error) {
+	key, err := normalizeEpicProgressionKey(update.Key)
+	if err != nil {
+		return EpicProgression{}, err
+	}
+	update.Key = key
+	if err := validateEpicProgressionHalt(update.Halt); err != nil {
+		return EpicProgression{}, err
+	}
+	backend, ok := s.backend.(epicProgressionBackend)
+	if !ok {
+		return EpicProgression{}, errors.New("flow backend does not support epic progression")
+	}
+	return backend.haltEpicProgression(update, s.now)
 }
 
 // EnableEpicProgressionForPreparedFlow revalidates the exact child Flow and
@@ -350,7 +376,10 @@ func validateEpicProgression(record EpicProgression) error {
 	if record.Halt == nil {
 		return nil
 	}
-	halt := record.Halt
+	return validateEpicProgressionHalt(*record.Halt)
+}
+
+func validateEpicProgressionHalt(halt EpicProgressionHalt) error {
 	if strings.TrimSpace(halt.ChildBeadID) == "" || strings.TrimSpace(halt.Message) == "" ||
 		halt.ChildBeadID != strings.TrimSpace(halt.ChildBeadID) || halt.Message != strings.TrimSpace(halt.Message) {
 		return errors.New("epic progression halt tuple is incomplete or not canonical")
@@ -658,6 +687,66 @@ ON CONFLICT(repo_path, epic_id) DO UPDATE SET
 	}
 	if err := tx.Commit(); err != nil {
 		return EpicProgression{}, fmt.Errorf("commit epic progression update %q/%q: %w", current.RepoPath, current.EpicID, err)
+	}
+	return current, nil
+}
+
+func (b *sqliteBackend) haltEpicProgression(update EpicProgressionHaltUpdate, now func() time.Time) (EpicProgression, error) {
+	tx, err := b.beginTx(context.Background())
+	if err != nil {
+		return EpicProgression{}, fmt.Errorf("begin epic progression halt %q/%q: %w", update.Key.RepoPath, update.Key.EpicID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, found, err := queryEpicProgression(tx.QueryRow(
+		"SELECT repo_path, epic_id, enabled, updated_at, record FROM epic_progressions WHERE repo_path = ? AND epic_id = ?",
+		update.Key.RepoPath, update.Key.EpicID,
+	), update.Key)
+	if err != nil {
+		return EpicProgression{}, err
+	}
+	if !found {
+		return EpicProgression{}, fmt.Errorf("epic progression %q/%q is off; only active progression can halt", update.Key.RepoPath, update.Key.EpicID)
+	}
+	if current.Halt != nil {
+		// Halt is sticky: the first cause wins and neither timestamp moves, so
+		// the row is left untouched rather than rewritten.
+		if err := tx.Commit(); err != nil {
+			return EpicProgression{}, fmt.Errorf("commit epic progression halt %q/%q: %w", update.Key.RepoPath, update.Key.EpicID, err)
+		}
+		return current, nil
+	}
+	// This checks that progression is active, not that it is the same activation
+	// whose tracked child produced update.Halt: another process that disabled and
+	// re-enabled the epic can still be halted by a stale observation. The advance
+	// edge carries the identical exposure and predates this one, so fencing needs
+	// a shared activation generation across both — tracked in approach-d93.
+	if !current.Enabled || current.Done {
+		state := "off"
+		if current.Done {
+			state = "done"
+		}
+		return EpicProgression{}, fmt.Errorf("epic progression %q/%q is %s; only active progression can halt", update.Key.RepoPath, update.Key.EpicID, state)
+	}
+	halt := update.Halt
+	current.Enabled = false
+	current.Done = false
+	current.Halt = &halt
+	current.UpdatedAt = epicProgressionMutationTime(current, now())
+	data, updatedAt, err := encodeEpicProgression(current)
+	if err != nil {
+		return EpicProgression{}, err
+	}
+	if _, err := tx.Exec(`
+INSERT INTO epic_progressions(repo_path, epic_id, enabled, updated_at, record)
+VALUES(?, ?, ?, ?, ?)
+ON CONFLICT(repo_path, epic_id) DO UPDATE SET
+    enabled=excluded.enabled,
+    updated_at=excluded.updated_at,
+    record=excluded.record`, current.RepoPath, current.EpicID, boolToSQLite(current.Enabled), updatedAt, data); err != nil {
+		return EpicProgression{}, fmt.Errorf("halt epic progression %q/%q: %w", current.RepoPath, current.EpicID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return EpicProgression{}, fmt.Errorf("commit epic progression halt %q/%q: %w", current.RepoPath, current.EpicID, err)
 	}
 	return current, nil
 }

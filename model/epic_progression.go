@@ -41,6 +41,7 @@ const (
 	flowPreparationReadyBead
 	flowPreparationEpicToggle
 	flowPreparationEpicAdvance
+	flowPreparationEpicHalt
 	// flowPreparationSliceEpic holds across a whole agent spawn rather than a
 	// store round trip, so it is the longest-lived sharer of this admission.
 	flowPreparationSliceEpic
@@ -90,6 +91,32 @@ type epicProgressionAdvanceResultMsg struct {
 	flow         flowstore.FlowRecord
 	status       string
 	release      func()
+}
+
+type epicProgressionHaltRequest struct {
+	Request      uint64
+	OwnerToken   uint64
+	EpicKey      string
+	SourceFlowID string
+}
+
+type epicProgressionHaltDisposition uint8
+
+const (
+	epicProgressionHaltRetryable epicProgressionHaltDisposition = iota
+	epicProgressionHaltPersisted
+	epicProgressionHaltInactive
+)
+
+type epicProgressionHaltResultMsg struct {
+	request      uint64
+	ownerToken   uint64
+	epicKey      string
+	repoPath     string
+	epicID       string
+	sourceFlowID string
+	disposition  epicProgressionHaltDisposition
+	status       string
 }
 
 func (m Model) acquireFlowPreparation(kind flowPreparationKind) (Model, uint64, bool) {
@@ -292,6 +319,110 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 		}
 		return msg
 	}
+}
+
+// startEpicProgressionHalt shares the single-flight preparation admission with
+// advance and the epic toggle, so a halt can never interleave with either. It
+// creates no Flow, queries no Beads, and takes no Flow reservation.
+func (m Model) startEpicProgressionHalt(epicKey string, baseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
+	var ownerToken uint64
+	var admitted bool
+	m, ownerToken, admitted = m.acquireFlowPreparation(flowPreparationEpicHalt)
+	if !admitted {
+		return m, nil
+	}
+	m.epicProgressionHaltSeq++
+	request := epicProgressionHaltRequest{
+		Request: m.epicProgressionHaltSeq, OwnerToken: ownerToken,
+		EpicKey: epicKey, SourceFlowID: baseline.FlowID,
+	}
+	m.activeEpicProgressionHalt = request
+	return m, m.haltEpicProgressionCmd(request, observed)
+}
+
+func (m Model) haltEpicProgressionCmd(request epicProgressionHaltRequest, observed flowstore.FlowRecord) tea.Cmd {
+	haltProgression := m.haltEpicProgression
+	readProgression := m.readEpicProgression
+	repoPath := filepath.Clean(observed.RepoPath)
+	epicID := strings.TrimSpace(observed.Bead.EpicID)
+	childID := strings.TrimSpace(observed.Bead.ID)
+	// The web viewer renders the halt message verbatim beside the child and its
+	// state, so the message carries the one identifier neither surface derives.
+	message := fmt.Sprintf("child Flow %s halted auto-progression", strings.TrimSpace(observed.FlowID))
+	haltStatus := epicProgressionResolvedStatus(observed)
+	result := func(disposition epicProgressionHaltDisposition, status string) epicProgressionHaltResultMsg {
+		return epicProgressionHaltResultMsg{
+			request: request.Request, ownerToken: request.OwnerToken, epicKey: request.EpicKey,
+			repoPath: repoPath, epicID: epicID, sourceFlowID: request.SourceFlowID,
+			disposition: disposition, status: status,
+		}
+	}
+	return func() tea.Msg {
+		key := flowstore.EpicProgressionKey{RepoPath: repoPath, EpicID: epicID}
+		halt := flowstore.EpicProgressionHalt{ChildBeadID: childID, Status: haltStatus, Message: message}
+		persisted, err := haltProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
+		if err == nil {
+			// Halt is sticky, so an already-halted row keeps its first cause and
+			// this attempt's tuple is discarded. Announce what the store retained,
+			// never what this poll observed.
+			cause := halt
+			if persisted.Halt != nil {
+				cause = *persisted.Halt
+			}
+			return result(epicProgressionHaltPersisted, epicProgressionHaltStatus(epicID, cause))
+		}
+		authoritative, found, readErr := readProgression(key)
+		if readErr != nil {
+			return result(epicProgressionHaltRetryable, fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", epicID, readErr))
+		}
+		if found && authoritative.Halt != nil {
+			// A write can report an error after the row became durable. The read
+			// is the tiebreaker: a halted row is a halt, announced from its own
+			// tuple rather than the generic inactive line.
+			return result(epicProgressionHaltPersisted, epicProgressionHaltStatus(epicID, *authoritative.Halt))
+		}
+		if found && authoritative.Enabled && !authoritative.Done {
+			return result(epicProgressionHaltRetryable, fmt.Sprintf("Could not halt auto-progression for epic %s: %v", epicID, err))
+		}
+		return result(epicProgressionHaltInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
+	}
+}
+
+// handleEpicProgressionHaltResult drops the epic's runtime tracking once the
+// halt is durable. That teardown is what mechanically guarantees no further
+// child Flow is created until the user re-enables progression.
+func (m Model) handleEpicProgressionHaltResult(msg epicProgressionHaltResultMsg) (Model, tea.Cmd) {
+	active := m.activeEpicProgressionHalt
+	baseline, baselineFound := m.epicProgressionBaselines[msg.epicKey]
+	current := msg.request != 0 && active.Request == msg.request && active.OwnerToken == msg.ownerToken &&
+		active.EpicKey == msg.epicKey && active.SourceFlowID == msg.sourceFlowID &&
+		baselineFound && baseline.FlowID == msg.sourceFlowID &&
+		m.flowPreparationMatches(flowPreparationEpicHalt, msg.ownerToken)
+	// Releasing on every path is free and cannot steal: releaseFlowPreparation
+	// no-ops unless this exact kind and token still own admission.
+	m = m.releaseFlowPreparation(flowPreparationEpicHalt, msg.ownerToken)
+	if !current {
+		return m, nil
+	}
+	m.activeEpicProgressionHalt = epicProgressionHaltRequest{}
+	switch msg.disposition {
+	case epicProgressionHaltPersisted, epicProgressionHaltInactive:
+		delete(m.epicProgressionBaselines, msg.epicKey)
+		delete(m.epicProgressionBaselineMinimumRequests, msg.epicKey)
+		delete(m.epicProgressionOwnedSuccessors, msg.epicKey)
+	}
+	var statusCmd tea.Cmd
+	if strings.TrimSpace(msg.status) != "" {
+		// A halt is the class of alert the transition rank exists to protect: it
+		// is announced once, and then the baseline is gone.
+		m, statusCmd = m.setAutoAdvanceStatus(msg.status)
+	}
+	var progressionRefreshCmd tea.Cmd
+	target := m.beadExpansion.target
+	if target.token != 0 && filepath.Clean(target.repoPath) == msg.repoPath && strings.TrimSpace(target.epicID) == msg.epicID {
+		progressionRefreshCmd = m.readEpicProgressionCmd(target)
+	}
+	return m, batchNonNil(statusCmd, progressionRefreshCmd)
 }
 
 func rejectOwnedEpicProgressionSuccessor(flow flowstore.FlowRecord) string {
@@ -881,10 +1012,22 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 	} else {
 		projection.ProgressionDetail = ""
 	}
+	// Enabled progression can never be halted, so a confirmed enable clears the
+	// halt line in the same frame rather than waiting for the re-read below.
+	// Every other branch leaves it to the authoritative read: the enable-failure
+	// branches report known state without reading progression at all, and
+	// deriving halt state from them would render a halted epic as not-halted.
+	if msg.known && msg.enabled {
+		projection.ProgressionHaltDetail = ""
+	}
 	m.beadExpansion.projection = projection
 	m = m.reflowBeadExpansionPane()
 	m = m.setStatus(statusOther, msg.status)
-	return m, flowRefreshCmd
+	var progressionRefreshCmd tea.Cmd
+	if current := m.beadExpansion.target; current.token != 0 {
+		progressionRefreshCmd = m.readEpicProgressionCmd(current)
+	}
+	return m, batchNonNil(flowRefreshCmd, progressionRefreshCmd)
 }
 
 func (m Model) readEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
@@ -897,4 +1040,11 @@ func (m Model) readEpicProgressionCmd(target beadExpansionTarget) tea.Cmd {
 
 func epicProgressionBaselineKey(repoPath, epicID string) string {
 	return filepath.Clean(repoPath) + "\x00" + strings.TrimSpace(epicID)
+}
+
+// epicProgressionHaltStatus formats the one halt notification, always from the
+// tuple the store owns, so every path reports the cause that is actually
+// durable.
+func epicProgressionHaltStatus(epicID string, cause flowstore.EpicProgressionHalt) string {
+	return fmt.Sprintf("Auto-progression halted for epic %s: child %s is %s", epicID, cause.ChildBeadID, cause.Status)
 }

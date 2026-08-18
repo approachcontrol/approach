@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -119,11 +120,15 @@ func (m Model) handleBeadProgressionResult(msg beadProgressionResultMsg) Model {
 	projection.ProgressionKnown = false
 	projection.ProgressionEnabled = false
 	projection.ProgressionDetail = ""
+	projection.ProgressionHaltDetail = ""
 	if msg.err != nil {
 		projection.ProgressionDetail = msg.err.Error()
 	} else {
 		projection.ProgressionKnown = true
 		projection.ProgressionEnabled = msg.found && msg.progression.Enabled
+		if msg.found && msg.progression.Halt != nil {
+			projection.ProgressionHaltDetail = fmt.Sprintf("%s is %s", msg.progression.Halt.ChildBeadID, msg.progression.Halt.Status)
+		}
 	}
 	m.beadExpansion.projection = projection
 	return m.reflowBeadExpansionPane()

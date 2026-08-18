@@ -30,6 +30,18 @@ type BeadExpansion struct {
 	ProgressionKnown   bool
 	ProgressionEnabled bool
 	ProgressionDetail  string
+	// ProgressionHaltDetail names the child and state that halted
+	// auto-progression, e.g. "epic.8 is blocked". It is the single source of
+	// truth for both the halted row marker and the halted expansion line, so
+	// the two can never disagree about whether the line exists.
+	ProgressionHaltDetail string
+}
+
+// beadRowMarkers are the persistent markers a selected epic row can carry.
+// Halted outranks auto: it is the state that wants the user's attention.
+type beadRowMarkers struct {
+	Auto   bool
+	Halted bool
 }
 
 // BeadVisualHeight is the visual-line contract shared with model scrolling.
@@ -50,6 +62,9 @@ func BeadVisualHeight(bead beadsquery.Bead, expansion BeadExpansion) int {
 	case BeadExpansionLoading, BeadExpansionError:
 		height++
 	}
+	if strings.TrimSpace(expansion.ProgressionHaltDetail) != "" {
+		height++
+	}
 	if strings.TrimSpace(expansion.ProgressionDetail) != "" {
 		height++
 	}
@@ -65,8 +80,12 @@ func renderBeadsPane(beads []beadsquery.Bead, selected, scroll, width, height in
 }
 
 func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expansion BeadExpansion) []string {
-	autoEnabled := selected && bead.ID == expansion.EpicID && expansion.ProgressionKnown && expansion.ProgressionEnabled
-	lines := []string{renderBeadRow(bead, selected, width, autoEnabled)}
+	own := selected && bead.ID == expansion.EpicID
+	markers := beadRowMarkers{
+		Auto:   own && expansion.ProgressionKnown && expansion.ProgressionEnabled,
+		Halted: own && strings.TrimSpace(expansion.ProgressionHaltDetail) != "",
+	}
+	lines := []string{renderBeadRow(bead, selected, width, markers)}
 	if expansion.EpicID == "" || bead.ID != expansion.EpicID {
 		return lines
 	}
@@ -107,14 +126,17 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 			stateLine("Readiness unavailable: " + expansion.Detail)
 		}
 	}
+	// Cause precedes a read failure when a projection carries both.
+	if strings.TrimSpace(expansion.ProgressionHaltDetail) != "" {
+		stateLine("Auto-progression halted: " + expansion.ProgressionHaltDetail)
+	}
 	if strings.TrimSpace(expansion.ProgressionDetail) != "" {
 		stateLine("Auto-progression unavailable: " + expansion.ProgressionDetail)
 	}
 	return lines
 }
 
-func renderBeadRow(bead beadsquery.Bead, selected bool, width int, autoProjection ...bool) string {
-	autoEnabled := len(autoProjection) > 0 && autoProjection[0]
+func renderBeadRow(bead beadsquery.Bead, selected bool, width int, markers beadRowMarkers) string {
 	id := terminalSafeSingleLine(bead.ID)
 	title := terminalSafeSingleLine(bead.Title)
 	assignee := terminalSafeSingleLine(bead.Assignee)
@@ -125,7 +147,10 @@ func renderBeadRow(bead beadsquery.Bead, selected bool, width int, autoProjectio
 	marker := ""
 	if strings.EqualFold(strings.TrimSpace(bead.IssueType), "epic") {
 		marker = "  [epic]"
-		if autoEnabled {
+		switch {
+		case markers.Halted:
+			marker += "  [halted]"
+		case markers.Auto:
 			marker += "  [auto]"
 		}
 	}
