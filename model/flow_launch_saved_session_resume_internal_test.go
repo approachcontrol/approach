@@ -19,7 +19,7 @@ func savedSessionLifecycleModel(opts Options) Model {
 			return flowlease.Free, nil
 		}
 	}
-	return NewWithOptions([]scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, opts)
+	return newModelForTest([]scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, opts)
 }
 
 func TestSavedSessionResumeRefreshesCachedNonFlowAssociationBeforeRouting(t *testing.T) {

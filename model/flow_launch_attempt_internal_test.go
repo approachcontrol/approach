@@ -9,7 +9,7 @@ import (
 )
 
 func attemptTestModel() Model {
-	return NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
+	return newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
 		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
 			return flowlease.Free, nil
 		},
