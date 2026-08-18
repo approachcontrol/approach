@@ -59,6 +59,15 @@ func TestApproachFlowSkillDocumentsAgentContract(t *testing.T) {
 		"persistence failures",
 		"must not be treated as successful phase progression",
 	})
+	// The spooled contract: a deferred write is exit 0 with a fixed message,
+	// reported as deferred and never retried.
+	requireContainsAll(t, "spooled writes", skill, []string{
+		"spooled: control endpoint unreachable and this build cannot open the flow database; the request will be applied on the next approach start",
+		"do not retry",
+		"APPROACH_CONTROL_ENDPOINT",
+		"APPROACH_CONTROL_TOKEN",
+		"never spool",
+	})
 }
 
 func TestApproachFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {

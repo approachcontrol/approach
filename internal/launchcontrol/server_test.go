@@ -368,3 +368,24 @@ func TestRecordLaunchExitWritesExitJSON(t *testing.T) {
 		t.Fatalf("exit = %#v %v %v", exit, ok, err)
 	}
 }
+
+func TestNotifyBeforeSetAppliedNotifierNeitherPanicsNorBlocks(t *testing.T) {
+	store, root := newTestStore(t)
+	c := newTestController(t, store, root)
+	done := make(chan struct{})
+	go func() {
+		c.notify(AppliedEvent{FlowID: "f", PhaseID: "plan", LaunchID: "launch-1"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("notify blocked without a notifier")
+	}
+	got := make(chan AppliedEvent, 1)
+	c.SetAppliedNotifier(func(e AppliedEvent) { got <- e })
+	c.notify(AppliedEvent{LaunchID: "launch-2"})
+	if e := <-got; e.LaunchID != "launch-2" {
+		t.Fatalf("event = %#v", e)
+	}
+}

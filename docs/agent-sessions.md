@@ -107,6 +107,15 @@ phase in the TUI makes the same call by hand after a confirmation — see
 `docs/tui-guide.md` — which is why a released session is indistinguishable from
 a cleanly exited one: it is the same write.
 
+A `SessionEnd`-class hook (Claude and Cursor always; Codex on `Stop`) for a
+tracked phase launch also reports the end to the launch controller (see
+"Launch directories" below): anything the launch spooled is replayed first, and
+a phase still `running` under that exact launch is marked `needs_attention`
+with reason `phase_result_missing` — unless the Flow lease is held, because a
+held lease means a tracked tmux agent is still alive on that Flow and Claude's
+`SessionEnd` fires on `/clear` too. The hook reports what it did as a stderr
+warning and still exits 0.
+
 `session-hook` loads the normal Approach config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
 configured sessions root for one hook invocation. Raw provider transcript
@@ -129,6 +138,71 @@ repositories and uses restrictive file permissions for created session files.
 Provider session IDs are stored in hashed directory names instead of raw path
 components. Hook payloads without a usable session ID are rejected at capture
 time, so no unusable session records are stored.
+
+## Launch Directories and Controller-Owned Phase Results
+
+Every Flow-scoped launch has a directory `<root>/launches/<launch-id>/`
+(`0700`, files `0600`) beside — deliberately not inside — `bin/pins/`: pins are
+content-addressed binary retention, launch directories are a time-based
+mutation log, and the two fail for different reasons. The files:
+
+- `launch.json` — identity (`flow_id`, `phase_id`, `kind`: phase, autofix,
+  repair, generic, resume) and the SHA-256 of the launch's control token,
+  written at registration. The token itself lives only in the agent's
+  environment and the launcher's memory.
+- `baseline.json` — the phase status `AddPhaseLaunchID` returned for this
+  launch (`running` for a fresh launch, the terminal status for a resume of a
+  completed phase). Replay compares against it. `observed_updated_at` is
+  diagnostic only.
+- `requests/<seq:06d>-<request-id>.json` — every write the launch made through
+  the `flow` CLI, appended durably (fsync + directory sync) **before** it is
+  acknowledged, by the controller (`written_by: controller`), by the CLI's
+  direct fallback (`direct`), or by the CLI's spool path (`spool`).
+- `applied.json` — the log's high-water mark and the phase status after the
+  last applied request; `result` is `applied`, `refused`, `reconciled`, or
+  `rejected`.
+- `rejected.json` — replay rejections with `reason` `phase_result_stale`,
+  `request_invalid`, or `baseline_missing`, and the intended and observed
+  statuses.
+- `exit.json` — written by the tmux lease runner after the agent's whole
+  process group is gone; the sweep's authoritative exit evidence.
+- `FLOW-REPLAY-NOTICE.txt` — advisory, same shape as the migration notice.
+- `.seq.lock` — the per-launch flock every appender and replayer holds. Its
+  owner line is rewritten on each acquisition, so retention ignores it.
+
+The TUI hosts one Unix socket per state root
+(`$TMPDIR/approach-<uid>/<8 hex of sha256(root)>.sock`, falling back to
+`/tmp/approach-<uid>/`, never truncated to fit) and exports
+`APPROACH_CONTROL_ENDPOINT` and `APPROACH_CONTROL_TOKEN` to every registered
+launch. With them, `approach flow` writes are proxied over the socket and
+applied through the TUI's one store — which is how an agent whose `approach`
+on PATH is a schema-(N-1) build completes a phase a schema-N TUI launched.
+When the socket does not answer, reads open the database read-only or exit
+non-zero (a read never exits 0 without data); `phase restart`, `add-child`,
+and `agent set` open the database or exit non-zero (`cannot be deferred`);
+and the replayable writes open the database under the same log discipline or,
+when this build must not touch that database at all, spool the request and
+exit 0 with a fixed `spooled:` message. A restarted TUI re-binds the same
+socket path, reloads registrations from `launch.json`, replays every pending
+request exactly once — under the latest-launch gate, so a launch that no
+longer owns its phase never writes — and only then listens.
+
+Reconciliation demotes a phase only on positive exit evidence: an embedded
+terminal's exit, an interactive launch handing the TTY back, the lease
+runner's `exit.json`, a session record the store says ended more than ten
+minutes ago, or a `SessionEnd` hook — and never while the Flow lease is held.
+The write is `needs_attention` with the reason as the outcome
+(`phase_result_missing` or `phase_result_stale`); on a plan-review kind it is
+`blocked`/`blocked` with the reason leading the notes, the convention that
+kind already uses for "the agent did not run". Every such note ends with the
+recovery command: `approach flow phase set --flow-id <id> --phase-id <id>
+--status running --notes "<reason>"`. An operator who runs it without
+relaunching keeps that launch as the latest one, so a later stale replay will
+demote it again — loud over silent. Launch directories with nothing pending
+are retired 14 days after their last state change; a directory with a pending
+request or a held lock is never removed. Two TUIs on one root: the second
+finds the socket owned and runs without an endpoint, so its launches take the
+direct path.
 
 Flow records share this root but use the `0600` SQLite database `approach.db`;
 the `0700` root contains its WAL/SHM sidecars. Legacy `flows/` records migrate

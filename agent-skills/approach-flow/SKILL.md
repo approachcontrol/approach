@@ -75,7 +75,10 @@ fi
 Also use the launch metadata when present: `APPROACH_FLOW_PHASE_ID`,
 `APPROACH_PLAN_ID`, `APPROACH_PLAN_PATH`, `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`,
 `APPROACH_BRANCH`, `APPROACH_COMMIT`, `APPROACH_SESSION_STATE_ROOT`, and
-`APPROACH_PLAN_STATE_ROOT`.
+`APPROACH_PLAN_STATE_ROOT`. `APPROACH_CONTROL_ENDPOINT` and `APPROACH_CONTROL_TOKEN`
+are the launch's registration with the running Approach; the `flow` CLI reads
+them itself to route writes through the launcher, and you never pass or print
+them.
 
 When mutating your own Flow phase, use `APPROACH_CURRENT_PHASE_ID` rather than a
 hardcoded default preset phase ID. The default preset phase IDs are `plan`,
@@ -141,9 +144,22 @@ root. Conversely, a `flow` command that exits non-zero saying the flow database
 schema needs migration *is* a persistence failure: nothing was written, and the
 phase did not advance. Report it and stop.
 
+One more exit-zero case is a **deferred** success, not a failure. When the
+launcher that started you is not reachable and this build cannot open the flow
+database, a `flow` write may print `spooled: control endpoint unreachable and
+this build cannot open the flow database; the request will be applied on the
+next approach start` on stderr, print no JSON, and exit 0. The request is on
+disk and will be applied, exactly once, when Approach next starts. Report it as
+deferred ("phase completion recorded for replay"), do not retry it, and do not
+describe the phase as already advanced. Only `phase set`, `phase complete`,
+`phase block`, `phase needs-attention`, `plan set`, `issue set`, `pr set`, and
+`merge set` can be deferred; `phase restart`, `phase add-child`, and
+`phase agent set` cannot and exit non-zero instead, and `flow read` and
+`flow list` never spool — a read either returns data or exits non-zero.
+
 The current Flow CLI exposes `create`, `list`, `read`, `phase complete`,
 `phase block`, `phase needs-attention`, `phase restart`, `phase reset`, `phase set`,
-`phase add-child`,
+`phase add-child`, `phase agent set`,
 `plan set`, `issue set`, `pr set`, and `merge set`. Record merge metadata with
 `$APPROACH_BIN flow merge set`; do not claim a merge was recorded unless that structured
 command succeeds.
