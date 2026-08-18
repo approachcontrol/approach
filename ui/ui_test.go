@@ -104,8 +104,9 @@ func TestEmbeddedTerminalDockHeights(t *testing.T) {
 		wantTerminal int
 	}{
 		{name: "collapsed", height: 10, state: EmbeddedTerminalDockCollapsed, wantList: 10},
-		{name: "expanded", height: 10, state: EmbeddedTerminalDockExpanded, wantList: 4, wantTerminal: 6},
-		{name: "tiny expanded", height: 3, state: EmbeddedTerminalDockExpanded, wantList: 1, wantTerminal: 2},
+		{name: "expanded", height: 10, state: EmbeddedTerminalDockExpanded, wantList: 7, wantTerminal: 3},
+		{name: "tall expanded", height: 60, state: EmbeddedTerminalDockExpanded, wantList: 38, wantTerminal: 22},
+		{name: "tiny expanded", height: 3, state: EmbeddedTerminalDockExpanded, wantList: 2, wantTerminal: 1},
 		{name: "zero expanded", height: 0, state: EmbeddedTerminalDockExpanded},
 	}
 
@@ -133,8 +134,8 @@ func TestResolveEmbeddedTerminalDock(t *testing.T) {
 		wantBackend   int
 		wantShared    int
 	}{
-		{name: "preferred tall", height: 65, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 45, wantRenderPTY: 42, wantBackend: 42, wantShared: 19},
-		{name: "capped tall", height: 64, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 44, wantRenderPTY: 41, wantBackend: 41, wantShared: 19},
+		{name: "preferred tall", height: 65, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 22, wantRenderPTY: 19, wantBackend: 19, wantShared: 42},
+		{name: "capped tall", height: 64, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 22, wantRenderPTY: 19, wantBackend: 19, wantShared: 41},
 		{name: "minimum expanded", height: 24, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 4, wantRenderPTY: 1, wantBackend: 1, wantShared: 19},
 		{name: "auto collapsed", height: 23, requested: true, wantState: EmbeddedTerminalDockCollapsed, wantDock: 1, wantBackend: 1, wantShared: 21},
 		{name: "small collapsed", height: 7, requested: true, wantState: EmbeddedTerminalDockCollapsed, wantDock: 1, wantBackend: 1, wantShared: 5},
