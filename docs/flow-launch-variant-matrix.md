@@ -25,15 +25,22 @@ automatic phase launches share one builder and differ only by `req.AutoLaunch`.
 | `worktreeAgent` | `model/flow_launch_generic_agent.go:292` | none — hardcoded embedded at `model/flow_launch_generic_agent.go:299` |
 | `savedSessionResume` | `model/flow_launch_saved_session_resume.go:300` | none — hardcoded embedded at `model/flow_launch_saved_session_resume.go:226` |
 
-Five further `actions.AgentLaunchContext` literals exist outside the Flow
+Four further `actions.AgentLaunchContext` literals exist outside the Flow
 lifecycle and set no Flow marker at all — the non-Flow session resume
 (`model/model_keys.go:2773`), plan implementation (`model/model_keys.go:2847`),
-open-agent-in-worktree (`model/model_keys.go:3308`), slice-epic
-(`model/ready_bead_slice.go:171`), and the session-release finalizer
-(`model/flow_session_release.go:407`, which carries Flow IDs but is not a
-launch). Two more are probe-only values used purely to ask a routing question:
-`model/flow_launch_resume.go:299` and `model/tmux_mode.go:392`. They matter to
-Phase 4: any enforcement mechanism must tolerate them.
+open-agent-in-worktree (`model/model_keys.go:3308`), and slice-epic
+(`model/ready_bead_slice.go:171`). Two more are probe-only values used purely to
+ask a routing question: `model/flow_launch_resume.go:299` and
+`model/tmux_mode.go:392`; they too set no marker.
+
+Two literals do set Flow marker fields without being launches at all. Both
+carry `FlowID` + `FlowPhaseID` purely to address an existing launch record: the
+session-release finalizer (`model/flow_session_release.go:407`) and the
+auto-advance failure persister in `blockAutoFlowLaunchPhase`
+(`model/flow_launch_lifecycle.go:1051`). Neither is routed, neither builds a
+command, and neither has a launch kind. They matter to Phase 4: any enforcement
+mechanism must tolerate all of the above, and must distinguish "sets a Flow
+marker" from "constructs a Flow launch".
 
 ## 2. Reachable variants
 
@@ -152,7 +159,7 @@ deliberately treated alike.
 | `reserveFlowSpawn` (`model/model_keys.go:3145`) | `FlowID`, `FlowLaunchTracked`, `FlowRepair` | tracked non-repair (V1–V10) ‖ rest | all untracked kinds are no-ops |
 | `flowLaunchFailureUpdate` (`model/model_keys.go:3154`) | `FlowID`, `FlowPhaseID`, `ResumeSessionID`, `FlowLaunchTracked`, `FlowPhaseTerminal`, `FlowPhaseKind` | V8/V10 (terminal resume: refuse) ‖ V11–V17 (no phase: refuse) ‖ plan-review kind (blocked) ‖ rest | manual/auto/create/non-terminal resume |
 | `tmuxRouteEligible` (`model/tmux_mode.go:63`) | `Headless`, `FlowRepair`, `Command` | V3/V9/V10/V15 eligible ‖ rest | every embedded variant, for whichever of the two reasons |
-| `flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) | all ten markers + `FlowID`/`FlowPhaseID`/`FlowPhaseKind` | Flow launches ‖ the five non-Flow literals | all 17 variants alike |
+| `flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) | all ten marker fields (`FlowID`, `FlowPhaseID`, `FlowPhaseKind`, plus the seven booleans; not `FlowAutofixPRNumber`) | Flow launches ‖ the four non-Flow literals and the two probes | all 17 variants alike; the two non-launch Flow-ID literals would also classify as Flow, but never reach it |
 | `actions.ShouldPrefillEmbeddedPrompt` (`actions/actions.go:1338`) | `Command`, `Embedded`, `Headless`, `ResumeSessionID`, `InitialPrompt`, `FlowID`, `FlowPhaseID`, `FlowLaunchTracked`, `FlowRepair`, `FlowAgent`, `FlowAutofix` | V1/V5 (prefill) ‖ V11/V13/V16 (untracked prefill arms) ‖ resume and headless and tmux (no prefill) | the three untracked arms are separate clauses with identical effect |
 | `actions.resumeSessionIDForContext` (`actions/actions.go:1450`) | `FlowSavedSessionResume` + 12 negated fields + `ResumeSessionID` | V17 ‖ everything else | asserts *one* variant; all others take the plain path |
 | `actions.validateTrackedRepoTmuxRole` (`actions/tmux_mode.go:454`) | `FlowLaunchTracked`, `FlowID`, `FlowPhaseID`, `FlowAutoLaunch`, `Headless`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `FlowAutofix`, `FlowAutofixPRNumber` | V3/V9/V10 accepted | manual and resume tmux launches are identical to it |

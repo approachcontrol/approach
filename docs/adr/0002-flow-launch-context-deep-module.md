@@ -144,18 +144,31 @@ func FlowLaunchRoleOf(ctx AgentLaunchContext) (FlowLaunchRole, bool)
 func ValidateFlowLaunchRole(ctx AgentLaunchContext) error
 ```
 
-`FlowLaunchRoleOf` returns `false` for the five non-Flow launch contexts the
+`FlowLaunchRoleOf` returns `false` for the four non-Flow launch contexts the
 matrix lists (plan implementation, non-Flow session resume,
-open-agent-in-worktree, slice-epic, session-release finalizer). Those are
-legitimate and must keep working, so totality is not available.
+open-agent-in-worktree, slice-epic), and for the two non-launch literals that
+carry Flow IDs without a role (`model/flow_session_release.go:407`,
+`model/flow_launch_lifecycle.go:1051`). Those are legitimate and must keep
+working, so totality is not available. The two Flow-ID-carrying ones are also
+why `ValidateFlowLaunchRole` belongs on the launch path rather than on every
+context: neither is ever routed or turned into a command.
 
-`ValidateFlowLaunchRole` is the seam check: if
-`flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) is true but
-`FlowLaunchRoleOf` returns `false`, the context carries Flow markers in a
-combination no role admits — an invariant violation, and an error. That
-preserves today's behaviour at the one place that already errors
-(`actions/actions.go:1467`) while extending it to the two predicates that
-currently fail silently or by exclusion.
+`ValidateFlowLaunchRole` is the seam check: if the context carries any Flow
+marker but `FlowLaunchRoleOf` returns `false`, it carries them in a combination
+no role admits — an invariant violation, and an error. That preserves today's
+behaviour at the one place that already errors (`actions/actions.go:1467`)
+while extending it to the two predicates that currently fail silently or by
+exclusion.
+
+The marker-presence half must stay independent of classification. Today's
+`flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) is exactly that
+predicate — a disjunction over the ten fields it already names — so it
+moves to `actions` as `HasFlowLaunchMarkers`, gaining one clause so that its
+field set matches the boundary test's eleven exactly (`FlowAutofixPRNumber != 0`
+is today the only Flow-specific value neither predicate covers), and becomes the
+check's left operand. Re-expressing it as `_, ok := FlowLaunchRoleOf(ctx)`
+would be circular: the two halves could never disagree, and the runtime net
+would accept every malformed hand-assembled context it exists to reject.
 
 The defining test is the round trip:
 `FlowLaunchRoleOf(newFlowLaunchContext(target, …)) == target.Role()` for all
@@ -172,7 +185,8 @@ unreachable from them, and mirroring the enum in both packages reintroduces the
 two-definitions-of-one-concept problem this ADR exists to remove.
 
 So: `FlowLaunchRole`, the payload structs, `FlowLaunchRoleOf` and
-`ValidateFlowLaunchRole` go in a new `actions/flow_launch_role.go`;
+`ValidateFlowLaunchRole` go in a new `actions/flow_launch_role.go`, alongside
+`HasFlowLaunchMarkers` relocated from `model/tmux_mode.go:329`;
 `newFlowLaunchContext` goes in a new `model/flow_launch_context.go`, because it
 needs prompts, records, settings snapshots and the routing probe, none of which
 `actions` has. `flowLaunchKind` stays in `model` unchanged: it is the
@@ -183,20 +197,21 @@ keys attempts and fences on it).
 
 | Consumer | After |
 | --- | --- |
-| `flowEmbeddedTerminalIdentity` | `switch FlowLaunchRoleOf(ctx)`; the 9-field autofix arm collapses to one case + `AutofixTarget.PRNumber` |
+| `flowEmbeddedTerminalIdentity` | `switch FlowLaunchRoleOf(ctx)`; the 9-field autofix arm collapses to one case reading `ctx.FlowAutofixPRNumber` — the classifier returns a role, not a payload, and `FlowAutofixPRNumber` stays on the context as `RoleAutofix`'s payload |
 | `flowEmbeddedTerminalDetachPolicy` | `switch` on role: `RoleWorktreeAgent`, `RoleSavedSessionResume` → never |
 | slot stamping | stamps the role, not four booleans |
 | dock visibility, `updateFlowTerminalFocusAfterLaunch` | unchanged — they read `FlowAutoLaunch`/`Headless`, which stay payload |
 | `reserveFlowSpawn` | `role == RoleTrackedPhase \|\| role == RolePhaseResume` |
 | `flowLaunchFailureUpdate` | `RoleTrackedPhase`, or `RolePhaseResume` with `!PhaseTerminal`; all other roles refuse |
 | `tmuxRouteEligible` | folded into the builder (D3); survives as the eligibility rule it already is |
-| `flowLaunchContextRequiresLifecycle` | `_, ok := FlowLaunchRoleOf(ctx); return ok` |
+| `flowLaunchContextRequiresLifecycle` | moves to `actions` as `HasFlowLaunchMarkers`, plus a `FlowAutofixPRNumber` clause — it must stay marker-based, not role-based (see D4) |
 | `ShouldPrefillEmbeddedPrompt` | four hand-written arms → `role != RolePhaseResume && role != RoleSavedSessionResume`, plus the existing transport conditions |
 | `resumeSessionIDForContext` | `ValidateFlowLaunchRole` + `role == RoleSavedSessionResume` |
 | `validateTrackedRepoTmuxRole` | `ValidateFlowLaunchRole` + role ∈ {`RoleTrackedPhase`, `RolePhaseResume`}; the dead `FlowAutoLaunch` clause (matrix F1) becomes the explicit invariant `Auto ⇒ Headless ⇒ embedded`, checked in the builder |
 | tracked lease branch, window namers | unchanged — they read `LaunchID`/`FlowPhaseKind`, which stay payload |
 | `launchKind` | `switch` on role; **fixes F3** by separating `RolePhaseResume` from `RoleSavedSessionResume` |
-| `registerLaunchControl`, `reconcileInteractiveLaunchExitCmd` | role-owning check instead of `FlowLaunchTracked` + non-empty phase ID |
+| `registerLaunchControl` | `_, ok := FlowLaunchRoleOf(ctx); ok && LaunchID != ""` — every Flow role registers, phase-less roles still as unowned |
+| `reconcileInteractiveLaunchExitCmd` | `role.MutatesPhase()` (i.e. `RoleTrackedPhase`/`RolePhaseResume`, V1–V10) instead of `FlowLaunchTracked` + non-empty phase ID |
 | lifecycle kind enumerations (`:1103`, `:958`) | `role.MutatesPhase()` — removes both hand-written four-kind lists (F6) |
 
 ## Enforcement
@@ -208,23 +223,40 @@ out of this epic.**
 **The boundary test's exact scope.** An AST walk, in the style of the existing
 `model/flow_launch_boundary_test.go`, over `model/` and `actions/`
 non-`_test.go` files, failing on any composite literal of
-`actions.AgentLaunchContext` that sets *any* of the ten Flow marker fields
+`actions.AgentLaunchContext` that sets *any* of the eleven Flow marker fields
 (`FlowID`, `FlowPhaseID`, `FlowPhaseKind`, `FlowLaunchTracked`,
 `FlowAutoLaunch`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`,
-`FlowAutofix`, `FlowPhaseTerminal`) outside `model/flow_launch_context.go`. The
-scope is chosen from the matrix: it permits the five non-Flow literals and the
-two probe-only literals (`model/flow_launch_resume.go:299`,
-`model/tmux_mode.go:392`), which set no marker, and it catches exactly the seven
+`FlowAutofix`, `FlowPhaseTerminal`, `FlowAutofixPRNumber`) outside
+`model/flow_launch_context.go`,
+with a file:line allowlist for the two non-launch literals below.
+
+The scope is chosen from the matrix. It needs no exemption for the four
+non-Flow literals or the two probe-only literals
+(`model/flow_launch_resume.go:299`, `model/tmux_mode.go:392`) — none of them
+sets a marker. It does need an explicit allowlist for the two literals that set
+`FlowID`/`FlowPhaseID` without being launches: the session-release finalizer
+(`model/flow_session_release.go:407`) and `blockAutoFlowLaunchPhase`
+(`model/flow_launch_lifecycle.go:1051`). Both address an existing launch record
+rather than constructing one, so routing them through a launch builder would be
+wrong; the allowlist is the honest encoding of that, and it is two entries the
+test names and pins. With those exempted, the rule catches exactly the seven
 Flow builders.
 
-**The runtime net.** `ValidateFlowLaunchRole` at the two transport entry points
-(`actions.AgentLaunchWithOptions`, `repoTmuxAgentLaunchWithExecutable`) rejects
-any context that requires the lifecycle but classifies to no role.
+**The runtime net.** `ValidateFlowLaunchRole` rejects any context that carries
+Flow markers (`HasFlowLaunchMarkers`) but classifies to no role. It belongs in
+`actions.agentCommandSpec`, the one function every transport funnels through —
+external terminal (`AgentLaunchWithOptions`), repo tmux
+(`repoTmuxAgentLaunchWithExecutable`), embedded tmux
+(`EmbeddedTmuxAgentCommand`), and embedded direct (`AgentCommand`) all reach it.
+Placing it at the two terminal entry points alone would leave the embedded path
+— which is the hardcoded route for four of the seven builders — unchecked, i.e.
+exactly the future-caller case the net exists for.
 
 Rejection reasons for the alternatives:
 
-- **(1) unexported fields.** The matrix shows five non-Flow launch literals that
-  legitimately compose `AgentLaunchContext` directly. Making the Flow fields
+- **(1) unexported fields.** The matrix shows four non-Flow launch literals, two
+  probes, and two non-launch Flow-ID literals that legitimately compose
+  `AgentLaunchContext` directly. Making the Flow fields
   unexported forces a constructor for those paths too, which is a strictly
   larger change than this epic scopes, and it cannot be done incrementally —
   the field either is exported or is not. Deferred, not dismissed: it is the
