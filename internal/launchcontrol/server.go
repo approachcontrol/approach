@@ -432,8 +432,14 @@ func (c *Controller) applyLogged(req Request, env RequestEnvelope) (Response, *A
 	}
 	defer unlock()
 	resp, err := ApplyLogged(c.store, log, req, env, c.now())
-	if err != nil {
+	if err != nil && resp.SchemaVersion == 0 {
 		return Response{}, nil, err
+	}
+	if err != nil {
+		// Execute already produced a wire result (success or refusal). A
+		// missing applied marker is recovered by replay; do not tell the
+		// agent the mutation failed, or it may retry a non-replayable verb.
+		c.logf("launch %s: applied marker not written after %s: %v", req.LaunchID, req.Verb, err)
 	}
 	return resp, &AppliedEvent{FlowID: req.FlowID, PhaseID: env.PhaseID, LaunchID: req.LaunchID}, nil
 }

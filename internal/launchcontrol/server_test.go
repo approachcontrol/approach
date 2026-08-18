@@ -29,6 +29,29 @@ func serveTestController(t *testing.T, store *flowstore.Store, root string, reg 
 	return c, endpoint
 }
 
+func TestControllerReturnsExecuteResultWhenAppliedMarkerFails(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Marker")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	_, endpoint := serveTestController(t, store, root, Registration{FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1", Kind: "phase"})
+	original := applyMarkerHook
+	t.Cleanup(func() { applyMarkerHook = original })
+	applyMarkerHook = func() error { return errors.New("crash before applied.json") }
+
+	client := Client{Endpoint: endpoint.Path, Token: endpoint.Token, LaunchID: "launch-1", FlowID: created.FlowID, PhaseID: "plan"}
+	req, _ := NewRequest(VerbPhaseComplete, PhaseActionPayload{Summary: "landed"})
+	resp, err := client.Call(req)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("landed write reported as failure: %#v", resp)
+	}
+	if phaseOf(t, store, created.FlowID, "plan").Status != flowstore.PhaseCompleted {
+		t.Fatal("commit did not land")
+	}
+}
+
 func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 	store, root := newTestStore(t)
 	created := createFlow(t, store, "Served")

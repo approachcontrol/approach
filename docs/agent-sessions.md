@@ -216,8 +216,6 @@ longer owns its phase never writes — and only then listens.
 
 Reconciliation demotes a phase only on positive exit evidence: an embedded
 terminal's exit, an interactive launch handing the TTY back, the lease
-Reconciliation demotes a phase only on positive exit evidence: an embedded
-terminal's exit, an interactive launch handing the TTY back, the lease
 runner's `exit.json`, or a Claude session record the store says ended more
 than ten minutes ago for a reason other than `/clear` — and never while the
 Flow lease is held. A `SessionEnd` hook replays first but is not itself exit
