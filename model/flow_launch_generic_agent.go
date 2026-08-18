@@ -289,13 +289,13 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event.RepoPath = record.RepoPath
 		event.WorktreePath = record.WorktreePath
 		event.PlanPath = planPath
-		event.Context = applyLaunchPin(actions.AgentLaunchContext{
+		event.Context = applyLaunchStamp(actions.AgentLaunchContext{
 			Command: settings.Command, LaunchID: msg.Token,
 			RepoPath: record.RepoPath, WorktreePath: record.WorktreePath, WorkingDir: record.WorktreePath,
 			Branch: record.Branch, Commit: record.Commit, Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
 			SessionStateRoot: settings.SessionStateRoot, PlanID: record.PlanID, PlanPath: planPath,
 			FlowID: record.FlowID, FlowAgent: true, Embedded: true, Headless: false, InitialPrompt: "",
-		}, settings.Pin)
+		}, settings.stamp())
 		event.Route = flowLaunchRouteEmbedded
 		return event
 	}

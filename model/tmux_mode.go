@@ -3,6 +3,7 @@ package model
 import (
 	"slices"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -142,7 +143,167 @@ func (m Model) launchAgentInRepoTmuxSession(ctx actions.AgentLaunchContext, rele
 		releaseFlowLaunchReservation(release)
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
-	return m.runAgentLaunchWithStatus(ctx, spec.Launch, release, tmuxLaunchStatus(spec))
+	m, launchCmd := m.runAgentLaunchWithStatus(ctx, spec.Launch, release, tmuxLaunchStatus(spec))
+	// The session name comes from the spec the launch actually used, so the
+	// terminal can never attach to a name this launch did not create.
+	m, terminalCmd := m.maybeOpenRepoTmuxTerminal(ctx.RepoPath, spec.SessionName)
+	return m, batchNonNil(launchCmd, terminalCmd)
+}
+
+// repoTmuxTerminalOpenedMsg reports what the per-repo terminal attempt did. It
+// always lands, including when nothing was opened, because it is what clears
+// the repo's pending flag.
+type repoTmuxTerminalOpenedMsg struct {
+	RepoPath      string
+	SessionName   string
+	AttachCommand string
+	Opened        bool
+	Err           string
+}
+
+// repoTmuxTerminalWaitBudget bounds how long the attach goroutine waits for a
+// just-launched session to become visible. The spawn command returns as soon as
+// tmux accepts it, and on the leased Flow path the spawn is a helper that has
+// its own handshake to finish first, so the session can be a moment behind.
+const repoTmuxTerminalWaitBudget = 2 * time.Second
+
+// repoTmuxTerminalWaitStep is how often that wait re-probes.
+const repoTmuxTerminalWaitStep = 100 * time.Millisecond
+
+// withRepoTmuxTerminalPending marks a repo as having a terminal attempt in
+// flight. The map is copied rather than written in place, so a Model copy taken
+// before the write is unaffected.
+func (m Model) withRepoTmuxTerminalPending(repoPath string) Model {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return m
+	}
+	pending := make(map[string]bool, len(m.repoTmuxTerminalPending)+1)
+	for existing := range m.repoTmuxTerminalPending {
+		pending[existing] = true
+	}
+	pending[repoPath] = true
+	m.repoTmuxTerminalPending = pending
+	return m
+}
+
+func (m Model) clearRepoTmuxTerminalPending(repoPath string) Model {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" || !m.repoTmuxTerminalPending[repoPath] {
+		return m
+	}
+	pending := make(map[string]bool, len(m.repoTmuxTerminalPending))
+	for existing := range m.repoTmuxTerminalPending {
+		if existing != repoPath {
+			pending[existing] = true
+		}
+	}
+	m.repoTmuxTerminalPending = pending
+	return m
+}
+
+// tmuxRepoSessionAttached probes whether a terminal already watches a repo's
+// session. It runs a tmux subprocess, so it belongs only in a command goroutine.
+func (m Model) tmuxRepoSessionAttached(repoPath string) bool {
+	if strings.TrimSpace(repoPath) == "" {
+		return false
+	}
+	if m.repoTmuxSessionAttached == nil {
+		return actions.RepoTmuxSessionAttached(repoPath)
+	}
+	return m.repoTmuxSessionAttached(repoPath)
+}
+
+func (m Model) tmuxInsideMultiplexer() bool {
+	if m.insideMultiplexer == nil {
+		return actions.InsideMultiplexer()
+	}
+	return m.insideMultiplexer()
+}
+
+// maybeOpenRepoTmuxTerminal decides, on the update loop and without running any
+// subprocess, whether this tmux-mode launch should also open the repo's
+// terminal window. Every probe it needs is deferred into the returned command.
+//
+// It declines when the backend is not tmux, when approach itself runs inside a
+// multiplexer, when no detached-terminal seam exists, when the repo is unknown,
+// or when this repo already has an attempt in flight.
+func (m Model) maybeOpenRepoTmuxTerminal(repoPath, sessionName string) (Model, tea.Cmd) {
+	repoPath = strings.TrimSpace(repoPath)
+	sessionName = strings.TrimSpace(sessionName)
+	if !m.tmuxLaunchBackend() || repoPath == "" || sessionName == "" {
+		return m, nil
+	}
+	if m.launchDetachedTerminal == nil || m.tmuxInsideMultiplexer() {
+		return m, nil
+	}
+	if m.repoTmuxTerminalPending[repoPath] {
+		return m, nil
+	}
+	return m.withRepoTmuxTerminalPending(repoPath), m.openRepoTmuxTerminalCmd(repoPath, sessionName)
+}
+
+// openRepoTmuxTerminalCmd waits for the session to appear, checks whether a
+// client is already attached, and otherwise opens the configured terminal on
+// the session's attach command.
+//
+// Nothing here can fail a launch: the agent is already running in its tmux
+// window by the time this runs, so every giving-up branch simply reports that
+// no terminal was opened and leaves the launch status — which already carries
+// the attach command — alone.
+func (m Model) openRepoTmuxTerminalCmd(repoPath, sessionName string) tea.Cmd {
+	attachCommand := actions.RepoTmuxAttachCommand(sessionName)
+	return func() tea.Msg {
+		result := repoTmuxTerminalOpenedMsg{RepoPath: repoPath, SessionName: sessionName, AttachCommand: attachCommand}
+		if !m.waitForRepoTmuxSession(repoPath) {
+			return result
+		}
+		if m.tmuxRepoSessionAttached(repoPath) {
+			return result
+		}
+		launch, err := m.launchDetachedTerminal(actions.RepoTmuxAttachExistingShellCommand(sessionName), repoPath)
+		if err != nil {
+			result.Err = err.Error()
+			return result
+		}
+		// The terminal inherits approach's environment, and a client that
+		// inherits TMUX refuses to nest.
+		actions.StripMultiplexerEnv(launch.Cmd)
+		if err := launch.Cmd.Run(); err != nil {
+			result.Err = err.Error()
+			return result
+		}
+		result.Opened = true
+		return result
+	}
+}
+
+// waitForRepoTmuxSession polls for the session the launch just asked tmux to
+// create. Giving up is quiet: the agent's own launch already reported its
+// success or failure, and this only decides whether a window is worth opening.
+func (m Model) waitForRepoTmuxSession(repoPath string) bool {
+	deadline := time.Now().Add(repoTmuxTerminalWaitBudget)
+	for {
+		if m.tmuxRepoSessionExists(repoPath) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(repoTmuxTerminalWaitStep)
+	}
+}
+
+// applyRepoTmuxTerminalOpened clears the repo's pending flag and, when the
+// terminal could not be opened, restates the attach command the user needs. A
+// successful open leaves the launch status alone: it already names the window,
+// the session, and the attach command.
+func (m Model) applyRepoTmuxTerminalOpened(msg repoTmuxTerminalOpenedMsg) Model {
+	m = m.clearRepoTmuxTerminalPending(msg.RepoPath)
+	if strings.TrimSpace(msg.Err) == "" {
+		return m
+	}
+	return m.setStatus(statusOther, withFallbackNote(msg.AttachCommand, "terminal unavailable: "+msg.Err))
 }
 
 // launchAgentForBackend routes the launch paths that open an external terminal

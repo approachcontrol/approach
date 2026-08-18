@@ -363,7 +363,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			// through: this agent needs no plan body.
 			event.PlanPath = record.PlanPath
 		}
-		ctx := applyLaunchPin(actions.AgentLaunchContext{
+		ctx := applyLaunchStamp(actions.AgentLaunchContext{
 			Command: settings.Command,
 			// The admission token, never a fresh ID: every LaunchID-keyed fence and
 			// the tmux window registry key on it.
@@ -389,7 +389,7 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			Embedded:            true,
 			Headless:            headless,
 			InitialPrompt:       autofixPrompt(record, settings.PromptTemplates, settings.Pin.ExecutablePath),
-		}, settings.Pin)
+		}, settings.stamp())
 		event.Context = ctx
 		event.Route = flowLaunchRouteEmbedded
 		tmuxRoute, tmuxFellBack := tmuxLaunchRouteFor(backend, tmuxAvailable, ctx)

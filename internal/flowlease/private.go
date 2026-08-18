@@ -261,8 +261,26 @@ func runTmuxSpawn(spec PrivateSpec, stderr io.Writer, ops tmuxSpawnOps) error {
 	return nil
 }
 
+// LaunchExit is what the lease runner reports once the agent's whole process
+// group is gone. Code is the child-compatible exit status (128+signal when
+// Signaled). It is delivered to RunLeaseRunner's onExit exactly once per
+// started agent, never before the agent started, and while the runner still
+// holds the Flow lease.
+type LaunchExit struct {
+	Root     string
+	FlowID   string
+	PhaseID  string
+	LaunchID string
+	Code     int
+	Signaled bool
+	EndedAt  time.Time
+}
+
 // RunLeaseRunner owns the Flow lease while supervising the original agent.
-func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (retErr error) {
+// onExit may be nil; when set it is called once after the agent's process
+// group has ended, on the normal path and on the terminate paths that follow
+// a started agent.
+func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer, onExit func(LaunchExit)) (retErr error) {
 	spec, agentArgv, err := parsePrivateArgs(args, true)
 	if err != nil {
 		return err
@@ -351,14 +369,24 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (r
 	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
+	// The agent has started: from here every path that returns has ended its
+	// process group, and each reports that end exactly once.
+	reportExit := func(err error) {
+		if onExit == nil {
+			return
+		}
+		onExit(launchExitFor(spec, err))
+	}
 	if err := publishAndReadStarted(attempt, nil); err != nil {
 		cause := fmt.Errorf("confirm started tracked Flow agent: %w", err)
 		if failureErr := publishHandoffFailure(attempt, cause.Error()); failureErr != nil {
-			_ = terminateProcessGroup(cmd.Process.Pid, waitCh)
+			reportExit(terminateProcessGroup(cmd.Process.Pid, waitCh))
 			return errors.Join(cause, fmt.Errorf("publish Flow lease runner failure: %w", failureErr))
 		}
 		reportFailure = false
-		if cleanupErr := terminateProcessGroup(cmd.Process.Pid, waitCh); cleanupErr != nil {
+		cleanupErr := terminateProcessGroup(cmd.Process.Pid, waitCh)
+		reportExit(cleanupErr)
+		if cleanupErr != nil {
 			cause = errors.Join(cause, fmt.Errorf("terminate unconfirmed tracked Flow agent: %w", cleanupErr))
 		}
 		return awaitLeaseRunnerFailureConsumption(spec, attempt, cause, signals)
@@ -367,7 +395,29 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer) (r
 	// link. Once the parent can observe started, no runner read remains for the
 	// parent's successful cleanup to race.
 	reportFailure = false
-	return superviseProcessGroup(cmd.Process.Pid, waitCh, signals)
+	exitErr := superviseProcessGroup(cmd.Process.Pid, waitCh, signals)
+	reportExit(exitErr)
+	return exitErr
+}
+
+// launchExitFor translates the supervisor's result into a LaunchExit.
+func launchExitFor(spec PrivateSpec, err error) LaunchExit {
+	exit := LaunchExit{
+		Root: spec.Root, FlowID: spec.FlowID, PhaseID: spec.PhaseID, LaunchID: spec.LaunchID,
+		EndedAt: time.Now().UTC(),
+	}
+	var processExit ProcessExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &processExit):
+		exit.Code = processExit.Code
+		exit.Signaled = processExit.Signaled
+	default:
+		// The supervisor could not report a status: the runner itself failed
+		// after the agent started. Report it as a failure, not a clean exit.
+		exit.Code = 1
+	}
+	return exit
 }
 
 func publishAndReadStarted(attempt handoffAttempt, afterPublish func()) error {
@@ -431,7 +481,11 @@ func requireHandoffRecordAbsent(attempt handoffAttempt, kind string) error {
 }
 
 // ProcessExitError carries the child-compatible exit status to main.
-type ProcessExitError struct{ Code int }
+// Signaled marks a status synthesized from a terminating signal (128+n).
+type ProcessExitError struct {
+	Code     int
+	Signaled bool
+}
 
 func (e ProcessExitError) Error() string {
 	return fmt.Sprintf("tracked Flow agent exited with status %d", e.Code)
@@ -515,7 +569,7 @@ func childExitError(err error) error {
 		return ProcessExitError{Code: exitErr.ExitCode()}
 	}
 	if status.Signaled() {
-		return ProcessExitError{Code: 128 + int(status.Signal())}
+		return ProcessExitError{Code: 128 + int(status.Signal()), Signaled: true}
 	}
 	return ProcessExitError{Code: status.ExitStatus()}
 }

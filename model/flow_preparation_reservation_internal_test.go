@@ -9,7 +9,7 @@ import (
 
 func TestNewWithOptionsCustomLaunchPersistenceDoesNotAuthorizeDefaultPreparation(t *testing.T) {
 	repoPath := t.TempDir()
-	m := NewWithOptions(nil, Options{
+	m := newModelForTest(nil, Options{
 		SessionStateRoot: t.TempDir(),
 		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			t.Fatal("preparation reached custom launch persistence")
@@ -38,7 +38,7 @@ func TestNewWithOptionsFlowStoreAuthorizesProgressionRecoveryWithCustomLaunchPer
 	if err != nil {
 		t.Fatalf("CreatePreparation() error = %v", err)
 	}
-	m := NewWithOptions(nil, Options{
+	m := newModelForTest(nil, Options{
 		FlowStore: store,
 		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, nil

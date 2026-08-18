@@ -8,7 +8,19 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-const flowRefreshTickInterval = time.Second
+// defaultFlowRefreshTickInterval is the production cadence. Options may
+// override it; tests drive the loop far faster so they never wait on wall time.
+const defaultFlowRefreshTickInterval = time.Second
+
+// flowRefreshTickDelay is the cadence this Model refreshes at. A zero field
+// means "unset" — a directly constructed Model still ticks at the production
+// rate.
+func (m Model) flowRefreshTickDelay() time.Duration {
+	if m.flowRefreshTickInterval > 0 {
+		return m.flowRefreshTickInterval
+	}
+	return defaultFlowRefreshTickInterval
+}
 
 type flowRefreshTickMsg struct {
 	Generation uint64
@@ -19,7 +31,7 @@ func (m Model) flowRefreshTickCmd() tea.Cmd {
 	if generation == 0 {
 		return nil
 	}
-	return tea.Tick(flowRefreshTickInterval, func(time.Time) tea.Msg {
+	return tea.Tick(m.flowRefreshTickDelay(), func(time.Time) tea.Msg {
 		return flowRefreshTickMsg{Generation: generation}
 	})
 }

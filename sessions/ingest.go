@@ -12,6 +12,7 @@ import (
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
 
 type IngestOptions struct {
@@ -70,6 +71,7 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 		Provider:       provider,
 		SessionID:      sessionID,
 		Status:         statusForPayload(provider, payload),
+		EndReason:      endReasonForPayload(provider, payload),
 		StartedAt:      payload.StartedAt,
 		EndedAt:        payload.EndedAt,
 		CWD:            payload.CWD,
@@ -137,7 +139,79 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	// Upsert releases the per-session lock before Flow attachment. Keeping that
 	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts, warnings)
+	// After the attach, and with its own store: the hook path holds one Flow
+	// store handle at a time. Only a hook that can mean the agent process
+	// ended reaches the controller; a per-turn stop never does, however old
+	// the timestamp it carries.
+	if hookCanMeanProcessEnd(provider, payload) {
+		reconcileFlowLaunchExit(record, opts, warnings)
+	}
 	return record, nil
+}
+
+// hookCanMeanProcessEnd reports whether a hook payload can be evidence that
+// the agent process ended, as opposed to a record that merely says `ended`.
+// Codex fires `Stop` after every turn while the CLI stays open, Cursor's
+// `stop` hook is the same shape, and Claude's `SessionEnd` on `/clear` leaves
+// the agent alive on a new session; none of those may reach reconciliation,
+// which would otherwise demote on their age alone. Only a Claude `SessionEnd`
+// that is not a `/clear` can mean the process is exiting — and even that
+// still waits SessionEndGrace and the lease veto in Reconcile.
+func hookCanMeanProcessEnd(provider Provider, payload hookPayload) bool {
+	if provider != ProviderClaude {
+		return false
+	}
+	return strings.TrimSpace(payload.Reason) != "clear"
+}
+
+// reconcileFlowLaunchExit reports a session's end to the launch controller
+// so anything the launch spooled is replayed first. Session-end is not a
+// death certificate even for the hooks hookCanMeanProcessEnd admits, so
+// demotion waits for SessionEndGrace; the Flow lease veto still applies for
+// tracked tmux launches. Failures are warnings: the session record this hook
+// exists to write was still captured.
+func reconcileFlowLaunchExit(record SessionRecord, opts IngestOptions, warnings *[]string) {
+	if record.Status != "ended" || record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.LaunchID) == "" {
+		return
+	}
+	root, explicit := flowStateRoot(opts)
+	if root == "" {
+		return
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:         root,
+		RootExplicit: explicit,
+		Role:         flowstore.RoleWriter,
+		Presets:      opts.FlowPresets,
+	})
+	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not reconcile launch %s for Flow %s phase %s: %v",
+			record.LaunchID, record.FlowID, record.FlowPhaseID, err))
+		return
+	}
+	defer func() { _ = store.Close() }()
+	controller, err := launchcontrol.New(launchcontrol.Options{Root: root, Store: store})
+	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not reconcile launch %s for Flow %s phase %s: %v",
+			record.LaunchID, record.FlowID, record.FlowPhaseID, err))
+		return
+	}
+	outcome, err := controller.Reconcile(record.FlowID, record.FlowPhaseID, strings.TrimSpace(record.LaunchID), launchcontrol.ExitEvidence{
+		Source:  launchcontrol.SourceSessionEnd,
+		EndedAt: record.EndedAt,
+	})
+	for _, notice := range outcome.Notices {
+		appendWarning(warnings, notice)
+	}
+	if err != nil {
+		appendWarning(warnings, fmt.Sprintf("could not reconcile launch %s for Flow %s phase %s: %v",
+			record.LaunchID, record.FlowID, record.FlowPhaseID, err))
+		return
+	}
+	if outcome.Action == launchcontrol.ActionDemoted {
+		appendWarning(warnings, fmt.Sprintf("Flow %s phase %s marked %s: launch %s ended without a valid result (%s)",
+			record.FlowID, record.FlowPhaseID, outcome.Status, record.LaunchID, outcome.Reason))
+	}
 }
 
 type hookPayload struct {
@@ -163,6 +237,17 @@ func statusForPayload(provider Provider, payload hookPayload) string {
 		return "ended"
 	}
 	return "last_seen"
+}
+
+// endReasonForPayload keeps the provider's end reason on an ended record.
+// Only Claude's SessionEnd carries one that matters: `clear` means the agent
+// process is alive on a new session, which the launch liveness probe must
+// not read as an exit.
+func endReasonForPayload(provider Provider, payload hookPayload) string {
+	if statusForPayload(provider, payload) != "ended" {
+		return ""
+	}
+	return strings.TrimSpace(payload.Reason)
 }
 
 func summaryForPayload(payload hookPayload) string {

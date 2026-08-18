@@ -847,6 +847,53 @@ func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, prepara
 			return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
 		}
 
+		// Bead-slot admission, inside the writer transaction so a second
+		// process cannot slip a duplicate in between a read and this write.
+		// Returning here is safe: the closure runs at most once and returns
+		// before any saveSession, so a refusal writes nothing.
+		if requested := strings.TrimSpace(record.Bead.ID); requested != "" {
+			candidates, err := sess.beadLinkedFlows(record.RepoPath)
+			if err != nil {
+				return FlowRecord{}, err
+			}
+			for _, candidate := range candidates {
+				// bead_id is compared here, never in SQL: the column is
+				// projected verbatim, so a stored " x " must still match a
+				// requested "x". Pushing a trimmed value into the WHERE clause
+				// would filter such rows out before this comparison could run.
+				// The projection is used rather than the decoded link because
+				// it is the one field an undecodable row still reports; decode
+				// already proves the two agree for every other row.
+				if strings.TrimSpace(candidate.beadID) != requested {
+					continue
+				}
+				// An unreadable row for some other Bead stays ignorable, but
+				// this one claims the requested Bead and its status cannot be
+				// derived. Skipping it would admit exactly the duplicate Flow
+				// and duplicate worktree this guard exists to refuse, so the
+				// creation is refused with a repair target instead.
+				if candidate.decodeErr != nil {
+					return FlowRecord{}, &BeadFlowUnreadableError{
+						RepoPath: record.RepoPath,
+						BeadID:   requested,
+						FlowID:   candidate.flowID,
+						Err:      candidate.decodeErr,
+					}
+				}
+				if !BeadFlowSlotOccupied(candidate.record) {
+					continue
+				}
+				// Query order is updated_at DESC, flow_id ASC, so databases
+				// already carrying duplicates resolve deterministically to the
+				// most recently updated occupying Flow.
+				return FlowRecord{}, &BeadFlowActiveError{
+					RepoPath: record.RepoPath,
+					BeadID:   requested,
+					Existing: candidate.record,
+				}
+			}
+		}
+
 		// draft is a shallow copy: draft.Phases still aliases the caller's
 		// array, and backfillLinearDependsOnForCreate rewrites depends_on
 		// through it. That makes this closure single-use — a second pass would

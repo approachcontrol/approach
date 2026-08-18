@@ -208,7 +208,7 @@ func validateSavedSessionResumeFlow(flowID string, record flowstore.FlowRecord, 
 func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd {
 	reserve := m.reserveFlowLaunch
 	seams := m.launchSeams
-	pin := m.launchPin
+	stamp := m.launchStamp()
 	sessionStateRoot := m.sessionStateRoot
 	if root := strings.TrimSpace(m.flowLaunchAttempts[msg.FlowID].Settings.SessionStateRoot); root != "" {
 		sessionStateRoot = root
@@ -232,7 +232,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 		// Ahead of the reservation, as on every other route: a resume bakes the
 		// pinned path into the resumed session's hook argv just as a fresh
 		// launch does, so an unusable pin is refused before anything is held.
-		if refusal := refuseUnverifiedLaunchPin(pin); refusal != "" {
+		if refusal := refuseUnverifiedLaunchPin(stamp.Pin); refusal != "" {
 			event.Err = refusal
 			return event
 		}
@@ -297,7 +297,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 		event.Record = record
 		event.Session = refreshed
 		event.RepoPath = refreshed.RepoPath
-		event.Context = applyLaunchPin(actions.AgentLaunchContext{
+		event.Context = applyLaunchStamp(actions.AgentLaunchContext{
 			Command:                string(refreshed.Provider),
 			LaunchID:               msg.Token,
 			RepoPath:               refreshed.RepoPath,
@@ -312,7 +312,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			FlowID:                 record.FlowID,
 			FlowSavedSessionResume: true,
 			Embedded:               true,
-		}, pin)
+		}, stamp)
 		return event
 	}
 }

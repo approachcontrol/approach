@@ -55,11 +55,16 @@ type StoreOptions struct {
 }
 
 type SessionRecord struct {
-	SchemaVersion  int       `json:"schema_version"`
-	Provider       Provider  `json:"provider"`
-	SessionID      string    `json:"session_id"`
-	LaunchID       string    `json:"launch_id,omitempty"`
-	Status         string    `json:"status"`
+	SchemaVersion int      `json:"schema_version"`
+	Provider      Provider `json:"provider"`
+	SessionID     string   `json:"session_id"`
+	LaunchID      string   `json:"launch_id,omitempty"`
+	Status        string   `json:"status"`
+	// EndReason is the provider's reason for an ended record when the hook
+	// supplied one (Claude's SessionEnd `reason`: clear, logout,
+	// prompt_input_exit, other). A `clear` end leaves the agent process alive
+	// on a new session, so it is not process-exit evidence.
+	EndReason      string    `json:"end_reason,omitempty"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
 	EndedAt        time.Time `json:"ended_at,omitempty"`
 	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
@@ -392,6 +397,7 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	}
 	preserveBlank(&incoming.LaunchID, existing.LaunchID)
 	preserveBlank(&incoming.Status, existing.Status)
+	preserveBlank(&incoming.EndReason, existing.EndReason)
 	preserveBlank(&incoming.CWD, existing.CWD)
 	preserveBlank(&incoming.RepoPath, existing.RepoPath)
 	preserveBlank(&incoming.WorktreePath, existing.WorktreePath)

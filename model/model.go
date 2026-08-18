@@ -23,6 +23,7 @@ import (
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/model/pane"
 	"github.com/approachcontrol/approach/planstore"
@@ -154,6 +155,7 @@ type Model struct {
 	status                    statusError
 	statusSeq                 uint64
 	statusTimer               statusTimerFactory
+	statusSchedule            StatusTimings
 	pendingStatusCmds         []tea.Cmd
 	visibleRepoFetchSeq       uint64
 	visibleRepoFetch          visibleRepoFetchState
@@ -200,7 +202,6 @@ type Model struct {
 	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowLaunch         func(string) (flowstore.FlowRecord, func(), error)
 	reserveFlowPreparation    func(string) (flowstore.FlowRecord, func(), error)
-	reserveEpicSuccessor      func(string) (func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -224,17 +225,26 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
-	inspectFlowLease          func(string, string) (flowlease.LeaseState, error)
-	leaseInspectInjected      bool
-	tmuxAttachHint            bool
-	startEmbeddedTerminal     EmbeddedTerminalStarter
-	embeddedTerminals         []embeddedTerminalSlot
-	nextEmbeddedTerminalID    int
-	activeTerminalNum         int
-	terminalDockVisible       bool
-	terminalFocus             terminalFocus
-	autoAdvanceDrainFlows     map[string]struct{}
-	epicProgressionBaselines  map[string]flowstore.FlowRecord
+	repoTmuxSessionAttached   func(string) bool
+	insideMultiplexer         func() bool
+	// repoTmuxTerminalPending holds the repos whose first tmux-mode terminal
+	// window has been dispatched but has not reported back. It debounces two
+	// launches into one repo seconds apart, where the second would probe
+	// `list-clients` before the first terminal's client has registered. It is
+	// never the authority — RepoTmuxSessionAttached is — so it needs no expiry
+	// beyond the result message that clears it.
+	repoTmuxTerminalPending  map[string]bool
+	inspectFlowLease         func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected     bool
+	tmuxAttachHint           bool
+	startEmbeddedTerminal    EmbeddedTerminalStarter
+	embeddedTerminals        []embeddedTerminalSlot
+	nextEmbeddedTerminalID   int
+	activeTerminalNum        int
+	terminalDockVisible      bool
+	terminalFocus            terminalFocus
+	autoAdvanceDrainFlows    map[string]struct{}
+	epicProgressionBaselines map[string]flowstore.FlowRecord
 
 	epicProgressionBaselineMinimumRequests map[string]uint64
 
@@ -269,6 +279,10 @@ type Model struct {
 	launchSeams              flowLaunchSeams
 
 	embeddedTerminalTickGen uint64
+	// Tick cadences for the two 1 Hz poll loops. Zero means the production
+	// default; Options injects a faster value so tests never wait on wall time.
+	autoAdvanceTickInterval time.Duration
+	flowRefreshTickInterval time.Duration
 	flowRefreshTickGen      uint64
 	flowRefreshInFlight     uint64
 	flowRefreshInFlightMode ui.Mode
@@ -280,7 +294,16 @@ type Model struct {
 	finalizeAgentSession    func(actions.AgentLaunchContext) error
 	sessionStateRoot        string
 	// launchPin is the approach binary agents launched by this Model must run.
-	launchPin            controlplane.Pin
+	launchPin controlplane.Pin
+	// launchControl registers launches with the process's launch controller;
+	// nil leaves every launch on the direct path.
+	launchControl LaunchRegistrar
+	// reconcileLaunchExit reports an embedded terminal's exit for a tracked
+	// launch; the controller decides whether the phase needs attention.
+	reconcileLaunchExit func(flowID, phaseID, launchID string, ev launchcontrol.ExitEvidence) error
+	// sweepLaunches runs the controller's periodic sweep off the render path.
+	sweepLaunches        func()
+	launchSweepTickGen   uint64
 	bootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
@@ -367,7 +390,6 @@ type Options struct {
 	ReopenFlow                func(flowID string) (flowstore.FlowRecord, error)
 	ReserveFlowRepairLaunch   func(flowID string) (flowstore.FlowRecord, func(), error)
 	ReserveFlowLaunch         func(flowID string) (flowstore.FlowRecord, func(), error)
-	ReserveEpicSuccessor      func(flowID string) (func(), error)
 	AddFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow                func(flowID string) error
@@ -396,6 +418,13 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
+	// RepoTmuxSessionAttached probes whether a terminal is already watching a
+	// repo's tmux session. It decides whether a tmux-mode launch opens the
+	// repo's first terminal window, and runs only inside a command goroutine.
+	RepoTmuxSessionAttached func(repoPath string) bool
+	// InsideMultiplexer reports whether approach itself runs inside tmux or
+	// Zellij, where tmux mode opens no terminal window of its own.
+	InsideMultiplexer func() bool
 	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
 	// manual admission, and AutoMode. It must never invoke tmux or fork.
 	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
@@ -416,10 +445,31 @@ type Options struct {
 	// model construction stays free of filesystem work: a zero Pin means "no
 	// pin", which leaves agents on ambient PATH exactly as before.
 	LaunchPin controlplane.Pin
+	// AutoAdvanceTickInterval and FlowRefreshTickInterval override the two 1 Hz
+	// poll cadences. Zero leaves each at its production default; tests set a
+	// tiny value so driving a loop costs no real time.
+	AutoAdvanceTickInterval time.Duration
+	FlowRefreshTickInterval time.Duration
+	// StatusTimings overrides the transient-status fade and expiry schedule.
+	// Zero fields keep production timing.
+	StatusTimings StatusTimings
 	// LaunchPinNotice is context, never a gate: a degraded binary cache, or an
 	// `approach` on PATH that is a different build from the one launching
 	// agents. It is shown once at startup and changes nothing about routing.
 	LaunchPinNotice string
+	// LaunchControl registers every Flow-scoped launch with the process's
+	// launch controller, which hands the agent the socket endpoint and token
+	// its `approach flow` writes are proxied through. Nil means no controller:
+	// agents open the store directly, as before.
+	LaunchControl LaunchRegistrar
+	// ReconcileLaunchExit is called when an embedded tracked launch's terminal
+	// exits, with the exit evidence the model observed. The controller replays
+	// anything the launch left pending and demotes a still-running phase.
+	ReconcileLaunchExit func(flowID, phaseID, launchID string, ev launchcontrol.ExitEvidence) error
+	// SweepLaunches is the controller's periodic sweep, run every
+	// launchSweepInterval as a command so a detached agent that exits without
+	// a result is reconciled while the TUI is up. Nil disables the tick.
+	SweepLaunches func()
 }
 
 // New creates a Model from discovered repos.
@@ -430,7 +480,6 @@ func New(repos []scanner.Repo) Model {
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	customPhaseLaunchPersistence := opts.AddFlowPhaseLaunchID != nil
-	customEpicSuccessorPersistence := opts.ReconcileEpicSuccessor != nil
 	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
 	// fallback mutators below must share one rather than build a store per
 	// operation the way they did when the backend was plain files — that pattern
@@ -739,24 +788,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
-	reserveEpicSuccessor := opts.ReserveEpicSuccessor
-	if reserveEpicSuccessor == nil {
-		if customEpicSuccessorPersistence {
-			// A caller that replaces successor reconciliation owns its storage
-			// boundary; opening the default store here would reserve another backend.
-			reserveEpicSuccessor = func(string) (func(), error) {
-				return func() {}, nil
-			}
-		} else {
-			reserveEpicSuccessor = func(flowID string) (func(), error) {
-				store, err := newFlowStore()
-				if err != nil {
-					return nil, err
-				}
-				return store.ReserveEpicProgressionSuccessor(flowID)
-			}
-		}
-	}
 	createReserveFlowLaunch := reserveFlowLaunch
 	if opts.ReserveFlowLaunch == nil && customPhaseLaunchPersistence {
 		// Custom phase persistence may belong to a different backend, so its
@@ -785,6 +816,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return store.AddPhaseLaunchID(update)
 		}
 	}
+	// Decorated once, here, before the one resolved value is handed both to
+	// the launch seams and to the Model field: three callers publish launch IDs
+	// (create, resume, and the tracked phase path that bypasses the seams), and
+	// every one of them must leave baseline.json behind or replay has nothing
+	// to compare against. A blank root makes the decorator a pass-through.
+	addFlowPhaseLaunchID = launchcontrol.RecordBaseline(opts.SessionStateRoot, addFlowPhaseLaunchID)
 	resetFlowPhase := opts.ResetFlowPhase
 	if resetFlowPhase == nil {
 		resetFlowPhase = func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
@@ -865,6 +902,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	repoTmuxLaunchWindowLive := opts.RepoTmuxLaunchWindowLive
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
+	}
+	repoTmuxSessionAttached := opts.RepoTmuxSessionAttached
+	if repoTmuxSessionAttached == nil {
+		repoTmuxSessionAttached = actions.RepoTmuxSessionAttached
+	}
+	insideMultiplexer := opts.InsideMultiplexer
+	if insideMultiplexer == nil {
+		insideMultiplexer = actions.InsideMultiplexer
 	}
 	leaseInspectInjected := opts.InspectFlowLease != nil
 	inspectFlowLease := opts.InspectFlowLease
@@ -956,49 +1001,53 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
 	launchSeams.RunBootstrapHook = runBootstrapHook
 	launchSeams.SetStartMetadata = setFlowStartMetadata
+	launchSeams.ReconcileEpicSuccessor = reconcileEpicSuccessor
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
 	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(ui.ModeBeadsReady)
 	m := Model{
-		repos:                 newRepoPane().SetItems(repos),
-		rows:                  newBranchPane(),
-		stashes:               newStashPane(),
-		worktrees:             newWorktreePane(),
-		worktreeSessions:      newSessionPane(),
-		commits:               newCommitPane(),
-		reflogs:               newReflogPane(),
-		sessions:              newSessionPane(),
-		plans:                 newPlanPane(),
-		flows:                 newFlowPane(),
-		activeFlows:           newFlowPane(),
-		prBabysitterFlows:     newPRBabysitterFlowPane(nil),
-		prBabysitterStatuses:  make(map[string]actions.PullRequestStatus),
-		beads:                 newBeadSubviews(),
-		terminalDockVisible:   true,
-		flowRefreshTickGen:    1,
-		topMode:               topMode,
-		bottomMode:            bottomMode,
-		contentPane:           contentPane,
-		activeFlowSurface:     activeFlowSurface,
-		takeover:              takeoverFromStartup(activeFlowSurface),
-		agentCommand:          agent.NormalizeStored(opts.AgentCommand),
-		codexModel:            agent.NormalizeModel(opts.CodexModel),
-		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
-		cursorModel:           agent.NormalizeModel(opts.CursorModel),
-		codexReasoningEffort:  agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
-		claudeReasoningEffort: agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
-		planPromptTemplate:    opts.PlanPromptTemplate,
-		flowPromptTemplates:   opts.FlowPromptTemplates,
-		repoCreateRoot:        opts.RepoCreateRoot,
-		scanRepos:             opts.ScanRepos,
-		createRepo:            createRepo,
-		fetchRepo:             fetchRepo,
-		listSessions:          listSessions,
-		readTranscript:        readTranscript,
-		listPlans:             listPlans,
-		listFlows:             listFlows,
+		repos:                   newRepoPane().SetItems(repos),
+		rows:                    newBranchPane(),
+		stashes:                 newStashPane(),
+		worktrees:               newWorktreePane(),
+		worktreeSessions:        newSessionPane(),
+		commits:                 newCommitPane(),
+		reflogs:                 newReflogPane(),
+		sessions:                newSessionPane(),
+		plans:                   newPlanPane(),
+		flows:                   newFlowPane(),
+		activeFlows:             newFlowPane(),
+		prBabysitterFlows:       newPRBabysitterFlowPane(nil),
+		prBabysitterStatuses:    make(map[string]actions.PullRequestStatus),
+		beads:                   newBeadSubviews(),
+		terminalDockVisible:     true,
+		flowRefreshTickGen:      1,
+		autoAdvanceTickInterval: opts.AutoAdvanceTickInterval,
+		flowRefreshTickInterval: opts.FlowRefreshTickInterval,
+		statusSchedule:          opts.StatusTimings,
+		topMode:                 topMode,
+		bottomMode:              bottomMode,
+		contentPane:             contentPane,
+		activeFlowSurface:       activeFlowSurface,
+		takeover:                takeoverFromStartup(activeFlowSurface),
+		agentCommand:            agent.NormalizeStored(opts.AgentCommand),
+		codexModel:              agent.NormalizeModel(opts.CodexModel),
+		claudeModel:             agent.NormalizeModel(opts.ClaudeModel),
+		cursorModel:             agent.NormalizeModel(opts.CursorModel),
+		codexReasoningEffort:    agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
+		claudeReasoningEffort:   agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
+		planPromptTemplate:      opts.PlanPromptTemplate,
+		flowPromptTemplates:     opts.FlowPromptTemplates,
+		repoCreateRoot:          opts.RepoCreateRoot,
+		scanRepos:               opts.ScanRepos,
+		createRepo:              createRepo,
+		fetchRepo:               fetchRepo,
+		listSessions:            listSessions,
+		readTranscript:          readTranscript,
+		listPlans:               listPlans,
+		listFlows:               listFlows,
 		listBeads: [beadSubviewCount]func(string) ([]beadsquery.Bead, error){
 			listReadyBeads,
 			listBlockedBeads,
@@ -1030,7 +1079,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reserveFlowRepairLaunch:   reserveFlowRepairLaunch,
 		reserveFlowLaunch:         reserveFlowLaunch,
 		reserveFlowPreparation:    reserveFlowPreparation,
-		reserveEpicSuccessor:      reserveEpicSuccessor,
 		addFlowPhaseLaunchID:      addFlowPhaseLaunchID,
 		resetFlowPhase:            resetFlowPhase,
 		deleteFlow:                deleteFlow,
@@ -1054,6 +1102,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		repoTmuxSessionAttached:   repoTmuxSessionAttached,
+		insideMultiplexer:         insideMultiplexer,
 		inspectFlowLease:          inspectFlowLease,
 		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
@@ -1061,6 +1111,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		finalizeAgentSession:      finalizeAgentSession,
 		sessionStateRoot:          opts.SessionStateRoot,
 		launchPin:                 opts.LaunchPin,
+		launchControl:             opts.LaunchControl,
+		reconcileLaunchExit:       opts.ReconcileLaunchExit,
+		sweepLaunches:             opts.SweepLaunches,
 		bootstrapHookForRepo:      bootstrapHookForRepo,
 		runBootstrapHook:          runBootstrapHook,
 	}
@@ -1403,7 +1456,7 @@ func (m Model) withReasoningEffort(command, effort string) Model {
 func (m Model) RepoCreateRoot() string { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
-	return batchNonNil(m.fetchStoredModes(), autoAdvanceTickCmd())
+	return batchNonNil(m.fetchStoredModes(), m.autoAdvanceTickCmd(), m.launchSweepTickCmd())
 }
 
 func (m Model) View() string {
@@ -2044,9 +2097,14 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		if msg.Generation != m.embeddedTerminalTickGen {
 			return m, nil
 		}
+		// Before dismissal, because a dismissed slot is gone from the model
+		// and its exit would never be reported.
+		var cmds []tea.Cmd
+		var reconcileCmds []tea.Cmd
+		m, reconcileCmds = m.reconcileExitedFlowEmbeddedTerminals()
+		cmds = append(cmds, reconcileCmds...)
 		hadExitedFlowTerminals := m.hasExitedFlowEmbeddedTerminalAutoClose()
 		m = m.dismissExitedFlowEmbeddedTerminals()
-		var cmds []tea.Cmd
 		if hadExitedFlowTerminals {
 			var refreshCmd tea.Cmd
 			m, refreshCmd = m.startFlowSurfaceRefreshFetch()
@@ -2061,6 +2119,17 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		return m.startFlowSurfaceRefreshFetch()
+	case FlowControlAppliedMsg:
+		return m.startFlowSurfaceRefreshFetch()
+	case launchSweepTickMsg:
+		if msg.Generation != m.launchSweepTickGen {
+			return m, nil
+		}
+		return m.startLaunchSweep()
+	case launchSweepDoneMsg:
+		return m.handleLaunchSweepDone(msg)
+	case launchExitReconcileDoneMsg:
+		return m.handleLaunchExitReconcileDone(msg)
 	case prBabysitterPollMsg:
 		if !m.prBabysitterSurfaceVisible() || msg.Generation != m.currentListRequest(ui.ModePRBabysitter) {
 			return m, nil
@@ -2257,6 +2326,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m = m.setStatus(statusOther, msg.Err)
 		}
 		return m, nil
+	case repoTmuxTerminalOpenedMsg:
+		return m.applyRepoTmuxTerminalOpened(msg), nil
 	case EmbeddedTerminalDetachHandoffResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, "Detached embedded terminal, but failed to open terminal: "+msg.Err)
@@ -2416,6 +2487,11 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 			}
 		}
 		m = m.setStatus(statusOther, status)
+	} else if cmd := m.reconcileInteractiveLaunchExitCmd(ctx); cmd != nil {
+		// An interactive launch's agent has ended with the TTY handed back; a
+		// tracked phase it left running has no result and is reconciled the
+		// same way an embedded terminal's exit is.
+		return m, cmd
 	}
 	return m, nil
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -155,7 +156,7 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return record, func() {}, nil
 		}
 	}
-	modelValue := model.NewWithOptions(repos, opts)
+	modelValue := model.NewWithOptions(repos, fastTickOptions(opts))
 	modelValue = model.WithFlowLaunchEnsureWorktreeForTest(modelValue, func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 		if record.WorktreePath != "" {
 			return record, nil
@@ -2268,4 +2269,35 @@ func TestModel_RepoSwitchClearsReflogs(t *testing.T) {
 	if len(m.Reflogs()) != 0 {
 		t.Errorf("expected reflogs cleared on repo switch, got %d", len(m.Reflogs()))
 	}
+}
+
+// testTickInterval collapses the two 1 Hz poll loops for tests. The helpers
+// that drain a tea.Cmd tree run every command in it, including the loops' own
+// reschedule ticks, so at the production cadence each tick child in a batch
+// cost a real second of wall time.
+const testTickInterval = time.Millisecond
+
+// fastTickOptions injects the collapsed cadence unless the test set its own.
+func fastTickOptions(opts model.Options) model.Options {
+	if opts.AutoAdvanceTickInterval == 0 {
+		opts.AutoAdvanceTickInterval = testTickInterval
+	}
+	if opts.FlowRefreshTickInterval == 0 {
+		opts.FlowRefreshTickInterval = testTickInterval
+	}
+	if opts.StatusTimings == (model.StatusTimings{}) {
+		opts.StatusTimings = model.StatusTimings{
+			FadeStep1: testTickInterval,
+			FadeStep2: 2 * testTickInterval,
+			Lifetime:  3 * testTickInterval,
+		}
+	}
+	return opts
+}
+
+// fastTickStatusTimings collapses the transient-status schedule for tests.
+var fastTickStatusTimings = model.StatusTimings{
+	FadeStep1: testTickInterval,
+	FadeStep2: 2 * testTickInterval,
+	Lifetime:  3 * testTickInterval,
 }

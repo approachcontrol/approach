@@ -104,8 +104,8 @@ title, and assignee; repo filtering remains available from the left pane.
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR from any Flow surface when PR metadata exists |
 | `u` | Unlock a locked worktree (worktrees view) |
-| `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview |
-| `F` | Create and immediately start the selected Bead's Flow in a focused, settled Ready subview; pull with `--ff-only` outside that owned Ready selection (including eligible worktrees and checked-out branches) |
+| `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview — refused when that Bead already has a non-terminal Flow |
+| `F` | Create and immediately start the selected Bead's Flow in a focused, settled Ready subview, refused when that Bead already has a non-terminal Flow; pull with `--ff-only` outside that owned Ready selection (including eligible worktrees and checked-out branches) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID on a Flow surface |
@@ -426,6 +426,17 @@ What changes in tmux mode:
   window in the repo's session and never switch your client, so use `T` or your
   own tmux keys to get there. If you rely on the old workflow, keep the default
   backend; it is untouched.
+- The first launch for a repo opens a terminal window attached to that repo's
+  session, so the agent is in front of you rather than only reachable by
+  command. Later launches add a window to the session that terminal is already
+  watching, and open no second window. Close the terminal and the next launch
+  opens a fresh one.
+- That window uses the same terminal `T` does — `$TERMINAL`, `[terminal].command`,
+  or the macOS Terminal fallback. If none resolves, the launch still succeeds
+  and the status line carries the attach command instead.
+- Nothing is opened when Approach itself is running inside tmux or Zellij: you
+  already have a multiplexer, and a nested `tmux attach` refuses to run. Use `T`
+  or your own tmux keys there.
 - Every launch reports the window, the session, and the exact
   `tmux attach -t <session>` command in the status line.
 - Press `T` from the repos pane or any content pane to open your configured
@@ -563,7 +574,7 @@ With the top content pane focused, press `2` to enter the selected repository's
 Beads group at its last-used subview, defaulting to Ready before first use.
 Beads queries and detail reads are read-only. Manual Ready Flow creation is
 also claim-free; the only tracker mutation in this group is the child claim
-performed when epic auto-progression prepares a new Flow. Pressing `2` while
+performed when epic auto-progression is enabled on an epic. Pressing `2` while
 already in any Beads subview is a no-op. Press `r` for
 Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
 pressing the already-active letter is also a no-op. Top-pane `←`/`→` switches
@@ -673,6 +684,23 @@ headless setting. Its creation-time launch is strictly embedded, even when
 ownership. Neither action invokes `bd`, calls `bd show`, claims the issue, or
 otherwise changes tracker state.
 
+Both keys are refused when the selected Bead already has a non-terminal Flow in
+the same repository. The store enforces this inside the creation transaction, so
+a second TUI, the CLI, or a retry cannot slip past it. Only `closed`,
+`abandoned`, `merged`, and `completed` Flows release the Bead; a `blocked` or
+`needs_attention` Flow deliberately keeps holding it, because that is where a
+human is meant to intervene rather than fork a second Flow. On refusal nothing is
+created — no record, no worktree, no branch — and the status bar names the
+existing Flow and its derived status, for example `Bead approach-cwk already has
+a needs attention flow 20260816T025735Z-approach-cwk: close it from the Flows
+view with C`. Closing that Flow with `C` on a Flow surface releases the Bead, and
+`f`/`F` then succeed. Note that a Ready-Bead Flow whose preparation failed
+derives `blocked` and still holds its Bead, so repairing or closing it is the way
+forward rather than pressing the key again. If a stored Flow claims the Bead but
+its record cannot be read at all — for example one written by a newer version of
+Approach — the keys are refused too, and the status bar names that Flow and the
+decode failure instead of a derived status.
+
 The two keys share one Ready admission token. Repeated or mixed presses cannot
 create duplicate Flows. A repository change — cursor move or rescan —
 invalidates that source's pending presentation without clearing a newer Ready
@@ -749,15 +777,21 @@ revalidates its generation and current direct-child membership, repeats the
 idempotent claim, then surfaces incomplete preparation or adopts the prepared
 Flow. Consumed `completed`/`merged` markers are ignored so off/on recovery can
 select a later Ready sibling. Unmarked manual Flows do not enter this recovery
-path. This action prepares or adopts only; it does not start a phase or launch
-an agent.
+path. Enabling prepares or adopts only; it does not start a phase or launch an
+agent, so this first child is started by hand. Every child the epic advances to
+after it is created and started in one unattended step.
 
 Enabled epics advance from the same view-independent 1 Hz Flow poll. When the
 exact in-session baseline Flow is newly observed as `completed` or `merged`,
-Approach prepares the next unlinked direct child in fresh `bd ready` order; it
-does not claim the Bead or launch the new Flow. The status line reports the
-prepared child and Flow ID, retryable preparation/reconciliation errors, or an
-owned successor that blocks later children. When no creation candidate remains,
+Approach creates the next unlinked direct child in fresh `bd ready` order **and
+starts its first phase agent**, as one attempt; it does not claim the Bead. The
+child is created headless with auto mode on, so its later phases drain by
+themselves and the whole chain runs without a key press. The status line reports
+retryable preparation/reconciliation errors, an owned successor that blocks later
+children, or the launch's own failure. If that attempt fails at any point — the
+Flow cannot be created, the worktree cannot be made, the agent cannot start — the
+epic halts with a `blocked` cause naming the child, exactly as a failing child
+Flow would. When no creation candidate remains,
 it reports auto-progression completion and turns normal progression off. No
 startup catch-up occurs: explicitly toggle progression off and back on to
 install a new live baseline after reconciling an unknown drain state.

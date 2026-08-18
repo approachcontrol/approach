@@ -78,6 +78,15 @@ type manualLaunchHarness struct {
 	// launches from one that happened to be asked at the right moment.
 	tmuxWindowLiveLaunchID string
 	tmuxWindowProbes       [][]string
+	// tmuxSessionExists / tmuxSessionAttached / tmuxTerminalCommands cover the
+	// per-repo terminal a tmux-mode launch opens. They are seams rather than
+	// real probes so no test can shell out to tmux or open a window.
+	tmuxSessionExists    bool
+	tmuxSessionAttached  bool
+	tmuxAttachedProbes   int
+	tmuxTerminalCommands []string
+	tmuxTerminalCwds     []string
+	tmuxTerminalErr      error
 
 	sessionListCalls   int
 	readFlowCalls      int
@@ -147,6 +156,20 @@ func (h *manualLaunchHarness) options() Options {
 				return h.leaseInspect(h.leaseInspections, root, flowID)
 			}
 			return h.leaseState, h.leaseErr
+		},
+		RepoTmuxSessionExists: func(string) bool { return h.tmuxSessionExists },
+		RepoTmuxSessionAttached: func(string) bool {
+			h.tmuxAttachedProbes++
+			return h.tmuxSessionAttached
+		},
+		InsideMultiplexer: func() bool { return false },
+		LaunchDetachedTerminal: func(shellCommand, cwd string) (actions.TerminalLaunchSpec, error) {
+			h.tmuxTerminalCommands = append(h.tmuxTerminalCommands, shellCommand)
+			h.tmuxTerminalCwds = append(h.tmuxTerminalCwds, cwd)
+			if h.tmuxTerminalErr != nil {
+				return actions.TerminalLaunchSpec{}, h.tmuxTerminalErr
+			}
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
 		},
 		RepoTmuxLaunchWindowLive: func(repoPath string, launchIDs ...string) bool {
 			h.tmuxWindowProbes = append(h.tmuxWindowProbes, append([]string(nil), launchIDs...))
@@ -292,7 +315,7 @@ func (h *manualLaunchHarness) model() Model {
 
 func (h *manualLaunchHarness) modelWith(repos []scanner.Repo, opts Options) Model {
 	h.t.Helper()
-	m := NewWithOptions(repos, opts)
+	m := newModelForTest(repos, opts)
 	m.launchSeams.EnsureWorktree = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 		h.ensureRecords = append(h.ensureRecords, record)
 		if h.ensureErr != nil {
@@ -373,6 +396,11 @@ func (h *manualLaunchHarness) drainMsg(m Model, msg tea.Msg, depth int) Model {
 	case embeddedTerminalTickMsg, flowRefreshTickMsg, autoAdvanceTickMsg:
 		// Periodic repaint and refresh ticks re-arm themselves forever and are
 		// not part of the launch chain.
+		return m
+	case StatusExpiredMsg, StatusFadeMsg:
+		// The transient-status fade and expiry timers only retire the message
+		// the launch already produced, so applying them here would clear the
+		// status these tests are about to assert on.
 		return m
 	}
 	next, cmd := m.Update(msg)
@@ -1533,7 +1561,7 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			h := newManualLaunchHarness(t, tc.record)
 			opts := h.options()
 			opts.AgentCommand = tc.agentCommand
-			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
 			m.contentPane = ui.PaneBottom
 			m.bottomMode = ui.ModeFlows
 			m.flows = m.flows.SetItems([]flowstore.FlowRecord{tc.record})
@@ -2598,7 +2626,7 @@ func TestFlowLaunchPreflightMessagesSurfaceVerbatim(t *testing.T) {
 			if tc.planPath != nil {
 				opts.PlanMarkdownPath = tc.planPath
 			}
-			m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
 			m.contentPane = ui.PaneBottom
 			m.bottomMode = ui.ModeFlows
 			m.flows = m.flows.SetItems([]flowstore.FlowRecord{tc.record})
@@ -2692,6 +2720,51 @@ func TestManualFlowLaunchRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
 	// it on success would race the agent's own start.
 	if h.tmuxLaunchCleanups != 0 {
 		t.Fatalf("cleanups = %d, want none on a successful launch", h.tmuxLaunchCleanups)
+	}
+}
+
+// TestTrackedTmuxFlowLaunchOpensRepoTerminalOnce covers the leased Flow path:
+// the phase launch opens the repo's terminal exactly once, and the attempt and
+// reservation lifecycle is untouched by it.
+func TestTrackedTmuxFlowLaunchOpensRepoTerminalOnce(t *testing.T) {
+	h := newTmuxLaunchHarness(t, true)
+	h.tmuxSessionExists = true
+	m := h.launch(h.model())
+
+	if len(h.tmuxTerminalCommands) != 1 {
+		t.Fatalf("terminal launches = %d, want one", len(h.tmuxTerminalCommands))
+	}
+	if !strings.Contains(h.tmuxTerminalCommands[0], "=approach-alpha-0001") {
+		t.Fatalf("terminal command = %q, want the launch's own session, exactly targeted", h.tmuxTerminalCommands[0])
+	}
+	if strings.Contains(h.tmuxTerminalCommands[0], "new-session") {
+		t.Fatalf("terminal command = %q, want attach-only", h.tmuxTerminalCommands[0])
+	}
+	if len(h.tmuxTerminalCwds) != 1 || h.tmuxTerminalCwds[0] != h.record.RepoPath {
+		t.Fatalf("terminal cwds = %#v, want the Flow's repo", h.tmuxTerminalCwds)
+	}
+	// The launch half is unchanged: same reservation pairing, same released
+	// attempt, same status.
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations = %d releases = %d, want the launch lifecycle unchanged", h.launchReservations, h.launchReleases)
+	}
+	if m.flowLaunchAttemptOccupied("flow-1") {
+		t.Fatal("the terminal attempt must not hold the launch attempt open")
+	}
+	if got := m.status.Text; !strings.Contains(got, "tmux attach -t") {
+		t.Fatalf("status = %q, want the launch status", got)
+	}
+
+	// A second phase launch into a session someone is already watching adds a
+	// tmux window and opens nothing.
+	h.tmuxSessionAttached = true
+	h.record.Phases[0].Status = flowstore.PhaseReady
+	h.launch(h.model())
+	if len(h.tmuxTerminalCommands) != 1 {
+		t.Fatalf("terminal launches after an attached relaunch = %d, want no second window", len(h.tmuxTerminalCommands))
+	}
+	if h.tmuxAttachedProbes == 0 {
+		t.Fatal("expected the attached probe to decide the second launch")
 	}
 }
 
@@ -2809,9 +2882,9 @@ func TestTmuxHandoffCarriesReservationThroughResultDelivery(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("handoff command = nil")
 	}
-	result, ok := cmd().(AgentResultMsg)
+	result, ok := tmuxLaunchResult(cmd)
 	if !ok {
-		t.Fatalf("handoff result type = %T, want AgentResultMsg", cmd())
+		t.Fatal("expected an AgentResultMsg among the handoff commands")
 	}
 	if releases != 0 {
 		t.Fatalf("releases after parent command exit = %d, want 0 until delivery", releases)

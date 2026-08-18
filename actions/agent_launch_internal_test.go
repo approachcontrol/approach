@@ -729,3 +729,51 @@ func TestSessionHookCommandFallsBackToRunningBinary(t *testing.T) {
 		t.Fatalf("hook command = %q", got)
 	}
 }
+
+// The control endpoint is exported only when a launch was registered. Empty
+// fields must leave the variables absent (not empty), because the CLI reads
+// "set" as "proxy or fall back" and "absent" as "open the store directly".
+func TestAgentCommandSpecExportsControlEndpointOnlyWhenRegistered(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	t.Setenv("APPROACH_CONTROL_ENDPOINT", "/stale/parent.sock")
+	t.Setenv("APPROACH_CONTROL_TOKEN", "stale")
+
+	cmd, overrides, err := agentCommandSpec(planAgentContext())
+	if err != nil {
+		t.Fatalf("agentCommandSpec: %v", err)
+	}
+	for _, override := range overrides {
+		if override.key == "APPROACH_CONTROL_ENDPOINT" || override.key == "APPROACH_CONTROL_TOKEN" {
+			t.Fatalf("%s exported without a registration", override.key)
+		}
+	}
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "APPROACH_CONTROL_ENDPOINT=") || strings.HasPrefix(entry, "APPROACH_CONTROL_TOKEN=") {
+			t.Fatalf("stale parent value leaked into the agent environment: %s", entry)
+		}
+	}
+
+	ctx := planAgentContext()
+	ctx.ControlEndpoint = "/tmp/approach-501/deadbeef.sock"
+	ctx.ControlToken = "0123456789abcdef"
+	cmd, overrides, err = agentCommandSpec(ctx)
+	if err != nil {
+		t.Fatalf("agentCommandSpec: %v", err)
+	}
+	env := map[string]string{}
+	for _, override := range overrides {
+		env[override.key] = override.value
+	}
+	if env["APPROACH_CONTROL_ENDPOINT"] != ctx.ControlEndpoint || env["APPROACH_CONTROL_TOKEN"] != ctx.ControlToken {
+		t.Fatalf("control env = %q / %q", env["APPROACH_CONTROL_ENDPOINT"], env["APPROACH_CONTROL_TOKEN"])
+	}
+	found := 0
+	for _, entry := range cmd.Env {
+		if entry == "APPROACH_CONTROL_ENDPOINT="+ctx.ControlEndpoint || entry == "APPROACH_CONTROL_TOKEN="+ctx.ControlToken {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("cmd.Env carries %d control entries, want 2", found)
+	}
+}

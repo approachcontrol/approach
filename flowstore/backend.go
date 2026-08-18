@@ -6,6 +6,22 @@ type storedFlow struct {
 	record FlowRecord
 }
 
+// beadFlowCandidate is one Bead-linked row considered by the creation guard.
+//
+// beadID is the verbatim bead_id projection, which stays readable even when
+// record does not decode. decodeStoredFlowWithPreparation already rejects any
+// row whose projection disagrees with its blob, so for a decoded candidate
+// beadID and record.Bead.ID are the same value.
+type beadFlowCandidate struct {
+	flowID string
+	beadID string
+	record FlowRecord
+	// decodeErr is non-nil when the record blob could not be decoded. Such a
+	// row has no derivable status, so the guard cannot tell whether it still
+	// holds its Bead slot.
+	decodeErr error
+}
+
 type phaseAgentSettingsSave struct {
 	PhaseIndex      int
 	PhaseID         string
@@ -108,4 +124,19 @@ type flowSession interface {
 	// timestamp. Unlike save, it preserves key presence and raw values on every
 	// unrelated legacy field.
 	savePhaseAgentSettings(update phaseAgentSettingsSave) error
+
+	// beadLinkedFlows returns every stored row in this transaction for repoPath
+	// that carries a non-empty bead_id, excluding this session's own Flow ID,
+	// ordered updated_at DESC, flow_id ASC.
+	//
+	// It applies no domain rule: activeness and Bead-ID matching are the
+	// store's decision. Reading inside the section is the point — a
+	// List-then-Create pre-check is the racy shape that let two Flows be
+	// created for one Bead.
+	//
+	// A row whose record blob fails to decode is still returned, carrying its
+	// bead_id projection and decodeErr, because dropping it here would let the
+	// guard admit a duplicate for exactly the Bead it cannot read. Deciding
+	// what an unreadable row means is the store's job, not the backend's.
+	beadLinkedFlows(repoPath string) ([]beadFlowCandidate, error)
 }

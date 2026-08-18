@@ -526,6 +526,9 @@ type failingCommitTransaction struct {
 }
 
 func (t *failingCommitTransaction) QueryRow(string, ...any) *sql.Row { return nil }
+func (t *failingCommitTransaction) Query(string, ...any) (*sql.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
 func (t *failingCommitTransaction) Exec(string, ...any) (sql.Result, error) {
 	return nil, errors.New("unexpected Exec")
 }

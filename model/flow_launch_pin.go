@@ -7,7 +7,28 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
+
+// LaunchRegistrar registers a launch with the process's launch controller and
+// returns the endpoint the agent should report through. A nil registrar or a
+// zero Endpoint leaves the launch on the direct path.
+type LaunchRegistrar interface {
+	Register(launchcontrol.Registration) (launchcontrol.Endpoint, error)
+}
+
+// launchStamp is everything applyLaunchStamp writes onto a launch context: the
+// pinned binary and the controller registration. It travels together so a
+// launch kind cannot pick up one without the other.
+type launchStamp struct {
+	Pin     controlplane.Pin
+	Control LaunchRegistrar
+}
+
+// launchStamp is the Model's stamp for launches it starts directly.
+func (m Model) launchStamp() launchStamp {
+	return launchStamp{Pin: m.launchPin, Control: m.launchControl}
+}
 
 // retainLaunchPin claims a cached binary against cache retention. It is a var so
 // tests can observe the claim without writing into a real state root.
@@ -44,28 +65,74 @@ func refuseUnverifiedLaunchPin(pin controlplane.Pin) string {
 	return ""
 }
 
-// applyLaunchPin stamps the launching build onto a launch context so the agent
-// invokes exactly the binary that launched it rather than whatever `approach`
-// ambient PATH resolves, and claims the pinned copy against cache retention. A
-// zero Pin stamps nothing, which is the pre-pin behaviour and still correct for
-// a manually started session.
+// applyLaunchStamp stamps the launching build onto a launch context so the
+// agent invokes exactly the binary that launched it rather than whatever
+// `approach` ambient PATH resolves, claims the pinned copy against cache
+// retention, and registers the launch with the launch controller so the
+// agent's phase results are proxied and logged rather than written straight
+// into the database. A zero Pin stamps no pin, which is the pre-pin behaviour
+// and still correct for a manually started session; a nil registrar or a
+// launch without a Flow registers nothing.
 //
-// The two halves are deliberately one function. agentCommandSpec bakes the
-// pinned path into the provider session-hook argv of EVERY launch kind — phase,
+// The halves are deliberately one function. agentCommandSpec bakes the pinned
+// path into the provider session-hook argv of EVERY launch kind — phase,
 // repair, autofix, generic worktree agent, both resumes, plan and plain agent
 // launches — so a launch kind that stamped a pin without claiming it would let
-// retention evict the binary its own detached agent still has to run. Making
-// this the single place both happen is what stops the next launch kind from
-// forgetting.
-func applyLaunchPin(ctx actions.AgentLaunchContext, pin controlplane.Pin) actions.AgentLaunchContext {
-	if strings.TrimSpace(pin.ExecutablePath) == "" {
-		return ctx
+// retention evict the binary its own detached agent still has to run, and a
+// launch kind that pinned without registering would send its results down the
+// unlogged path. Making this the single place all of it happens is what stops
+// the next launch kind from forgetting.
+func applyLaunchStamp(ctx actions.AgentLaunchContext, stamp launchStamp) actions.AgentLaunchContext {
+	if strings.TrimSpace(stamp.Pin.ExecutablePath) != "" {
+		ctx.Executable = stamp.Pin.ExecutablePath
+		ctx.BuildVersion = stamp.Pin.Version
+		ctx.DBSchemaVersion = stamp.Pin.SchemaVersion
+		claimLaunchPin(ctx, stamp.Pin)
 	}
-	ctx.Executable = pin.ExecutablePath
-	ctx.BuildVersion = pin.Version
-	ctx.DBSchemaVersion = pin.SchemaVersion
-	claimLaunchPin(ctx, pin)
+	registerLaunchControl(&ctx, stamp.Control)
 	return ctx
+}
+
+// registerLaunchControl is best-effort like claimLaunchPin: a registration
+// that fails leaves the endpoint fields empty and the launch proceeds on the
+// direct path, which the fallback rules cover. Only Flow-scoped launches with
+// a launch ID register; a launch without a phase (repair, autofix, generic
+// worktree agent) registers as unowned, so its writes are proxied and logged
+// but never replayed against a phase it does not own.
+func registerLaunchControl(ctx *actions.AgentLaunchContext, control LaunchRegistrar) {
+	if control == nil {
+		return
+	}
+	if strings.TrimSpace(ctx.FlowID) == "" || strings.TrimSpace(ctx.LaunchID) == "" {
+		return
+	}
+	endpoint, err := control.Register(launchcontrol.Registration{
+		FlowID:   ctx.FlowID,
+		PhaseID:  ctx.FlowPhaseID,
+		LaunchID: ctx.LaunchID,
+		Kind:     launchKind(*ctx),
+	})
+	if err != nil || endpoint.Path == "" || endpoint.Token == "" {
+		return
+	}
+	ctx.ControlEndpoint = endpoint.Path
+	ctx.ControlToken = endpoint.Token
+}
+
+// launchKind names the launch for launch.json diagnostics.
+func launchKind(ctx actions.AgentLaunchContext) string {
+	switch {
+	case ctx.FlowRepair:
+		return "repair"
+	case ctx.FlowAutofix:
+		return "autofix"
+	case ctx.FlowAgent:
+		return "generic"
+	case ctx.FlowSavedSessionResume || strings.TrimSpace(ctx.ResumeSessionID) != "":
+		return "resume"
+	default:
+		return "phase"
+	}
 }
 
 // claimLaunchPin is best-effort by design. Retention is hygiene: failing a

@@ -14,7 +14,19 @@ import (
 // The advance poll is a session-long 1 Hz loop that fetches the unscoped flow
 // set and drives AutoMode phase launches from its own snapshot, independent of
 // which view is displayed. It never touches display state.
-const autoAdvanceTickInterval = time.Second
+//
+// Options may override the cadence; tests drive the loop far faster so they
+// never wait on wall time.
+const defaultAutoAdvanceTickInterval = time.Second
+
+// autoAdvanceTickDelay is the cadence this Model polls at. A zero field means
+// "unset" — a directly constructed Model still ticks at the production rate.
+func (m Model) autoAdvanceTickDelay() time.Duration {
+	if m.autoAdvanceTickInterval > 0 {
+		return m.autoAdvanceTickInterval
+	}
+	return defaultAutoAdvanceTickInterval
+}
 
 type autoAdvanceTickMsg struct{}
 
@@ -28,8 +40,8 @@ type AutoAdvanceResultMsg struct {
 	Request     uint64
 }
 
-func autoAdvanceTickCmd() tea.Cmd {
-	return tea.Tick(autoAdvanceTickInterval, func(time.Time) tea.Msg {
+func (m Model) autoAdvanceTickCmd() tea.Cmd {
+	return tea.Tick(m.autoAdvanceTickDelay(), func(time.Time) tea.Msg {
 		return autoAdvanceTickMsg{}
 	})
 }
@@ -61,7 +73,7 @@ func (m Model) finishAutoAdvanceFetch(request uint64) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.autoAdvanceInFlight = 0
-	return m, autoAdvanceTickCmd()
+	return m, m.autoAdvanceTickCmd()
 }
 
 func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd) {
@@ -147,6 +159,14 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 		switch {
 		case epicProgressionSuccessTerminal(observed):
 			if epicProgressionSuccessTerminal(baseline) {
+				continue
+			}
+			if owned, ok := m.epicProgressionOwnedSuccessors[key]; ok && owned.SourceFlowID == baseline.FlowID {
+				// An advance for this source already owns a created child Flow.
+				// The create pipeline clears that marker at every terminal, so
+				// this is skipped only while the child's own attempt is running.
+				// The halt edge below is deliberately not fenced this way: a
+				// failing child must be able to stop the chain regardless.
 				continue
 			}
 			var cmd tea.Cmd

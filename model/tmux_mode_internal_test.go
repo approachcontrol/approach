@@ -26,7 +26,7 @@ type tmuxResumeSpy struct {
 }
 
 func (s *tmuxResumeSpy) model(backend string, tmuxAvailable bool) Model {
-	return NewWithOptions(nil, Options{
+	return newModelForTest(nil, Options{
 		AgentCommand: "codex",
 		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
 			return flowlease.Free, nil
@@ -69,6 +69,26 @@ func resumeContext() actions.AgentLaunchContext {
 	}
 }
 
+// tmuxLaunchResult finds the launch's own result among the commands it
+// returned. A tmux-mode launch batches the spawn with the per-repo terminal
+// attempt, so the result is one message of a batch rather than the only one.
+func tmuxLaunchResult(cmd tea.Cmd) (AgentResultMsg, bool) {
+	if cmd == nil {
+		return AgentResultMsg{}, false
+	}
+	switch msg := cmd().(type) {
+	case AgentResultMsg:
+		return msg, true
+	case tea.BatchMsg:
+		for _, sub := range msg {
+			if result, ok := tmuxLaunchResult(sub); ok {
+				return result, true
+			}
+		}
+	}
+	return AgentResultMsg{}, false
+}
+
 func TestSessionResumeRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
 	spy := &tmuxResumeSpy{t: t}
 	m := spy.model("tmux", true)
@@ -99,9 +119,9 @@ func TestSessionResumeRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected a launch command")
 	}
-	msg, ok := cmd().(AgentResultMsg)
+	msg, ok := tmuxLaunchResult(cmd)
 	if !ok {
-		t.Fatalf("launch message = %#v, want AgentResultMsg", msg)
+		t.Fatal("expected an AgentResultMsg among the launch commands")
 	}
 	if !released {
 		t.Fatal("expected the reservation released once the spawn returned")
@@ -708,7 +728,7 @@ func TestWorktreeSessionResumeRoutesToTmux(t *testing.T) {
 // through to a detached external launch whose own result message would
 // otherwise overwrite the fallback note with the generic launch text.
 func TestResumeFallbackNoteSurvivesTheExternalFallthrough(t *testing.T) {
-	m := NewWithOptions(nil, Options{
+	m := newModelForTest(nil, Options{
 		AgentCommand:        "codex",
 		LaunchBackend:       "tmux",
 		TmuxLaunchAvailable: func() bool { return false },

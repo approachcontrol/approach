@@ -29,7 +29,7 @@ func TestFixedStackedPaneStartupState(t *testing.T) {
 }
 
 func TestInitFetchesBothStoredPanesWithoutActiveFlows(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/repo"}}, Options{
 		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1"}}, nil
 		},
@@ -78,7 +78,7 @@ func TestRepositorySwitchStartsBothStoredPaneRequests(t *testing.T) {
 func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
 	readyCalls := 0
 	openCalls := 0
-	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/repo"}}, Options{
 		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
 			readyCalls++
 			return []beadsquery.Bead{{ID: "bd-ready"}}, nil
@@ -320,7 +320,7 @@ func TestDegradedPaneFocusSwapReflowsNewlyVisibleList(t *testing.T) {
 }
 
 func TestRefreshAndActiveFlowsUseIndependentRequestSlots(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+	m := newModelForTest([]scanner.Repo{{Path: "/repo"}}, Options{
 		ScanRepos: func() ([]scanner.Repo, error) { return []scanner.Repo{{Path: "/repo"}}, nil },
 	})
 	beadsBefore := m.currentListRequest(ui.ModeBeadsReady)

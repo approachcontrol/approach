@@ -54,7 +54,7 @@ func TestGenericAgentLaunchRequestRejectsEveryFlowContextMarker(t *testing.T) {
 	}
 	for name, mark := range tests {
 		t.Run(name, func(t *testing.T) {
-			m := NewWithOptions(nil, Options{})
+			m := newModelForTest(nil, Options{})
 			ctx := actions.AgentLaunchContext{LaunchID: "launch-1"}
 			mark(&ctx)
 			released := 0
@@ -469,6 +469,7 @@ func TestFlowLaunchLifecycleBoundary(t *testing.T) {
 	}{
 		{name: "createFlowAndLaunchPlanForRepo", origin: "flowLaunchOriginNewFlow"},
 		{name: "requestReadyBeadFlowLaunch", origin: "flowLaunchOriginReadyBead"},
+		{name: "requestEpicProgressionChildLaunch", origin: "flowLaunchOriginEpicProgression"},
 	}
 	for _, source := range createSources {
 		sourceKey := modelFlowLaunchFunction(source.name)

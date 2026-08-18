@@ -9,7 +9,7 @@ import (
 )
 
 func TestConfirmFlowDeleteAllowsStalePhaseSelectionOnly(t *testing.T) {
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
+	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
 	m.bottomMode = ui.ModeFlows
 	m.contentPane = ui.PaneBottom
 	m.activeFlowSurface = false

@@ -9,7 +9,39 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-const statusLifetime = 3 * time.Second
+// The transient-status schedule: two fade steps and then expiry. Options may
+// override it; tests collapse it so draining a command batch never waits on a
+// status timer.
+const (
+	defaultStatusFadeStep1 = time.Second
+	defaultStatusFadeStep2 = 2 * time.Second
+	defaultStatusLifetime  = 3 * time.Second
+)
+
+// StatusTimings overrides the transient-status fade and expiry schedule. A zero
+// field keeps that step at its production delay.
+type StatusTimings struct {
+	FadeStep1 time.Duration
+	FadeStep2 time.Duration
+	Lifetime  time.Duration
+}
+
+// statusTimings is this Model's schedule, with unset steps filled in from the
+// production defaults so a directly constructed Model behaves as before. Read
+// the schedule through here rather than off the field.
+func (m Model) statusTimings() StatusTimings {
+	timings := m.statusSchedule
+	if timings.FadeStep1 <= 0 {
+		timings.FadeStep1 = defaultStatusFadeStep1
+	}
+	if timings.FadeStep2 <= 0 {
+		timings.FadeStep2 = defaultStatusFadeStep2
+	}
+	if timings.Lifetime <= 0 {
+		timings.Lifetime = defaultStatusLifetime
+	}
+	return timings
+}
 
 type StatusExpiredMsg struct {
 	Seq uint64
@@ -72,10 +104,11 @@ func (m Model) setVisibleRepoFetchSummaryStatus(text string) Model {
 	m = m.setStatusNow(statusVisibleRepoFetchSummary, text)
 	seq := m.status.Seq
 	timer := m.currentStatusTimer()
+	timings := m.statusTimings()
 	return m.queueStatusCmds(
-		timer.Fade(seq, 1, time.Second),
-		timer.Fade(seq, 2, 2*time.Second),
-		timer.Expire(seq, statusLifetime),
+		timer.Fade(seq, 1, timings.FadeStep1),
+		timer.Fade(seq, 2, timings.FadeStep2),
+		timer.Expire(seq, timings.Lifetime),
 	)
 }
 
@@ -153,11 +186,11 @@ func (m Model) setRankedAutoAdvanceStatus(rank autoAdvanceStatusRank, text strin
 	}
 	m = m.setStatusNow(statusFlowAutoAdvance, text)
 	m.status.AutoRank = rank
-	return m, m.currentStatusTimer().Expire(m.status.Seq, statusLifetime)
+	return m, m.currentStatusTimer().Expire(m.status.Seq, m.statusTimings().Lifetime)
 }
 
 func (m Model) queueStatusExpiry(seq uint64) Model {
-	return m.queueStatusCmds(m.currentStatusTimer().Expire(seq, statusLifetime))
+	return m.queueStatusCmds(m.currentStatusTimer().Expire(seq, m.statusTimings().Lifetime))
 }
 
 func (m Model) queueStatusCmds(cmds ...tea.Cmd) Model {

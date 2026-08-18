@@ -416,7 +416,7 @@ func TestRunTmuxSpawnRunnerHelper(t *testing.T) {
 		}
 		os.Exit(0)
 	}
-	if err := RunLeaseRunner(args, nil, io.Discard, io.Discard); err != nil {
+	if err := RunLeaseRunner(args, nil, io.Discard, io.Discard, nil); err != nil {
 		os.Exit(3)
 	}
 	os.Exit(0)
@@ -463,7 +463,7 @@ func TestRunnerHoldsLeaseUntilAgentExits(t *testing.T) {
 		t.Fatalf("LeaseRunArgv() error = %v", err)
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard) }()
+	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, nil) }()
 
 	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
 		t.Fatalf("wait ready error = %v", err)
@@ -564,7 +564,7 @@ func TestLeaseRunnerStartFailureIsPublishedToParent(t *testing.T) {
 		t.Fatalf("LeaseRunArgv() error = %v", err)
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard) }()
+	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, nil) }()
 	if _, err := waitForRecordOrFailure(attempt, recordReady, spec.DecisionDeadline); err != nil {
 		t.Fatalf("wait ready error = %v", err)
 	}
@@ -600,7 +600,7 @@ func TestLeaseRunnerAcquireFailureIsPublishedBeforeReady(t *testing.T) {
 		t.Fatalf("LeaseRunArgv() error = %v", err)
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard) }()
+	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, nil) }()
 	if _, err := waitForRecordOrFailure(attempt, recordReady, spec.DecisionDeadline); err == nil ||
 		!strings.Contains(err.Error(), "acquire tracked Flow lease") {
 		t.Fatalf("parent failure = %v, want lease-acquisition diagnostic before ready", err)
@@ -626,7 +626,7 @@ func TestDuplicateLeaseRunnerDoesNotPublishSharedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LeaseRunArgv() error = %v", err)
 	}
-	err = RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard)
+	err = RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "duplicate Flow lease runner claim") {
 		t.Fatalf("RunLeaseRunner() error = %v, want duplicate claim rejection", err)
 	}
@@ -722,7 +722,7 @@ func TestRunnerAbortNeverStartsAgent(t *testing.T) {
 		t.Fatalf("LeaseRunArgv() error = %v", err)
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard) }()
+	go func() { errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, nil) }()
 	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
 		t.Fatalf("wait ready error = %v", err)
 	}
@@ -912,4 +912,83 @@ func waitForPath(t *testing.T, path string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", path)
+}
+
+func TestLeaseRunnerReportsExitExactlyOnceAfterAgentEnds(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	argv, err := LeaseRunArgv("/absolute/approach", spec, []string{"/bin/sh", "-c", "exit 7"})
+	if err != nil {
+		t.Fatalf("LeaseRunArgv() error = %v", err)
+	}
+	exits := make(chan LaunchExit, 4)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, func(exit LaunchExit) {
+			// The lease is still held while the exit is reported.
+			if state, err := Inspect(spec.Root, spec.FlowID); err != nil || state != Held {
+				t.Errorf("Inspect(onExit) = %v, %v, want Held", state, err)
+			}
+			exits <- exit
+		})
+	}()
+	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
+		t.Fatalf("wait ready error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordDecision, decisionCommit); err != nil {
+		t.Fatalf("publish commit error = %v", err)
+	}
+	err = <-errCh
+	var processExit ProcessExitError
+	if !errors.As(err, &processExit) || processExit.Code != 7 {
+		t.Fatalf("RunLeaseRunner() error = %v, want exit status 7", err)
+	}
+	select {
+	case exit := <-exits:
+		if exit.Code != 7 || exit.Signaled || exit.LaunchID != spec.LaunchID || exit.FlowID != spec.FlowID || exit.PhaseID != spec.PhaseID || exit.Root != spec.Root || exit.EndedAt.IsZero() {
+			t.Fatalf("LaunchExit = %#v", exit)
+		}
+	default:
+		t.Fatal("onExit was not called")
+	}
+	select {
+	case exit := <-exits:
+		t.Fatalf("onExit called twice: %#v", exit)
+	default:
+	}
+	_ = cleanupHandoff(attempt)
+}
+
+func TestLeaseRunnerDoesNotReportExitWhenAbortedBeforeStart(t *testing.T) {
+	spec := testPrivateSpec(t)
+	attempt := spec.attempt()
+	if err := createHandoff(attempt); err != nil {
+		t.Fatalf("createHandoff() error = %v", err)
+	}
+	argv, err := LeaseRunArgv("/absolute/approach", spec, []string{"/bin/sh", "-c", "exit 0"})
+	if err != nil {
+		t.Fatalf("LeaseRunArgv() error = %v", err)
+	}
+	called := make(chan struct{}, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, func(LaunchExit) { called <- struct{}{} })
+	}()
+	if _, err := waitForRecord(attempt, recordReady, spec.DecisionDeadline); err != nil {
+		t.Fatalf("wait ready error = %v", err)
+	}
+	if err := publishHandoffRecord(attempt, recordDecision, decisionAbort); err != nil {
+		t.Fatalf("publish abort error = %v", err)
+	}
+	if err := <-errCh; err == nil {
+		t.Fatal("RunLeaseRunner(abort) error = nil, want error")
+	}
+	select {
+	case <-called:
+		t.Fatal("onExit called for a runner that never started its agent")
+	default:
+	}
 }
