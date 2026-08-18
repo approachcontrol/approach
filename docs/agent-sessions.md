@@ -234,7 +234,9 @@ recovery command: `approach flow phase set --flow-id <id> --phase-id <id>
 relaunching keeps that launch as the latest one, so a later stale replay will
 demote it again — loud over silent. Launch directories with nothing pending
 are retired 14 days after their last state change; a directory with a pending
-request or a held lock is never removed. Two TUIs on one root: the second
+request or a held lock is never removed, and neither is one whose launch is
+still the latest launch of a running phase — its agent's next result
+authenticates with the registration retirement would drop. Two TUIs on one root: the second
 finds the socket owned and runs without an endpoint, so its launches take the
 direct path.
 

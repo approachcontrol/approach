@@ -2,6 +2,8 @@ package launchcontrol
 
 import (
 	"time"
+
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 const (
@@ -18,9 +20,11 @@ const (
 )
 
 // Retain deletes launch directories with no pending request whose retention
-// age is older than RetentionAge. Age is checked before any lock is taken;
-// a directory whose lock is held is left alone. Retired launches also lose
-// their in-memory registration.
+// age is older than RetentionAge and whose launch no longer owns a running
+// phase — a launch that does may still have an agent, and its next result
+// authenticates with the registration retirement would drop. Age is checked
+// before any lock is taken; a directory whose lock is held is left alone.
+// Retired launches also lose their in-memory registration.
 func (c *Controller) Retain() (int, error) {
 	now := c.now()
 	c.mu.Lock()
@@ -42,6 +46,9 @@ func (c *Controller) Retain() (int, error) {
 		}
 		pending, err := log.Pending()
 		if err != nil || len(pending) > 0 {
+			continue
+		}
+		if c.ownsRunningPhase(log) {
 			continue
 		}
 		lock := c.launchLock(id)
@@ -66,4 +73,22 @@ func (c *Controller) Retain() (int, error) {
 		lock.Unlock()
 	}
 	return retired, nil
+}
+
+// ownsRunningPhase reports whether the launch is the latest launch of a phase
+// that is still running. An unreadable launch.json, Flow, or phase means no.
+func (c *Controller) ownsRunningPhase(log *Log) bool {
+	info, ok, err := log.Launch()
+	if err != nil || !ok || info.FlowID == "" || info.PhaseID == "" {
+		return false
+	}
+	record, err := c.store.Read(info.FlowID)
+	if err != nil {
+		return false
+	}
+	phase, ok := PhaseByID(record, info.PhaseID)
+	if !ok {
+		return false
+	}
+	return phase.Status == flowstore.PhaseRunning && flowstore.LatestPhaseLaunchID(phase) == log.LaunchID()
 }

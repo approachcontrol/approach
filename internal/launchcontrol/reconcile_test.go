@@ -373,3 +373,46 @@ func TestSweepProbesLivenessOnlyForRunningPhasesItOwns(t *testing.T) {
 		t.Fatalf("probed = %v, want only the launch that owns a running phase", probed)
 	}
 }
+
+// A launch that still owns a running phase is not retired however old its
+// directory is: retiring it would drop the registration its agent's next
+// result authenticates with, and a controller refusal is final — the CLI
+// would not fall back. Once the phase has moved on, the launch retires.
+func TestRetainKeepsLaunchesThatStillOwnARunningPhase(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Long Running")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	c := newTestController(t, store, root)
+	if _, err := c.Register(Registration{FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-20 * 24 * time.Hour)
+	log, _ := OpenLog(root, "launch-1")
+	for _, name := range []string{"launch.json", "baseline.json"} {
+		if err := os.Chtimes(filepath.Join(log.Dir(), name), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	retired, err := c.Retain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 0 || !log.Exists() {
+		t.Fatalf("retired = %d, exists = %v; a launch owning a running phase was retired", retired, log.Exists())
+	}
+	c.mu.Lock()
+	_, registered := c.registrations["launch-1"]
+	c.mu.Unlock()
+	if !registered {
+		t.Fatal("registration dropped for a launch owning a running phase")
+	}
+	completePhase(t, store, created.FlowID, "plan", "")
+	// Completing bumps nothing in the launch directory; the age still holds.
+	retired, err = c.Retain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 1 || log.Exists() {
+		t.Fatalf("retired = %d, exists = %v; a finished launch was kept", retired, log.Exists())
+	}
+}
