@@ -363,3 +363,62 @@ func TestProgressionCreateRefusesASupersededAdvanceAndReleasesAdmission(t *testi
 			next.flowPreparationOwner, next.activeEpicProgressionHalt)
 	}
 }
+
+// TestProgressionCreateSurfacesBeadSlotRefusalAndHalts covers the residual race
+// the selection filter cannot close: another process commits a Flow for the
+// selected child between the advance's listFlows snapshot and this create. The
+// store refuses, and because a refusal writes nothing there is no record, no
+// worktree and no receipt to recover — so the pre-write exit runs, naming the
+// Flow that holds the Bead, and halts the epic exactly as every other pre-write
+// create failure does. A halt is the bounded outcome: it is visible, it names
+// the cause, and re-enabling is one key away.
+func TestProgressionCreateSurfacesBeadSlotRefusalAndHalts(t *testing.T) {
+	winner := flowstore.FlowRecord{
+		FlowID: "20260816T025735Z-winner",
+		Bead:   flowstore.BeadLink{ID: progressionLaunchChild},
+		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseNeedsAttention}},
+	}
+	fixture, m := newProgressionLaunchFixture(t, flowstore.EpicProgressionSuccessorAccepted, nil)
+	h := fixture.harness
+	h.createErr = &flowstore.BeadFlowActiveError{
+		RepoPath: progressionLaunchRepo, BeadID: progressionLaunchChild, Existing: winner,
+	}
+
+	m, cmd := fixture.admit(t, m)
+	m = drainProgressionLaunch(t, m, cmd)
+
+	want := conflictStatus(winner, true)
+	if m.status.Text != want {
+		t.Fatalf("status = %q, want the named conflict %q", m.status.Text, want)
+	}
+	if !strings.Contains(m.status.Text, winner.FlowID) {
+		t.Fatalf("status %q does not name the Flow holding the Bead", m.status.Text)
+	}
+	// Nothing was written, so nothing may have been provisioned or reconciled.
+	for _, step := range h.order {
+		if step == "worktree" || strings.HasPrefix(step, "reconcile:") {
+			t.Fatalf("refused create provisioned or reconciled: %#v", h.order)
+		}
+	}
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("refused create mutated phases: %#v", h.phaseUpdates)
+	}
+	if fixture.halted != 1 {
+		t.Fatalf("refused create halted %d times, want exactly one durable halt: %#v", fixture.halted, fixture.updates)
+	}
+	if fixture.updates[0].Halt.ChildBeadID != progressionLaunchChild {
+		t.Fatalf("halt names child %q, want %q", fixture.updates[0].Halt.ChildBeadID, progressionLaunchChild)
+	}
+	if !strings.Contains(fixture.updates[0].Halt.Message, winner.FlowID) {
+		t.Fatalf("halt message %q does not name the Flow holding the Bead", fixture.updates[0].Halt.Message)
+	}
+	// The advance must not keep the epic pinned: a refusal that leaked the
+	// admission would wedge every later poll behind a create that never ran.
+	if m.activeEpicProgressionAdvance.Request != 0 || m.flowPreparationAdmission {
+		t.Fatalf("refused create retained runtime state: active=%#v admission=%t",
+			m.activeEpicProgressionAdvance, m.flowPreparationAdmission)
+	}
+	if len(m.epicProgressionOwnedSuccessors) != 0 {
+		t.Fatalf("owned successors = %#v, want none; adopting the winner livelocks reconciliation", m.epicProgressionOwnedSuccessors)
+	}
+}

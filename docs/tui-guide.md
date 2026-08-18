@@ -104,8 +104,8 @@ title, and assignee; repo filtering remains available from the left pane.
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR from any Flow surface when PR metadata exists |
 | `u` | Unlock a locked worktree (worktrees view) |
-| `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview |
-| `F` | Create and immediately start the selected Bead's Flow in a focused, settled Ready subview; pull with `--ff-only` outside that owned Ready selection (including eligible worktrees and checked-out branches) |
+| `f` | Fetch with `--prune` (worktrees and branches views), or create a parked Flow with its worktree for the selected Bead in a settled Ready subview — refused when that Bead already has a non-terminal Flow |
+| `F` | Create and immediately start the selected Bead's Flow in a focused, settled Ready subview, refused when that Bead already has a non-terminal Flow; pull with `--ff-only` outside that owned Ready selection (including eligible worktrees and checked-out branches) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `T` | Attach an external terminal to the selected repo's Approach tmux session (tmux mode only); reports an error when no session exists |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID on a Flow surface |
@@ -672,6 +672,23 @@ headless setting. Its creation-time launch is strictly embedded, even when
 `[launch].backend = "tmux"`; no external launch fallback bypasses lifecycle
 ownership. Neither action invokes `bd`, calls `bd show`, claims the issue, or
 otherwise changes tracker state.
+
+Both keys are refused when the selected Bead already has a non-terminal Flow in
+the same repository. The store enforces this inside the creation transaction, so
+a second TUI, the CLI, or a retry cannot slip past it. Only `closed`,
+`abandoned`, `merged`, and `completed` Flows release the Bead; a `blocked` or
+`needs_attention` Flow deliberately keeps holding it, because that is where a
+human is meant to intervene rather than fork a second Flow. On refusal nothing is
+created — no record, no worktree, no branch — and the status bar names the
+existing Flow and its derived status, for example `Bead approach-cwk already has
+a needs attention flow 20260816T025735Z-approach-cwk: close it from the Flows
+view with C`. Closing that Flow with `C` on a Flow surface releases the Bead, and
+`f`/`F` then succeed. Note that a Ready-Bead Flow whose preparation failed
+derives `blocked` and still holds its Bead, so repairing or closing it is the way
+forward rather than pressing the key again. If a stored Flow claims the Bead but
+its record cannot be read at all — for example one written by a newer version of
+Approach — the keys are refused too, and the status bar names that Flow and the
+decode failure instead of a derived status.
 
 The two keys share one Ready admission token. Repeated or mixed presses cannot
 create duplicate Flows. A repository change — cursor move or rescan —

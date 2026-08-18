@@ -221,10 +221,32 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 				direct[id] = struct{}{}
 			}
 		}
-		exactLinked := make(map[string]struct{})
+		// This filter must agree with the store's creation guard in every
+		// dimension the guard uses — repository, TRIMMED Bead ID, and slot
+		// occupancy — or a child the filter selects gets refused by the guard
+		// on every pass. Selection sets no backoff and nothing here sets Halt,
+		// so a disagreement is an unbounded 1 Hz select-create-refuse loop
+		// rather than a cosmetic mismatch.
+		//
+		// Hence flowstore.BeadFlowSlotOccupied itself rather than a
+		// hand-rolled status test: a child whose only Flow is closed or merged
+		// is still selected, and the guard still permits the create. The epic
+		// disjunct preserves today's behaviour for a child whose epic-linked
+		// Flow has since completed — progression treats that child as done,
+		// and this fix is not the place to revisit that.
+		//
+		// A refusal that still gets through is a genuine race: another process
+		// committed the Flow between listFlows and the create. It surfaces in
+		// the shared launch-create pipeline, which names it, and the next
+		// pass's snapshot contains the winner, so this filter skips the child
+		// and selection moves on (or the exhausted path fires).
+		linkedChildren := make(map[string]struct{})
 		for _, flow := range flows {
-			if filepath.Clean(flow.RepoPath) == repoPath && flow.Bead.EpicID == epicID && flow.Bead.ID != "" {
-				exactLinked[flow.Bead.ID] = struct{}{}
+			if filepath.Clean(flow.RepoPath) != repoPath || strings.TrimSpace(flow.Bead.ID) == "" {
+				continue
+			}
+			if flow.Bead.EpicID == epicID || flowstore.BeadFlowSlotOccupied(flow) {
+				linkedChildren[strings.TrimSpace(flow.Bead.ID)] = struct{}{}
 			}
 		}
 		intersection, linked := 0, 0
@@ -234,7 +256,7 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 				continue
 			}
 			intersection++
-			if _, ok := exactLinked[childID]; ok {
+			if _, ok := linkedChildren[childID]; ok {
 				linked++
 				continue
 			}
@@ -243,6 +265,16 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			break
 		}
 		if candidate.ChildID == "" {
+			// A child held by a Flow under another epic counts as exhausted
+			// rather than retryable, deliberately. Progression already
+			// terminates whenever no ready child is available to it — a
+			// blocked child reaches this branch the same way — and the
+			// alternative is an unbounded poll: nothing here sets a backoff,
+			// so a manual Flow left open on a child would keep this closure
+			// shelling out to `bd` every advance tick for as long as it lives.
+			// Termination is visible (the status below says so) and
+			// re-enabling auto-progression is one key away, whereas the poll
+			// has no exit the user can see.
 			status := fmt.Sprintf("Auto-progression complete for epic %s; no ready children remain", epicID)
 			if intersection > 0 && linked == intersection {
 				status = fmt.Sprintf("Auto-progression complete for epic %s; every ready child already has a Flow", epicID)
@@ -696,6 +728,24 @@ func (m Model) enableEpicProgressionCmd(target beadExpansionTarget, projection u
 			if siblingMarkerDetail != "" {
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
 					status: siblingMarkerDetail}
+			}
+			// The pre-check above matches flow.Bead == link exactly, so a Flow
+			// for this Bead under a different (or empty) epic slips past it and
+			// reaches the guard. A newer-schema row for the same Bead can also
+			// land between listFlows and create. Without this branch either
+			// refusal would surface through the !claimAttempted arm as a
+			// Bead-admission message — AfterFlowPersisted never runs on a
+			// guard refusal — which describes the wrong failure. Enabling
+			// still declines; the user is just told why. The unreadable
+			// variant names no decodable Flow, so it surfaces the store's own
+			// text, which already names the row to repair.
+			if flowstore.IsBeadFlowRefusal(createErr) {
+				status := createErr.Error()
+				if existing, conflict := flowstore.ActiveBeadFlow(createErr); conflict {
+					status = conflictStatus(existing, false)
+				}
+				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,
+					status: status}
 			}
 			if claimErr != nil {
 				return epicProgressionToggleResultMsg{target: target, flow: flow, known: true, baselineDisposition: epicProgressionBaselineRemove,

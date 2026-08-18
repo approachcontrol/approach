@@ -2212,8 +2212,18 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 	if errText == "" {
 		errText = "Unable to create flow"
 	}
-	if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
-		errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
+	// A Bead-slot refusal creates nothing, so it must not be reported as a Flow
+	// that "was created, but preparation failed".
+	switch {
+	case strings.TrimSpace(msg.ExistingFlow.FlowID) != "":
+		errText = conflictStatus(msg.ExistingFlow, true)
+	case msg.Refused:
+		// The unreadable-row refusal names no decodable Flow, so the store's
+		// own text stands: it already names the row a human must repair.
+	default:
+		if flowID := strings.TrimSpace(msg.FlowID); flowID != "" {
+			errText = fmt.Sprintf("Flow %s was created, but preparation failed: %s", flowID, errText)
+		}
 	}
 	m = m.setStatus(statusOther, errText)
 	if m.flowRefreshSurfaceVisible() {

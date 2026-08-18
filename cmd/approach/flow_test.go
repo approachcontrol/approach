@@ -458,7 +458,10 @@ func TestRunFlowReadPrintsExactBeadLinkStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	records := make([]flowstore.FlowRecord, 0, 3)
-	for _, tt := range []struct {
+	// Each case gets its own repository: the two linked cases share Bead ID
+	// "child", and a Bead may hold only one non-terminal Flow per repository.
+	// The rendering under test does not depend on them sharing one.
+	for i, tt := range []struct {
 		title string
 		bead  flowstore.BeadLink
 	}{
@@ -467,7 +470,7 @@ func TestRunFlowReadPrintsExactBeadLinkStates(t *testing.T) {
 		{title: "Unlinked"},
 	} {
 		record, err := store.Create(flowstore.FlowRecord{
-			Title: tt.title, Instructions: "Read the Bead link.", RepoPath: filepath.Join(root, "repo"), Bead: tt.bead,
+			Title: tt.title, Instructions: "Read the Bead link.", RepoPath: filepath.Join(root, fmt.Sprintf("repo-%d", i)), Bead: tt.bead,
 		})
 		if err != nil {
 			t.Fatal(err)
