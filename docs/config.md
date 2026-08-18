@@ -35,7 +35,7 @@ exist:
 | Flow phase graph preset | `approach flow create --preset` | `[flow].preset` | `default` |
 | TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1`; a development build substitutes `approach-dev` (see [`[sessions]`](#sessions)) |
 | Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
-| Plan state root | `--state-root` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
+| Plan state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
 | Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/approach.db`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
@@ -338,7 +338,8 @@ agent, which is what the built-in prompts use; a literal `approach` resolves
 from the agent's ambient `PATH` instead and can be a different build from the
 one that owns the Flow database. On a launch that carries no pin it expands to
 the same self-resolving `"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}"`
-form the bundled skills use, so a template written this way works either way.
+form documented by the unified skill, so a template written this way works
+either way.
 
 ### `[flow]`
 
@@ -424,15 +425,16 @@ documented in `docs/tui-guide.md`, and the edit action's editor selection in
 
 ```bash
 # Save or update (reuse --plan-id) a plan; Markdown comes from --file or stdin.
-# Prints only the plan_id.
+# Prints only the plan_id unless --json is supplied.
 printf '%s' "$PLAN_MD" | approach plan save --title "Persist plans" [--plan-id ID] \
     [--summary TEXT] [--status STATUS] [--source SOURCE] [--provider PROVIDER] \
     [--session-id ID] [--launch-id ID] [--repo-path PATH] [--worktree-path PATH] \
-    [--branch BRANCH] [--commit HASH] [--file PATH] [--state-root PATH]
+    [--branch BRANCH] [--commit HASH] [--file PATH] [--json] [--state-root PATH]
 
+approach plan status set --plan-id ID --status STATUS [--state-root PATH]
 approach plan phase set --plan-id ID --phase-id ID --title TITLE --status STATUS [--order N] [--state-root PATH]
 approach plan list [--repo-path PATH] [--state-root PATH] --json   # --json required in v1
-approach plan read --plan-id ID [--state-root PATH]                # prints Markdown only
+approach plan read --plan-id ID [--json] [--state-root PATH]
 ```
 
 Plan statuses: `draft`, `approved`, `in_progress`, `completed`, `blocked`,
@@ -449,17 +451,17 @@ updates `status`, `source`, `summary`, and repo/session metadata only when
 supplied; otherwise it preserves the stored values, `created_at`, and recorded
 phases. A body-only re-save keeps the existing status.
 
-The plan state root is resolved as: `--state-root` > `APPROACH_PLAN_STATE_ROOT` >
-`APPROACH_SESSION_STATE_ROOT` > `[sessions].root` > the user state default. The
+The plan state root is resolved as: `--state-root` > `APPROACH_FLOW_STATE_ROOT` >
+`APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` > `[sessions].root` > the user state default. The
 `approach plan` commands may load config to resolve the root but never scan repos or
 start the TUI. Omitted metadata is filled from `APPROACH_AGENT` (provider),
 `APPROACH_LAUNCH_ID`, `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and
 `APPROACH_COMMIT`; for new plans, and for updates that provide a repo or worktree
 location, Approach also resolves best-effort repo, worktree, branch, and commit
-metadata from git. The `approach-plan-persist`
-skill instructs agents on when and how to save plans; its canonical source
-lives in `agent-skills/approach-plan-persist/` for symlinking into user-level
-Codex/Claude skill directories.
+metadata from git. The unified `approach-flow` skill instructs agents on when
+and how to save plans; its canonical source lives in
+`agent-skills/approach-flow/` for symlinking into user-level Codex/Claude skill
+directories.
 
 ## Flows
 
@@ -662,12 +664,18 @@ and make any manual recovery decision against a preserved copy of
 `approach.db`.
 
 ```bash
-# Create a flow. --repo-path must be absolute, instructions are required, and
-# --json is required in v1.
+# Create a Flow record. --repo-path must be absolute, instructions are required,
+# and --json is required in v1.
 approach flow create --title "Ship saved plans" \
     --instructions "Plan, implement, review, open a PR, and merge." \
     --repo-path "$REPO" [--worktree-path PATH] [--branch BRANCH] \
     [--base-ref REF] [--commit HASH] [--preset NAME] [--state-root PATH] --json
+
+# Create and prepare a dedicated Flow worktree through the same lifecycle as the
+# TUI. When --repo-path is omitted, the current checkout's main worktree is used.
+approach flow create --title "Ship saved plans" \
+    --instructions-file ./instructions.md --prepare-worktree \
+    [--repo-path "$REPO"] [--base-ref REF] [--preset NAME] [--state-root PATH] --json
 
 # You may also read instructions from a file.
 approach flow create --title "Ship saved plans" \
@@ -688,11 +696,26 @@ approach flow phase set --flow-id ID --phase-id ID --status STATUS \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 approach flow phase add-child --flow-id ID --parent-phase-id implementation \
     --phase-id ID --title TITLE --order N [--state-root PATH]
+approach flow plan save --flow-id ID [--plan-id ID] [--title TITLE] \
+    [--status STATUS] [--summary TEXT] [--file PATH] [--state-root PATH]
 approach flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
 approach flow issue set --flow-id ID --provider github --number N --url URL [--state-root PATH]
 approach flow pr set --flow-id ID --provider github --number N --url URL \
     --head HEAD_BRANCH --base BASE_BRANCH [--status STATUS] [--state-root PATH]
 ```
+
+Inside an Approach launch, Flow commands default `--flow-id` and `--phase-id`
+from `APPROACH_FLOW_ID` and `APPROACH_FLOW_PHASE_ID`; plan commands default
+`--plan-id` from `APPROACH_PLAN_ID`, and plan phase updates prefer
+`APPROACH_PLAN_PHASE_ID` before falling back to the Flow phase. The explicit
+flags above remain available for ad hoc commands and cross-Flow updates.
+`approach flow plan save` reads Markdown from `--file` or stdin, saves and
+reads back the plan, seeds any missing top-level implementation phases without
+regressing existing progress, links the plan to the Flow, and prints JSON. It
+does not complete the Flow's Plan phase; phase progression remains an explicit
+`approach flow phase ...` operation. If the plan persists but the later Flow
+link fails, the command's error names the saved plan ID and path so the caller
+can inspect or link that partial result safely.
 
 Transitioning a Flow phase to `completed` also syncs a linked saved-plan phase
 with the same normalized phase ID; the sync and failure semantics are
@@ -769,29 +792,20 @@ The flow state root is resolved as: `--state-root` >
 `APPROACH_FLOW_STATE_ROOT` has highest precedence for the shared artifact root; if
 it is set, the TUI reads sessions, plans, and flows from that root.
 
-The canonical provider-agnostic Flow phase skill lives at
-`agent-skills/approach-flow/`, beside `agent-skills/approach-plan-persist/`. The
-companion creation skill lives at `agent-skills/approach-flow-create/`. Install or
-symlink both `approach-flow` and `approach-flow-create` into the user-level skill
-directory for supported agents such as Codex or Claude; for Codex, typical
-targets are `~/.codex/skills/approach-flow` and
-`~/.codex/skills/approach-flow-create`, though Codex also reads the shared
-`~/.agents/skills` directory. `agent-skills/install.sh` performs that
-installation for all three skills, defaulting to whichever of
-`~/.claude/skills` and `~/.agents/skills` has an existing agent home; use
-`--target DIR` for any other location such as `~/.codex/skills`. It also
-supports `--copy`, `--dry-run`, and `--force`. It replaces stale symlinks — including ones left dangling by a moved
-checkout — but skips real directories unless `--force` is given.
-`approach-flow` activates when `APPROACH_FLOW_ID`
-and `APPROACH_FLOW_PHASE_ID` are present, reads the active flow with
-`approach flow read --flow-id "$APPROACH_FLOW_ID"`, and documents the implemented
-`approach flow` / `approach plan` commands for phase persistence and saved-plan linkage.
-`approach-flow-create` is for ad hoc sessions where the user asks to create a Flow
-from the current task or an already-written plan. It creates the Flow, can save
-and link an imported plan, and reports persistence failures explicitly. In v1,
-the imported ad hoc session itself is not attached to the Flow; the created
-Flow and linked plan are persisted artifacts, and future phase launches or
-resumes are tracked normally.
+The canonical provider-agnostic skill lives at `agent-skills/approach-flow/`.
+It routes active phase work, ad hoc Flow creation, and standalone plan
+persistence to focused references in the same package. Install or symlink the
+single `approach-flow` skill into the user-level skill directory for supported
+agents such as Codex or Claude; for Codex, a typical target is
+`~/.codex/skills/approach-flow`, though Codex also reads the shared
+`~/.agents/skills` directory. Symlink `agent-skills/approach-flow/` into the
+chosen directory to track the checkout, or copy it for a detached installation.
+`approach-flow` activates for launched phase/plan context and for ad hoc
+requests to create a Flow or persist a plan. Launch-aware CLI defaults let the
+skill use `approach flow read`, `approach flow plan save`, and plan lifecycle
+commands without repeating IDs or root flags. In v1, an imported ad hoc session
+itself is not attached to the Flow; the created Flow and linked plan are
+persisted artifacts, and future phase launches or resumes are tracked normally.
 
 ### `[bootstrap]`
 

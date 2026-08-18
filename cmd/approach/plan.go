@@ -21,7 +21,7 @@ func runPlan(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: approach plan <save|list|read|phase> [flags]")
+		return fmt.Errorf("usage: approach plan <save|list|read|status|phase> [flags]")
 	}
 	switch args[2] {
 	case "save":
@@ -30,10 +30,12 @@ func runPlan(args []string, deps runDeps) error {
 		return runPlanList(args[3:], deps)
 	case "read":
 		return runPlanRead(args[3:], deps)
+	case "status":
+		return runPlanStatus(args[3:], deps)
 	case "phase":
 		return runPlanPhase(args[3:], deps)
 	default:
-		return unknownCommandError(args[2], []string{"save", "list", "read", "phase"}, planHelpText)
+		return unknownCommandError(args[2], []string{"save", "list", "read", "status", "phase"}, planHelpText)
 	}
 }
 
@@ -41,20 +43,22 @@ func printPlanHelp(w io.Writer) {
 	io.WriteString(w, planHelpText)
 }
 
-const planHelpText = `Usage: approach plan <save|list|read|phase> [flags]
+const planHelpText = `Usage: approach plan <save|list|read|status|phase> [flags]
 
 Persist saved plan artifacts under the approach agent-artifact root.
 
 Commands:
-  save       Save or update a Markdown plan; prints only the plan id.
+  save       Save or update a Markdown plan; optionally prints JSON.
   list       List saved plans as JSON.
-  read       Print a saved plan's Markdown.
+  read       Print a saved plan's Markdown or JSON.
+  status set Update only a saved plan's lifecycle status.
   phase set  Create or update a saved-plan phase row.
 
 Examples:
   printf '%s' "$PLAN_MD" | approach plan save --title "Persist plans" --status draft
   approach plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
   approach plan read --plan-id "$PLAN_ID"
+  approach plan status set --plan-id "$PLAN_ID" --status in_progress
   approach plan list --repo-path "$REPO" --json
   approach plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
 
@@ -63,11 +67,15 @@ Most commands accept:
 `
 
 // resolvePlanRoot applies the documented precedence:
-// --state-root > APPROACH_PLAN_STATE_ROOT > APPROACH_SESSION_STATE_ROOT >
+// --state-root > APPROACH_FLOW_STATE_ROOT > APPROACH_PLAN_STATE_ROOT >
+// APPROACH_SESSION_STATE_ROOT >
 // [sessions].root from config > planstore.DefaultRoot() (resolved by NewStore).
 func resolvePlanRoot(stateRoot string, deps runDeps) (string, error) {
 	if stateRoot != "" {
 		return stateRoot, nil
+	}
+	if root := deps.getenv("APPROACH_FLOW_STATE_ROOT"); root != "" {
+		return root, nil
 	}
 	if root := deps.getenv("APPROACH_PLAN_STATE_ROOT"); root != "" {
 		return root, nil
@@ -90,13 +98,19 @@ func newPlanStore(stateRoot string, deps runDeps) (*planstore.Store, error) {
 	return planstore.NewStore(planstore.StoreOptions{Root: root})
 }
 
+type planCommandResult struct {
+	planstore.PlanRecord
+	PlanPath string `json:"plan_path"`
+	Markdown string `json:"markdown,omitempty"`
+}
+
 func runPlanSave(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("plan save", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printPlanSaveHelp(deps.stdout) }
 	title := flags.String("title", "", "plan title")
 	summary := flags.String("summary", "", "plan summary")
-	planID := flags.String("plan-id", "", "reuse an existing plan id")
+	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "reuse an existing plan id")
 	status := flags.String("status", "", "plan status")
 	source := flags.String("source", "", "plan source")
 	provider := flags.String("provider", "", "agent provider")
@@ -108,6 +122,7 @@ func runPlanSave(args []string, deps runDeps) error {
 	commit := flags.String("commit", "", "commit hash")
 	file := flags.String("file", "", "read markdown from file instead of stdin")
 	stateRoot := flags.String("state-root", "", "artifact state root")
+	asJSON := flags.Bool("json", false, "emit JSON output")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		if help {
 			return nil
@@ -150,6 +165,26 @@ func runPlanSave(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	if *asJSON {
+		metadata, err := store.ReadMetadata(savedID)
+		if err != nil {
+			return err
+		}
+		root, err := resolvePlanRoot(*stateRoot, deps)
+		if err != nil {
+			return err
+		}
+		planPath, err := planstore.MarkdownPath(root, savedID)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(planCommandResult{PlanRecord: metadata, PlanPath: planPath})
+		if err != nil {
+			return fmt.Errorf("encode saved plan: %w", err)
+		}
+		fmt.Fprintln(deps.stdout, string(data))
+		return nil
+	}
 	fmt.Fprintln(deps.stdout, savedID)
 	return nil
 }
@@ -167,6 +202,7 @@ Common flags:
   --status STATUS    Plan status, such as draft.
   --file PATH        Read Markdown from a file.
   --repo-path PATH   Repository path metadata.
+  --json             Print saved plan metadata and plan path as JSON.
   --state-root PATH  Override the artifact state root.
 
 Examples:
@@ -201,6 +237,7 @@ Required flags:
   --plan-id PLAN_ID
 
 Common flags:
+  --json             Print metadata, Markdown, and plan path as JSON.
   --state-root PATH  Override the artifact state root.
 
 Example:
@@ -247,8 +284,9 @@ func runPlanRead(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("plan read", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printPlanReadHelp(deps.stdout) }
-	planID := flags.String("plan-id", "", "plan id")
+	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
 	stateRoot := flags.String("state-root", "", "artifact state root")
+	asJSON := flags.Bool("json", false, "emit JSON output")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
 		if help {
 			return nil
@@ -266,8 +304,83 @@ func runPlanRead(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	if *asJSON {
+		metadata, err := store.ReadMetadata(*planID)
+		if err != nil {
+			return err
+		}
+		root, err := resolvePlanRoot(*stateRoot, deps)
+		if err != nil {
+			return err
+		}
+		planPath, err := planstore.MarkdownPath(root, *planID)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(planCommandResult{PlanRecord: metadata, PlanPath: planPath, Markdown: markdown})
+		if err != nil {
+			return fmt.Errorf("encode plan: %w", err)
+		}
+		fmt.Fprintln(deps.stdout, string(data))
+		return nil
+	}
 	fmt.Fprint(deps.stdout, markdown)
 	return nil
+}
+
+func runPlanStatus(args []string, deps runDeps) error {
+	if len(args) < 1 || args[0] != "set" {
+		return fmt.Errorf("usage: approach plan status set [flags]")
+	}
+	flags := flag.NewFlagSet("plan status set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printPlanStatusSetHelp(deps.stdout) }
+	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
+	status := flags.String("status", "", "plan status")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args[1:]); help || err != nil {
+		return err
+	}
+	if *planID == "" || *status == "" {
+		return fmt.Errorf("plan status set requires --plan-id and --status")
+	}
+	store, err := newPlanStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetStatus(*planID, *status)
+	if err != nil {
+		return err
+	}
+	root, err := resolvePlanRoot(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	planPath, err := planstore.MarkdownPath(root, *planID)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(planCommandResult{PlanRecord: record, PlanPath: planPath})
+	if err != nil {
+		return fmt.Errorf("encode plan: %w", err)
+	}
+	fmt.Fprintln(deps.stdout, string(data))
+	return nil
+}
+
+func printPlanStatusSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: approach plan status set [flags]
+
+Update only a saved plan's lifecycle status. The plan id defaults from
+APPROACH_PLAN_ID when launched by Approach.
+
+Required flags:
+  --plan-id PLAN_ID
+  --status STATUS
+
+Common flags:
+  --state-root PATH
+`)
 }
 
 func runPlanPhase(args []string, deps runDeps) error {
@@ -284,8 +397,8 @@ func runPlanPhase(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("plan phase set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() { printPlanPhaseSetHelp(deps.stdout) }
-	planID := flags.String("plan-id", "", "plan id")
-	phaseID := flags.String("phase-id", "", "phase id")
+	planID := flags.String("plan-id", deps.getenv("APPROACH_PLAN_ID"), "plan id")
+	phaseID := flags.String("phase-id", firstNonEmpty(deps.getenv("APPROACH_PLAN_PHASE_ID"), deps.getenv("APPROACH_FLOW_PHASE_ID")), "phase id")
 	title := flags.String("title", "", "phase title")
 	status := flags.String("status", "", "phase status")
 	order := flags.Int("order", 0, "phase order")

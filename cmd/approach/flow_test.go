@@ -16,6 +16,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/testgit"
 	"github.com/approachcontrol/approach/planstore"
 )
 
@@ -42,6 +43,7 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		"approach flow phase set --flow-id",
 		"approach flow phase agent set --flow-id",
 		"approach flow issue set --flow-id",
+		"approach flow plan save",
 		"approach flow pr set --flow-id",
 		"approach flow merge set --flow-id",
 	})
@@ -225,6 +227,7 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 				"Usage: approach flow create [flags]",
 				"--title TITLE",
 				"--instructions TEXT",
+				"--prepare-worktree",
 			},
 		},
 		{
@@ -271,6 +274,15 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 				"Usage: approach flow plan set [flags]",
 				"--flow-id FLOW_ID",
 				"--plan-id PLAN_ID",
+			},
+		},
+		{
+			name: "plan save",
+			args: []string{"approach", "flow", "plan", "save", "--help"},
+			wants: []string{
+				"Usage: approach flow plan save [flags]",
+				"--flow-id FLOW_ID",
+				"--title TITLE",
 			},
 		},
 		{
@@ -433,6 +445,160 @@ func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 	}
 }
 
+func TestRunFlowCreatePrepareWorktreeUsesSharedPreparationLifecycle(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, repoPath, "init", "-b", "main")
+	testgit.ConfigureRepo(t, repoPath)
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("seed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, repoPath, "add", "README.md")
+	testgit.Run(t, repoPath, "commit", "-m", "seed")
+	baseCommit := testgit.Output(t, repoPath, "rev-parse", "HEAD")
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "create",
+		"--title", "Prepared Flow",
+		"--instructions", "implement it",
+		"--base-ref", "main",
+		"--prepare-worktree",
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		getwd: func() (string, error) { return repoPath, nil },
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Agent: config.AgentConfig{
+				Command:               agent.CommandClaude,
+				ClaudeModel:           agent.ModelClaudeOpus5,
+				ClaudeReasoningEffort: agent.ReasoningEffortHigh,
+			}}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not a Flow record: %v\n%s", err, stdout.String())
+	}
+	wantWorktree := filepath.Join(filepath.Dir(record.RepoPath), "repo-worktrees", "flow-prepared-flow")
+	if record.WorktreePath != wantWorktree || record.Branch != "flow/prepared-flow" || record.BaseRef != "main" || record.Commit != baseCommit || record.PreparedAt == nil {
+		t.Fatalf("prepared Flow = %#v, want verified worktree metadata and preparation receipt", record)
+	}
+	if got := testgit.Output(t, wantWorktree, "branch", "--show-current"); got != record.Branch {
+		t.Fatalf("worktree branch = %q, want %q", got, record.Branch)
+	}
+	wantSettings := flowstore.PhaseAgentSettings{Agent: agent.CommandClaude, Model: agent.ModelClaudeOpus5, ReasoningEffort: agent.ReasoningEffortHigh}
+	for _, phase := range record.Phases {
+		if got := phase.AgentSettings(); got != wantSettings {
+			t.Fatalf("phase %q settings = %#v, want %#v", phase.PhaseID, got, wantSettings)
+		}
+	}
+}
+
+func TestRunFlowCreatePrepareWorktreeCanonicalizesExplicitLinkedWorktreeRepoPath(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	linkedPath := filepath.Join(root, "linked")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, repoPath, "init", "-b", "main")
+	testgit.ConfigureRepo(t, repoPath)
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("seed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, repoPath, "add", "README.md")
+	testgit.Run(t, repoPath, "commit", "-m", "seed")
+	testgit.Run(t, repoPath, "worktree", "add", "-b", "scratch", linkedPath, "main")
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "create",
+		"--title", "Canonical Repo",
+		"--instructions", "use the main worktree identity",
+		"--repo-path", linkedPath,
+		"--prepare-worktree",
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not a Flow record: %v\n%s", err, stdout.String())
+	}
+	wantRepoPath, err := filepath.EvalSymlinks(repoPath)
+	if err != nil {
+		t.Fatalf("resolve expected main worktree: %v", err)
+	}
+	if record.RepoPath != wantRepoPath {
+		t.Fatalf("repo path = %q, want main worktree %q", record.RepoPath, wantRepoPath)
+	}
+	if wantPrefix := filepath.Join(filepath.Dir(wantRepoPath), "repo-worktrees") + string(filepath.Separator); !strings.HasPrefix(record.WorktreePath, wantPrefix) {
+		t.Fatalf("prepared worktree = %q, want prefix %q", record.WorktreePath, wantPrefix)
+	}
+}
+
+func TestRunFlowCreatePrepareWorktreeReportsPersistedFlowOnBootstrapFailure(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(repoPath, ".approach"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, repoPath, "init", "-b", "main")
+	testgit.ConfigureRepo(t, repoPath)
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("seed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, ".approach", "bootstrap"), []byte("#!/bin/sh\nexit 17\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Run(t, repoPath, "add", ".")
+	testgit.Run(t, repoPath, "commit", "-m", "seed")
+
+	err := run([]string{
+		"approach", "flow", "create",
+		"--title", "Bootstrap Failure",
+		"--instructions", "preserve the flow",
+		"--repo-path", repoPath,
+		"--prepare-worktree",
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Bootstrap: config.BootstrapConfig{
+				Hooks: []config.BootstrapHookConfig{{RepoPath: repoPath, Script: ".approach/bootstrap"}},
+			}}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("run returned nil error, want bootstrap failure")
+	}
+
+	flows, listErr := mustFlowStore(t, root).List(flowstore.FlowFilter{})
+	if listErr != nil {
+		t.Fatalf("list persisted Flows: %v", listErr)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("persisted Flows = %d, want 1", len(flows))
+	}
+	if flows[0].Status != flowstore.StatusBlocked {
+		t.Fatalf("persisted Flow status = %q, want blocked", flows[0].Status)
+	}
+	requireContainsAll(t, err.Error(), []string{flows[0].FlowID, "persisted", "blocked", "Bootstrap hook failed"})
+}
+
 func TestRunFlowReadWithExplicitStateRootUsesRequestedRoot(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -448,6 +614,30 @@ func TestRunFlowReadWithExplicitStateRootUsesRequestedRoot(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), created.FlowID) {
 		t.Fatalf("flow read output missing flow ID %q: %s", created.FlowID, stdout.String())
+	}
+}
+
+func TestRunFlowReadDefaultsFlowIDFromLaunchEnvironment(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Launch readable", "--instructions", "read it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	var stdout bytes.Buffer
+	err := run([]string{"approach", "flow", "read", "--state-root", root},
+		noScanDeps(t, runDeps{
+			getenv: func(key string) string {
+				if key == "APPROACH_FLOW_ID" {
+					return created.FlowID
+				}
+				return ""
+			},
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), created.FlowID) {
+		t.Fatalf("flow read output missing launch Flow ID %q: %s", created.FlowID, stdout.String())
 	}
 }
 
@@ -798,6 +988,115 @@ func TestRunFlowPlanSetLinksPlanArtifact(t *testing.T) {
 	if got := read.UpdatedAt.Format(time.RFC3339Nano); got != linkedAt {
 		t.Fatalf("persisted UpdatedAt = %s, want idempotent retry to preserve %s", got, linkedAt)
 	}
+}
+
+func TestRunFlowPlanSavePersistsLinksAndSeedsImplementationPhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{
+		"approach", "flow", "create",
+		"--title", "Save Flow Plan",
+		"--instructions", "plan it",
+		"--repo-path", repoPath,
+		"--json",
+		"--state-root", root,
+	})
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "plan", "save",
+		"--flow-id", created.FlowID,
+		"--title", "Save Flow Plan",
+		"--plan-id", "flow-plan",
+		"--status", "approved",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		stdin:  strings.NewReader("# Save Flow Plan\n"),
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var result flowPlanSaveResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result.FlowID != created.FlowID || result.PlanID != "flow-plan" || !result.Linked || result.PlanPath != filepath.Join(root, "plans", "flow-plan", "plan.md") {
+		t.Fatalf("result = %#v, want saved and linked Flow plan", result)
+	}
+
+	flow, err := mustFlowStore(t, root).Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.PlanID != "flow-plan" || flow.PlanPath != result.PlanPath || phaseByID(flow, "plan").Status != flowstore.PhaseReady {
+		t.Fatalf("flow = %#v, want linked plan without implicit phase completion", flow)
+	}
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := store.ReadMetadata("flow-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdown, err := store.ReadPlan("flow-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Status != "approved" || metadata.RepoPath != repoPath || markdown != "# Save Flow Plan\n" {
+		t.Fatalf("plan metadata = %#v, markdown = %q", metadata, markdown)
+	}
+	if len(metadata.Phases) != 1 || metadata.Phases[0].PhaseID != "implementation" || metadata.Phases[0].Status != "pending" {
+		t.Fatalf("plan phases = %#v, want pending implementation phase", metadata.Phases)
+	}
+}
+
+func TestRunFlowPlanSavePreservesExistingPhaseProgress(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Revise Flow Plan", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	save := func(markdown string) {
+		t.Helper()
+		if err := run([]string{
+			"approach", "flow", "plan", "save",
+			"--flow-id", created.FlowID,
+			"--plan-id", "revised-flow-plan",
+			"--status", "approved",
+			"--state-root", root,
+		}, noScanDeps(t, runDeps{stdin: strings.NewReader(markdown), stdout: &bytes.Buffer{}})); err != nil {
+			t.Fatalf("flow plan save returned error: %v", err)
+		}
+	}
+	save("# First revision\n")
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPhaseStatus("revised-flow-plan", "implementation", "completed"); err != nil {
+		t.Fatal(err)
+	}
+
+	save("# Second revision\n")
+	metadata, err := store.ReadMetadata("revised-flow-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata.Phases) != 1 || metadata.Phases[0].Status != "completed" {
+		t.Fatalf("revised plan phases = %#v, want completed progress preserved", metadata.Phases)
+	}
+}
+
+func TestFlowPlanLinkFailureReportsPersistedPlanForRecovery(t *testing.T) {
+	err := flowPlanLinkFailure("plan-1", "/state/plans/plan-1/plan.md", errors.New("database busy"))
+	requireContainsAll(t, err.Error(), []string{
+		`plan "plan-1" persisted`,
+		`/state/plans/plan-1/plan.md`,
+		"Flow link failed",
+		"database busy",
+	})
 }
 
 func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
@@ -1295,6 +1594,42 @@ func TestRunFlowPhaseActionCompletePrintsNextActionablePhase(t *testing.T) {
 	}
 	if phaseByID(result.Flow, "plan-review").Status != flowstore.PhaseReady {
 		t.Fatalf("embedded flow plan-review = %#v", phaseByID(result.Flow, "plan-review"))
+	}
+}
+
+func TestRunFlowPhaseActionDefaultsIDsFromLaunchEnvironment(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Launch completion", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "phase", "complete",
+		"--summary", "Saved the implementation plan.",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return created.FlowID
+			case "APPROACH_FLOW_PHASE_ID":
+				return "plan"
+			default:
+				return ""
+			}
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.FlowID != created.FlowID || result.UpdatedPhase.PhaseID != "plan" || result.UpdatedPhase.Status != flowstore.PhaseCompleted {
+		t.Fatalf("result = %#v, want launch Flow plan phase completed", result)
 	}
 }
 

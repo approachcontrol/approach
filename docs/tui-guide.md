@@ -550,8 +550,8 @@ are rejected. `enter` still toggles phase rows, and `i` still opens plan
 launch instructions as compatibility aliases.
 
 Plans are persisted explicitly by agents through the `approach plan` CLI rather
-than captured from hooks; the canonical agent instructions are the
-`approach-plan-persist` skill (`agent-skills/approach-plan-persist/SKILL.md`).
+than captured from hooks; the canonical agent instructions are the unified
+`approach-flow` skill (`agent-skills/approach-flow/SKILL.md`).
 Plans share the agent-artifact root with sessions (see
 `docs/agent-sessions.md` for the storage layout); because plans live beside
 sessions, moving or cleaning the sessions root also moves or removes saved
@@ -811,10 +811,10 @@ existing launch-failure persistence and recovery behavior; the Flow remains
 available and the status line shows the failure.
 
 A Flow that has no worktree at all — one created by `approach flow create`
-without `--worktree-path`, or left behind by a failure before the start metadata
-was written — never launches in the repository root. Pressing `g` creates the
-worktree first, announcing it in the status line, and only then starts the
-agent.
+without `--worktree-path` or `--prepare-worktree`, or left behind by a failure
+before the start metadata was written — never launches in the repository root.
+Pressing `g` creates the worktree first, announcing it in the status line, and
+only then starts the agent.
 
 A Flow that records a non-empty worktree path takes a different route: Approach
 inspects that exact path before persisting a phase launch ID or preparing an
@@ -1353,11 +1353,10 @@ semantics, rejection rules, and phase gating are documented in
 
 The TUI can create a new Flow and record a launch for the next launchable
 phase; agents perform all other phase progression through the `approach flow`
-CLI. The canonical agent instructions are the `approach-flow` and
-`approach-flow-create` skills (`agent-skills/approach-flow/SKILL.md`,
-`agent-skills/approach-flow-create/SKILL.md`); phase transitions, derived
-readiness, gating, and merge requirements are documented in
-`docs/flow-phases.md`.
+CLI. The canonical agent instructions are the active-phase, plan, and creation
+references in the unified `approach-flow` skill
+(`agent-skills/approach-flow/SKILL.md`); phase transitions, derived readiness,
+gating, and merge requirements are documented in `docs/flow-phases.md`.
 
 ## Active Flows View (`ctrl+a`)
 
