@@ -784,7 +784,10 @@ after it is created and started in one unattended step.
 Enabled epics advance from the same view-independent 1 Hz Flow poll. When the
 exact in-session baseline Flow is newly observed as `completed` or `merged`,
 Approach creates the next unlinked direct child in fresh `bd ready` order **and
-starts its first phase agent**, as one attempt; it does not claim the Bead. The
+starts its first phase agent**, as one attempt; it does not claim the Bead. It
+does close the merged predecessor's Bead first, when that Flow recorded a real
+merge, which is what releases the claim taken at enablement and lets the
+dependent siblings become ready in time for this same advance. The
 child is created headless with auto mode on, so its later phases drain by
 themselves and the whole chain runs without a key press. The status line reports
 retryable preparation/reconciliation errors, an owned successor that blocks later

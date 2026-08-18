@@ -170,7 +170,7 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 				continue
 			}
 			var cmd tea.Cmd
-			m, cmd = m.startEpicProgressionAdvance(key, baseline)
+			m, cmd = m.startEpicProgressionAdvance(key, baseline, observed)
 			if cmd != nil {
 				m.epicProgressionAdvanceCursor = key
 				return m, cmd

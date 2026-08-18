@@ -70,7 +70,7 @@ it claims a child before preparing that child's new Flow.
 22. As an Approach user, I want bead data fetched asynchronously on group entry and repo-cursor change, so that the UI never blocks on a `bd` subprocess.
 23. As an Approach user, I want stale-result protection on bead fetches, so that moving quickly across repos never shows one repo's beads under another repo's name.
 24. As an Approach user, I want `enter` on a bead to page its full detail (`bd show`) through the pager, so that I can read descriptions and dependencies without leaving the TUI.
-25. As an Approach user, I want Beads queries and manual Flow creation to remain read-only, so that only an explicit epic auto-progression claim mutates tracker state.
+25. As an Approach user, I want Beads queries and manual Flow creation to remain read-only, so that only epic auto-progression mutates tracker state: the claim it takes when enabling, and the `bd close` it records against a child whose Flow merged.
 26. As an Approach user, I want `default_view` numbers 10–14 pinning each beads subview, so that I can start the app directly in any of them, mirroring the git subview numbers.
 27. As an Approach user, I want the frozen `default_view` vocabulary (1–9) untouched, so that existing configs keep their meaning.
 28. As an Approach user, I want a manual way to refetch beads via the app's existing refresh affordance, so that I can pull in changes an agent made without bouncing the repo cursor.

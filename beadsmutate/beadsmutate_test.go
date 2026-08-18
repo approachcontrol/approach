@@ -102,3 +102,88 @@ func TestMutatorClaimWrapsRunnerFailureWithChildIdentity(t *testing.T) {
 		t.Fatalf("Claim() error = %q, want child identity", got)
 	}
 }
+
+func TestMutatorCloseCanonicalizesInputsAndUsesCloseCommand(t *testing.T) {
+	runner := &fakeRunner{}
+	err := beadsmutate.NewMutator(runner).Close("/selected/repo/../repo", "  child-42 \t", " merged as PR #7 ")
+	if err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if runner.calls != 1 || runner.dir != "/selected/repo" {
+		t.Fatalf("runner call = (%d, %q), want (1, %q)", runner.calls, runner.dir, "/selected/repo")
+	}
+	want := []string{"close", "--reason=merged as PR #7", "--", "child-42"}
+	if !reflect.DeepEqual(runner.args, want) {
+		t.Fatalf("runner args = %#v, want %#v", runner.args, want)
+	}
+}
+
+// The reason precedes the -- separator: bd treats everything after -- as
+// positional, so a trailing --reason is parsed as a second issue ID.
+func TestMutatorCloseOmitsBlankReason(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := beadsmutate.NewMutator(runner).Close("/repo", "bead-1", "   "); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if want := []string{"close", "--", "bead-1"}; !reflect.DeepEqual(runner.args, want) {
+		t.Fatalf("runner args = %#v, want %#v", runner.args, want)
+	}
+}
+
+func TestMutatorCloseTreatsFlagShapedIDsAsPositional(t *testing.T) {
+	for _, beadID := range []string{"--help", "--db=/other/db"} {
+		t.Run(beadID, func(t *testing.T) {
+			runner := &fakeRunner{}
+			if err := beadsmutate.NewMutator(runner).Close("/repo", beadID, "why"); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			if got := runner.args[len(runner.args)-2]; got != "--" {
+				t.Fatalf("args[%d] = %q, want %q", len(runner.args)-2, got, "--")
+			}
+		})
+	}
+}
+
+func TestMutatorCloseRejectsBlankInputs(t *testing.T) {
+	runner := &fakeRunner{}
+	for name, tc := range map[string]struct{ repo, bead string }{
+		"blank repo":    {"", "bead-1"},
+		"relative repo": {"repo", "bead-1"},
+		"blank bead":    {"/repo", "  "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := beadsmutate.NewMutator(runner).Close(tc.repo, tc.bead, "why"); err == nil {
+				t.Fatal("Close() error = nil, want error")
+			}
+		})
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
+	}
+}
+
+func TestMutatorCloseWrapsRunnerError(t *testing.T) {
+	sentinel := errors.New("boom")
+	runner := &fakeRunner{err: sentinel}
+	err := beadsmutate.NewMutator(runner).Close("/repo", "bead-1", "why")
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Close() error = %v, want wrapped %v", err, sentinel)
+	}
+	if !strings.Contains(err.Error(), "bead-1") {
+		t.Fatalf("Close() error = %v, want it to name the bead", err)
+	}
+}
+
+func TestCloseUsesDefaultRunner(t *testing.T) {
+	runner := &fakeRunner{}
+	previous := beadsmutate.DefaultRunner
+	beadsmutate.DefaultRunner = runner
+	t.Cleanup(func() { beadsmutate.DefaultRunner = previous })
+
+	if err := beadsmutate.Close("/repo", "bead-default", "why"); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if want := []string{"close", "--reason=why", "--", "bead-default"}; !reflect.DeepEqual(runner.args, want) {
+		t.Fatalf("runner args = %#v, want %#v", runner.args, want)
+	}
+}

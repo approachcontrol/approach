@@ -650,3 +650,149 @@ func TestEpicProgressionBeadSlotRefusalConvergesAcrossPasses(t *testing.T) {
 		}
 	}
 }
+
+// progressionMergedFlow is the shape the advance edge must close a Bead for: a
+// child whose PR actually landed, not merely one whose phases all finished.
+func progressionMergedFlow(flowID, repoPath, childID, epicID string) flowstore.FlowRecord {
+	record := progressionAdvanceFlow(flowID, repoPath, childID, epicID, flowstore.StatusMerged)
+	record.PR = flowstore.PullRequest{Provider: "github", Number: 371, Status: flowstore.MergeMerged}
+	record.Merge = flowstore.Merge{Status: flowstore.MergeMerged, Commit: "abc123"}
+	return record
+}
+
+func TestEpicProgressionAdvanceClosesMergedChildBeadBeforeReadyQuery(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	merged := progressionMergedFlow("flow-a", repo, "epic.a", epic)
+
+	var order []string
+	var closedRepo, closedBead, closedReason string
+	// epic.b is ready only because closing epic.a unblocked it, which is the
+	// whole point: a close that lands after the query selects nothing.
+	ready := []beadsquery.Bead{}
+	m := Model{
+		autoAdvanceInFlight:      1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		agentCommand:             "codex",
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		closeBead: func(repoPath, beadID, reason string) error {
+			order = append(order, "close")
+			closedRepo, closedBead, closedReason = repoPath, beadID, reason
+			ready = []beadsquery.Bead{{ID: "epic.b", Title: "B"}}
+			return nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			order = append(order, "children")
+			return []beadsquery.Bead{{ID: "epic.a", Title: "A"}, {ID: "epic.b", Title: "B"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			order = append(order, "ready")
+			return append([]beadsquery.Bead(nil), ready...), nil
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{merged}, nil
+		},
+	}
+
+	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{merged}, Request: 1})
+	result := epicProgressionAdvanceMessage(t, cmd)
+
+	if len(order) == 0 || order[0] != "close" {
+		t.Fatalf("call order = %v, want the Bead closed before any Beads query", order)
+	}
+	if closedRepo != repo || closedBead != "epic.a" {
+		t.Fatalf("closed (%q, %q), want (%q, %q)", closedRepo, closedBead, repo, "epic.a")
+	}
+	if !strings.Contains(closedReason, "flow-a") || !strings.Contains(closedReason, "371") {
+		t.Fatalf("close reason = %q, want it to name the Flow and the PR", closedReason)
+	}
+	if result.disposition != epicProgressionAdvanceSelected || result.owned.ChildID != "epic.b" {
+		t.Fatalf("advance result = %#v, want epic.b selected after the close unblocked it", result)
+	}
+}
+
+func TestEpicProgressionAdvanceDoesNotCloseUnmergedChildBead(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	// Completed without a recorded merge: the phases finished but nothing
+	// landed on the base branch, so the Bead is not this edge's to close.
+	completed := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusCompleted)
+
+	closes := 0
+	m := Model{
+		autoAdvanceInFlight:      1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		agentCommand:             "codex",
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		closeBead: func(string, string, string) error { closes++; return nil },
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.a"}, {ID: "epic.b"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.b", Title: "B"}}, nil
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{completed}, nil
+		},
+	}
+
+	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{completed}, Request: 1})
+	result := epicProgressionAdvanceMessage(t, cmd)
+	if closes != 0 {
+		t.Fatalf("closeBead calls = %d, want 0 for a completed-but-unmerged child", closes)
+	}
+	if result.disposition != epicProgressionAdvanceSelected || result.owned.ChildID != "epic.b" {
+		t.Fatalf("advance result = %#v, want the advance to proceed unchanged", result)
+	}
+}
+
+// A close failure must not be swallowed into a false "no ready children", which
+// is exactly the shape that wrongly reports the epic complete.
+func TestEpicProgressionAdvanceCloseFailureIsRetryable(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	merged := progressionMergedFlow("flow-a", repo, "epic.a", epic)
+
+	queries := 0
+	setProgressionCalls := 0
+	m := Model{
+		autoAdvanceInFlight:      1,
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		agentCommand:             "codex",
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		closeBead: func(string, string, string) error { return errors.New("bd exploded") },
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			queries++
+			return nil, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) { queries++; return nil, nil },
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{merged}, nil
+		},
+		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			setProgressionCalls++
+			return flowstore.EpicProgression{}, nil
+		},
+	}
+
+	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{merged}, Request: 1})
+	result := epicProgressionAdvanceMessage(t, cmd)
+	if result.disposition != epicProgressionAdvanceRetryable {
+		t.Fatalf("disposition = %v, want retryable", result.disposition)
+	}
+	if !strings.Contains(result.status, "epic.a") {
+		t.Fatalf("status = %q, want it to name the child Bead", result.status)
+	}
+	if queries != 0 || setProgressionCalls != 0 {
+		t.Fatalf("queries=%d setProgression=%d, want the edge to stop before both", queries, setProgressionCalls)
+	}
+}

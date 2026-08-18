@@ -155,7 +155,7 @@ func (m Model) releaseFlowPreparation(kind flowPreparationKind, token uint64) Mo
 	return m
 }
 
-func (m Model) startEpicProgressionAdvance(epicKey string, baseline flowstore.FlowRecord) (Model, tea.Cmd) {
+func (m Model) startEpicProgressionAdvance(epicKey string, baseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
 	var ownerToken uint64
 	var admitted bool
 	m, ownerToken, admitted = m.acquireFlowPreparation(flowPreparationEpicAdvance)
@@ -168,7 +168,7 @@ func (m Model) startEpicProgressionAdvance(epicKey string, baseline flowstore.Fl
 		EpicKey: epicKey, SourceFlowID: baseline.FlowID,
 	}
 	m.activeEpicProgressionAdvance = request
-	return m, m.advanceEpicProgressionCmd(request, baseline)
+	return m, m.advanceEpicProgressionCmd(request, baseline, observed)
 }
 
 // advanceEpicProgressionCmd selects the next child and stops there. Everything
@@ -176,8 +176,9 @@ func (m Model) startEpicProgressionAdvance(epicKey string, baseline flowstore.Fl
 // successor reconciliation and its first phase — belongs to the create-phase
 // launch pipeline the selection is handed to, so the whole advance is one
 // admitted launch attempt rather than a preparation plus a later start.
-func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, baseline flowstore.FlowRecord) tea.Cmd {
+func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, baseline, observed flowstore.FlowRecord) tea.Cmd {
 	readProgression := m.readEpicProgression
+	closeBead := m.closeBead
 	listChildren := m.listChildrenBeads
 	listReady := m.listReadyBeads
 	listFlows := m.listFlows
@@ -199,6 +200,24 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 		}
 		if !found || !progression.Enabled || progression.Done || progression.Halt != nil {
 			return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
+		}
+
+		// Closing the merged child's Bead must precede the readiness query, not
+		// follow it. Progression claims a child on enable but nothing else ever
+		// releases it, so a still-claimed parent keeps its dependent siblings out
+		// of `bd ready`; a close that lands afterwards selects against a stale
+		// snapshot and the empty intersection reports the epic complete.
+		//
+		// Only a recorded merge qualifies. A child that merely reached completed
+		// has nothing on the base branch, and closing its Bead would retire work
+		// that never landed.
+		if beadID, reason, ok := progressionMergedChildClose(observed); ok && closeBead != nil {
+			// bd close is idempotent, which is what makes this safe on a
+			// level-triggered edge: the success branch refires on every poll
+			// until an advance actually completes.
+			if err := closeBead(repoPath, beadID, reason); err != nil {
+				return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not close Bead %s for merged Flow %s: %v", beadID, observed.FlowID, err))
+			}
 		}
 
 		var candidate epicProgressionOwnedSuccessor
@@ -306,6 +325,28 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 // startEpicProgressionHalt shares the single-flight preparation admission with
 // advance and the epic toggle, so a halt can never interleave with either. It
 // creates no Flow, queries no Beads, and takes no Flow reservation.
+// progressionMergedChildClose reports the Bead a merged child Flow retires, and
+// the reason recorded against it. It keys on the durable merge record rather
+// than on the derived status so that a hand-edited status cannot close a Bead
+// whose PR never landed.
+func progressionMergedChildClose(observed flowstore.FlowRecord) (string, string, bool) {
+	if observed.Merge.Status != flowstore.MergeMerged {
+		return "", "", false
+	}
+	beadID := strings.TrimSpace(observed.Bead.ID)
+	if beadID == "" {
+		return "", "", false
+	}
+	reason := fmt.Sprintf("Merged by Approach Flow %s", observed.FlowID)
+	if observed.PR.Number > 0 {
+		reason = fmt.Sprintf("Merged by Approach Flow %s (PR #%d)", observed.FlowID, observed.PR.Number)
+	}
+	if commit := strings.TrimSpace(observed.Merge.Commit); commit != "" {
+		reason += ": " + commit
+	}
+	return beadID, reason, true
+}
+
 func (m Model) startEpicProgressionHalt(epicKey string, baseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
 	var ownerToken uint64
 	var admitted bool
