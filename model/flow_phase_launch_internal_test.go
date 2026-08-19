@@ -575,7 +575,11 @@ func TestRefuseUnverifiedLaunchPinIgnoresAnUnpinnedLaunch(t *testing.T) {
 // unverified one, including the non-Flow routes in model_keys.go. A new entry
 // here is a claim that needs a reason as specific as the ones in
 // nonLaunchingContextFiles.
-var unverifiedLaunchPinFiles = map[string]string{}
+var unverifiedLaunchPinFiles = map[string]string{
+	"flow_launch_context.go": "the shared launch-context builder constructs and stamps but never reserves " +
+		"or writes; the refusal has to happen at the route before it reserves, so the fence follows the " +
+		"newFlowLaunchContext call sites instead",
+}
 
 // preflight is not the only path that marks a phase running and bakes the
 // pinned path into a detached agent's argv: create, resume, saved-session
@@ -603,7 +607,10 @@ func TestEveryFlowLaunchRouteRefusesAnUnverifiedPin(t *testing.T) {
 			t.Fatalf("read %s: %v", name, err)
 		}
 		text := string(source)
-		if !strings.Contains(text, "applyLaunchStamp(") {
+		// A route that hands construction to newFlowLaunchContext no longer
+		// spells applyLaunchStamp itself, but it still reserves and writes, so
+		// the fence follows the builder's call sites too.
+		if !strings.Contains(text, "applyLaunchStamp(") && !strings.Contains(text, "newFlowLaunchContext(") {
 			continue
 		}
 		if reason, exempt := unverifiedLaunchPinFiles[name]; exempt {
@@ -620,7 +627,7 @@ func TestEveryFlowLaunchRouteRefusesAnUnverifiedPin(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(text, "refuseUnverifiedLaunchPin(") {
-			t.Fatalf("%s stamps a launch pin but never refuses an unverified one, so it can launch a binary the "+
+			t.Fatalf("%s builds a pinned launch but never refuses an unverified pin, so it can launch a binary the "+
 				"state root lost or an upgrade replaced. Refuse before it reserves or writes, or document the file "+
 				"in unverifiedLaunchPinFiles with the reason it cannot.", name)
 		}

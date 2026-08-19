@@ -411,13 +411,29 @@ Approach was down.
 Each live edge takes the shared, monotonically token-owned preparation
 admission. Before any Beads query or creation side effect, the worker re-reads
 the progression row; absent, disabled, done, or halted state cancels the edge, while
-an unreadable row leaves it armed for retry. With no successor already owned by
+an unreadable row leaves it armed for retry.
+
+When the observed source Flow carries a durable merge — `Merge.Status` is
+`merged`, not merely a derived or hand-edited `status` — the worker then closes
+that child's Bead through `bd close`, recording the Flow ID, PR number, and merge
+commit as the reason. This runs **before** the children and `bd ready` queries and
+is the one release for the claim taken at enablement: a still-claimed parent keeps
+its dependent siblings out of `bd ready`, so a close ordered after the query would
+select against a stale snapshot and the empty intersection would report the epic
+complete. `bd close` is idempotent, which is what makes it safe on this
+level-triggered edge; a close failure is retryable and stops the edge before the
+queries and before any exhaustion write, so a `bd` outage can never be mistaken
+for a finished epic. A child that reached `completed` without a recorded merge is
+deliberately left open — nothing landed on the base branch.
+
+With no successor already owned by
 that edge, it intersects a fresh direct-child query with fresh `bd ready` order,
 indexes the complete repository Flow corpus by exact canonical repository plus
 `{child ID, epic ID}`, skips every ready child that already has such a Flow, and
 selects the first unlinked child. Links for another repository or epic do not
 suppress the candidate. Selection is where the advance worker stops: it creates
-nothing, claims no Bead, and starts no phase.
+nothing, claims no Bead, and starts no phase. Closing the merged predecessor
+above is the worker's only tracker write.
 
 The selected child is then submitted to the create-phase launch lifecycle as one
 create-then-launch intent whose origin is epic progression. That single admitted

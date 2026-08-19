@@ -182,6 +182,7 @@ type Model struct {
 	listChildrenBeads         func(string, string) ([]beadsquery.Bead, error)
 	listReadyBeads            func(string) ([]beadsquery.Bead, error)
 	claimBead                 func(repoPath, beadID string) error
+	closeBead                 func(repoPath, beadID, reason string) error
 	readEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	setEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	haltEpicProgression       func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error)
@@ -366,6 +367,7 @@ type Options struct {
 	ListReadyBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListChildrenBeads         func(repoPath, parentID string) ([]beadsquery.Bead, error)
 	ClaimBead                 func(repoPath, beadID string) error
+	CloseBead                 func(repoPath, beadID, reason string) error
 	ReadEpicProgression       func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error)
 	SetEpicProgression        func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error)
 	HaltEpicProgression       func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error)
@@ -589,6 +591,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	claimBead := opts.ClaimBead
 	if claimBead == nil {
 		claimBead = beadsmutate.Claim
+	}
+	closeBead := opts.CloseBead
+	if closeBead == nil {
+		closeBead = beadsmutate.Close
 	}
 	readEpicProgression := opts.ReadEpicProgression
 	if readEpicProgression == nil {
@@ -1058,6 +1064,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		listChildrenBeads:         listChildrenBeads,
 		listReadyBeads:            listReadyBeads,
 		claimBead:                 claimBead,
+		closeBead:                 closeBead,
 		readEpicProgression:       readEpicProgression,
 		setEpicProgression:        setEpicProgression,
 		haltEpicProgression:       haltEpicProgression,
