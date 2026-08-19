@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/dblease"
 )
 
 func dbDeps(t *testing.T, stdout, stderr *bytes.Buffer, env map[string]string) runDeps {
@@ -290,4 +292,70 @@ func TestRunSessionHookWarnsOnStderrAndStillExitsZero(t *testing.T) {
 	if !strings.Contains(stderr.String(), "could not attach this session to Flow") {
 		t.Fatalf("stderr = %q, want the attachment failure named", stderr.String())
 	}
+}
+
+// TestRunDBMigrateRefusesWhileLiveOwnersHoldTheDatabase is the acceptance
+// criterion at the command surface: the refusal an operator actually sees names
+// every process they have to close, not just the first one found.
+func TestRunDBMigrateRefusesWhileLiveOwnersHoldTheDatabase(t *testing.T) {
+	root := t.TempDir()
+	seedCurrentRoot(t, root)
+	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
+
+	first := holdOwnerLease(t, root, flowstore.DatabaseSchemaVersion()-1, "v0.10.2")
+	second := holdOwnerLease(t, root, flowstore.DatabaseSchemaVersion()-1, "v0.10.1")
+	_ = first
+	_ = second
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"approach", "db", "migrate", "--state-root", root},
+		dbDeps(t, &stdout, &stderr, nil))
+	if err == nil {
+		t.Fatal("db migrate proceeded with two live incompatible owners")
+	}
+	if !flowstore.IsMigrationBlockedByOwners(err) {
+		t.Fatalf("err = %v, want the owners refusal", err)
+	}
+	for _, want := range []string{"v0.10.2", "v0.10.1", "stop these processes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q is missing %q", err.Error(), want)
+		}
+	}
+	// Nothing was migrated, so the operator can close the processes and re-run.
+	report := inspectReport(t, root)
+	if got := report["user_version"].(float64); int(got) != flowstore.DatabaseSchemaVersion()-1 {
+		t.Fatalf("user_version = %v after a refused migration", got)
+	}
+	if owners, ok := report["owners"].([]any); !ok || len(owners) != 2 {
+		t.Fatalf("db inspect reports owners = %v, want both live holders", report["owners"])
+	}
+}
+
+func holdOwnerLease(t *testing.T, root string, schema int, build string) *dblease.Holder {
+	t.Helper()
+	holder, err := dblease.Acquire(root, dblease.Identity{
+		BuildVersion:  build,
+		Executable:    "/opt/approach/" + build,
+		SchemaVersion: schema,
+		StartedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = holder.Release() })
+	return holder
+}
+
+func inspectReport(t *testing.T, root string) map[string]any {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"approach", "db", "inspect", "--json", "--state-root", root},
+		dbDeps(t, &stdout, &stderr, nil)); err != nil {
+		t.Fatal(err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	return report
 }

@@ -13,14 +13,16 @@ import (
 	"time"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/dblease"
 	sqlitedriver "modernc.org/sqlite"
 )
 
 // inspectSchemaVersion versions the report's own JSON so a consumer can tell a
 // shape change from a content change.
 //
-// 2 adds first_compatible_release. Additive, but the constant exists precisely
-// so a consumer never has to discover that by parsing.
+// 2 adds first_compatible_release and owners. Both are additive, but the
+// constant exists precisely so a consumer never has to discover that by
+// parsing.
 const inspectSchemaVersion = 2
 
 // The six tiers Inspect can land in. They are values, not step indexes: two
@@ -74,6 +76,22 @@ type InspectMigrationOwner struct {
 	Verified bool `json:"verified"`
 }
 
+// InspectOwner is one live holder of the owners lease.
+//
+// Verified is always TRUE, and that is the difference from InspectMigrationOwner
+// above: this record was published by a process that still holds an exclusive
+// flock on it, so its liveness was proved rather than inferred from a PID that
+// a crash could have left behind.
+type InspectOwner struct {
+	PID           int    `json:"pid"`
+	BuildVersion  string `json:"build_version"`
+	Commit        string `json:"commit,omitempty"`
+	Executable    string `json:"executable,omitempty"`
+	SchemaVersion int    `json:"schema_version"`
+	StartedAt     string `json:"started_at,omitempty"`
+	Verified      bool   `json:"verified"`
+}
+
 // InspectReport is the answer `approach db inspect --json` prints. Every
 // nullable field is a pointer so "not applicable" and "zero" stay distinct —
 // reporting sidecar_stale: false in a tier that never compared anything would
@@ -99,9 +117,13 @@ type InspectReport struct {
 	SidecarStale           *bool                  `json:"sidecar_stale"`
 	Executable             InspectExecutable      `json:"executable"`
 	MigrationOwner         *InspectMigrationOwner `json:"migration_owner"`
-	Warnings               []string               `json:"warnings"`
-	Reason                 *string                `json:"reason"`
-	NextAction             *string                `json:"next_action"`
+	// Owners are the live holders of the owners lease, each verified. Always an
+	// array, never null: "no live holders" is an answer, and a consumer must
+	// not have to distinguish it from "not checked".
+	Owners     []InspectOwner `json:"owners"`
+	Warnings   []string       `json:"warnings"`
+	Reason     *string        `json:"reason"`
+	NextAction *string        `json:"next_action"`
 }
 
 // Inspect answers "what is in this state root, and can approach open it" for an
@@ -139,6 +161,7 @@ func Inspect(root string) (InspectReport, error) {
 		SchemaVersion: inspectSchemaVersion,
 		Path:          path,
 		Warnings:      []string{},
+		Owners:        []InspectOwner{},
 		Executable: InspectExecutable{
 			Path:         executablePath,
 			BuildVersion: buildVersion,
@@ -148,6 +171,7 @@ func Inspect(root string) (InspectReport, error) {
 	applyDirectoryMode(&report, root)
 	applyWALState(&report, path)
 	applyMigrationOwner(&report, root)
+	applyOwners(&report, root)
 	// The sidecar is read independently of the tier: it describes the root, not
 	// the open, and a root whose database will not open is exactly where its
 	// provenance is most worth having.
@@ -190,6 +214,30 @@ func applyMigrationOwner(report *InspectReport, root string) {
 		return
 	}
 	report.MigrationOwner = &InspectMigrationOwner{PID: pid}
+}
+
+// applyOwners reports the live holders. Deliberately does NOT reap the dead
+// ones: this command never mutates the root it is diagnosing, and unlinking a
+// holder file is a mutation. A migrator's scan does the reaping.
+func applyOwners(report *InspectReport, root string) {
+	live, _, err := dblease.Scan(root)
+	if err != nil {
+		return
+	}
+	for _, record := range live {
+		owner := InspectOwner{
+			PID:           record.PID,
+			BuildVersion:  record.BuildVersion,
+			Commit:        record.Commit,
+			Executable:    record.Executable,
+			SchemaVersion: record.SchemaVersion,
+			Verified:      true,
+		}
+		if !record.StartedAt.IsZero() {
+			owner.StartedAt = record.StartedAt.UTC().Format(time.RFC3339)
+		}
+		report.Owners = append(report.Owners, owner)
+	}
 }
 
 // applyFirstCompatibleRelease answers the only manifest question an operator

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/dblease"
 	"github.com/approachcontrol/approach/internal/version"
 )
 
@@ -75,6 +76,19 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 		return nil, err
 	}
 	opts.root = canonicalRoot
+	// TOTAL ACQUISITION ORDER: the owners lease is scanned BEFORE the bootstrap
+	// lock, never the reverse, and internal/dblease's doc comment says the same
+	// from its side. The bootstrap lock is held for up to two minutes by a
+	// running migration; taking it first and then discovering a refusal would
+	// block every other open on a migration that was never going to happen.
+	//
+	// Only a migrator, and only when the database is actually behind. The
+	// version probe here is the same lock-free read Inspect uses, so a
+	// current-schema open — the overwhelmingly common case — does not read the
+	// owners directory at all.
+	if err := refuseMigrationForBlockingOwners(canonicalRoot, opts); err != nil {
+		return nil, err
+	}
 	// The lock is taken for every role, deliberately: a reader must not observe
 	// a half-promoted cutover. Note that acquiring it CREATES, chmods, and
 	// writes the lock file, so even a reader writes this one path and a reader
@@ -88,6 +102,7 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap flow database: %w", err)
 	}
+	dblease.Probe(dblease.ProbeBootstrapLock)
 	defer release()
 
 	state, err := inspectCutoverState(canonicalRoot)
@@ -270,6 +285,28 @@ func refuseUnmigratedForRole(storedVersion int64, readErr error, role Role) erro
 	default:
 		return nil
 	}
+}
+
+// refuseMigrationForBlockingOwners is the migrator's pre-lock gate.
+//
+// It answers "would this open advance the schema" with a lock-free
+// user_version read, exactly as Inspect does, so it costs one read-only open
+// on a migrator path that was about to open the database anyway — and nothing
+// at all for a reader or a writer.
+//
+// A probe that cannot answer falls through unchanged. The version is then read
+// again under the bootstrap lock by the migration itself, which is where an
+// unreadable database gets its real classification; refusing here on a
+// transient BUSY would turn a locked database into a migration failure.
+func refuseMigrationForBlockingOwners(canonicalRoot string, opts backendOptions) error {
+	if opts.role != RoleMigrator {
+		return nil
+	}
+	storedVersion, err := readUserVersion(filepath.Join(canonicalRoot, databaseFilename))
+	if err != nil || storedVersion >= databaseSchemaVersion {
+		return nil
+	}
+	return refuseMigrationForOwners(canonicalRoot, opts.ownerNonce)
 }
 
 // supportedPredecessorVersions is the exact set migrateAuthoritativeDatabase

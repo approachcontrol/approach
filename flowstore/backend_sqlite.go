@@ -213,6 +213,9 @@ type backendOptions struct {
 	allowDevLiveMigration bool
 	// backupDir overrides <root>/backups/ for the pre-migration copy.
 	backupDir string
+	// ownerNonce is this opener's own owners-lease holder, excluded from the
+	// scan a migration runs so a long-lived migrator does not block itself.
+	ownerNonce string
 }
 
 // requireWriter refuses a mutation on a read-only handle.

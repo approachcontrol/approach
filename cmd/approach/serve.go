@@ -78,6 +78,12 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("error opening flow store: %w", err)
 	}
+	// serve is long-lived and holds this store open for its whole run, so it
+	// publishes itself as an owner: a `db migrate` that advanced the schema
+	// underneath it would leave it serving a database its own build can no
+	// longer open. Released on the way out, so a clean shutdown blocks nothing.
+	ownerLease := acquireDatabaseOwnerLease(store.Root())
+	defer func() { _ = ownerLease.Release() }()
 
 	scanRoot, err := scanner.ResolveRoot(firstNonEmpty(*scanRootFlag, deps.getenv("WORKTREE_ROOT"), cfg.Scan.Root))
 	if err != nil {
