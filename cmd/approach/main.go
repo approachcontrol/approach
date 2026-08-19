@@ -198,7 +198,7 @@ Commands:
   plan          Save, list, read, and update saved plans.
   flow          Create, inspect, and update Flow records.
   serve         Serve the read-only GraphQL API over HTTP.
-  db            Inspect and migrate the flow database.
+  db            Inspect, migrate, and restore the flow database.
   session-hook  Capture Claude, Codex, or Cursor session hook payloads.
 
 Flags:

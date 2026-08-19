@@ -192,14 +192,14 @@ func TestRunDBRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	defaultRoot := filepath.Join(stateHome, "approach", "sessions", "v1")
 
-	for _, command := range []string{"inspect", "migrate"} {
+	for _, command := range []string{"inspect", "migrate", "restore"} {
 		t.Run(command+" help", func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			if err := run([]string{"approach", "db", command, "help"},
 				dbDeps(t, &stdout, &stderr, nil)); err != nil {
 				t.Fatalf("db %s help returned an error: %v", command, err)
 			}
-			if !strings.Contains(stdout.String(), "approach db <inspect|migrate>") {
+			if !strings.Contains(stdout.String(), "approach db <inspect|migrate|restore>") {
 				t.Fatalf("db %s help = %s", command, stdout.String())
 			}
 		})
@@ -225,7 +225,7 @@ func TestDBIsRegisteredInTheDispatchAndHelp(t *testing.T) {
 	if err := run([]string{"approach", "--help"}, dbDeps(t, &stdout, &stderr, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "db            Inspect and migrate the flow database.") {
+	if !strings.Contains(stdout.String(), "db            Inspect, migrate, and restore the flow database.") {
 		t.Fatalf("main help does not list db:\n%s", stdout.String())
 	}
 
@@ -239,7 +239,7 @@ func TestDBIsRegisteredInTheDispatchAndHelp(t *testing.T) {
 	if err := run([]string{"approach", "db", "--help"}, dbDeps(t, &stdout, &stderr, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "approach db <inspect|migrate>") {
+	if !strings.Contains(stdout.String(), "approach db <inspect|migrate|restore>") {
 		t.Fatalf("db help = %s", stdout.String())
 	}
 }
@@ -358,4 +358,61 @@ func inspectReport(t *testing.T, root string) map[string]any {
 		t.Fatal(err)
 	}
 	return report
+}
+
+// TestRunDBRestorePutsABackupBackAndReportsIt is `db restore` at the command
+// surface: the leaf that makes "reversible migration" actually reversible.
+func TestRunDBRestorePutsABackupBackAndReportsIt(t *testing.T) {
+	root := t.TempDir()
+	seedCurrentRoot(t, root)
+	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
+	backupDir := filepath.Join(root, "backups")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"approach", "db", "migrate", "--state-root", root},
+		dbDeps(t, &stdout, &stderr, nil)); err != nil {
+		t.Fatalf("db migrate: %v", err)
+	}
+	entries, err := os.ReadDir(backupDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("backups = %v, err %v", entries, err)
+	}
+	backup := filepath.Join(backupDir, entries[0].Name())
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := run([]string{"approach", "db", "restore", "--backup", backup, "--json", "--state-root", root},
+		dbDeps(t, &stdout, &stderr, nil)); err != nil {
+		t.Fatalf("db restore: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("db restore --json is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got := int(result["user_version"].(float64)); got != flowstore.DatabaseSchemaVersion()-1 {
+		t.Fatalf("user_version = %d, want the backup's %d", got, flowstore.DatabaseSchemaVersion()-1)
+	}
+	if result["restored_from"] != backup {
+		t.Fatalf("restored_from = %v, want %q", result["restored_from"], backup)
+	}
+	if result["pre_restore_backup"] == "" {
+		t.Fatal("db restore recorded no pre-restore copy")
+	}
+	// And the restored database is reported by the diagnostic.
+	report := inspectReport(t, root)
+	if got := int(report["user_version"].(float64)); got != flowstore.DatabaseSchemaVersion()-1 {
+		t.Fatalf("db inspect user_version = %d after the restore", got)
+	}
+}
+
+func TestRunDBRestoreWithoutABackupFlagFailsWithUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"approach", "db", "restore", "--state-root", t.TempDir()},
+		dbDeps(t, &stdout, &stderr, nil))
+	if err == nil {
+		t.Fatal("db restore with no --backup succeeded")
+	}
+	if !strings.Contains(err.Error(), "--backup") {
+		t.Fatalf("err = %v, want the usage refusal", err)
+	}
 }
