@@ -418,16 +418,88 @@ func MainWorktreePath(path string) (string, error) {
 	}
 	for _, field := range strings.Split(string(out), delimiter) {
 		if !nulDelimited {
-			field = strings.TrimSpace(field)
+			field = strings.Trim(field, "\r\n")
 		}
-		if mainPath, ok := strings.CutPrefix(field, "worktree "); ok {
-			if !filepath.IsAbs(mainPath) {
-				return "", fmt.Errorf("git returned non-absolute main worktree path %q", mainPath)
+		mainPath, ok := strings.CutPrefix(field, "worktree ")
+		if !ok {
+			continue
+		}
+		if !nulDelimited {
+			// -z prints the path raw; the legacy format applies git's C-style
+			// quoting to any path with a newline, quote, tab, or non-ASCII
+			// byte in it, and reading that literally would reject a path git
+			// reported perfectly well.
+			unquoted, err := unquoteGitPath(mainPath)
+			if err != nil {
+				return "", err
 			}
-			return filepath.Clean(mainPath), nil
+			mainPath = unquoted
 		}
+		if !filepath.IsAbs(mainPath) {
+			return "", fmt.Errorf("git returned non-absolute main worktree path %q", mainPath)
+		}
+		return filepath.Clean(mainPath), nil
 	}
 	return "", fmt.Errorf("git worktree list returned no primary worktree")
+}
+
+// unquoteGitPath decodes one pathname from git's legacy porcelain output.
+//
+// An unquoted token is already the path. A quoted one uses C escapes, and the
+// octal form git emits for non-ASCII bytes (`\303\251`) is why this is written
+// out rather than handed to strconv.Unquote, which rejects it. The bytes are
+// assembled as bytes, never as runes: a path is a byte string, and decoding a
+// two-byte UTF-8 escape into one rune would produce a name that does not exist.
+func unquoteGitPath(path string) (string, error) {
+	if !strings.HasPrefix(path, `"`) {
+		return path, nil
+	}
+	if len(path) < 2 || !strings.HasSuffix(path, `"`) {
+		return "", fmt.Errorf("git returned an unterminated quoted worktree path %s", path)
+	}
+	body := path[1 : len(path)-1]
+	var decoded []byte
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' {
+			decoded = append(decoded, body[i])
+			continue
+		}
+		i++
+		if i >= len(body) {
+			return "", fmt.Errorf("git returned a quoted worktree path ending in an escape: %s", path)
+		}
+		switch body[i] {
+		case 'a':
+			decoded = append(decoded, '\a')
+		case 'b':
+			decoded = append(decoded, '\b')
+		case 'f':
+			decoded = append(decoded, '\f')
+		case 'n':
+			decoded = append(decoded, '\n')
+		case 'r':
+			decoded = append(decoded, '\r')
+		case 't':
+			decoded = append(decoded, '\t')
+		case 'v':
+			decoded = append(decoded, '\v')
+		case '\\', '"':
+			decoded = append(decoded, body[i])
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			if i+2 >= len(body) {
+				return "", fmt.Errorf("git returned a truncated octal escape in worktree path %s", path)
+			}
+			value, err := strconv.ParseUint(body[i:i+3], 8, 8)
+			if err != nil {
+				return "", fmt.Errorf("git returned an undecodable octal escape in worktree path %s: %w", path, err)
+			}
+			decoded = append(decoded, byte(value))
+			i += 2
+		default:
+			return "", fmt.Errorf("git returned an unrecognized escape %q in worktree path %s", body[i], path)
+		}
+	}
+	return string(decoded), nil
 }
 
 // CreateFlowWorktree creates a deterministic Flow branch/worktree pair:

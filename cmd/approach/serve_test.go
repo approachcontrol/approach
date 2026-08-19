@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/dblease"
 	"github.com/approachcontrol/approach/scanner"
 )
 
@@ -633,5 +635,38 @@ func TestRunServeTrimsConfiguredToken(t *testing.T) {
 	status, _ = harness.query(t, `{ flows { title } }`)
 	if status != http.StatusUnauthorized {
 		t.Errorf("missing token status = %d, want 401 (a padded token must still be a token)", status)
+	}
+}
+
+// serve holds its store open for the whole run, so it must publish its owner
+// lease BEFORE the store opens: a `db migrate` that scanned the owners
+// directory in the gap between the open and a later Acquire would find nothing
+// and migrate underneath a handle this process never closes. The TUI takes the
+// same total order; this asserts serve's, as an order rather than a comment.
+func TestRunServePublishesItsOwnerLeaseBeforeOpeningTheStore(t *testing.T) {
+	var mu sync.Mutex
+	var steps []string
+	restore := dblease.SetAcquisitionProbe(func(step string) {
+		mu.Lock()
+		defer mu.Unlock()
+		steps = append(steps, step)
+	})
+	defer restore()
+
+	root := t.TempDir()
+	harness := startServe(t, []string{"approach", "serve", "--addr", "127.0.0.1:0", "--state-root", root}, serveDeps(t, root, nil))
+	if status, payload := harness.query(t, `{ flows { title } }`); status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%v)", status, payload)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	published := slices.Index(steps, dblease.ProbePublished)
+	bootstrap := slices.Index(steps, dblease.ProbeBootstrapLock)
+	if published < 0 || bootstrap < 0 {
+		t.Fatalf("steps = %v, want both a published lease and a bootstrap lock", steps)
+	}
+	if published > bootstrap {
+		t.Fatalf("steps = %v, want the lease published before the store's bootstrap lock", steps)
 	}
 }

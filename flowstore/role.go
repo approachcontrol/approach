@@ -86,18 +86,23 @@ func refuseRoleStageResume(stagePath string, role Role) error {
 }
 
 // refuseIncompatibleBuild reports a database this build cannot open because it
-// is ahead of it. It names a schema generation rather than a release name: the
-// generation to release mapping lives in a compatibility manifest this build
-// does not have, and inventing a version string here would be a number the
-// operator cannot check.
+// is ahead of it.
+//
+// It names a release only when THIS build's manifest declares one for the
+// stored version. A database from the future is by definition absent from this
+// build's manifest, so the generation-only wording stays the fallback: the
+// generation-to-release mapping lives in a manifest this build does not have,
+// and inventing a version string there would be a number the operator cannot
+// check.
 //
 // It wraps errDatabaseFromNewerBuild so describeUnusableDatabase keeps
 // suppressing the rebuild advice for it.
 func refuseIncompatibleBuild(storedVersion, requiredGeneration int64) error {
 	path, build := launcherIdentity()
 	return fmt.Errorf("%w: database schema %d needs an approach build supporting flow database"+
-		" schema %d or newer, but %s is build %s (schema %d); upgrade approach",
-		errDatabaseFromNewerBuild, storedVersion, requiredGeneration, path, build, databaseSchemaVersion)
+		" schema %d or newer%s, but %s is build %s (schema %d); upgrade approach",
+		errDatabaseFromNewerBuild, storedVersion, requiredGeneration,
+		manifestReleaseSuffix(storedVersion), path, build, databaseSchemaVersion)
 }
 
 // launcherIdentity names the binary the operator has to replace. Inside a

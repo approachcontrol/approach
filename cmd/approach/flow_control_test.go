@@ -486,3 +486,100 @@ func TestProxiedAddChildIsAuthorizedForTheOwningLaunch(t *testing.T) {
 		t.Fatalf("child not added: %#v", record.Phases)
 	}
 }
+
+// `flow plan save` is the command the bundled skill tells a launched agent to
+// run, and it is a composite of `flow read` and `flow plan set`. Both halves go
+// through the controller, so the composite stays exactly as available as its
+// parts after a newer TUI has migrated the state root out of this build's
+// reach.
+func TestFlowPlanSaveProxiesThroughEndpoint(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Plan Save", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	_, endpoint := controllerFor(t, root, created.FlowID, "plan", "launch-1")
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both halves proxied means neither opens the database, and the direct
+	// path needs config to do that — so a fatal loadConfig is the proof. The
+	// plan artifact itself is a local file under the named state root, which
+	// needs no config either.
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"approach", "flow", "plan", "save", "--flow-id", created.FlowID, "--title", "Implementation plan", "--file", planFile, "--state-root", root},
+		noScanDeps(t, runDeps{
+			stdout: &stdout, stderr: &stderr,
+			getenv: controlEnv(root, endpoint.Path, endpoint.Token, "launch-1", created.FlowID, "plan"),
+			loadConfig: func() (config.Config, error) {
+				t.Fatal("flow plan save opened the database directly instead of proxying")
+				return config.Config{}, nil
+			},
+		}))
+	if err != nil {
+		t.Fatalf("proxied plan save: %v (%s)", err, stderr.String())
+	}
+	var saved flowPlanSaveResult
+	if err := json.Unmarshal(stdout.Bytes(), &saved); err != nil {
+		t.Fatalf("output = %s (%v)", stdout.String(), err)
+	}
+	if saved.PlanID == "" || !saved.Linked || saved.FlowID != created.FlowID {
+		t.Fatalf("saved = %#v", saved)
+	}
+	if _, err := os.Lstat(saved.PlanPath); err != nil {
+		t.Fatalf("plan markdown is not on disk: %v", err)
+	}
+	// The link really landed in the Flow the controller serves.
+	linked := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root})
+	if linked.PlanID != saved.PlanID {
+		t.Fatalf("linked plan = %q, want %q", linked.PlanID, saved.PlanID)
+	}
+}
+
+// A launched agent may deliberately update ANOTHER Flow in the same root — the
+// bundled skill says so, and `flow plan save` documents what an omitted
+// --plan-id means there. The controller authorizes exactly the Flow its launch
+// registered, and its refusal is final, so such a command must open the store
+// itself rather than be proxied into a refusal.
+func TestFlowLeavesTargetingAnotherFlowBypassTheEndpoint(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	launched := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Launched", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	other := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Other", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	recordLaunch(t, root, launched.FlowID, "plan", "launch-1")
+	_, endpoint := controllerFor(t, root, launched.FlowID, "plan", "launch-1")
+	deps := func(stdout, stderr *bytes.Buffer) runDeps {
+		return noScanDeps(t, runDeps{
+			stdout: stdout, stderr: stderr,
+			getenv: controlEnv(root, endpoint.Path, endpoint.Token, "launch-1", launched.FlowID, "plan"),
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"approach", "flow", "read", "--flow-id", other.FlowID}, deps(&stdout, &stderr)); err != nil {
+		t.Fatalf("read of another Flow: %v (%s)", err, stderr.String())
+	}
+	var read flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &read); err != nil || read.FlowID != other.FlowID {
+		t.Fatalf("read output = %s (%v)", stdout.String(), err)
+	}
+	stdout.Reset()
+	// A write lands too, and is not logged against this launch.
+	if err := run([]string{"approach", "flow", "phase", "complete", "--flow-id", other.FlowID, "--phase-id", "plan", "--summary", "cross flow"}, deps(&stdout, &stderr)); err != nil {
+		t.Fatalf("write to another Flow: %v (%s)", err, stderr.String())
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.UpdatedPhase.Status != flowstore.PhaseCompleted {
+		t.Fatalf("write output = %s (%v)", stdout.String(), err)
+	}
+	log, _ := launchcontrol.OpenLog(root, "launch-1")
+	if requests, _ := log.Requests(); len(requests) != 0 {
+		t.Fatalf("another Flow's write was logged against this launch: %#v", requests)
+	}
+	// The launch's own Flow is still proxied.
+	stdout.Reset()
+	if err := run([]string{"approach", "flow", "read", "--flow-id", launched.FlowID}, deps(&stdout, &stderr)); err != nil {
+		t.Fatalf("read of the launch's own Flow: %v (%s)", err, stderr.String())
+	}
+}

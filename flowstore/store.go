@@ -218,6 +218,11 @@ type StoreOptions struct {
 	// BackupDir is where a migration writes its pre-migration copy. Empty means
 	// <root>/backups/. Surfaced as `approach db migrate --backup-dir`.
 	BackupDir string
+	// OwnerNonce is the caller's own internal/dblease holder, excluded from the
+	// owners scan a migration runs. A long-lived migrator (TUI startup) takes
+	// its lease FIRST and keeps it across the migration; without this it would
+	// refuse to migrate because of itself.
+	OwnerNonce string
 }
 
 // IsNotFound reports whether err means the requested Flow record does not exist.
@@ -723,6 +728,7 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		role:                  opts.Role,
 		rootExplicit:          opts.RootExplicit,
 		backupDir:             opts.BackupDir,
+		ownerNonce:            opts.OwnerNonce,
 		allowDevLiveMigration: opts.AllowDevLiveMigration,
 	})
 	if err != nil {
@@ -742,6 +748,14 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		now:           now,
 		diagnostics:   store.diagnostics,
 	}, nil
+}
+
+// Root is the canonical state root this store opened, after symlink
+// resolution. Callers that place files beside the database — the owners lease
+// especially — must use this rather than the path they passed in, or a
+// symlinked spelling would put their file in a directory nothing else looks at.
+func (s *Store) Root() string {
+	return s.canonicalRoot
 }
 
 // OpenDiagnostics reports what this open observed about the root and the

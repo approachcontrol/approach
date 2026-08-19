@@ -248,6 +248,15 @@ ln -s "$(pwd)/agent-skills/approach-flow" ~/.agents/skills/approach-flow
 Symlinks keep the skill tracking your checkout; copy the directory instead for
 a detached installation. Reinstall it after moving the repository to repair a
 link that still points at the old path.
+
+`approach-flow` replaces the earlier `approach-flow-create` and
+`approach-plan-persist` skills, which no longer exist in this repository. If you
+installed either of them, remove those links — they now dangle — and install
+`approach-flow`, which covers everything both did:
+
+```bash
+rm -f ~/.agents/skills/approach-flow-create ~/.agents/skills/approach-plan-persist
+```
 Phase transitions, gating, and merge rules are documented in
 [docs/flow-phases.md](docs/flow-phases.md).
 

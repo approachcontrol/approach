@@ -10,7 +10,14 @@ make test           # run all tests
 make fmt-check      # formatting check used by CI
 make run            # build and run the TUI
 go test ./scanner   # run one package
+go test -short ./... # skip the packages that build a second binary
 ```
+
+`make test` takes roughly 7-8 minutes. `actions` and `gitquery` spin up real
+temporary git repositories, and `internal/regression` adds one `go build` of
+`cmd/approach` per run (~20-40s): it is the cross-package incident suite, and
+running the real binary against the real generated prompt is the whole reason
+it exists. `-short` skips that package entirely when you are iterating.
 
 CI requires `make fmt-check`, `make test`, and `make build`. `web/node_modules`
 is inside the repo tree and can contain Go files from npm packages, so it is
@@ -66,9 +73,48 @@ refuse the root until it is migrated:
 approach db inspect --json            # what is in this root, and can approach open it
 approach db migrate                   # advance the schema (the only CLI entry point)
 approach db migrate --backup-dir DIR  # write the pre-migration backup somewhere else
+approach db restore --backup PATH     # put a verified pre-migration backup back
 ```
 
-Both accept `--state-root PATH`. A TUI start also migrates; nothing else does.
+All three accept `--state-root PATH`. A TUI start also migrates; nothing else
+does.
+
+`approach db restore` is the reversible half. It verifies the backup before it
+touches anything (`integrity_check`, plus the object shape for the backup's own
+`user_version`), refuses while **any** process holds the database open — a
+restore replaces the file, so every live holder ends up on an unlinked inode,
+which is why this is stricter than migration's refusal — takes the bootstrap
+lock, then refuses a backup that is not the one the current generation was
+migrated from unless `--force` acknowledges it. Two things enforce that "any
+holder" refusal, because one cannot: the owners lease names long-lived holders,
+and a connection probe (`locking_mode=exclusive` with `busy_timeout(0)`, which
+SQLite answers `SQLITE_BUSY` for exactly while another connection is attached)
+catches the short-lived `flow` and `plan` leaves, which publish no lease and can
+be mid-command. Only a busy answer refuses; a missing, read-only, or damaged
+database is inconclusive, and a restore is the command those cases need. It
+copies the database it replaces into `backups/` first, so a restore is itself
+reversible. That copy is checkpointed so it is self-contained; when SQLite
+cannot open the database to checkpoint it, the `-wal` — where committed rows can
+live alone after a crash — is copied beside it instead, and a backup carrying
+its own `-wal` is promoted with it. The copy's name is reserved with exclusive
+creation, so two restores in the same second cannot overwrite each other's
+recovery copy, and the replaced database's stale `-wal`/`-shm` are removed (safe
+only there: the lock is held and nothing has the database open) so the restored
+file is not shadowed by the replaced one's uncheckpointed content. `--json`
+reports in `db inspect`'s key style.
+
+**Migration is blocked while a long-lived owner holds the database at an older
+build.** The TUI and `approach serve` publish a holder file under
+`<root>/.approach.db.owners/`, each holding an exclusive `flock` on its own file
+for the process lifetime; short-lived `flow` and `plan` leaves publish nothing.
+A migrator scans that directory *before* taking the bootstrap lock — the total
+acquisition order is owners lease, then bootstrap lock, never the reverse — and
+only when a lock-free `user_version` read says the schema would actually
+advance, so an ordinary current-schema open reads nothing. The refusal names
+every blocking holder's PID, build, and executable in one message. Liveness is
+proved by the lock rather than by a PID heuristic, so a crashed holder is reaped
+by the next scan and blocks nothing. `db inspect` reports them as `owners`, and
+unlike `migration_owner` those are marked `verified`.
 
 What each open is allowed to do is named at the call site as a
 `flowstore.StoreOptions.Role`, and a call-site test fails the build if a
@@ -110,6 +156,23 @@ Three consequences worth knowing:
   and the migration's write lock — an older build, which does not honour the
   migration lease — the migration aborts with nothing changed rather than
   publishing a backup that does not match what it migrated.
+- **A migration records what it did, and proves the result is usable before it
+  reports success.** `approach.db.meta.json` carries an append-only `history`
+  array (build, commit, timestamp, from/to versions, backup path, generation,
+  provenance), capped at 100 entries with a `history_truncated` flag. After the
+  commit and *before* the bootstrap lease is released, the migration re-checks
+  the schema and round-trips a sample of records through the read path's codec;
+  a failure names the backup it just wrote and the exact `approach db restore`
+  command that undoes it. Records that were already undecodable before the
+  migration are tolerated — they are a partial list on the read path, and
+  refusing an upgrade over one would strand exactly the corpus that most needs
+  migrating.
+- **A live handle is fenced if its database changes underneath it.** Every write
+  re-reads `user_version` (a same-connection pragma) and re-reads the sidecar's
+  generation at most once a second, or on demand via `Store.Revalidate()`.
+  Either moving aborts that write and every one after it with
+  `flowstore.ErrDatabaseGenerationChanged`, naming both values. Reads are
+  deliberately not fenced.
 
 `approach db inspect` never refuses. It never constructs a store, never takes
 the bootstrap lock, and never repairs anything, so it still answers while a

@@ -403,7 +403,7 @@ func TestInspectReportCarriesTheDocumentedJSONKeys(t *testing.T) {
 		"schema_version", "path", "tier", "readable", "user_version",
 		"checkpointed_user_version", "wal", "journal_mode", "directory_mode",
 		"generation_id", "min_reader_generation", "min_writer_generation",
-		"sidecar_stale", "executable", "migration_owner", "warnings",
+		"first_compatible_release", "sidecar_stale", "executable", "migration_owner", "owners", "warnings",
 		"reason", "next_action",
 	}
 	for _, key := range want {
@@ -425,6 +425,11 @@ func TestInspectReportCarriesTheDocumentedJSONKeys(t *testing.T) {
 	}
 	if _, ok := decoded["warnings"].([]any); !ok {
 		t.Fatalf("warnings must be an array, not null: %s", data)
+	}
+	// Same reason as warnings: "no live holders" is an answer, and a consumer
+	// must not have to tell it apart from "not checked".
+	if _, ok := decoded["owners"].([]any); !ok {
+		t.Fatalf("owners must be an array, not null: %s", data)
 	}
 }
 

@@ -198,7 +198,7 @@ Commands:
   plan          Save, list, read, and update saved plans.
   flow          Create, inspect, and update Flow records.
   serve         Serve the read-only GraphQL API over HTTP.
-  db            Inspect and migrate the flow database.
+  db            Inspect, migrate, and restore the flow database.
   session-hook  Capture Claude, Codex, or Cursor session hook payloads.
 
 Flags:
@@ -422,6 +422,13 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
+	// The owners lease is taken BEFORE the store opens and kept for the whole
+	// process, and the store is told to exclude it. Not released and
+	// reacquired around the migration: that gap is exactly as racy as the
+	// shared-to-exclusive upgrade it would be imitating, and a concurrent
+	// `approach db migrate` could take the lease inside it and migrate
+	// underneath the handle this process never closes.
+	ownerLease := acquireDatabaseOwnerLease(sessionStore.Root())
 	// The one migrator in the process. TUI startup and `approach db migrate`
 	// are the only surfaces that may advance the schema.
 	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{
@@ -429,8 +436,13 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 		Role:                  flowstore.RoleMigrator,
 		Presets:               cfg.Flow.Presets,
 		AllowDevLiveMigration: opts.AllowDevLiveMigration,
+		OwnerNonce:            ownerLease.Nonce(),
 	})
 	if err != nil {
+		// Released on the failure path only. On the success path the store
+		// stays open for the process lifetime (see the note below), so the
+		// lease has to outlive this function exactly as the store does.
+		_ = ownerLease.Release()
 		return err
 	}
 	// One store for the whole process: it is handed to the model below so the

@@ -3480,3 +3480,30 @@ func TestShouldPrefillEmbeddedPromptForUntrackedFlowAutofix(t *testing.T) {
 		})
 	}
 }
+
+// The legacy fallback reads git's C-quoted pathnames, which is the only form a
+// Git without `-z` has for a path holding a newline, a quote, or a non-ASCII
+// byte. Reading the token literally would reject a path git reported perfectly
+// well.
+func TestMainWorktreePathDecodesQuotedLegacyPorcelainPaths(t *testing.T) {
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	script := `#!/bin/sh
+case " $* " in
+  *" -z "*) echo "error: unknown switch z" >&2; exit 129 ;;
+esac
+printf 'worktree "/tmp/main\\trepo-caf\\303\\251"\nHEAD deadbeef\nbranch refs/heads/main\n\n'
+`
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := actions.MainWorktreePath("/tmp/linked-repo")
+	if err != nil {
+		t.Fatalf("MainWorktreePath() error = %v", err)
+	}
+	if want := "/tmp/main\trepo-café"; got != want {
+		t.Fatalf("MainWorktreePath() = %q, want %q", got, want)
+	}
+}
