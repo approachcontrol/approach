@@ -339,3 +339,31 @@ For each field the role does *not* carry, "which consumer proves it is payload?"
    the cost of three roles no consumer distinguishes. Confirm the collapse.
 6. **Enforcement scope**: the boundary test as specified covers `model/` and
    `actions/` only. Confirm no other package should be in scope.
+
+## Implementation note — tracer bullet (`approach-hyl.2`)
+
+The first slice landed the seam and migrated one launch kind. Three things
+about it diverge from the text above and stay true until a later slice changes
+them:
+
+- **The tracer migrated `RoleWorktreeAgent`, not `RoleRepair`.** The migration
+  order above nominates repair; the worktree agent is the strictly simpler
+  tracer — one marker, one hardcoded route, no phase writes, no post-literal
+  field mutation — so it went first. Repair still owns its own slice, where
+  the post-literal refresh write at `model/flow_repair.go` gets handled.
+- **D5 was followed.** `FlowLaunchRole` lives in `actions/flow_launch_role.go`;
+  `newFlowLaunchContext` and the `flowLaunchTarget` sum live in
+  `model/flow_launch_context.go`. Open question 1 is therefore answered in the
+  code, not the ADR's status.
+- **The builder takes no routing probe yet (D3 deferred).** The worktree agent
+  has no tmux call site and no route to decide, so the builder returns
+  `flowLaunchRoute` without taking a probe. The routing input arrives with the
+  first tmux-capable kind. Open question 4 remains open.
+
+`TestEveryFlowLaunchRouteRefusesAnUnverifiedPin` now follows
+`newFlowLaunchContext` call sites as well as `applyLaunchStamp` ones, so a
+route that delegates construction still has to refuse an unverified pin before
+it reserves. The builder itself is exempt: it never reserves or writes, and the
+refusal has to happen earlier than it runs.
+
+The ADR's status stays `proposed`; the remaining open questions are unanswered.
