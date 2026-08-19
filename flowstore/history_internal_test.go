@@ -330,3 +330,49 @@ func restoreCommandBackup(t *testing.T, message string) string {
 	}
 	return strings.Fields(rest)[0]
 }
+
+// TestTheSampleQueryFitsAV1PredecessorsColumns: bead_id and epic_id arrive in
+// v2. Naming them against a v1 database does not read empty values — it fails
+// the query, which empties the leniency baseline and turns that root's
+// pre-existing damage into a post-commit migration failure.
+func TestTheSampleQueryFitsAV1PredecessorsColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`CREATE TABLE flows (
+		flow_id TEXT PRIMARY KEY,
+		repo_path TEXT NOT NULL,
+		status TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		record BLOB NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO flows VALUES('f', '/repo', 'active', '2026-08-18T00:00:00Z', X'7B7D')"); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := db.Query(migratedRecordSampleQuery(1), migratedRecordSampleSize)
+	if err != nil {
+		t.Fatalf("the v1 sample query does not run against a v1 database: %v", err)
+	}
+	if !rows.Next() {
+		t.Fatal("the v1 sample query returned no rows")
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The current schema's query genuinely cannot run there, which is why the
+	// version has to pick the columns.
+	if _, err := db.Query(migratedRecordSampleQuery(databaseSchemaVersion), migratedRecordSampleSize); err == nil {
+		t.Fatal("the current-schema query unexpectedly ran against a v1 database")
+	}
+	// A baseline built from it is a real answer rather than the empty map a
+	// failed query yields.
+	if undecodable := sampleUndecodableFlows(db, 1); len(undecodable) != 1 || !undecodable["f"] {
+		t.Fatalf("baseline = %v, want the undecodable v1 record", undecodable)
+	}
+}

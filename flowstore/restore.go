@@ -151,11 +151,18 @@ func Restore(opts RestoreOptions) (RestoreResult, error) {
 		return RestoreResult{}, err
 	}
 	generation := newGenerationID()
-	from := backupVersion
+	// The history entry answers "what undoes the newest event here", which for
+	// a restore is the copy of the database this restore REPLACED — not the
+	// backup it restored FROM. Recording the source instead would break the
+	// undo in both directions: restoring the pre-restore copy would be refused
+	// as a generation mismatch, and restoring this same backup a second time
+	// would be accepted without --force, silently discarding everything written
+	// in between. from_version is likewise where the database was, not where
+	// the backup was.
 	if err := writeSidecar(root, backupVersion, sidecarProvenanceRestored, generation, migrationOutcome{
 		Migrated:    true,
-		FromVersion: from,
-		BackupPath:  backupPath,
+		FromVersion: live.PhysicalVersion,
+		BackupPath:  preRestore,
 	}); err != nil {
 		// The database IS replaced by now. Reporting a bare failure here would
 		// have an operator believe the original is still live and retry, so the

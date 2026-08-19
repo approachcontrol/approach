@@ -341,7 +341,7 @@ const migratedRecordSampleSize = 32
 // An empty database passes trivially, and correctly: there is nothing a
 // migration could have corrupted.
 func validateMigratedRecordRoundTrip(db *sql.DB, tolerated map[string]bool) error {
-	rows, err := db.Query(migratedRecordSampleQuery(true), migratedRecordSampleSize)
+	rows, err := db.Query(migratedRecordSampleQuery(databaseSchemaVersion), migratedRecordSampleSize)
 	if err != nil {
 		return fmt.Errorf("read migrated flow records: %w", err)
 	}
@@ -364,16 +364,30 @@ func validateMigratedRecordRoundTrip(db *sql.DB, tolerated map[string]bool) erro
 	return rows.Err()
 }
 
-// migratedRecordSampleQuery names the same rows before and after the migration.
+// migratedRecordSampleQuery names the same rows before and after the migration,
+// selecting only columns the schema it is aimed at actually has.
+//
 // ORDER BY, deliberately: an unordered LIMIT may return different rows on the
 // two sides, and the comparison this sample feeds is only meaningful over the
-// same set. withProjections is false before the migration, where the columns
-// the current schema adds do not exist yet.
-func migratedRecordSampleQuery(withProjections bool) string {
-	columns := "flow_id, repo_path, status, updated_at, bead_id, epic_id, '', '', record"
-	if withProjections {
-		columns = "flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record"
+// same set.
+//
+// Every column the current schema added is substituted with an empty string on
+// a predecessor that predates it. bead_id and epic_id arrive in v2, so a v1
+// database has neither — and naming them there does not read empty values, it
+// makes the whole query fail, which silently empties the leniency baseline and
+// turns a v1 root's PRE-EXISTING damage into a post-commit migration failure.
+func migratedRecordSampleQuery(schema int64) string {
+	bead, epic := "bead_id", "epic_id"
+	if schema <= 1 {
+		bead, epic = "''", "''"
 	}
+	prepared, nonce := "''", "''"
+	if schema >= databaseSchemaVersion {
+		prepared, nonce = "prepared_at", "preparation_nonce"
+	}
+	columns := strings.Join([]string{
+		"flow_id", "repo_path", "status", "updated_at", bead, epic, prepared, nonce, "record",
+	}, ", ")
 	return "SELECT " + columns + " FROM flows ORDER BY flow_id LIMIT ?"
 }
 
@@ -390,8 +404,7 @@ func migratedRecordSampleQuery(withProjections bool) string {
 // migration failure of its own.
 func sampleUndecodableFlows(db *sql.DB, predecessor int64) map[string]bool {
 	undecodable := map[string]bool{}
-	rows, err := db.Query(migratedRecordSampleQuery(predecessor >= databaseSchemaVersion),
-		migratedRecordSampleSize)
+	rows, err := db.Query(migratedRecordSampleQuery(predecessor), migratedRecordSampleSize)
 	if err != nil {
 		return undecodable
 	}

@@ -62,8 +62,11 @@ func TestRestoreReplacesTheDatabaseWithTheBackup(t *testing.T) {
 	if entry.Provenance != sidecarProvenanceRestored {
 		t.Fatalf("newest history entry = %#v", entry)
 	}
-	if entry.BackupPath == nil || *entry.BackupPath != backup {
-		t.Fatalf("the history entry does not name the source backup: %#v", entry)
+	// The entry names what UNDOES this restore — the copy of the database it
+	// replaced — because that is the question restoreUndoesTheNewestMigration
+	// asks of it.
+	if entry.BackupPath == nil || *entry.BackupPath != result.PreRestoreBackup {
+		t.Fatalf("the history entry does not name the pre-restore copy: %#v", entry)
 	}
 	// The restored database is openable by the migrator, which re-advances it.
 	// That is the point: a restore returns the corpus, not a dead end.
@@ -374,5 +377,33 @@ func TestRestoreRefusesItsOwnStagingFileAsTheBackup(t *testing.T) {
 	}
 	if storedSchemaVersion(t, root) != before {
 		t.Fatal("a refused restore changed the database anyway")
+	}
+}
+
+// TestARestoreIsItselfUndoneWithoutForce: the pre-restore copy is advertised as
+// what makes a restore reversible, so restoring it must be accepted on the same
+// terms — and the backup just restored must NOT be, since re-applying it after
+// the fact would discard everything written since without acknowledgement.
+func TestARestoreIsItselfUndoneWithoutForce(t *testing.T) {
+	root, backup := migratedRootWithBackup(t)
+	first, err := Restore(RestoreOptions{Root: root, BackupPath: backup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PreRestoreBackup == "" {
+		t.Fatal("no pre-restore copy to undo the restore with")
+	}
+
+	undone, err := Restore(RestoreOptions{Root: root, BackupPath: first.PreRestoreBackup})
+	if err != nil {
+		t.Fatalf("the pre-restore copy was refused: %v", err)
+	}
+	if undone.UserVersion != databaseSchemaVersion {
+		t.Fatalf("undo left user_version = %d, want %d", undone.UserVersion, databaseSchemaVersion)
+	}
+	// And the backup restored a moment ago is no longer the newest event's
+	// undo, so re-applying it needs the acknowledgement.
+	if _, err := Restore(RestoreOptions{Root: root, BackupPath: backup}); !errors.Is(err, ErrRestoreGenerationMismatch) {
+		t.Fatalf("err = %v, want ErrRestoreGenerationMismatch", err)
 	}
 }
