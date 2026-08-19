@@ -428,3 +428,21 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 		b.WriteString("\n")
 	}
 }
+
+// PhaseLaunchPrompt renders the prompt a phase launch carries, for callers
+// outside this package that must exercise the REAL generated text rather than
+// a reconstruction of it.
+//
+// It exists for the cross-package incident regression suite
+// (internal/regression), whose whole value is running the command line an agent
+// is actually told to run against a real second binary. A test that rebuilt
+// that command line itself would keep passing while the shipped prompt drifted,
+// which is exactly how the schema-N / CLI-(N-1) incident survived six
+// unit-tested mechanisms.
+//
+// pinnedExecutable is the launch's controlplane pin; empty renders the
+// documented APPROACH_EXECUTABLE / APPROACH_BIN / PATH fallback. It is the same
+// call flowLaunchPreparation.prepare makes with l.Pin.ExecutablePath.
+func PhaseLaunchPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates, pinnedExecutable string) string {
+	return flowPhasePrompt(record, phase, planPath, planBody, templates, pinnedExecutable)
+}

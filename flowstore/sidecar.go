@@ -150,12 +150,18 @@ func reconcileSidecar(root string, storedVersion int64, migrated bool) error {
 }
 
 func writeSidecar(root string, storedVersion int64, provenance, generation string) error {
+	// Declared, not assumed. The two floors were hardcoded to storedVersion
+	// while every schema shipped so far had them equal; taking them from the
+	// manifest is behaviour-preserving today and is what makes the NEXT bump
+	// able to say "this version is readable by an older build" without editing
+	// this function.
+	minReader, minWriter := manifestGenerations(storedVersion)
 	sidecar := databaseSidecar{
 		SchemaVersion:       sidecarSchemaVersion,
 		GenerationID:        generation,
 		PhysicalVersion:     storedVersion,
-		MinReaderGeneration: storedVersion,
-		MinWriterGeneration: storedVersion,
+		MinReaderGeneration: minReader,
+		MinWriterGeneration: minWriter,
 		MigratedBy: sidecarMigrator{
 			BuildVersion: version.Version(),
 			Commit:       version.Commit(),
@@ -236,6 +242,39 @@ func newGenerationID() string {
 		return fmt.Sprintf("%016x", time.Now().UTC().UnixNano())
 	}
 	return hex.EncodeToString(raw[:])
+}
+
+// sidecarCompatibilityNotice reports a sidecar declaring a compatibility floor
+// above what this build implements. Empty when there is nothing to say.
+//
+// This is the case user_version cannot express: a newer build migrated the
+// database to a physical version this one still opens, and declared in the
+// sidecar that reading it needs a later generation anyway. The role gate keys
+// on user_version and legitimately admits the open, so without this the
+// operator sees no signal at all until something behaves strangely.
+func sidecarCompatibilityNotice(root string) string {
+	sidecar, ok := readSidecar(root)
+	if !ok {
+		return ""
+	}
+	required := sidecar.MinReaderGeneration
+	if sidecar.MinWriterGeneration > required {
+		required = sidecar.MinWriterGeneration
+	}
+	if required <= databaseSchemaVersion {
+		return ""
+	}
+	return fmt.Sprintf("flow database at %s declares a minimum reader generation of %d,"+
+		" above this build's %d; it was migrated by approach %s. Upgrade approach%s.",
+		root, required, databaseSchemaVersion, sidecarBuildOrUnknown(sidecar),
+		manifestReleaseSuffix(required))
+}
+
+func sidecarBuildOrUnknown(sidecar databaseSidecar) string {
+	if sidecar.MigratedBy.BuildVersion == "" {
+		return "(build unrecorded)"
+	}
+	return sidecar.MigratedBy.BuildVersion
 }
 
 // sidecarGenerationOrNoGen names the generation a backup filename carries.

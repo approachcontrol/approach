@@ -403,7 +403,7 @@ func TestInspectReportCarriesTheDocumentedJSONKeys(t *testing.T) {
 		"schema_version", "path", "tier", "readable", "user_version",
 		"checkpointed_user_version", "wal", "journal_mode", "directory_mode",
 		"generation_id", "min_reader_generation", "min_writer_generation",
-		"sidecar_stale", "executable", "migration_owner", "warnings",
+		"first_compatible_release", "sidecar_stale", "executable", "migration_owner", "warnings",
 		"reason", "next_action",
 	}
 	for _, key := range want {

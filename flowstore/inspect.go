@@ -18,7 +18,10 @@ import (
 
 // inspectSchemaVersion versions the report's own JSON so a consumer can tell a
 // shape change from a content change.
-const inspectSchemaVersion = 1
+//
+// 2 adds first_compatible_release. Additive, but the constant exists precisely
+// so a consumer never has to discover that by parsing.
+const inspectSchemaVersion = 2
 
 // The six tiers Inspect can land in. They are values, not step indexes: two
 // separate conditions report not_a_database and two report not_writable, so a
@@ -76,24 +79,29 @@ type InspectMigrationOwner struct {
 // reporting sidecar_stale: false in a tier that never compared anything would
 // assert agreement nobody checked.
 type InspectReport struct {
-	SchemaVersion           int64                  `json:"schema_version"`
-	Path                    string                 `json:"path"`
-	Tier                    string                 `json:"tier"`
-	Readable                bool                   `json:"readable"`
-	UserVersion             *int64                 `json:"user_version"`
-	CheckpointedUserVersion *int64                 `json:"checkpointed_user_version"`
-	WAL                     InspectWAL             `json:"wal"`
-	JournalMode             *string                `json:"journal_mode"`
-	DirectoryMode           *string                `json:"directory_mode"`
-	GenerationID            *string                `json:"generation_id"`
-	MinReaderGeneration     *int64                 `json:"min_reader_generation"`
-	MinWriterGeneration     *int64                 `json:"min_writer_generation"`
-	SidecarStale            *bool                  `json:"sidecar_stale"`
-	Executable              InspectExecutable      `json:"executable"`
-	MigrationOwner          *InspectMigrationOwner `json:"migration_owner"`
-	Warnings                []string               `json:"warnings"`
-	Reason                  *string                `json:"reason"`
-	NextAction              *string                `json:"next_action"`
+	SchemaVersion           int64      `json:"schema_version"`
+	Path                    string     `json:"path"`
+	Tier                    string     `json:"tier"`
+	Readable                bool       `json:"readable"`
+	UserVersion             *int64     `json:"user_version"`
+	CheckpointedUserVersion *int64     `json:"checkpointed_user_version"`
+	WAL                     InspectWAL `json:"wal"`
+	JournalMode             *string    `json:"journal_mode"`
+	DirectoryMode           *string    `json:"directory_mode"`
+	GenerationID            *string    `json:"generation_id"`
+	MinReaderGeneration     *int64     `json:"min_reader_generation"`
+	MinWriterGeneration     *int64     `json:"min_writer_generation"`
+	// FirstCompatibleRelease is the earliest release that opens a database at
+	// the version found here, taken from this build's compatibility manifest.
+	// Null when the version is one this build does not declare — a database
+	// from a newer build, or a predecessor the manifest cannot map honestly.
+	FirstCompatibleRelease *string                `json:"first_compatible_release"`
+	SidecarStale           *bool                  `json:"sidecar_stale"`
+	Executable             InspectExecutable      `json:"executable"`
+	MigrationOwner         *InspectMigrationOwner `json:"migration_owner"`
+	Warnings               []string               `json:"warnings"`
+	Reason                 *string                `json:"reason"`
+	NextAction             *string                `json:"next_action"`
 }
 
 // Inspect answers "what is in this state root, and can approach open it" for an
@@ -184,6 +192,18 @@ func applyMigrationOwner(report *InspectReport, root string) {
 	report.MigrationOwner = &InspectMigrationOwner{PID: pid}
 }
 
+// applyFirstCompatibleRelease answers the only manifest question an operator
+// can act on. Set from user_version rather than from the sidecar: user_version
+// is authoritative, and the sidecar is a cache that is never believed.
+func applyFirstCompatibleRelease(report *InspectReport, userVersion int64) {
+	entry, ok := manifestEntry(userVersion)
+	if !ok || entry.FirstCompatibleRelease == "" {
+		return
+	}
+	release := entry.FirstCompatibleRelease
+	report.FirstCompatibleRelease = &release
+}
+
 func applySidecar(report *InspectReport, root string) {
 	sidecar, ok := readSidecar(root)
 	if !ok {
@@ -244,8 +264,22 @@ func classifyDatabase(report *InspectReport, root, path string) {
 			stale = sidecar.PhysicalVersion != userVersion
 		}
 		report.SidecarStale = &stale
+		applyFirstCompatibleRelease(report, userVersion)
 		report.Tier = TierOpen
 		report.Readable = true
+		// A database from a newer build reads cleanly here — that is the whole
+		// point of a diagnostic that never refuses — but leaving next_action
+		// empty makes the one command that still answers say nothing about the
+		// one thing to do. The advice is UPGRADE, never restore: rolling back
+		// to a pre-migration backup would discard everything the newer build
+		// has written since.
+		if userVersion > databaseSchemaVersion {
+			reason := fmt.Sprintf("database schema %d was written by a newer approach; this build writes %d",
+				userVersion, databaseSchemaVersion)
+			nextAction := "upgrade approach; this build cannot open a newer flow database"
+			report.Reason = &reason
+			report.NextAction = &nextAction
+		}
 		return
 	}
 	classifyOpenFailure(report, path, openErr)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -167,6 +168,14 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 			return nil, err
 		}
 		backend.diagnostics.SidecarStale = sidecarStale
+		// The compatibility notice, on the one channel every surface already
+		// reads: `db migrate` prints Warnings to stderr and the TUI renders
+		// them beside controlplane.PathMismatchNotice. A notice rather than a
+		// refusal, because user_version — the authority — is a version this
+		// build opens, and the sidecar is a cache that never drives a decision.
+		if notice := sidecarCompatibilityNotice(canonicalRoot); notice != "" {
+			backend.diagnostics.Warnings = append(backend.diagnostics.Warnings, notice)
+		}
 		if _, err := presetRegistry(opts.presets); err != nil {
 			_ = backend.db.Close()
 			return nil, err
@@ -263,6 +272,17 @@ func refuseUnmigratedForRole(storedVersion int64, readErr error, role Role) erro
 	}
 }
 
+// supportedPredecessorVersions is the exact set migrateAuthoritativeDatabase
+// will advance to databaseSchemaVersion.
+//
+// A named slice rather than the inline chain of comparisons it replaced,
+// because manifest_test.go asserts it equals the manifest's declared
+// migration_tested_predecessors: accepting a new predecessor without declaring
+// it — and without an executing migration test for it — fails the build's own
+// gate rather than shipping an untested upgrade path. Version 0 is the
+// unstamped original, whose shape is v1's.
+var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5}
+
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
 // It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
 // authoritative read-only validation and before the WAL runtime handle opens.
@@ -319,7 +339,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		closeDB = false
 		return false, nil
 	}
-	if version != 0 && version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
+	if !slices.Contains(supportedPredecessorVersions, version) {
 		return false, fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	if err := refuseDevLiveMigration(canonicalRoot, version, allowDevLiveMigration); err != nil {

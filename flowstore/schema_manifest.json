@@ -1,0 +1,53 @@
+{
+  "manifest_version": 1,
+  "schemas": [
+    {
+      "physical_version": 1,
+      "min_reader_generation": 1,
+      "min_writer_generation": 1,
+      "first_compatible_release": "v0.10.0",
+      "migration_tested_predecessors": [],
+      "release_notes": "First stamped flow database schema: flows(flow_id, repo_path, status, updated_at, record) with the three list indexes."
+    },
+    {
+      "physical_version": 2,
+      "min_reader_generation": 2,
+      "min_writer_generation": 2,
+      "first_compatible_release": "v0.10.1",
+      "migration_tested_predecessors": [0, 1],
+      "release_notes": "Bead link projection: flows.bead_id and flows.epic_id plus the guard_linked_flow_record_update compatibility trigger."
+    },
+    {
+      "physical_version": 3,
+      "min_reader_generation": 3,
+      "min_writer_generation": 3,
+      "first_compatible_release": "v0.10.2",
+      "migration_tested_predecessors": [0, 1, 2],
+      "release_notes": "Preparation receipt projection: flows.prepared_at, the epic_progressions table, and the guard_prepared_flow_record_update trigger."
+    },
+    {
+      "physical_version": 4,
+      "min_reader_generation": 4,
+      "min_writer_generation": 4,
+      "first_compatible_release": "v0.10.2",
+      "migration_tested_predecessors": [0, 1, 2, 3],
+      "release_notes": "Epic progression done state is mandatory: the guard_epic_progression_done_insert and guard_epic_progression_done_record_update triggers, and the conservative rewrite of legacy v3 progression records."
+    },
+    {
+      "physical_version": 5,
+      "min_reader_generation": 5,
+      "min_writer_generation": 5,
+      "first_compatible_release": "v0.10.2",
+      "migration_tested_predecessors": [0, 1, 2, 3, 4],
+      "release_notes": "Progression claim marker is fenced by the guard_progression_claim_record_update trigger."
+    },
+    {
+      "physical_version": 6,
+      "min_reader_generation": 6,
+      "min_writer_generation": 6,
+      "first_compatible_release": "v0.10.3",
+      "migration_tested_predecessors": [0, 1, 2, 3, 4, 5],
+      "release_notes": "Preparation nonce projection: flows.preparation_nonce and the guard_preparation_nonce_update trigger."
+    }
+  ]
+}
