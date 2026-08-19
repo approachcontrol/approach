@@ -25,6 +25,28 @@ Create a GitHub personal access token with contents write access to
 HOMEBREW_TAP_GITHUB_TOKEN
 ```
 
+## Flow Database Schema Bump Checklist
+
+Do this in the same change that bumps `flowstore.databaseSchemaVersion`. The
+package's own gate (`flowstore/manifest_test.go`) fails until all four are
+done, which is the point — a bump that ships without them is the incident
+`approach-0e9` exists to prevent.
+
+1. **Bump** `databaseSchemaVersion` and add the migration step.
+2. **Add the manifest entry** to `flowstore/schema_manifest.json`: the new
+   `physical_version`, its `min_reader_generation` and `min_writer_generation`
+   (equal to the version unless an older build can genuinely still open it),
+   and `migration_tested_predecessors`, which must equal
+   `supportedPredecessorVersions` exactly.
+3. **Add the predecessor migration fixture** so every declared predecessor
+   really migrates. `TestManifestDeclaredPredecessorsMigrate` runs each one;
+   a declared predecessor with no fixture fails there rather than in the field.
+4. **Fill `first_compatible_release` and `release_notes`.** The release string
+   is the only half of a compatibility answer an operator can act on — it is
+   what `db inspect` reports and what a refusal names. Use the tag this change
+   will ship in; `"unknown"` is only for historic entries whose mapping cannot
+   be reconstructed honestly.
+
 ## Cutting a Release
 
 1. Land the release changes on `main`.
