@@ -220,7 +220,7 @@ func applyMigrationOwner(report *InspectReport, root string) {
 // ones: this command never mutates the root it is diagnosing, and unlinking a
 // holder file is a mutation. A migrator's scan does the reaping.
 func applyOwners(report *InspectReport, root string) {
-	live, _, err := dblease.Scan(root)
+	live, err := dblease.Observe(root)
 	if err != nil {
 		return
 	}

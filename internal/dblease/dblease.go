@@ -237,6 +237,20 @@ func (h *Holder) Release() error {
 // A missing owners directory is not an error. Every root that predates this
 // package has none, and a lease nobody has taken is exactly zero holders.
 func Scan(root string, exclude ...string) (live []Record, reaped []string, err error) {
+	return scan(root, true, exclude)
+}
+
+// Observe reports the live holders and reaps nothing.
+//
+// For a diagnostic — `approach db inspect` — that must not mutate the root it
+// is describing. Reaping is a filesystem write, and a command an operator runs
+// to LOOK at a damaged root has no business unlinking anything in it.
+func Observe(root string, exclude ...string) (live []Record, err error) {
+	live, _, err = scan(root, false, exclude)
+	return live, err
+}
+
+func scan(root string, reap bool, exclude []string) (live []Record, reaped []string, err error) {
 	dir := Dir(root)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -271,6 +285,9 @@ func Scan(root string, exclude ...string) (live []Record, reaped []string, err e
 			continue
 		}
 		if dead {
+			if !reap {
+				continue
+			}
 			if err := os.Remove(path); err == nil || os.IsNotExist(err) {
 				reaped = append(reaped, name)
 			}

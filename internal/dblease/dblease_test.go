@@ -319,3 +319,35 @@ func TestALiveHolderWithADamagedRecordIsStillReported(t *testing.T) {
 		t.Fatalf("schema = %d, want 0 for a record nothing could be read from", live[0].SchemaVersion)
 	}
 }
+
+// Observe is what a diagnostic uses: it reports the same live holders and
+// unlinks nothing, so `approach db inspect` cannot mutate the root it is
+// describing.
+func TestObserveReportsLiveHoldersWithoutReapingDeadOnes(t *testing.T) {
+	root := t.TempDir()
+	holder, err := dblease.Acquire(root, identity(t, "v0.10.3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Release()
+	// A dead holder's file: written under a final name, locked by nobody.
+	dead := filepath.Join(dblease.Dir(root), "999999-dead.json")
+	if err := os.WriteFile(dead, []byte(`{"pid":999999,"build_version":"v0.0.1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	live, err := dblease.Observe(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].BuildVersion != "v0.10.3" {
+		t.Fatalf("live = %#v, want only the real holder", live)
+	}
+	if _, err := os.Lstat(dead); err != nil {
+		t.Fatalf("Observe reaped a dead holder: %v", err)
+	}
+	// Scan still reaps, so the cleanup a migrator does is unchanged.
+	if _, reaped, err := dblease.Scan(root); err != nil || len(reaped) != 1 {
+		t.Fatalf("Scan reaped %v (%v), want the dead holder", reaped, err)
+	}
+}

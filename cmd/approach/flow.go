@@ -1554,6 +1554,20 @@ func (c flowControlContext) servesRoot(stateRoot string) bool {
 	return canonicalStateRoot(requested) == canonicalStateRoot(c.root)
 }
 
+// servesFlow reports whether the endpoint is the right place for a command that
+// names flowID. The controller authorizes exactly the Flow its launch is
+// registered for and refuses anything else outright — and a refusal is final,
+// with no fallback — so a command that deliberately targets ANOTHER Flow in the
+// same root opens the store itself, as it did before the controller existed.
+// The unreachable-endpoint path already declines to log such a request against
+// this launch for the same reason.
+//
+// A blank flowID is `flow list`, which names no Flow and stays proxied.
+func (c flowControlContext) servesFlow(flowID string) bool {
+	requested := strings.TrimSpace(flowID)
+	return requested == "" || requested == c.flowID
+}
+
 // canonicalStateRoot compares roots by where they point, so a symlinked
 // spelling of the launcher's root is still the launcher's root.
 func canonicalStateRoot(root string) string {
@@ -1604,7 +1618,8 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		return launchcontrol.Response{}, fmt.Errorf("unknown launch control verb %q", req.Verb)
 	}
 	control := flowControlContextFromEnv(deps)
-	if class == launchcontrol.ClassDirect || control.endpoint == "" || !control.servesRoot(stateRoot) {
+	if class == launchcontrol.ClassDirect || control.endpoint == "" ||
+		!control.servesRoot(stateRoot) || !control.servesFlow(req.FlowID) {
 		return runFlowRequestDirect(deps, stateRoot, req, role)
 	}
 	client := launchcontrol.Client{

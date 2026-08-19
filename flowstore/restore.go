@@ -157,7 +157,15 @@ func Restore(opts RestoreOptions) (RestoreResult, error) {
 		FromVersion: from,
 		BackupPath:  backupPath,
 	}); err != nil {
-		return RestoreResult{}, err
+		// The database IS replaced by now. Reporting a bare failure here would
+		// have an operator believe the original is still live and retry, so the
+		// error states what actually happened: the restore landed, only its
+		// record did not. The next open reconstructs the sidecar from
+		// user_version, which is why this is a partial success and not a
+		// rollback.
+		return RestoreResult{}, fmt.Errorf("the flow database at %s WAS restored from %s, but recording it failed"+
+			" (the database it replaced is at %s): %w",
+			databasePath, backupPath, preRestoreOrNone(preRestore), err)
 	}
 	return RestoreResult{
 		SchemaVersion:    restoreResultSchemaVersion,
@@ -188,6 +196,15 @@ func refuseRestoreFromStaging(root, backupPath string) error {
 		}
 	}
 	return nil
+}
+
+// preRestoreOrNone names the pre-restore copy for an error message. A root
+// whose database was already gone has none, and saying so beats an empty path.
+func preRestoreOrNone(path string) string {
+	if path == "" {
+		return "no copy — the root had no database to replace"
+	}
+	return path
 }
 
 // verifyRestoreSource proves the backup is a usable flow database before
