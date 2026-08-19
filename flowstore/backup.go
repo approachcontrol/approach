@@ -33,7 +33,11 @@ const backupRetention = 8
 // VACUUM INTO rather than a raw copy, because a raw copy of a live database is
 // only as consistent as its WAL, and this copy is the thing an operator falls
 // back to when a migration goes wrong.
-func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fromVersion int64) error {
+// It returns the path of the verified backup, which the sidecar's history
+// records: a migration whose post-commit validation fails names this path as
+// the thing to restore, and a history entry that could not name its backup
+// would leave an operator grepping a directory.
+func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fromVersion int64) (string, error) {
 	if backupDir == "" {
 		backupDir = filepath.Join(canonicalRoot, backupDirName)
 	}
@@ -42,14 +46,14 @@ func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fr
 	// already proved the flows table exists in the shape this version claims.
 	var sourceRows int64
 	if err := db.QueryRow("SELECT count(*) FROM flows").Scan(&sourceRows); err != nil {
-		return backupFailure(backupDir, fmt.Errorf("count source rows: %w", err))
+		return "", backupFailure(backupDir, fmt.Errorf("count source rows: %w", err))
 	}
 	// Recorded BEFORE the create, because afterwards there is no way to tell
 	// which levels MkdirAll had to make. --backup-dir is an arbitrary path and
 	// may be missing several.
 	created := missingAncestors(backupDir)
 	if err := os.MkdirAll(backupDir, artifacts.DirPerm); err != nil {
-		return backupFailure(backupDir, err)
+		return "", backupFailure(backupDir, err)
 	}
 	stem := backupStem(path, canonicalRoot)
 	destination := filepath.Join(backupDir, backupFilename(stem, fromVersion,
@@ -68,7 +72,7 @@ func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fr
 	// VACUUM INTO refuses to write to a path that already exists.
 	staging, err := os.MkdirTemp(backupDir, ".backup-")
 	if err != nil {
-		return backupFailure(backupDir, err)
+		return "", backupFailure(backupDir, err)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 	staged := filepath.Join(staging, filepath.Base(destination))
@@ -78,24 +82,24 @@ func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fr
 	// untestable besides. The wrap names the escape hatch.
 	backupRaceProbe()
 	if _, err := db.Exec("VACUUM INTO " + sqliteStringLiteral(staged)); err != nil {
-		return backupFailure(destination, err)
+		return "", backupFailure(destination, err)
 	}
 	if err := os.Chmod(staged, artifacts.FilePerm); err != nil {
-		return backupFailure(destination, err)
+		return "", backupFailure(destination, err)
 	}
 	if err := verifyBackup(staged, fromVersion, sourceRows); err != nil {
-		return backupFailure(destination, err)
+		return "", backupFailure(destination, err)
 	}
 	// VACUUM INTO's own refusal to overwrite is what kept two migrations from
 	// clobbering one backup, and the rename below would not inherit it. Keep the
 	// property explicitly rather than lose it to the staging step.
 	if _, err := os.Lstat(destination); err == nil {
-		return backupFailure(destination, fmt.Errorf("a backup by that name already exists"))
+		return "", backupFailure(destination, fmt.Errorf("a backup by that name already exists"))
 	} else if !os.IsNotExist(err) {
-		return backupFailure(destination, err)
+		return "", backupFailure(destination, err)
 	}
 	if err := os.Rename(staged, destination); err != nil {
-		return backupFailure(destination, err)
+		return "", backupFailure(destination, err)
 	}
 	// VACUUM INTO syncs the backup's CONTENTS; nothing has synced the directory
 	// entry that names it, nor any directory MkdirAll just created. The whole
@@ -106,11 +110,14 @@ func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fr
 	// entry in ITS parent, so a brand-new /mnt/new/a/backups needs the whole
 	// created chain persisted or the pathname to the copy is lost.
 	if err := syncBackupPath(backupDir, created); err != nil {
-		return backupFailure(destination, err)
+		return "", backupFailure(destination, err)
 	}
 	// Only after a successful verify, never before: pruning first would trade a
 	// proven backup for an unproven one.
-	return pruneBackups(backupDir, stem, filepath.Base(destination))
+	if err := pruneBackups(backupDir, stem, filepath.Base(destination)); err != nil {
+		return "", err
+	}
+	return destination, nil
 }
 
 // missingAncestors lists the directories MkdirAll will have to create, deepest

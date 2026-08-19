@@ -189,10 +189,16 @@ type sqliteBackend struct {
 	// epic_progression.go (two type assertions to *sqliteBackend and two to
 	// epicProgressionBackend), and a wrapper would break all four — including
 	// the ReadEpicProgression read `approach serve` depends on.
-	role          Role
-	diagnostics   OpenDiagnostics
-	beginTx       func(context.Context) (sqliteTransaction, error)
-	queryListRows func(string, ...any) (flowListRows, error)
+	role        Role
+	diagnostics OpenDiagnostics
+	// guard fences writes through a handle whose database was migrated or
+	// restored underneath it. See generation_guard.go.
+	guard           generationGuard
+	generationClock func() time.Time
+	readGeneration  func() string
+	readUserVersion func() (int64, error)
+	beginTx         func(context.Context) (sqliteTransaction, error)
+	queryListRows   func(string, ...any) (flowListRows, error)
 }
 
 // backendOptions carries what an open needs. It replaces a positional parameter
@@ -356,8 +362,28 @@ func openSQLiteBackend(opts backendOptions) (*sqliteBackend, error) {
 	db.SetMaxOpenConns(64)
 	closeOnError = false
 	backend := &sqliteBackend{db: db, root: root, role: opts.role, diagnostics: diagnostics}
+	// The live-handle guard's baseline, captured at open. Both seams are fields
+	// rather than package functions so a test can count sidecar reads and drive
+	// the throttle without sleeping.
+	backend.generationClock = time.Now
+	backend.readGeneration = func() string {
+		sidecar, ok := readSidecar(root)
+		if !ok {
+			return ""
+		}
+		return sidecar.GenerationID
+	}
+	backend.readUserVersion = func() (int64, error) {
+		var observed int64
+		err := db.QueryRow("PRAGMA user_version").Scan(&observed)
+		return observed, err
+	}
+	if observed, err := backend.readUserVersion(); err == nil {
+		backend.guard.openUserVersion = observed
+	}
+	backend.guard.openGeneration = backend.readGeneration()
 	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
-		if err := backend.requireWriter(); err != nil {
+		if err := backend.guardWrite(); err != nil {
 			return nil, err
 		}
 		return db.BeginTx(ctx, nil)
@@ -958,7 +984,7 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 }
 
 func (b *sqliteBackend) delete(flowID string) error {
-	if err := b.requireWriter(); err != nil {
+	if err := b.guardWrite(); err != nil {
 		return err
 	}
 	if err := validateFlowID(flowID); err != nil {

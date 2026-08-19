@@ -135,13 +135,13 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 		// predecessor database. An unreadable version instead falls to the
 		// read-only validateAuthoritativeDatabase below, which reaches the same
 		// describeUnusableDatabase classification without a write-capable open.
-		migrated := false
+		outcome := migrationOutcome{}
 		if opts.role == RoleMigrator {
-			advanced, err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.backupDir, opts.allowDevLiveMigration)
+			result, err := migrateAuthoritativeDatabase(databasePath, opts.lockTimeout, canonicalRoot, opts.backupDir, opts.allowDevLiveMigration)
 			if err != nil {
 				return nil, describeUnusableDatabase(canonicalRoot, err)
 			}
-			migrated = advanced
+			outcome = result
 		}
 		if err := validateAuthoritativeDatabase(databasePath); err != nil {
 			return nil, describeUnusableDatabase(canonicalRoot, err)
@@ -156,14 +156,14 @@ func newSQLiteStoreBackend(opts backendOptions) (*sqliteBackend, error) {
 		// find", and a migrator that reported a clean sidecar because it had
 		// just rewritten one would hide the drift entirely.
 		//
-		// `migrated` is what the helper REPORTED doing, never what the probe
+		// The outcome is what the helper REPORTED doing, never what the probe
 		// above predicted: the probe can fail transiently while the helper — on
 		// its own connection, under the longer lock timeout — goes on to
 		// migrate, and inferring from the probe would stamp no provenance for a
 		// migration that really happened.
 		sidecarStale := sidecarDisagrees(canonicalRoot, databaseSchemaVersion)
 		if opts.role == RoleMigrator {
-			if err := reconcileSidecar(canonicalRoot, databaseSchemaVersion, migrated); err != nil {
+			if err := reconcileSidecar(canonicalRoot, databaseSchemaVersion, outcome); err != nil {
 				return nil, err
 			}
 		}
@@ -309,6 +309,161 @@ func refuseMigrationForBlockingOwners(canonicalRoot string, opts backendOptions)
 	return refuseMigrationForOwners(canonicalRoot, opts.ownerNonce)
 }
 
+// postMigrationValidation re-proves a just-migrated database is the thing this
+// build writes, after the commit and before the lease is released. It is a var
+// so a test can force the failure path: the whole point of the check is what
+// happens when it fails, and nothing else can produce that state.
+var postMigrationValidation = func(db *sql.DB, target int64, tolerated map[string]bool) error {
+	if err := validateSQLiteSchemaVersion(db, target); err != nil {
+		return err
+	}
+	return validateMigratedRecordRoundTrip(db, tolerated)
+}
+
+// migratedRecordSampleSize bounds the record round-trip. A sample, not a sweep:
+// the migration is holding the bootstrap lease while this runs, and decoding
+// every record in a large corpus would add unbounded time to a startup. A
+// migration that broke the codec breaks it for the first record as readily as
+// the thousandth.
+const migratedRecordSampleSize = 32
+
+// validateMigratedRecordRoundTrip decodes a sample of records through the same
+// codec every read uses. The schema check above proves the SHAPE; this proves
+// the CONTENT survived, which an ALTER TABLE with a bad UPDATE would not.
+//
+// tolerated names the records that ALREADY failed to decode before the
+// migration ran. They are not this migration's doing, and the store's read path
+// reports them as a partial list rather than a failure; refusing a migration
+// over one would make an upgrade impossible for exactly the corpus that most
+// needs it. The question here is narrow and answerable: did anything that
+// decoded before stop decoding?
+//
+// An empty database passes trivially, and correctly: there is nothing a
+// migration could have corrupted.
+func validateMigratedRecordRoundTrip(db *sql.DB, tolerated map[string]bool) error {
+	rows, err := db.Query(migratedRecordSampleQuery(true), migratedRecordSampleSize)
+	if err != nil {
+		return fmt.Errorf("read migrated flow records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, nonce string
+		var blob []byte
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID,
+			&preparedAt, &nonce, &blob); err != nil {
+			return fmt.Errorf("read migrated flow record: %w", err)
+		}
+		if _, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt,
+			beadID, epicID, preparedAt, nonce, blob); err != nil {
+			if tolerated[flowID] {
+				continue
+			}
+			return fmt.Errorf("migrated flow record %q no longer decodes: %w", flowID, err)
+		}
+	}
+	return rows.Err()
+}
+
+// migratedRecordSampleQuery names the same rows before and after the migration.
+// ORDER BY, deliberately: an unordered LIMIT may return different rows on the
+// two sides, and the comparison this sample feeds is only meaningful over the
+// same set. withProjections is false before the migration, where the columns
+// the current schema adds do not exist yet.
+func migratedRecordSampleQuery(withProjections bool) string {
+	columns := "flow_id, repo_path, status, updated_at, bead_id, epic_id, '', '', record"
+	if withProjections {
+		columns = "flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record"
+	}
+	return "SELECT " + columns + " FROM flows ORDER BY flow_id LIMIT ?"
+}
+
+// sampleUndecodableFlows records which of the sampled records already fail to
+// decode, BEFORE the migration touches anything.
+//
+// A predecessor schema may not have the projection columns the current one
+// does, so the query substitutes empty strings for them; the decode this
+// baseline performs only has to agree with the post-commit one about which
+// records are readable, not about what they contain.
+//
+// A query that fails here yields an empty baseline rather than an error: this
+// is a leniency input, and being unable to build it must not turn into a
+// migration failure of its own.
+func sampleUndecodableFlows(db *sql.DB, predecessor int64) map[string]bool {
+	undecodable := map[string]bool{}
+	rows, err := db.Query(migratedRecordSampleQuery(predecessor >= databaseSchemaVersion),
+		migratedRecordSampleSize)
+	if err != nil {
+		return undecodable
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, nonce string
+		var blob []byte
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID,
+			&preparedAt, &nonce, &blob); err != nil {
+			return undecodable
+		}
+		if _, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt,
+			beadID, epicID, preparedAt, nonce, blob); err != nil {
+			undecodable[flowID] = true
+		}
+	}
+	return undecodable
+}
+
+// refusePostCommitValidation reports a migration that committed and produced a
+// database this build cannot use. It names the backup it just wrote and the
+// exact command that undoes the migration, because at this point the operator
+// has a schema-advanced database and a verified copy of what it used to be, and
+// nothing else in the tree will connect the two for them.
+func refusePostCommitValidation(canonicalRoot, backupPath string, cause error) error {
+	if backupPath == "" {
+		backupPath = filepath.Join(canonicalRoot, backupDirName)
+	}
+	return fmt.Errorf("flow database migration committed but the result did not validate: %w;"+
+		" the pre-migration copy is at %s — undo this with"+
+		" 'approach db restore --backup %s --state-root %s'",
+		cause, backupPath, shellQuote(backupPath), shellQuote(canonicalRoot))
+}
+
+// migrationOutcome is what a migrator open actually did, and it is the only
+// honest input to the provenance record. Callers used to infer "migrated" from
+// the earlier user_version probe, which is wrong whenever that probe failed
+// transiently and the migration then succeeded on its own connection.
+type migrationOutcome struct {
+	// Migrated reports that the schema was ADVANCED, not merely opened.
+	Migrated bool
+	// FromVersion is the version migrated away from. Meaningful only when
+	// Migrated.
+	FromVersion int64
+	// BackupPath names the verified pre-migration copy.
+	BackupPath string
+	// Reconstructed marks a sidecar rebuilt from user_version rather than
+	// written by the migration that moved it. Its history entry leaves the
+	// fields it cannot know explicitly null.
+	Reconstructed bool
+}
+
+// fromVersionOrNil and backupPathOrNil are what the history entry records. A
+// reconstruction genuinely does not know either, and null says so; a zero would
+// claim the database was migrated from the unstamped original, and an empty
+// string would claim a backup at the root.
+func (o migrationOutcome) fromVersionOrNil() *int64 {
+	if !o.Migrated {
+		return nil
+	}
+	from := o.FromVersion
+	return &from
+}
+
+func (o migrationOutcome) backupPathOrNil() *string {
+	if o.BackupPath == "" {
+		return nil
+	}
+	path := o.BackupPath
+	return &path
+}
+
 // supportedPredecessorVersions is the exact set migrateAuthoritativeDatabase
 // will advance to databaseSchemaVersion.
 //
@@ -330,10 +485,10 @@ var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5}
 // transiently and this helper — retrying on its own connection under the
 // caller's longer timeout — then succeeded: the migration ran, and nothing
 // recorded it.
-func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canonicalRoot, backupDir string, allowDevLiveMigration bool) (bool, error) {
+func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canonicalRoot, backupDir string, allowDevLiveMigration bool) (migrationOutcome, error) {
 	millis, err := sqliteBusyTimeoutMillis(lockTimeout)
 	if err != nil {
-		return false, err
+		return migrationOutcome{}, err
 	}
 	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{
 		"mode":    {"rw"},
@@ -341,7 +496,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		"_txlock": {"immediate"},
 	}))
 	if err != nil {
-		return false, fmt.Errorf("open authoritative flow database for migration: %w", err)
+		return migrationOutcome{}, fmt.Errorf("open authoritative flow database for migration: %w", err)
 	}
 	// One connection for the whole migration. PRAGMA data_version is a
 	// PER-CONNECTION signal — it moves only when some OTHER connection commits —
@@ -356,31 +511,31 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		}
 	}()
 	if err := db.Ping(); err != nil {
-		return false, fmt.Errorf("open authoritative flow database for migration: %w", err)
+		return migrationOutcome{}, fmt.Errorf("open authoritative flow database for migration: %w", err)
 	}
 	version, err := readSchemaVersion(db)
 	if err != nil {
-		return false, err
+		return migrationOutcome{}, err
 	}
 	if version > databaseSchemaVersion {
 		// Same helper as the steady-state role gate, so exactly one
 		// compatibility refusal string exists in the tree rather than two that
 		// can drift apart. Reached here only on the stage-resume call site,
 		// where the gate above has no database to have read.
-		return false, refuseIncompatibleBuild(version, version)
+		return migrationOutcome{}, refuseIncompatibleBuild(version, version)
 	}
 	if version == databaseSchemaVersion {
 		if err := db.Close(); err != nil {
-			return false, fmt.Errorf("close authoritative flow database migration handle: %w", err)
+			return migrationOutcome{}, fmt.Errorf("close authoritative flow database migration handle: %w", err)
 		}
 		closeDB = false
-		return false, nil
+		return migrationOutcome{}, nil
 	}
 	if !slices.Contains(supportedPredecessorVersions, version) {
-		return false, fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
+		return migrationOutcome{}, fmt.Errorf("flow database has unsupported predecessor schema version %d", version)
 	}
 	if err := refuseDevLiveMigration(canonicalRoot, version, allowDevLiveMigration); err != nil {
-		return false, err
+		return migrationOutcome{}, err
 	}
 	predecessor := int64(1)
 	if version >= 2 {
@@ -395,11 +550,11 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 				// Parent-release v4 that already has the v5 claim trigger still
 				// needs the v6 nonce column; do not stamp-only.
 			} else {
-				return false, fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
+				return migrationOutcome{}, fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
 			}
 		}
 	} else if err := validateSQLiteSchemaVersion(db, predecessor); err != nil {
-		return false, fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
+		return migrationOutcome{}, fmt.Errorf("validate predecessor flow database schema v%d: %w", version, err)
 	}
 	// Placement is exact. Everything above can still refuse — the dev-live
 	// guard, the unsupported-predecessor check, and the already-current early
@@ -424,15 +579,23 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 	// in-place UPDATE would reveal it.
 	dataVersion, err := readDataVersion(db)
 	if err != nil {
-		return false, err
+		return migrationOutcome{}, err
 	}
-	if err := backupBeforeMigration(db, path, canonicalRoot, backupDir, version); err != nil {
-		return false, err
+	backupPath, err := backupBeforeMigration(db, path, canonicalRoot, backupDir, version)
+	if err != nil {
+		return migrationOutcome{}, err
 	}
+	outcome := migrationOutcome{Migrated: true, FromVersion: version, BackupPath: backupPath}
+	// Sampled before the write lock, on the predecessor shape, so the
+	// post-commit check can tell "this migration broke a record" from "this
+	// record was already unreadable" — the second is a partial list on the read
+	// path, and refusing an upgrade over one would strand exactly the corpus
+	// that most needs migrating.
+	tolerated := sampleUndecodableFlows(db, version)
 	migrationRaceProbe()
 	tx, err := db.Begin()
 	if err != nil {
-		return false, fmt.Errorf("begin flow database schema migration: %w", err)
+		return migrationOutcome{}, fmt.Errorf("begin flow database schema migration: %w", err)
 	}
 	rollback := func(cause error) error {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
@@ -447,7 +610,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 	// than copy-again, because a writer that raced once will race again and a
 	// retry loop would be the wrong shape for a one-shot command.
 	if err := verifyDataVersion(tx, dataVersion); err != nil {
-		return false, rollback(err)
+		return migrationOutcome{}, rollback(err)
 	}
 	statements := make([]string, 0, 10)
 	if !stampOnly {
@@ -467,12 +630,12 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		}
 		for _, statement := range statements {
 			if _, err := tx.Exec(statement); err != nil {
-				return false, rollback(fmt.Errorf("migrate flow database schema: %w", err))
+				return migrationOutcome{}, rollback(fmt.Errorf("migrate flow database schema: %w", err))
 			}
 		}
 		if predecessor == 3 {
 			if err := migrateLegacyV3EpicProgressions(tx); err != nil {
-				return false, rollback(err)
+				return migrationOutcome{}, rollback(err)
 			}
 		}
 		statements = nil
@@ -496,17 +659,26 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
-			return false, rollback(fmt.Errorf("migrate flow database schema: %w", err))
+			return migrationOutcome{}, rollback(fmt.Errorf("migrate flow database schema: %w", err))
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return false, rollback(fmt.Errorf("commit flow database schema migration: %w", err))
+		return migrationOutcome{}, rollback(fmt.Errorf("commit flow database schema migration: %w", err))
+	}
+	// After the commit and BEFORE the bootstrap lease is released, so nothing
+	// else can open the database in the window between producing it and
+	// discovering it is unusable. A migration that returned success here and
+	// left a database no build can read would be the worst possible outcome:
+	// the backup is still on disk, and nothing would tell the operator to use
+	// it.
+	if err := postMigrationValidation(db, databaseSchemaVersion, tolerated); err != nil {
+		return migrationOutcome{}, refusePostCommitValidation(canonicalRoot, backupPath, err)
 	}
 	if err := db.Close(); err != nil {
-		return false, fmt.Errorf("close authoritative flow database migration handle: %w", err)
+		return migrationOutcome{}, fmt.Errorf("close authoritative flow database migration handle: %w", err)
 	}
 	closeDB = false
-	return true, nil
+	return outcome, nil
 }
 
 func migrateLegacyV3EpicProgressions(tx *sql.Tx) error {
@@ -902,8 +1074,8 @@ func completeCutover(opts backendOptions, state cutoverState, presets map[string
 			// provenance. Without this the sidecar is never written at all, and a
 			// later open reads the absence as the legitimate never-migrated state
 			// and leaves it that way forever.
-			if migratedStage {
-				if err := reconcileSidecar(root, databaseSchemaVersion, true); err != nil {
+			if migratedStage.Migrated {
+				if err := reconcileSidecar(root, databaseSchemaVersion, migratedStage); err != nil {
 					return err
 				}
 			}

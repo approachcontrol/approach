@@ -167,7 +167,7 @@ CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id 
 // distinguishes the two implementations.
 func TestSidecarGenerationsComeFromTheManifest(t *testing.T) {
 	root := t.TempDir()
-	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, newGenerationID()); err != nil {
+	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, newGenerationID(), migrationOutcome{}); err != nil {
 		t.Fatal(err)
 	}
 	sidecar, ok := readSidecar(root)

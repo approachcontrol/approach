@@ -201,7 +201,7 @@ func TestSidecarGenerationFallsBackToNoGen(t *testing.T) {
 	if got := sidecarGenerationOrNoGen(root); got != "nogen" {
 		t.Fatalf("generation = %q, want nogen", got)
 	}
-	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, "feedfacefeedface"); err != nil {
+	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, "feedfacefeedface", migrationOutcome{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := sidecarGenerationOrNoGen(root); got != "feedfacefeedface" {
@@ -348,7 +348,7 @@ func TestTheSidecarIsMadeDurableBeforeItIsVisible(t *testing.T) {
 	sidecarDurabilityProbe = func(step string) { steps = append(steps, step) }
 	t.Cleanup(func() { sidecarDurabilityProbe = original })
 
-	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, newGenerationID()); err != nil {
+	if err := writeSidecar(root, databaseSchemaVersion, sidecarProvenanceMigrated, newGenerationID(), migrationOutcome{}); err != nil {
 		t.Fatalf("write sidecar: %v", err)
 	}
 	want := []string{"file-sync", "rename", "dir-sync"}
