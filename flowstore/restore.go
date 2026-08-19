@@ -25,6 +25,11 @@ const sidecarProvenanceRestored = "restored"
 // replaces, so the restore is itself reversible.
 const preRestoreBackupPrefix = "pre-restore"
 
+// restoreStagingFilename is where a restore assembles the database before it is
+// promoted. Its WAL is staged at the same name plus ".wal" — deliberately NOT
+// "-wal", which SQLite would treat as the staged file's own log.
+const restoreStagingFilename = ".approach.db.restoring"
+
 // The refusals Restore returns. Each is typed because each has a different
 // remedy: fix or re-take the backup, close the named processes, or acknowledge
 // with --force.
@@ -89,6 +94,9 @@ func Restore(opts RestoreOptions) (RestoreResult, error) {
 	}
 	backupPath, err := filepath.Abs(opts.BackupPath)
 	if err != nil {
+		return RestoreResult{}, err
+	}
+	if err := refuseRestoreFromStaging(root, backupPath); err != nil {
 		return RestoreResult{}, err
 	}
 	backupVersion, err := verifyRestoreSource(backupPath)
@@ -160,6 +168,26 @@ func Restore(opts RestoreOptions) (RestoreResult, error) {
 		GenerationID:     generation,
 		Forced:           opts.Force,
 	}, nil
+}
+
+// refuseRestoreFromStaging rejects a backup that IS one of this restore's own
+// staging files — the leftovers an interrupted restore can leave in the root.
+//
+// Left to run, the copy would open that file as its source and, an instant
+// later, as its O_TRUNC destination: the verified backup would be emptied and
+// the empty file promoted over the live database, with a sidecar reporting the
+// version measured before the truncation. Copy such a file somewhere else and
+// restore it from there.
+func refuseRestoreFromStaging(root, backupPath string) error {
+	staged := filepath.Join(root, restoreStagingFilename)
+	for _, reserved := range []string{staged, staged + ".wal"} {
+		if sameRestorePath(reserved, backupPath) {
+			return fmt.Errorf("%w: %s is where this restore stages its own files;"+
+				" copy it elsewhere and pass that path instead",
+				ErrRestoreBackupUnusable, backupPath)
+		}
+	}
+	return nil
 }
 
 // verifyRestoreSource proves the backup is a usable flow database before
@@ -549,7 +577,7 @@ func copyFileDurablyIfPresentReporting(source, destination string) (bool, error)
 //     leaves a database missing rows it never showed anyone — inert, and
 //     recoverable from the backup, which is still on disk.
 func replaceDatabase(root, databasePath, backupPath string) error {
-	staged := filepath.Join(root, ".approach.db.restoring")
+	staged := filepath.Join(root, restoreStagingFilename)
 	stagedWAL := staged + ".wal"
 	cleanup := func() {
 		_ = os.Remove(staged)

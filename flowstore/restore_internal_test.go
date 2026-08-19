@@ -352,3 +352,27 @@ func TestReplaceDatabasePromotesTheBackupsOwnWAL(t *testing.T) {
 		t.Fatalf("promoted WAL = %q, want the backup's", promoted)
 	}
 }
+
+// TestRestoreRefusesItsOwnStagingFileAsTheBackup: an interrupted restore can
+// leave a valid database at the staging path, and an operator may well reach
+// for it. Copying it onto itself would truncate the source and promote an empty
+// file over the live database.
+func TestRestoreRefusesItsOwnStagingFileAsTheBackup(t *testing.T) {
+	root, backup := migratedRootWithBackup(t)
+	staged := filepath.Join(root, restoreStagingFilename)
+	if err := copyFileDurably(backup, staged); err != nil {
+		t.Fatal(err)
+	}
+	before := storedSchemaVersion(t, root)
+
+	_, err := Restore(RestoreOptions{Root: root, BackupPath: staged})
+	if !errors.Is(err, ErrRestoreBackupUnusable) {
+		t.Fatalf("err = %v, want ErrRestoreBackupUnusable", err)
+	}
+	if info, statErr := os.Lstat(staged); statErr != nil || info.Size() == 0 {
+		t.Fatalf("the refused source was truncated: %v (%v)", info, statErr)
+	}
+	if storedSchemaVersion(t, root) != before {
+		t.Fatal("a refused restore changed the database anyway")
+	}
+}
