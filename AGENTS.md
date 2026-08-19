@@ -20,6 +20,8 @@ CLAUDE.md is a symlink to this file — edit here.
 
 Branch first — never commit or push directly to main. Everything else (TDD, quality gate, Flow/plan persistence, transcript safety) is in `docs/agent-operations.md`.
 
+Approach is a single-user personal tool. This means no backwards-compat shims, no data-migration paths, no deprecation periods. Make clean breaks and say so in the PR.
+
 ## Conflict Rule
 
 If this file conflicts with a linked doc, trust the linked doc and remove the duplicate here.
