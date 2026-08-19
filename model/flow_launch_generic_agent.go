@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
@@ -289,14 +288,15 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event.RepoPath = record.RepoPath
 		event.WorktreePath = record.WorktreePath
 		event.PlanPath = planPath
-		event.Context = applyLaunchStamp(actions.AgentLaunchContext{
-			Command: settings.Command, LaunchID: msg.Token,
-			RepoPath: record.RepoPath, WorktreePath: record.WorktreePath, WorkingDir: record.WorktreePath,
-			Branch: record.Branch, Commit: record.Commit, Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
-			SessionStateRoot: settings.SessionStateRoot, PlanID: record.PlanID, PlanPath: planPath,
-			FlowID: record.FlowID, FlowAgent: true, Embedded: true, Headless: false, InitialPrompt: "",
-		}, settings.stamp())
-		event.Route = flowLaunchRouteEmbedded
+		ctx, route, err := newFlowLaunchContext(worktreeAgentTarget{
+			LaunchID: msg.Token, Record: record, PlanPath: planPath,
+		}, settings)
+		if err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		event.Context = ctx
+		event.Route = route
 		return event
 	}
 }
