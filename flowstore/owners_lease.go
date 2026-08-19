@@ -46,6 +46,13 @@ func refuseMigrationForOwners(root string, selfNonce string) error {
 		// reason to refuse a migration that would otherwise be fine. The
 		// alternative fails every migration on a root whose owners directory a
 		// stray chmod made unreadable, with no way to proceed.
+		//
+		// Fail-open here is the same posture the lease takes everywhere else —
+		// acquireDatabaseOwnerLease also degrades to nil rather than refusing
+		// to start — and it must stay that way as a set. A gate that refuses
+		// when it cannot read, published by a holder that shrugs when it cannot
+		// write, would deadlock a root that a single permission bit made
+		// unreadable, with nothing left to fix it with.
 		return nil
 	}
 	var blocking []dblease.Record

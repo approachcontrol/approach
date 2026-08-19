@@ -99,6 +99,15 @@ func applyLaunchStamp(ctx actions.AgentLaunchContext, stamp launchStamp) actions
 // a launch ID register; a launch without a phase (repair, autofix, generic
 // worktree agent) registers as unowned, so its writes are proxied and logged
 // but never replayed against a phase it does not own.
+//
+// What that costs, said plainly rather than left for the next reader to
+// discover: a launch that failed to register has no launch directory, so the
+// sweep never sees it, and a DETACHED tracked launch that then exits without
+// writing a result leaves its phase running until someone moves it. That is
+// accepted deliberately. Registration fails only when the state root itself
+// cannot be written, and refusing to launch an agent on that would trade a
+// recoverable phase status for an outage — the same trade claimLaunchPin
+// refuses below.
 func registerLaunchControl(ctx *actions.AgentLaunchContext, control LaunchRegistrar) {
 	if control == nil {
 		return
