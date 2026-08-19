@@ -534,9 +534,20 @@ func copyFileDurablyIfPresentReporting(source, destination string) (bool, error)
 // A backup that carries its OWN -wal is the mirror image: it was copied from a
 // database SQLite could not checkpoint, its committed rows live there, and
 // promoting the database without it would silently drop exactly what the
-// pre-restore copy went out of its way to keep. It is renamed into place BEFORE
-// the database, so no window exists in which the restored database is visible
-// without the log it needs. -shm is never promoted; SQLite rebuilds it.
+// pre-restore copy went out of its way to keep. -shm is never promoted; SQLite
+// rebuilds it.
+//
+// The three promotions are ordered so that EVERY state an interruption can
+// leave behind is a database paired with its own WAL or with none — never a
+// MISMATCHED pair, whose frames SQLite would happily apply to a database they
+// were never written for:
+//
+//  1. the replaced database's -wal/-shm go first, leaving it standalone (its
+//     uncheckpointed content is already in the pre-restore copy);
+//  2. the restored database is renamed in, self-contained;
+//  3. its own -wal, if it has one, is renamed in last. An interruption here
+//     leaves a database missing rows it never showed anyone — inert, and
+//     recoverable from the backup, which is still on disk.
 func replaceDatabase(root, databasePath, backupPath string) error {
 	staged := filepath.Join(root, ".approach.db.restoring")
 	stagedWAL := staged + ".wal"
@@ -561,15 +572,15 @@ func replaceDatabase(root, databasePath, backupPath string) error {
 			return fmt.Errorf("remove the replaced database's %s file: %w", suffix, err)
 		}
 	}
+	if err := os.Rename(staged, databasePath); err != nil {
+		cleanup()
+		return fmt.Errorf("promote the restored flow database: %w", err)
+	}
 	if stagedWALPresent {
 		if err := os.Rename(stagedWAL, databasePath+"-wal"); err != nil {
 			cleanup()
 			return fmt.Errorf("promote the restored flow database's write-ahead log: %w", err)
 		}
-	}
-	if err := os.Rename(staged, databasePath); err != nil {
-		cleanup()
-		return fmt.Errorf("promote the restored flow database: %w", err)
 	}
 	if err := syncDirectory(root); err != nil {
 		return fmt.Errorf("sync the restored flow database's directory: %w", err)
