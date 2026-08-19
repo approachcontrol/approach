@@ -380,6 +380,103 @@ func TestRestoreRefusesItsOwnStagingFileAsTheBackup(t *testing.T) {
 	}
 }
 
+// TestRestoreAfterReconstructedHistoryUsesThePreservedGeneration: a crash
+// between commit and sidecar write is repaired with a reconstructed entry that
+// names no backup and keeps the prior generation. That entry is "I do not know
+// the backup", not a hole to look through — the backup the unrecorded
+// migration wrote still carries the preserved generation, and an older history
+// row must not become the undo target.
+func TestRestoreAfterReconstructedHistoryUsesThePreservedGeneration(t *testing.T) {
+	root := predecessorRoot(t)
+	first, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	afterFirst, ok := readSidecar(root)
+	if !ok || len(afterFirst.History) != 1 || afterFirst.History[0].BackupPath == nil {
+		t.Fatalf("first migration left no history: %#v", afterFirst)
+	}
+	olderBackup := *afterFirst.History[0].BackupPath
+
+	stampUserVersion(t, root, databaseSchemaVersion-1)
+	second, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	afterSecond, ok := readSidecar(root)
+	if !ok || len(afterSecond.History) != 2 || afterSecond.History[1].BackupPath == nil {
+		t.Fatalf("second migration left no newest backup: %#v", afterSecond)
+	}
+	newestBackup := *afterSecond.History[1].BackupPath
+
+	// The on-disk sidecar is still the first migration's, and user_version has
+	// moved: the shape reconcileSidecar repairs by appending a reconstructed
+	// entry and keeping the first generation — the one the second backup's
+	// filename carries.
+	stale := afterFirst
+	stale.PhysicalVersion = databaseSchemaVersion - 1
+	writeTestSidecar(t, root, stale)
+
+	repaired, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repaired.Close(); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := readSidecar(root)
+	if n := len(live.History); n == 0 || live.History[n-1].BackupPath != nil {
+		t.Fatalf("repair did not append a reconstructed entry: %#v", live.History)
+	}
+
+	if _, err := Restore(RestoreOptions{Root: root, BackupPath: olderBackup}); !errors.Is(err, ErrRestoreGenerationMismatch) {
+		t.Fatalf("older backup err = %v, want ErrRestoreGenerationMismatch", err)
+	}
+	if _, err := Restore(RestoreOptions{Root: root, BackupPath: newestBackup}); err != nil {
+		t.Fatalf("the backup named for the preserved generation was refused: %v", err)
+	}
+}
+
+func writeTestSidecar(t *testing.T, root string, sidecar databaseSidecar) {
+	t.Helper()
+	data, err := json.MarshalIndent(sidecar, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sidecarPath(root), append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCopyDatabaseAsideSyncsTheBackupDirectory: the pre-restore copy is the
+// only undo for a completed restore. File sync without a later directory sync
+// does not make the name durable, and replaceDatabase syncs the root after the
+// live database is already gone.
+func TestCopyDatabaseAsideSyncsTheBackupDirectory(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, databaseFilename)
+	if err := os.WriteFile(database, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var steps []string
+	original := preRestoreDurabilityProbe
+	preRestoreDurabilityProbe = func(step string) { steps = append(steps, step) }
+	t.Cleanup(func() { preRestoreDurabilityProbe = original })
+
+	if _, err := copyDatabaseAside(root, database); err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0] != "dir-sync" {
+		t.Fatalf("durability steps = %v, want [dir-sync]", steps)
+	}
+}
+
 // TestARestoreIsItselfUndoneWithoutForce: the pre-restore copy is advertised as
 // what makes a restore reversible, so restoring it must be accepted on the same
 // terms — and the backup just restored must NOT be, since re-applying it after

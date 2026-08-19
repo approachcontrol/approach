@@ -392,19 +392,24 @@ func refuseRestoreGenerationMismatch(live databaseSidecar, backupPath string, fo
 		generationOrNone(live.GenerationID), generationOrNone(recorded))
 }
 
-// restoreUndoesTheNewestMigration reports whether backupPath is the copy the
-// most recent recorded event wrote.
+// restoreUndoesTheNewestMigration reports whether backupPath undoes the most
+// recent recorded event.
+//
+// The newest history entry is that event. A reconstructed entry is "I do not
+// know the backup", not a hole to look through: skipping it would accept an
+// older backup without --force and refuse the one the unrecorded migration
+// actually wrote. That case falls back to the generation the filename carries,
+// which the crash-repair path keeps because it names the backups already on
+// disk.
 func restoreUndoesTheNewestMigration(live databaseSidecar, backupPath string) bool {
-	for i := len(live.History) - 1; i >= 0; i-- {
-		entry := live.History[i]
-		if entry.BackupPath == nil {
-			// A reconstructed entry knows no backup. It is not evidence that
-			// THIS backup is wrong, so keep looking back for one that is.
-			continue
+	if n := len(live.History); n > 0 {
+		entry := live.History[n-1]
+		if entry.BackupPath != nil {
+			return sameRestorePath(*entry.BackupPath, backupPath)
 		}
-		return sameRestorePath(*entry.BackupPath, backupPath)
 	}
-	// No history at all: fall back to the generation the filename carries.
+	// No history, or a reconstructed newest entry: fall back to the generation
+	// the filename carries.
 	recorded := backupGeneration(backupPath)
 	if recorded == "" && live.GenerationID == "" {
 		return true
@@ -440,6 +445,12 @@ func backupGeneration(path string) string {
 	return generation
 }
 
+// preRestoreDurabilityProbe is a no-op seam naming each durability step as it
+// completes. fsync has no effect a test can read back — the loss it prevents
+// only appears after a power cut — and an unverified durability claim is
+// exactly what this copy used to make.
+var preRestoreDurabilityProbe = func(step string) {}
+
 // copyDatabaseAside preserves the database a restore is about to replace, so
 // the restore is itself reversible. A missing database is not an error: a root
 // whose approach.db was deleted is exactly the case a restore is for.
@@ -451,6 +462,11 @@ func copyDatabaseAside(root, databasePath string) (string, error) {
 		return "", fmt.Errorf("inspect flow database before restore: %w", err)
 	}
 	backupDir := filepath.Join(root, backupDirName)
+	// Recorded BEFORE the create, because afterwards there is no way to tell
+	// which levels MkdirAll had to make. The copy is the only undo for a
+	// completed restore, so a newly created backups/ has to have its ancestor
+	// chain persisted the same way a pre-migration backup does.
+	created := missingAncestors(backupDir)
 	if err := os.MkdirAll(backupDir, artifacts.DirPerm); err != nil {
 		return "", fmt.Errorf("create backup directory for the pre-restore copy: %w", err)
 	}
@@ -482,6 +498,13 @@ func copyDatabaseAside(root, databasePath string) (string, error) {
 			return "", fmt.Errorf("drop the checkpointed write-ahead log beside the pre-restore copy: %w", err)
 		}
 	}
+	// Contents are already synced; the directory entry that names them is not.
+	// replaceDatabase syncs the root after the live file is gone, so a crash
+	// that dropped this name would make the restore irreversible.
+	if err := syncBackupPath(backupDir, created); err != nil {
+		return "", fmt.Errorf("sync the pre-restore copy's directory: %w", err)
+	}
+	preRestoreDurabilityProbe("dir-sync")
 	return destination, nil
 }
 
