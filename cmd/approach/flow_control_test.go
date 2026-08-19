@@ -486,3 +486,53 @@ func TestProxiedAddChildIsAuthorizedForTheOwningLaunch(t *testing.T) {
 		t.Fatalf("child not added: %#v", record.Phases)
 	}
 }
+
+// `flow plan save` is the command the bundled skill tells a launched agent to
+// run, and it is a composite of `flow read` and `flow plan set`. Both halves go
+// through the controller, so the composite stays exactly as available as its
+// parts after a newer TUI has migrated the state root out of this build's
+// reach.
+func TestFlowPlanSaveProxiesThroughEndpoint(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Plan Save", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	_, endpoint := controllerFor(t, root, created.FlowID, "plan", "launch-1")
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both halves proxied means neither opens the database, and the direct
+	// path needs config to do that — so a fatal loadConfig is the proof. The
+	// plan artifact itself is a local file under the named state root, which
+	// needs no config either.
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"approach", "flow", "plan", "save", "--flow-id", created.FlowID, "--title", "Implementation plan", "--file", planFile, "--state-root", root},
+		noScanDeps(t, runDeps{
+			stdout: &stdout, stderr: &stderr,
+			getenv: controlEnv(root, endpoint.Path, endpoint.Token, "launch-1", created.FlowID, "plan"),
+			loadConfig: func() (config.Config, error) {
+				t.Fatal("flow plan save opened the database directly instead of proxying")
+				return config.Config{}, nil
+			},
+		}))
+	if err != nil {
+		t.Fatalf("proxied plan save: %v (%s)", err, stderr.String())
+	}
+	var saved flowPlanSaveResult
+	if err := json.Unmarshal(stdout.Bytes(), &saved); err != nil {
+		t.Fatalf("output = %s (%v)", stdout.String(), err)
+	}
+	if saved.PlanID == "" || !saved.Linked || saved.FlowID != created.FlowID {
+		t.Fatalf("saved = %#v", saved)
+	}
+	if _, err := os.Lstat(saved.PlanPath); err != nil {
+		t.Fatalf("plan markdown is not on disk: %v", err)
+	}
+	// The link really landed in the Flow the controller serves.
+	linked := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root})
+	if linked.PlanID != saved.PlanID {
+		t.Fatalf("linked plan = %q, want %q", linked.PlanID, saved.PlanID)
+	}
+}

@@ -1006,12 +1006,7 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	flowStore, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = flowStore.Close() }()
-	flow, err := flowStore.Read(*flowID)
+	flow, err := readFlowForPlanSave(deps, *stateRoot, *flowID)
 	if err != nil {
 		return err
 	}
@@ -1068,15 +1063,74 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 	if _, err := planStore.ReadPlan(savedID); err != nil {
 		return flowPlanPersistenceFailure(savedID, planPath, "plan readback", err)
 	}
-	if _, err := flowStore.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: *flowID, PlanID: savedID, PlanPath: planPath}); err != nil {
+	linked, err := linkPlanForPlanSave(deps, *stateRoot, *flowID, savedID, planPath)
+	if err != nil {
 		return flowPlanPersistenceFailure(savedID, planPath, "Flow link", err)
 	}
-	data, err := json.Marshal(flowPlanSaveResult{FlowID: *flowID, PlanID: savedID, PlanPath: planPath, Linked: true})
+	data, err := json.Marshal(flowPlanSaveResult{FlowID: *flowID, PlanID: savedID, PlanPath: planPath, Linked: linked})
 	if err != nil {
 		return fmt.Errorf("encode saved Flow plan: %w", err)
 	}
 	fmt.Fprintln(deps.stdout, string(data))
 	return nil
+}
+
+// readFlowForPlanSave reads the Flow this save links to through the same
+// launch-control path `flow read` uses.
+//
+// Not a direct store open, which is the whole point: after a newer TUI has
+// migrated the state root, a pinned older agent cannot open the database at
+// all, and `flow plan save` is the command the bundled skill tells it to run.
+// Going through the controller keeps the composite command exactly as available
+// as the `flow read` and `flow plan set` it is a shorthand for.
+func readFlowForPlanSave(deps runDeps, stateRoot, flowID string) (flowstore.FlowRecord, error) {
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbFlowRead, launchcontrol.ReadPayload{})
+	if err != nil {
+		return flowstore.FlowRecord{}, err
+	}
+	req.FlowID = flowID
+	resp, err := runFlowRequest(deps, stateRoot, req, flowstore.RoleReader)
+	if err != nil {
+		return flowstore.FlowRecord{}, err
+	}
+	if !resp.OK {
+		return flowstore.FlowRecord{}, errors.New(resp.Error)
+	}
+	var flow flowstore.FlowRecord
+	if err := json.Unmarshal(resp.Result, &flow); err != nil {
+		return flowstore.FlowRecord{}, fmt.Errorf("decode Flow record for plan save: %w", err)
+	}
+	return flow, nil
+}
+
+// linkPlanForPlanSave links the saved plan through the controller, and reports
+// whether the link is in place.
+//
+// A spooled link is a deferred success, exactly as it is for `flow plan set`:
+// the plan itself is already persisted and verified on disk, so the command
+// prints its JSON with linked=false and exits 0 rather than telling an agent to
+// re-save a plan that is already there.
+func linkPlanForPlanSave(deps runDeps, stateRoot, flowID, planID, planPath string) (bool, error) {
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPlanSet,
+		launchcontrol.PlanSetPayload{PlanID: planID, PlanPath: planPath})
+	if err != nil {
+		return false, err
+	}
+	req.FlowID = flowID
+	resp, err := runFlowRequest(deps, stateRoot, req, flowstore.RoleWriter)
+	if errors.As(err, new(flowRequestSpooled)) {
+		if _, writeErr := fmt.Fprintln(deps.stderr, flowSpooledMessage); writeErr != nil {
+			return false, writeErr
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !resp.OK {
+		return false, errors.New(resp.Error)
+	}
+	return true, nil
 }
 
 func printFlowPlanSaveHelp(w io.Writer) {

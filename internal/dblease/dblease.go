@@ -66,6 +66,11 @@ type Record struct {
 	// Path is the holder file, for diagnostics only. A refusal names the PID
 	// and the build, which is what an operator can act on.
 	Path string `json:"-"`
+	// Unreadable names why a PROVEN-live holder's record could not be decoded.
+	// Such a holder is still live — the lock said so — and is reported with
+	// nothing but its path, because the alternative is to let a migration or a
+	// restore run underneath it on the strength of damaged metadata.
+	Unreadable string `json:"-"`
 }
 
 // Holder is a live lease. It owns an open file descriptor for its lifetime;
@@ -257,10 +262,12 @@ func Scan(root string, exclude ...string) (live []Record, reaped []string, err e
 		path := filepath.Join(dir, name)
 		record, dead, probeErr := probeHolder(path)
 		if probeErr != nil {
-			// An unreadable holder file is evidence of nothing. It is neither
-			// reported as live — which would block a migration on a file
-			// nobody can attribute — nor unlinked, which would destroy the one
-			// artifact a human could inspect.
+			// A file that could not be opened or locked at all is evidence of
+			// nothing. It is neither reported as live — which would block a
+			// migration on a file nobody can attribute — nor unlinked, which
+			// would destroy the one artifact a human could inspect. A file
+			// whose LOCK was proved held takes the other branch: probeHolder
+			// returns it live and unreadable rather than as an error.
 			continue
 		}
 		if dead {
@@ -300,16 +307,20 @@ func probeHolder(path string) (Record, bool, error) {
 	if lockErr != syscall.EWOULDBLOCK && lockErr != syscall.EAGAIN {
 		return Record{}, false, lockErr
 	}
+	// Past this point the holder is LIVE: the lock is held by someone. What the
+	// file says is a diagnostic, and failing to read it must never downgrade
+	// that proof to "no holder" — a migration or a restore would then run
+	// underneath a process that never closes its handle.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Record{}, false, err
+		return Record{Path: path, Unreadable: err.Error()}, false, nil
 	}
 	var record Record
 	if err := json.Unmarshal(data, &record); err != nil {
-		return Record{}, false, err
+		return Record{Path: path, Unreadable: err.Error()}, false, nil
 	}
 	if record.PID <= 0 {
-		return Record{}, false, fmt.Errorf("owner record %s names no pid", path)
+		return Record{Path: path, Unreadable: "the record names no pid"}, false, nil
 	}
 	return record, false, nil
 }
@@ -317,6 +328,9 @@ func probeHolder(path string) (Record, bool, error) {
 // Describe renders one holder the way a refusal names it. Split out so the
 // migrator's plural message and any diagnostic spell a holder identically.
 func (r Record) Describe() string {
+	if r.Unreadable != "" {
+		return fmt.Sprintf("a live holder whose record at %s could not be read (%s)", r.Path, r.Unreadable)
+	}
 	build := r.BuildVersion
 	if strings.TrimSpace(build) == "" {
 		build = "unknown build"

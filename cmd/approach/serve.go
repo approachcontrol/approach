@@ -74,16 +74,28 @@ func runServeContext(ctx context.Context, args []string, deps runDeps) error {
 	// Read-only by role as well as by construction: serve only ever calls List
 	// and ReadEpicProgression, and it must not migrate, discard a staged
 	// database, or tighten the mode of a state root it merely reads.
-	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps, flowstore.RoleReader)
-	if err != nil {
-		return fmt.Errorf("error opening flow store: %w", err)
-	}
 	// serve is long-lived and holds this store open for its whole run, so it
 	// publishes itself as an owner: a `db migrate` that advanced the schema
 	// underneath it would leave it serving a database its own build can no
 	// longer open. Released on the way out, so a clean shutdown blocks nothing.
-	ownerLease := acquireDatabaseOwnerLease(store.Root())
+	//
+	// BEFORE the store opens, for the same reason the TUI takes it first: a
+	// migrator that scans the owners directory in the gap between the open and
+	// a later Acquire finds nothing, and migrates underneath a handle this
+	// process then keeps for its whole run.
+	root, _ := resolveFlowStateRoot(*stateRoot, cfg, deps)
+	ownerLease := acquireDatabaseOwnerLease(root)
 	defer func() { _ = ownerLease.Release() }()
+	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps, flowstore.RoleReader)
+	if err != nil {
+		return fmt.Errorf("error opening flow store: %w", err)
+	}
+	if ownerLease == nil {
+		// A root that did not exist yet could not be canonicalized, so the
+		// lease above was a no-op. The store has since created it; publishing
+		// now is late, but a first run has no predecessor schema to migrate.
+		ownerLease = acquireDatabaseOwnerLease(store.Root())
+	}
 
 	scanRoot, err := scanner.ResolveRoot(firstNonEmpty(*scanRootFlag, deps.getenv("WORKTREE_ROOT"), cfg.Scan.Root))
 	if err != nil {

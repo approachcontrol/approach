@@ -416,3 +416,44 @@ func TestRetainKeepsLaunchesThatStillOwnARunningPhase(t *testing.T) {
 		t.Fatalf("retired = %d, exists = %v; a finished launch was kept", retired, log.Exists())
 	}
 }
+
+// A Flow the store cannot read right now is not evidence that the launch has
+// finished. Retiring on that guess deletes the registration a still-running
+// agent's next proxied result authenticates with, and the refusal that follows
+// is final.
+func TestRetainKeepsLaunchesWhoseOwnershipCannotBeRead(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Unreadable Owner")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	c := newTestController(t, store, root)
+	if _, err := c.Register(Registration{FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	completePhase(t, store, created.FlowID, "plan", "")
+	old := time.Now().Add(-20 * 24 * time.Hour)
+	log, _ := OpenLog(root, "launch-1")
+	for _, name := range []string{"launch.json", "baseline.json"} {
+		if err := os.Chtimes(filepath.Join(log.Dir(), name), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The phase is finished, so this launch would retire — except the store
+	// can no longer answer whether it is.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	retired, err := c.Retain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 0 || !log.Exists() {
+		t.Fatalf("retired = %d, exists = %v; a launch was retired on an unreadable Flow", retired, log.Exists())
+	}
+	c.mu.Lock()
+	_, registered := c.registrations["launch-1"]
+	c.mu.Unlock()
+	if !registered {
+		t.Fatal("registration dropped on an unreadable Flow")
+	}
+}

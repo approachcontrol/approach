@@ -278,3 +278,44 @@ func TestHelperHoldsALease(t *testing.T) {
 	_ = holder
 	select {}
 }
+
+// A holder whose lock is held is LIVE, whatever its file says. Damaged metadata
+// must not turn that proof into "no holder": a migration or a restore would
+// then run underneath a process that never closes its handle.
+func TestALiveHolderWithADamagedRecordIsStillReported(t *testing.T) {
+	root := t.TempDir()
+	holder, err := dblease.Acquire(root, identity(t, "v0.10.3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Release()
+	entries, err := os.ReadDir(dblease.Dir(root))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries = %v (%v)", entries, err)
+	}
+	path := filepath.Join(dblease.Dir(root), entries[0].Name())
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	live, reaped, err := dblease.Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reaped) != 0 {
+		t.Fatalf("reaped %v while the holder is live", reaped)
+	}
+	if len(live) != 1 {
+		t.Fatalf("live = %#v, want the damaged holder reported", live)
+	}
+	if live[0].Unreadable == "" {
+		t.Fatalf("record %#v does not say its metadata is unreadable", live[0])
+	}
+	if !strings.Contains(live[0].Describe(), path) {
+		t.Fatalf("describe = %q does not name the holder file", live[0].Describe())
+	}
+	// Schema 0 is older than any real one, so it blocks a migration too.
+	if live[0].SchemaVersion != 0 {
+		t.Fatalf("schema = %d, want 0 for a record nothing could be read from", live[0].SchemaVersion)
+	}
+}

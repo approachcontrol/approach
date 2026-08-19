@@ -1,6 +1,7 @@
 package flowstore
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -112,21 +113,33 @@ func Restore(opts RestoreOptions) (RestoreResult, error) {
 	dblease.Probe(dblease.ProbeBootstrapLock)
 	defer release()
 
-	// Re-scanned under the lock is deliberately NOT done: a holder that
-	// appeared since the scan above cannot have opened this database through
-	// this build, because every open takes the bootstrap lock this call is now
-	// holding. The scan above is the one that matters.
+	// The lease scan above is not re-run under the lock, and on its own it is
+	// not the whole guarantee: only LONG-LIVED processes publish a lease, and a
+	// short-lived `flow` or `plan` leaf releases the bootstrap lock as soon as
+	// its store is open, so it can hold a live SQLite handle while this call
+	// owns the lock. The lease scan names such processes for the operator; the
+	// connection probe below is what catches the unleased ones.
 	live, _ := readSidecar(root)
 	if err := refuseRestoreGenerationMismatch(live, backupPath, opts.Force); err != nil {
 		return RestoreResult{}, err
 	}
 
 	databasePath := filepath.Join(root, databaseFilename)
+	if err := refuseRestoreForOpenConnections(databasePath); err != nil {
+		return RestoreResult{}, err
+	}
 	preRestore, err := copyDatabaseAside(root, databasePath)
 	if err != nil {
 		return RestoreResult{}, err
 	}
 	if err := replaceDatabase(root, databasePath, backupPath); err != nil {
+		// The pre-restore copy is named here because the result that would have
+		// carried it is never returned on this path, and an operator told only
+		// that a restore failed has no way to find the copy of the database it
+		// was about to replace.
+		if preRestore != "" {
+			return RestoreResult{}, fmt.Errorf("%w (the database this restore would have replaced was copied to %s)", err, preRestore)
+		}
 		return RestoreResult{}, err
 	}
 	generation := newGenerationID()
@@ -239,6 +252,64 @@ func refuseRestoreForOwners(root string) error {
 		strings.Join(described, "; "))
 }
 
+// refuseRestoreForOpenConnections refuses while any process still has the
+// database open, whether or not it published an owners lease.
+//
+// The lease covers the TUI and `serve`; the short-lived `flow` and `plan`
+// leaves deliberately publish nothing, and one of them can be mid-command right
+// now. Replacing the file underneath such a handle is silent data loss: the
+// writer keeps the unlinked inode, its commit succeeds, and the bytes are
+// unreachable the moment it exits.
+//
+// The probe is SQLite's own answer to "is anyone else attached": in WAL mode
+// every open connection holds a shared lock on the database file for its whole
+// lifetime, so entering exclusive locking mode is refused with SQLITE_BUSY
+// exactly when another connection exists. busy_timeout(0) makes that answer
+// immediate rather than a wait.
+//
+// Only a BUSY/LOCKED answer refuses. Every other failure — a missing database,
+// a read-only mount, a file too damaged to open — is inconclusive, and a
+// restore is precisely the command those cases need to still run.
+func refuseRestoreForOpenConnections(databasePath string) error {
+	if _, err := os.Lstat(databasePath); err != nil {
+		return nil
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(databasePath, map[string][]string{
+		"_pragma": {"busy_timeout(0)", "locking_mode(exclusive)"},
+	}))
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = db.Close() }()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return restoreBusyRefusal(databasePath, err)
+	}
+	defer func() { _ = conn.Close() }()
+	// BEGIN IMMEDIATE, not a read: exclusive locking mode is entered on the
+	// first lock the connection actually takes, and a read would settle for a
+	// shared one that a second reader is happy to share.
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		return restoreBusyRefusal(databasePath, err)
+	}
+	_, err = conn.ExecContext(context.Background(), "ROLLBACK")
+	return err
+}
+
+// restoreBusyRefusal turns a probe failure into a refusal only when SQLite said
+// the file is held; anything else reports no problem, per the doc above.
+func restoreBusyRefusal(databasePath string, err error) error {
+	switch sqliteResultCode(err) {
+	case sqliteBusy, sqliteLocked:
+		return fmt.Errorf("%w: another process still has %s open (it may be a short-lived"+
+			" 'approach flow' or 'approach plan' command, which publishes no owner record);"+
+			" wait for it to exit, then re-run 'approach db restore'",
+			ErrRestoreBlockedByOwners, databasePath)
+	default:
+		return nil
+	}
+}
+
 // refuseRestoreGenerationMismatch stops a restore that would silently discard
 // migrations taken since the backup.
 //
@@ -331,39 +402,174 @@ func copyDatabaseAside(root, databasePath string) (string, error) {
 	if err := os.MkdirAll(backupDir, artifacts.DirPerm); err != nil {
 		return "", fmt.Errorf("create backup directory for the pre-restore copy: %w", err)
 	}
-	// A plain file copy, not VACUUM INTO: the WAL is dropped by the restore
-	// below, so the bytes on disk are exactly what this copy has to preserve —
-	// including a database too damaged for SQLite to open, which is precisely
-	// the one worth keeping.
-	destination := filepath.Join(backupDir, fmt.Sprintf("%s-%s-%s.db",
-		preRestoreBackupPrefix, databaseFilename, time.Now().UTC().Format(backupTimestampLayout)))
+	destination, err := createUniqueBackupName(backupDir)
+	if err != nil {
+		return "", err
+	}
+	// The WAL is copied BEFORE the checkpoint below, because opening a database
+	// SQLite cannot make sense of DELETES the -wal beside it — the exact file
+	// this copy exists to keep. Copy first, then decide whether to keep it.
+	if err := copyFileDurablyIfPresent(databasePath+"-wal", destination+"-wal"); err != nil {
+		return "", fmt.Errorf("copy the flow database's write-ahead log aside before restoring: %w", err)
+	}
+	// Checkpointed so the copy is SELF-CONTAINED where it can be: a backup
+	// whose committed rows lived only in a companion -wal needs a second file
+	// nobody thinks to carry. Best effort — a database too damaged to open is
+	// precisely the one worth keeping, and that is what the copy above is for.
+	checkpointed := checkpointBeforeCopy(databasePath)
+	// A plain file copy, not VACUUM INTO: the bytes on disk are exactly what
+	// this copy has to preserve, damage included.
 	if err := copyFileDurably(databasePath, destination); err != nil {
 		return "", fmt.Errorf("copy the flow database aside before restoring: %w", err)
+	}
+	if checkpointed {
+		// Folded in, so the companion is now a stale shadow of the copy it sits
+		// beside — and replaceDatabase would promote it back over a database
+		// that already contains it.
+		if err := os.Remove(destination + "-wal"); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("drop the checkpointed write-ahead log beside the pre-restore copy: %w", err)
+		}
 	}
 	return destination, nil
 }
 
-// replaceDatabase puts the backup in place and drops the WAL the previous
-// database left.
+// createUniqueBackupName reserves a pre-restore name no existing file holds.
 //
-// Removing -wal and -shm is safe here and ONLY here: the bootstrap lock is
-// held and the owners scan proved no process has the database open, so nothing
-// can be mid-transaction. Leaving them would shadow the restored file with the
+// Exclusive creation, not a timestamp alone: the name is second-resolution, and
+// two restores in the same second would otherwise have the second copy truncate
+// the first. Worse, an operator restoring the pre-restore backup they were just
+// handed would, within that second, generate ITS name — and the copy would
+// overwrite the very file the restore is about to read.
+func createUniqueBackupName(backupDir string) (string, error) {
+	stamp := time.Now().UTC().Format(backupTimestampLayout)
+	for attempt := 0; attempt < 100; attempt++ {
+		suffix := ""
+		if attempt > 0 {
+			suffix = fmt.Sprintf("-%d", attempt+1)
+		}
+		candidate := filepath.Join(backupDir, fmt.Sprintf("%s-%s-%s%s.db",
+			preRestoreBackupPrefix, databaseFilename, stamp, suffix))
+		file, err := os.OpenFile(candidate, os.O_CREATE|os.O_EXCL|os.O_WRONLY, artifacts.FilePerm)
+		if err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("reserve a name for the pre-restore copy: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return "", fmt.Errorf("reserve a name for the pre-restore copy: %w", err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("reserve a name for the pre-restore copy: %s already holds 100 copies for this second", backupDir)
+}
+
+// checkpointBeforeCopy folds a WAL back into the database file it belongs to,
+// and reports whether that really happened.
+//
+// Every failure is inspected rather than ignored: the answer decides whether
+// the companion WAL copied aside is redundant or is the only place the rows
+// live. A refusal is never fatal — this is an optimization of what the copy
+// captures, not a precondition for taking one.
+func checkpointBeforeCopy(databasePath string) bool {
+	db, err := sql.Open("sqlite", sqliteDSN(databasePath, nil))
+	if err != nil {
+		return false
+	}
+	defer func() { _ = db.Close() }()
+	var busy, logFrames, checkpointed int64
+	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return false
+	}
+	// busy is SQLite's own answer: 0 means the log was checkpointed, 1 means it
+	// could not be, and a copy taken after "could not be" needs its WAL.
+	return busy == 0
+}
+
+// copyFileDurablyIfPresent copies source when it exists and has content.
+// A missing or empty source is not an error and is not copied: a cleanly closed
+// or checkpointed WAL database has no -wal file, or a zero-length one, and
+// neither carries a row worth moving.
+func copyFileDurablyIfPresent(source, destination string) error {
+	_, err := copyFileDurablyIfPresentReporting(source, destination)
+	return err
+}
+
+// copyFileDurablyIfPresentReporting is copyFileDurablyIfPresent, and also says
+// whether it copied anything — which is what decides whether there is a staged
+// file to promote.
+func copyFileDurablyIfPresentReporting(source, destination string) (bool, error) {
+	info, err := os.Lstat(source)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Size() == 0 {
+		return false, nil
+	}
+	if err := copyFileDurably(source, destination); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// replaceDatabase puts the backup in place, with the WAL that belongs to it,
+// and drops the one the previous database left.
+//
+// Everything that can FAIL happens before anything is promoted: both files are
+// staged and fsynced first, and the live database is replaced only by renames
+// and unlinks after that. The order matters because a failure after the rename
+// is not recoverable by returning an error — the old database is already gone —
+// and a half-copied WAL promoted beside a restored database would be worse than
+// either alone.
+//
+// Removing the replaced database's -wal and -shm is safe here and ONLY here:
+// the bootstrap lock is held and nothing has the database open, so nothing can
+// be mid-transaction. Leaving them would shadow the restored file with the
 // replaced one's uncheckpointed content, which is data loss dressed as a
 // successful restore.
+//
+// A backup that carries its OWN -wal is the mirror image: it was copied from a
+// database SQLite could not checkpoint, its committed rows live there, and
+// promoting the database without it would silently drop exactly what the
+// pre-restore copy went out of its way to keep. It is renamed into place BEFORE
+// the database, so no window exists in which the restored database is visible
+// without the log it needs. -shm is never promoted; SQLite rebuilds it.
 func replaceDatabase(root, databasePath, backupPath string) error {
 	staged := filepath.Join(root, ".approach.db.restoring")
+	stagedWAL := staged + ".wal"
+	cleanup := func() {
+		_ = os.Remove(staged)
+		_ = os.Remove(stagedWAL)
+	}
 	if err := copyFileDurably(backupPath, staged); err != nil {
+		cleanup()
 		return fmt.Errorf("stage the restored flow database: %w", err)
 	}
-	if err := os.Rename(staged, databasePath); err != nil {
-		_ = os.Remove(staged)
-		return fmt.Errorf("promote the restored flow database: %w", err)
+	stagedWALPresent, err := copyFileDurablyIfPresentReporting(backupPath+"-wal", stagedWAL)
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("stage the restored flow database's write-ahead log: %w", err)
 	}
+	// Nothing below copies bytes. From here the live database is replaced by
+	// renames and unlinks only.
 	for _, suffix := range []string{"-wal", "-shm"} {
 		if err := os.Remove(databasePath + suffix); err != nil && !os.IsNotExist(err) {
+			cleanup()
 			return fmt.Errorf("remove the replaced database's %s file: %w", suffix, err)
 		}
+	}
+	if stagedWALPresent {
+		if err := os.Rename(stagedWAL, databasePath+"-wal"); err != nil {
+			cleanup()
+			return fmt.Errorf("promote the restored flow database's write-ahead log: %w", err)
+		}
+	}
+	if err := os.Rename(staged, databasePath); err != nil {
+		cleanup()
+		return fmt.Errorf("promote the restored flow database: %w", err)
 	}
 	if err := syncDirectory(root); err != nil {
 		return fmt.Errorf("sync the restored flow database's directory: %w", err)

@@ -721,7 +721,13 @@ an omitted `--plan-id` uses that target Flow's linked plan rather than
 `APPROACH_PLAN_ID`; pass `--plan-id` to override it deliberately.
 `approach flow plan save` reads Markdown from `--file` or stdin, saves and
 reads back the plan, seeds any missing top-level implementation phases without
-regressing existing progress, links the plan to the Flow, and prints JSON. It
+regressing existing progress, links the plan to the Flow, and prints JSON. Its
+Flow read and Flow link both go through the launch controller when
+`APPROACH_CONTROL_ENDPOINT` names one, exactly as the `flow read` and
+`flow plan set` it is shorthand for do, so the composite stays available to a
+pinned agent whose own build can no longer open a migrated state root; a link
+that can only be spooled prints `linked: false` and exits 0, with the plan
+itself already persisted. It
 does not complete the Flow's Plan phase; phase progression remains an explicit
 `approach flow phase ...` operation. If the plan persists but the later Flow
 link fails, the command's error names the saved plan ID and path so the caller

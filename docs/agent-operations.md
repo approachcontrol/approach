@@ -85,11 +85,23 @@ touches anything (`integrity_check`, plus the object shape for the backup's own
 restore replaces the file, so every live holder ends up on an unlinked inode,
 which is why this is stricter than migration's refusal — takes the bootstrap
 lock, then refuses a backup that is not the one the current generation was
-migrated from unless `--force` acknowledges it. It copies the database it
-replaces into `backups/` first, so a restore is itself reversible, and removes
-the stale `-wal`/`-shm` (safe only there: the lock is held and nothing has the
-database open) so the restored file is not shadowed by the replaced one's
-uncheckpointed content. `--json` reports in `db inspect`'s key style.
+migrated from unless `--force` acknowledges it. Two things enforce that "any
+holder" refusal, because one cannot: the owners lease names long-lived holders,
+and a connection probe (`locking_mode=exclusive` with `busy_timeout(0)`, which
+SQLite answers `SQLITE_BUSY` for exactly while another connection is attached)
+catches the short-lived `flow` and `plan` leaves, which publish no lease and can
+be mid-command. Only a busy answer refuses; a missing, read-only, or damaged
+database is inconclusive, and a restore is the command those cases need. It
+copies the database it replaces into `backups/` first, so a restore is itself
+reversible. That copy is checkpointed so it is self-contained; when SQLite
+cannot open the database to checkpoint it, the `-wal` — where committed rows can
+live alone after a crash — is copied beside it instead, and a backup carrying
+its own `-wal` is promoted with it. The copy's name is reserved with exclusive
+creation, so two restores in the same second cannot overwrite each other's
+recovery copy, and the replaced database's stale `-wal`/`-shm` are removed (safe
+only there: the lock is held and nothing has the database open) so the restored
+file is not shadowed by the replaced one's uncheckpointed content. `--json`
+reports in `db inspect`'s key style.
 
 **Migration is blocked while a long-lived owner holds the database at an older
 build.** The TUI and `approach serve` publish a holder file under

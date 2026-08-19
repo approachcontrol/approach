@@ -1,6 +1,7 @@
 package launchcontrol
 
 import (
+	"errors"
 	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
@@ -76,15 +77,27 @@ func (c *Controller) Retain() (int, error) {
 }
 
 // ownsRunningPhase reports whether the launch is the latest launch of a phase
-// that is still running. An unreadable launch.json, Flow, or phase means no.
+// that is still running.
+//
+// An ABSENT answer is no: a launch.json that says the launch owns no phase, a
+// Flow that no longer exists, or a phase gone from the Flow are all definite.
+// An UNREADABLE one is not an answer at all and counts as yes, so retirement
+// skips it: a Flow the store could not read this once says nothing about
+// whether an agent is still running under it, and retiring on that guess
+// deletes the identity a live agent's next proxied result is authenticated
+// against. Waiting for the next sweep costs a directory that lives a little
+// longer.
 func (c *Controller) ownsRunningPhase(log *Log) bool {
 	info, ok, err := log.Launch()
-	if err != nil || !ok || info.FlowID == "" || info.PhaseID == "" {
+	if err != nil {
+		return true
+	}
+	if !ok || info.FlowID == "" || info.PhaseID == "" {
 		return false
 	}
 	record, err := c.store.Read(info.FlowID)
 	if err != nil {
-		return false
+		return !errors.Is(err, flowstore.ErrFlowNotFound)
 	}
 	phase, ok := PhaseByID(record, info.PhaseID)
 	if !ok {

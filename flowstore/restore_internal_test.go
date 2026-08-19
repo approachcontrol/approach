@@ -232,3 +232,123 @@ func corruptBackupPage(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+// TestRestoreRefusesWhileAnUnleasedConnectionHoldsTheDatabase: short-lived
+// `flow` and `plan` leaves publish no owners lease, so the lease scan cannot
+// see them. Replacing the file underneath such a handle loses every write it
+// makes afterwards, so the connection probe has to refuse.
+func TestRestoreRefusesWhileAnUnleasedConnectionHoldsTheDatabase(t *testing.T) {
+	root, backup := migratedRootWithBackup(t)
+	holder, err := NewStore(StoreOptions{Root: root, Role: RoleWriter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Close() }()
+	// A write, so the connection is really attached rather than merely opened.
+	if _, err := holder.List(FlowFilter{}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Restore(RestoreOptions{Root: root, BackupPath: backup})
+	if !errors.Is(err, ErrRestoreBlockedByOwners) {
+		t.Fatalf("err = %v, want ErrRestoreBlockedByOwners", err)
+	}
+	if storedSchemaVersion(t, root) != databaseSchemaVersion {
+		t.Fatal("a refused restore changed the database anyway")
+	}
+}
+
+// TestCopyDatabaseAsidePreservesTheWALOfADatabaseSQLiteCannotOpen: the copy is
+// checkpointed first, so an openable database needs no companion WAL. A damaged
+// one cannot be checkpointed, its committed rows can live only in -wal, and
+// dropping them would make the restore irreversible exactly when reversing it
+// matters.
+func TestCopyDatabaseAsidePreservesTheWALOfADatabaseSQLiteCannotOpen(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, databaseFilename)
+	if err := os.WriteFile(database, []byte("this is not a SQLite file at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(database+"-wal", []byte("uncheckpointed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	destination, err := copyDatabaseAside(root, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := os.ReadFile(destination + "-wal")
+	if err != nil {
+		t.Fatalf("the pre-restore copy dropped the WAL: %v", err)
+	}
+	if string(preserved) != "uncheckpointed" {
+		t.Fatalf("preserved WAL = %q, want the live one", preserved)
+	}
+}
+
+// TestCopyDatabaseAsideNeverOverwritesAnEarlierCopy: the name carries a
+// second-resolution timestamp, so two copies in one second must not collide —
+// least of all with the pre-restore backup an operator is restoring, which
+// would destroy the source before the restore reads it.
+func TestCopyDatabaseAsideNeverOverwritesAnEarlierCopy(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, databaseFilename)
+	if err := os.WriteFile(database, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := copyDatabaseAside(root, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(database, []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := copyDatabaseAside(root, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("both copies took the name %s", first)
+	}
+	kept, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != "first" {
+		t.Fatalf("the earlier copy now reads %q", kept)
+	}
+}
+
+// TestReplaceDatabasePromotesTheBackupsOwnWAL: the mirror image of the copy
+// above. A backup that carries a -wal was taken from a database SQLite could
+// not checkpoint; promoting the database without it would drop exactly the rows
+// the pre-restore copy went out of its way to keep.
+func TestReplaceDatabasePromotesTheBackupsOwnWAL(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, databaseFilename)
+	if err := os.WriteFile(database, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The replaced database's own WAL, which must not survive.
+	if err := os.WriteFile(database+"-wal", []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(t.TempDir(), "backup.db")
+	if err := os.WriteFile(backup, []byte("restored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backup+"-wal", []byte("restored-wal"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceDatabase(root, database, backup); err != nil {
+		t.Fatal(err)
+	}
+	promoted, err := os.ReadFile(database + "-wal")
+	if err != nil {
+		t.Fatalf("the backup's WAL was not promoted with it: %v", err)
+	}
+	if string(promoted) != "restored-wal" {
+		t.Fatalf("promoted WAL = %q, want the backup's", promoted)
+	}
+}
