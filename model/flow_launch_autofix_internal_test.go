@@ -1589,7 +1589,7 @@ func TestToggleFlowHeadlessRefusedWhileAutofixAttemptHoldsTheFlow(t *testing.T) 
 // half of the same fence. A repair takes its lifecycle attempt at the key press
 // and only reads the Flow later, in prepare, through ReserveRepairLaunch — the
 // same launch/close lock, and the same lack of ordering against SetHeadless —
-// before refreshFlowRepairLaunchContext resolves ctx.Headless from that record.
+// before the repair launch builder resolves ctx.Headless from that record.
 // So the toggle has to stand off for a repair attempt exactly as it does for a
 // autofix agent, or the repair runs interactively or headlessly depending on
 // which command finished first.
