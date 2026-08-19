@@ -274,3 +274,59 @@ func TestPostCommitValidationFailureNamesTheBackupAndTheRestoreCommand(t *testin
 		t.Fatalf("failure %q does not name the restore command", message)
 	}
 }
+
+// TestPostCommitValidationFailureLeavesTheAdvertisedRestoreUsable: the refusal
+// names one exact recovery command, and on a root that has migrated before, the
+// history is what decides whether `db restore` accepts it. A committed
+// migration that goes unrecorded leaves the previous migration's backup as the
+// newest entry, and the command in the error is then refused as a generation
+// mismatch — advice that does not work is worse than none.
+func TestPostCommitValidationFailureLeavesTheAdvertisedRestoreUsable(t *testing.T) {
+	root := predecessorRoot(t)
+	first, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stampUserVersion(t, root, databaseSchemaVersion-1)
+	original := postMigrationValidation
+	t.Cleanup(func() { postMigrationValidation = original })
+	postMigrationValidation = func(*sql.DB, int64, map[string]bool) error {
+		return errors.New("the migrated database is missing an index")
+	}
+	_, err = NewStore(StoreOptions{Root: root, Role: RoleMigrator})
+	if err == nil {
+		t.Fatal("a migration whose post-commit validation failed returned success")
+	}
+	advertised := restoreCommandBackup(t, err.Error())
+
+	postMigrationValidation = original
+	if _, restoreErr := Restore(RestoreOptions{Root: root, BackupPath: advertised}); restoreErr != nil {
+		t.Fatalf("the restore the refusal advertised was itself refused: %v", restoreErr)
+	}
+	if storedSchemaVersion(t, root) != databaseSchemaVersion-1 {
+		t.Fatal("the advertised restore did not put the predecessor back")
+	}
+}
+
+// restoreCommandBackup extracts the backup path from the refusal's recovery
+// command, so the test runs the command an operator would copy.
+func restoreCommandBackup(t *testing.T, message string) string {
+	t.Helper()
+	const marker = "approach db restore --backup "
+	at := strings.Index(message, marker)
+	if at < 0 {
+		t.Fatalf("failure %q does not name the restore command", message)
+	}
+	rest := strings.TrimSpace(message[at+len(marker):])
+	if quote := rest[:1]; quote == `"` || quote == "'" {
+		end := strings.Index(rest[1:], quote)
+		if end < 0 {
+			t.Fatalf("failure %q leaves the backup path unterminated", message)
+		}
+		return rest[1 : 1+end]
+	}
+	return strings.Fields(rest)[0]
+}

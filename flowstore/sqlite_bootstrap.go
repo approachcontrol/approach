@@ -672,6 +672,15 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 	// the backup is still on disk, and nothing would tell the operator to use
 	// it.
 	if err := postMigrationValidation(db, databaseSchemaVersion, tolerated); err != nil {
+		// The migration COMMITTED; only the check after it failed. Recording
+		// that before refusing is what makes the recovery command in the
+		// refusal actually work: `db restore` compares the backup it is handed
+		// against the newest history entry, and a root with an earlier
+		// migration would otherwise still name THAT migration's backup, so the
+		// exact command printed below would be refused as a generation
+		// mismatch. A sidecar write that itself fails changes nothing here —
+		// the refusal is the answer either way.
+		_ = reconcileSidecar(canonicalRoot, databaseSchemaVersion, outcome)
 		return migrationOutcome{}, refusePostCommitValidation(canonicalRoot, backupPath, err)
 	}
 	if err := db.Close(); err != nil {
