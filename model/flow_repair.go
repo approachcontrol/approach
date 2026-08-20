@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -177,28 +176,6 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	}
 	next, cmd, _ := m.requestFlowLaunch(intent)
 	return next, cmd
-}
-
-func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flowstore.FlowRecord) actions.AgentLaunchContext {
-	repoPath, worktreePath, ok := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, ctx.WorktreePath, ctx.RepoPath)
-	if !ok {
-		repoPath = ctx.RepoPath
-		worktreePath = ctx.WorktreePath
-	}
-	planPath := strings.TrimSpace(record.PlanPath)
-	if planPath == "" && record.PlanID == ctx.PlanID {
-		planPath = ctx.PlanPath
-	}
-	obstruction, _ := flowRepairObstructionForRecord(record)
-	ctx.RepoPath = repoPath
-	ctx.WorktreePath = worktreePath
-	ctx.Branch = record.Branch
-	ctx.Commit = record.Commit
-	ctx.PlanID = record.PlanID
-	ctx.PlanPath = planPath
-	ctx.Headless = record.Headless
-	ctx.InitialPrompt = flowRepairPrompt(record, obstruction, ctx.Executable)
-	return ctx
 }
 
 func flowRepairLaunchPaths(repoPath, worktreePath string, fallbacks ...string) (string, string, bool) {

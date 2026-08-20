@@ -1134,7 +1134,7 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 	// each resolves
 	// headless in its prepare stage from a record read under the launch/close
 	// lock — autofix from ReserveAgentLaunch, repair from
-	// ReserveRepairLaunch by way of refreshFlowRepairLaunchContext. SetHeadless
+	// ReserveRepairLaunch by way of the repair launch builder. SetHeadless
 	// writes under the Flow store's own lock and so is ordered against neither,
 	// leaving both free to observe either value; for autofix the
 	// route turns on it too, since a headless launch is never tmux-eligible.

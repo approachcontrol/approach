@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
@@ -389,10 +388,10 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		}
 		if strings.TrimSpace(current.FlowID) != msg.FlowID {
 			// The reservation is supposed to return the Flow it locked. A seam
-			// that returns a zero or foreign record would otherwise reach
-			// refreshFlowRepairLaunchContext, which rebuilds branch, commit,
-			// plan, and the prompt from whatever it is handed — producing a
-			// repair agent pointed at the wrong record, or at none.
+			// that returns a zero or foreign record would otherwise reach the
+			// repair builder, which takes branch, commit, plan, and the prompt
+			// from the record it is handed — producing a repair agent pointed at
+			// the wrong record, or at none.
 			event.Err = flowRepairNotRepairableStatus
 			return event
 		}
@@ -400,11 +399,6 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			event.Err = flowRepairNotRepairableStatus
 			return event
 		}
-		// Seeded before the refresh, not after: refreshFlowRepairLaunchContext
-		// treats ctx.WorktreePath/ctx.RepoPath as its fallback chain and keeps
-		// ctx.PlanPath only when the record's plan ID still matches, so an
-		// unseeded context would silently discard the read stage's repo
-		// fallback and its PlanMarkdownPath lookup.
 		resolved, err := resolveFlowRepairAgentSettings(current, settings.Preferences)
 		if err != nil {
 			event.Err = flowRepairAgentSettingsError(current, settings.Preferences, err)
@@ -417,27 +411,27 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			event.Err = fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex, claude, or cursor-agent", resolved.Command)
 			return event
 		}
-		ctx := applyLaunchStamp(actions.AgentLaunchContext{
-			Command: resolved.Command,
-			// The admission token, never a fresh ID: every LaunchID-keyed fence
-			// downstream is on it.
-			LaunchID:         msg.Token,
-			RepoPath:         msg.RepoPath,
-			WorktreePath:     msg.WorktreePath,
-			SessionStateRoot: settings.SessionStateRoot,
-			PlanID:           msg.Record.PlanID,
-			PlanPath:         msg.PlanPath,
-			FlowID:           msg.FlowID,
-			FlowRepair:       true,
-			Embedded:         true,
-			Model:            resolved.Model,
-			ReasoningEffort:  resolved.ReasoningEffort,
-		}, settings.stamp())
-		// FlowPhaseID stays empty and FlowLaunchTracked stays false. The empty
-		// phase ID is what makes flowLaunchFailureUpdate refuse, which is what
-		// keeps a failed repair from ever mutating a phase.
-		event.Context = refreshFlowRepairLaunchContext(ctx, current)
-		event.Route = flowLaunchRouteEmbedded
+		// The read stage's paths and plan resolution are submitted as fallbacks
+		// rather than applied here: the builder owns the precedence between them
+		// and the reserved record, and it is the builder that sets repair's
+		// markers. FlowPhaseID stays empty and FlowLaunchTracked stays false
+		// there — the empty phase ID is what makes flowLaunchFailureUpdate
+		// refuse, which is what keeps a failed repair from ever mutating a phase.
+		ctx, route, err := newFlowLaunchContext(repairTarget{
+			LaunchID:             msg.Token,
+			Record:               current,
+			Agent:                resolved,
+			FallbackRepoPath:     msg.RepoPath,
+			FallbackWorktreePath: msg.WorktreePath,
+			PlanID:               msg.Record.PlanID,
+			PlanPath:             msg.PlanPath,
+		}, settings)
+		if err != nil {
+			event.Err = "Prepare Flow repair launch: " + err.Error()
+			return event
+		}
+		event.Context = ctx
+		event.Route = route
 		return event
 	}
 }

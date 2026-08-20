@@ -367,3 +367,51 @@ it reserves. The builder itself is exempt: it never reserves or writes, and the
 refusal has to happen earlier than it runs.
 
 The ADR's status stays `proposed`; the remaining open questions are unanswered.
+
+## Implementation note — repair (`approach-hyl.3`)
+
+The second slice migrated `RoleRepair`, the kind the migration order nominated
+first and the tracer deferred. It is the first migration where the call site was
+doing real work after the literal, so it is the first that tests the seam's
+central claim.
+
+- **Post-literal mutation was the whole point.** `refreshFlowRepairLaunchContext`
+  ran after the composed literal and overwrote seven fields from the reserved
+  record, treating the literal's `RepoPath`/`WorktreePath`/`PlanPath` as a
+  fallback chain rather than as values. That made the literal's fields mean two
+  different things at two different instants, and it is why the call site's own
+  comment had to explain the seeding order. Under the builder the read stage's
+  resolutions are named for what they are — `FallbackRepoPath`,
+  `FallbackWorktreePath`, `PlanID`, `PlanPath` — and the precedence between them
+  and the record lives in one function. The refresh is deleted, not shimmed.
+- **Stamp-last forced the prompt off `ctx.Executable`.** `flowRepairPrompt` read
+  the stamped executable, which only had a value because the old call site
+  stamped *before* refreshing. The builder stamps last — registration reads the
+  finished context to name the launch — so the prompt renders from
+  `settings.Pin.ExecutablePath` instead. It is the same string
+  `applyLaunchStamp` writes, and the empty-pin case is what `flowPromptBinary`
+  already falls back from. This regression would have been silent (a well-formed
+  prompt naming ambient `approach`), so it has its own test.
+- **Repair's payload validation is deliberately looser than the worktree
+  agent's.** The builder requires a launch ID and a flow ID but *not* a worktree
+  path: repair exists for Flows whose recorded directories are gone, so copying
+  the tracer's check would have refused exactly the Flows repair is for. The
+  no-usable-directory refusal stays in the read stage, where it can name what it
+  refused.
+- **Resolved agent settings ride on the target, not the snapshot.** Repair's
+  command, model and effort come from the obstruction phase's persisted settings,
+  and resolving them needs the reserved record. Overwriting the snapshot's three
+  fields before calling was rejected: it would make the snapshot mean one thing
+  for repair and another for every other kind.
+- **D3 is still deferred.** `docs/flow-launch-variant-matrix.md:54` records that
+  `repair × tmux` is unreachable, so repair has no route to decide and the
+  builder still returns `flowLaunchRoute` without taking a routing probe. Open
+  question 4 remains open, now for the second slice running.
+
+The acceptance evidence is that `model/flow_launch_repair_internal_test.go`
+passes unedited, as `model/flow_launch_generic_agent_internal_test.go` did for
+the tracer, and that the module-interface variant test's whole-struct comparison
+now has a repair row pinning the empty `FlowPhaseID`, `FlowLaunchTracked` false,
+and the empty `WorkingDir`.
+
+The ADR's status stays `proposed`.
