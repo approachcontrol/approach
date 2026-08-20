@@ -11964,13 +11964,14 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 	if startWidth <= 0 || startHeight <= 0 {
 		t.Fatalf("embedded terminal size = %dx%d", startWidth, startHeight)
 	}
+	fencedInstruction := fencedFlowRecord("Write\nthe plan")
 	prompt := strings.ToLower(started.InitialPrompt)
-	for _, want := range []string{"approach-flow", "write\nthe plan", "\"${approach_executable:-${approach_bin:-approach}}\" plan save", "\"${approach_executable:-${approach_bin:-approach}}\" flow plan set"} {
+	for _, want := range []string{"approach-flow", strings.ToLower(fencedInstruction), "\"${approach_executable:-${approach_bin:-approach}}\" plan save", "\"${approach_executable:-${approach_bin:-approach}}\" flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("Plan Now prompt missing %q: %q", want, started.InitialPrompt)
 		}
 	}
-	if model.ActiveFlowCreateForTest(m) != 0 || len(term.writes) != 1 || !strings.Contains(term.writes[0], "Write\nthe plan") {
+	if model.ActiveFlowCreateForTest(m) != 0 || len(term.writes) != 1 || !strings.Contains(term.writes[0], fencedInstruction) {
 		t.Fatalf("prefill completion: active=%d writes=%#v", model.ActiveFlowCreateForTest(m), term.writes)
 	}
 	beforeWrites := len(term.writes)
