@@ -80,11 +80,11 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 	}
 	log, _ := OpenLog(root, "launch-1")
 	requests, _ := log.Requests()
-	if len(requests) != 1 || requests[0].Verb != VerbPhaseComplete || requests[0].WrittenBy != WrittenByController || !requests[0].Replayable || requests[0].Observed.Status != flowstore.PhaseRunning {
+	if len(requests) != 1 || requests[0].Verb != VerbPhaseComplete || requests[0].WrittenBy != WrittenByController || !requests[0].Replayable || requests[0].Observed.Status != string(flowstore.PhaseRunning) {
 		t.Fatalf("logged requests = %#v", requests)
 	}
 	applied, ok, _ := log.Applied()
-	if !ok || applied.AppliedSeq != 1 || applied.Status != flowstore.PhaseCompleted || applied.Result != ResultApplied {
+	if !ok || applied.AppliedSeq != 1 || applied.Status != string(flowstore.PhaseCompleted) || applied.Result != ResultApplied {
 		t.Fatalf("applied = %#v", applied)
 	}
 	if len(events) != 1 || events[0].LaunchID != "launch-1" || events[0].PhaseID != "plan" {
@@ -98,7 +98,7 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 		t.Fatal("token persisted in clear")
 	}
 	// A refused write still advances the marker so replay never retries it.
-	req, _ = NewRequest(VerbPhaseSet, PhaseSetPayload{Status: flowstore.PhaseSkipped})
+	req, _ = NewRequest(VerbPhaseSet, PhaseSetPayload{Status: string(flowstore.PhaseSkipped)})
 	resp, err = client.Call(req)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 		t.Fatalf("skipped without notes = %#v", resp)
 	}
 	applied, _, _ = log.Applied()
-	if applied.AppliedSeq != 2 || applied.Result != ResultRefused || applied.Status != flowstore.PhaseCompleted {
+	if applied.AppliedSeq != 2 || applied.Result != ResultRefused || applied.Status != string(flowstore.PhaseCompleted) {
 		t.Fatalf("applied after refusal = %#v", applied)
 	}
 	if pending, _ := log.Pending(); len(pending) != 0 {
@@ -196,7 +196,7 @@ func TestControllerRestartReloadsRegistrationsAndReplaysPending(t *testing.T) {
 	first, endpoint := serveTestController(t, store, root, Registration{FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1"})
 	// Simulate a spooled request that the first controller never applied.
 	log, _ := OpenLog(root, "launch-1")
-	if err := log.WriteBaseline(Baseline{BaselineStatus: flowstore.PhaseRunning}); err != nil {
+	if err := log.WriteBaseline(Baseline{BaselineStatus: string(flowstore.PhaseRunning)}); err != nil {
 		t.Fatal(err)
 	}
 	req := mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-1", PhaseActionPayload{Summary: "spooled"})
@@ -356,7 +356,7 @@ func TestRecordBaselineWritesStatusForExactlyThatLaunch(t *testing.T) {
 	}
 	log, _ := OpenLog(root, "launch-1")
 	baseline, ok, err := log.Baseline()
-	if err != nil || !ok || baseline.BaselineStatus != flowstore.PhaseRunning || baseline.ObservedUpdatedAt.IsZero() {
+	if err != nil || !ok || baseline.BaselineStatus != string(flowstore.PhaseRunning) || baseline.ObservedUpdatedAt.IsZero() {
 		t.Fatalf("baseline = %#v %v %v", baseline, ok, err)
 	}
 	completePhase(t, store, created.FlowID, "plan", "")
@@ -365,7 +365,7 @@ func TestRecordBaselineWritesStatusForExactlyThatLaunch(t *testing.T) {
 	}
 	log2, _ := OpenLog(root, "launch-2")
 	baseline, _, _ = log2.Baseline()
-	if baseline.BaselineStatus != flowstore.PhaseCompleted {
+	if baseline.BaselineStatus != string(flowstore.PhaseCompleted) {
 		t.Fatalf("resume baseline = %#v", baseline)
 	}
 	if _, err := next(flowstore.PhaseLaunchUpdate{FlowID: created.FlowID, PhaseID: "nope", LaunchID: "launch-3"}); err == nil {

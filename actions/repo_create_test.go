@@ -143,6 +143,25 @@ func TestCreateRepoLocalOnlyInitializesGitRepository(t *testing.T) {
 	}
 }
 
+func TestCreateRepoDestinationIsWorldReadable(t *testing.T) {
+	root := t.TempDir()
+	result, err := createRepoWithRunner(RepoCreateOptions{
+		Root:         root,
+		Name:         "project",
+		CreateGitHub: false,
+	}, &fakeCreateRepoRunner{})
+	if err != nil {
+		t.Fatalf("createRepoWithRunner() error = %v", err)
+	}
+	info, err := os.Stat(result.DestinationPath)
+	if err != nil {
+		t.Fatalf("stat destination: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("destination perm = %04o, want 0755", got)
+	}
+}
+
 func TestCreateRepoGitInitFailureCleansDestination(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeCreateRepoRunner{failName: "git", failErr: errors.New("git unavailable")}

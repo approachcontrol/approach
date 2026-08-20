@@ -382,7 +382,7 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 		PlanPath:         req.PlanPath,
 		FlowID:           launchRecord.FlowID,
 		FlowPhaseID:      launchPhase.PhaseID,
-		FlowPhaseKind:    flowstore.SemanticKind(launchPhase),
+		FlowPhaseKind:    string(flowstore.SemanticKind(launchPhase)),
 		FlowAutoLaunch:   req.AutoLaunch,
 		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates, l.Pin.ExecutablePath),
 	}
@@ -680,7 +680,7 @@ func newlyStoppedAutoAdvanceFlowPhases(previous, current flowstore.FlowRecord) [
 			continue
 		}
 		previousPhase, ok := previousByPhaseID[phaseID]
-		if ok && autoAdvanceStopped(previousPhase.Status, phase.Status) {
+		if ok && autoAdvanceStopped(string(previousPhase.Status), string(phase.Status)) {
 			stopped = append(stopped, phase)
 		}
 	}
@@ -689,10 +689,10 @@ func newlyStoppedAutoAdvanceFlowPhases(previous, current flowstore.FlowRecord) [
 
 func autoAdvanceStopped(previousStatus, currentStatus string) bool {
 	switch currentStatus {
-	case flowstore.PhaseSkipped, flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention:
+	case string(flowstore.PhaseSkipped), string(flowstore.PhaseBlocked), string(flowstore.PhaseNeedsAttention):
 		return previousStatus != currentStatus
 	default:
-		return previousStatus == flowstore.PhaseRunning && currentStatus == flowstore.PhaseReady
+		return previousStatus == string(flowstore.PhaseRunning) && currentStatus == string(flowstore.PhaseReady)
 	}
 }
 
@@ -878,7 +878,7 @@ func flowPhaseCanLaunchAtIndex(record flowstore.FlowRecord, phaseIndex int) bool
 }
 
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
-	detail := strings.TrimSpace(phase.Status)
+	detail := strings.TrimSpace(string(phase.Status))
 	if detail == "" {
 		detail = "unknown"
 	}
@@ -897,8 +897,8 @@ func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
 	if flowstore.HasPRTarget(record.PR) {
 		return false
 	}
-	prCreation, hasPRCreation := flowstore.FindPhaseByKind(record, flowstore.KindPRCreation)
-	autoreview, hasAutoreview := flowstore.FindPhaseByKind(record, flowstore.KindAutoreview)
+	prCreation, hasPRCreation := flowstore.FindPhaseByKind(record, string(flowstore.KindPRCreation))
+	autoreview, hasAutoreview := flowstore.FindPhaseByKind(record, string(flowstore.KindAutoreview))
 	if !hasPRCreation || !hasAutoreview || prCreation.Status != flowstore.PhaseCompleted {
 		return false
 	}

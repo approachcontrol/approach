@@ -424,7 +424,7 @@ func flowSearchText(record flowstore.FlowRecord) string {
 		parts = append(parts, fmt.Sprintf("#%d", record.Issue.Number))
 	}
 	for _, phase := range record.Phases {
-		parts = append(parts, phase.Title, phase.Status, phase.Summary)
+		parts = append(parts, phase.Title, string(phase.Status), phase.Summary)
 		for _, session := range phase.Sessions {
 			parts = append(parts, session.Provider, session.SessionID, session.Status)
 		}

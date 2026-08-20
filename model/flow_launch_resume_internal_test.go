@@ -170,8 +170,8 @@ func TestStoredCodexAppPreferenceResumesCodexSessionThroughTrackedBackend(t *tes
 func TestFlowPhaseResumeTerminalProtectionFollowsPersistedRecord(t *testing.T) {
 	tests := []struct {
 		name            string
-		snapshotStatus  string
-		persistedStatus string
+		snapshotStatus  flowstore.PhaseStatus
+		persistedStatus flowstore.PhaseStatus
 		wantUpdates     int
 	}{
 		{

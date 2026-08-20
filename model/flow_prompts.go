@@ -230,7 +230,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 	writeFlowChangeMetadata(&b, record)
 	writeFlowPromptHeader(&b, record, "")
 	writeFlowPromptPlanContext(&b, record, "")
-	writeFlowPromptPhaseSummaryByKind(&b, record, "Plan Review context", flowstore.KindPlanReview)
+	writeFlowPromptPhaseSummaryByKind(&b, record, "Plan Review context", string(flowstore.KindPlanReview))
 	writeFlowRestartPromptIfNeeded(&b, record, phase, bin)
 	b.WriteString("\nUse the commit skill before completing this phase.")
 	b.WriteString("\nAdvance this phase with `" + bin + " flow phase set` only after the implementation is complete, blocked, or needs attention.")
@@ -410,7 +410,7 @@ func writeFlowPromptHeader(b *strings.Builder, record flowstore.FlowRecord, plan
 }
 
 func writeFlowPromptPlanContext(b *strings.Builder, record flowstore.FlowRecord, planBody string) {
-	if plan, ok := flowstore.FindPhaseByKind(record, flowstore.KindPlan); ok {
+	if plan, ok := flowstore.FindPhaseByKind(record, string(flowstore.KindPlan)); ok {
 		b.WriteString("\nPrior Plan context:\n")
 		writeFlowPhaseContext(b, plan)
 	}
@@ -431,7 +431,7 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 		writeUntrustedFlowRecord(b, "- Title: "+phase.Title)
 	}
 	b.WriteString("- Status: ")
-	b.WriteString(phase.Status)
+	b.WriteString(string(phase.Status))
 	b.WriteString("\n")
 	if phase.Outcome != "" {
 		b.WriteString("- Outcome: ")

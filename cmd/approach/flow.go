@@ -30,7 +30,7 @@ func runFlow(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: approach flow <create|list|read|phase|plan|issue|pr|merge> [flags]")
+		return errors.New("usage: approach flow <create|list|read|phase|plan|issue|pr|merge> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -189,10 +189,10 @@ func runFlowCreate(args []string, deps runDeps) error {
 		return err
 	}
 	if !*asJSON {
-		return fmt.Errorf("flow create requires --json in v1")
+		return errors.New("flow create requires --json in v1")
 	}
 	if strings.TrimSpace(*title) == "" {
-		return fmt.Errorf("flow create requires --title")
+		return errors.New("flow create requires --title")
 	}
 	if *prepareWorktree {
 		candidate := strings.TrimSpace(*repoPath)
@@ -210,10 +210,10 @@ func runFlowCreate(args []string, deps runDeps) error {
 		*repoPath = resolved
 	}
 	if strings.TrimSpace(*repoPath) == "" {
-		return fmt.Errorf("flow create requires --repo-path")
+		return errors.New("flow create requires --repo-path")
 	}
 	if !filepath.IsAbs(*repoPath) {
-		return fmt.Errorf("flow create requires absolute --repo-path")
+		return errors.New("flow create requires absolute --repo-path")
 	}
 	body, err := readFlowInstructions(*instructions, *instructionsFile)
 	if err != nil {
@@ -234,7 +234,7 @@ func runFlowCreate(args []string, deps runDeps) error {
 	defer func() { _ = store.Close() }()
 	if *prepareWorktree {
 		if *worktreePath != "" || *branch != "" || *commit != "" {
-			return fmt.Errorf("flow create --prepare-worktree cannot be combined with --worktree-path, --branch, or --commit")
+			return errors.New("flow create --prepare-worktree cannot be combined with --worktree-path, --branch, or --commit")
 		}
 		settings := configuredAgentSettings(cfg)
 		result, err := model.PrepareFlow(model.FlowStartRequest{
@@ -364,7 +364,7 @@ func runFlowList(args []string, deps runDeps) error {
 		return err
 	}
 	if !*asJSON {
-		return fmt.Errorf("flow list requires --json in v1")
+		return errors.New("flow list requires --json in v1")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbFlowList, launchcontrol.ListPayload{RepoPath: *repoPath})
 	if err != nil {
@@ -403,7 +403,7 @@ func runFlowRead(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow read requires --flow-id")
+		return errors.New("flow read requires --flow-id")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbFlowRead, launchcontrol.ReadPayload{})
 	if err != nil {
@@ -435,7 +435,7 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]")
+		return errors.New("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]")
 	}
 	switch args[0] {
 	case "set":
@@ -512,7 +512,7 @@ func runFlowPhaseAgent(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow phase agent set [flags]")
+		return errors.New("usage: approach flow phase agent set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowPhaseAgentHelpText)
@@ -547,19 +547,19 @@ func runFlowPhaseAgentSet(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow phase agent set requires --flow-id")
+		return errors.New("flow phase agent set requires --flow-id")
 	}
 	if *phaseID == "" {
-		return fmt.Errorf("flow phase agent set requires --phase-id")
+		return errors.New("flow phase agent set requires --phase-id")
 	}
 	provided := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 	if *clear {
 		if provided["agent"] || provided["model"] || provided["reasoning-effort"] {
-			return fmt.Errorf("flow phase agent set --clear cannot be combined with --agent, --model, or --reasoning-effort")
+			return errors.New("flow phase agent set --clear cannot be combined with --agent, --model, or --reasoning-effort")
 		}
 	} else if strings.TrimSpace(*agentCommand) == "" {
-		return fmt.Errorf("flow phase agent set requires --agent or --clear")
+		return errors.New("flow phase agent set requires --agent or --clear")
 	}
 	payload := launchcontrol.AgentSetPayload{Clear: *clear}
 	if !*clear {
@@ -631,13 +631,13 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow phase set requires --flow-id")
+		return errors.New("flow phase set requires --flow-id")
 	}
 	if *phaseID == "" {
-		return fmt.Errorf("flow phase set requires --phase-id")
+		return errors.New("flow phase set requires --phase-id")
 	}
 	if *status == "" {
-		return fmt.Errorf("flow phase set requires --status")
+		return errors.New("flow phase set requires --status")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseSet, launchcontrol.PhaseSetPayload{
 		Status:  *status,
@@ -723,10 +723,10 @@ func runFlowPhaseRestart(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow phase restart requires --flow-id")
+		return errors.New("flow phase restart requires --flow-id")
 	}
 	if *phaseID == "" {
-		return fmt.Errorf("flow phase restart requires --phase-id")
+		return errors.New("flow phase restart requires --phase-id")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseRestart, launchcontrol.PhaseRestartPayload{Notes: *notes})
 	if err != nil {
@@ -750,10 +750,10 @@ func runFlowPhaseReset(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow phase reset requires --flow-id")
+		return errors.New("flow phase reset requires --flow-id")
 	}
 	if *phaseID == "" {
-		return fmt.Errorf("flow phase reset requires --phase-id")
+		return errors.New("flow phase reset requires --phase-id")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseReset, launchcontrol.PhaseResetPayload{})
 	if err != nil {
@@ -884,16 +884,16 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow phase add-child requires --flow-id")
+		return errors.New("flow phase add-child requires --flow-id")
 	}
 	if *phaseID == "" {
-		return fmt.Errorf("flow phase add-child requires --phase-id")
+		return errors.New("flow phase add-child requires --phase-id")
 	}
 	if strings.TrimSpace(*title) == "" {
-		return fmt.Errorf("flow phase add-child requires --title")
+		return errors.New("flow phase add-child requires --title")
 	}
 	if *order < 1 {
-		return fmt.Errorf("flow phase add-child requires positive --order")
+		return errors.New("flow phase add-child requires positive --order")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseAddChild, launchcontrol.AddChildPayload{
 		ParentPhaseID: *parentPhaseID,
@@ -934,7 +934,7 @@ func runFlowPlan(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow plan <save|set> [flags]")
+		return errors.New("usage: approach flow plan <save|set> [flags]")
 	}
 	switch args[0] {
 	case "save":
@@ -1000,7 +1000,7 @@ func runFlowPlanSave(args []string, deps runDeps) error {
 		}
 	})
 	if *flowID == "" {
-		return fmt.Errorf("flow plan save requires --flow-id")
+		return errors.New("flow plan save requires --flow-id")
 	}
 	markdown, err := readPlanInput(*file, deps.stdin)
 	if err != nil {
@@ -1165,10 +1165,10 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow plan set requires --flow-id")
+		return errors.New("flow plan set requires --flow-id")
 	}
 	if *planID == "" {
-		return fmt.Errorf("flow plan set requires --plan-id")
+		return errors.New("flow plan set requires --plan-id")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbPlanSet, launchcontrol.PlanSetPayload{PlanID: *planID, PlanPath: *planPath})
 	if err != nil {
@@ -1202,7 +1202,7 @@ func runFlowIssue(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow issue set [flags]")
+		return errors.New("usage: approach flow issue set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowIssueHelpText)
@@ -1247,13 +1247,13 @@ func runFlowIssueSet(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow issue set requires --flow-id")
+		return errors.New("flow issue set requires --flow-id")
 	}
 	if *number <= 0 {
-		return fmt.Errorf("flow issue set requires positive --number")
+		return errors.New("flow issue set requires positive --number")
 	}
 	if *issueURL == "" {
-		return fmt.Errorf("flow issue set requires --url")
+		return errors.New("flow issue set requires --url")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbIssueSet, launchcontrol.IssueSetPayload{Provider: *provider, Number: *number, URL: *issueURL})
 	if err != nil {
@@ -1288,7 +1288,7 @@ func runFlowPR(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow pr set [flags]")
+		return errors.New("usage: approach flow pr set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowPRHelpText)
@@ -1327,19 +1327,19 @@ func runFlowPRSet(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow pr set requires --flow-id")
+		return errors.New("flow pr set requires --flow-id")
 	}
 	if *number <= 0 {
-		return fmt.Errorf("flow pr set requires positive --number")
+		return errors.New("flow pr set requires positive --number")
 	}
 	if *prURL == "" {
-		return fmt.Errorf("flow pr set requires --url")
+		return errors.New("flow pr set requires --url")
 	}
 	if *head == "" {
-		return fmt.Errorf("flow pr set requires --head")
+		return errors.New("flow pr set requires --head")
 	}
 	if *base == "" {
-		return fmt.Errorf("flow pr set requires --base")
+		return errors.New("flow pr set requires --base")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbPRSet, launchcontrol.PRSetPayload{
 		Provider: *provider,
@@ -1384,7 +1384,7 @@ func runFlowMerge(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach flow merge set [flags]")
+		return errors.New("usage: approach flow merge set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowMergeHelpText)
@@ -1420,10 +1420,10 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 		return err
 	}
 	if *flowID == "" {
-		return fmt.Errorf("flow merge set requires --flow-id")
+		return errors.New("flow merge set requires --flow-id")
 	}
 	if *status == "" {
-		return fmt.Errorf("flow merge set requires --status")
+		return errors.New("flow merge set requires --status")
 	}
 	req, err := launchcontrol.NewRequest(launchcontrol.VerbMergeSet, launchcontrol.MergeSetPayload{
 		Status:   *status,
@@ -1460,7 +1460,7 @@ Example:
 
 func readFlowInstructions(inline, file string) (string, error) {
 	if inline != "" && file != "" {
-		return "", fmt.Errorf("flow create accepts either --instructions or --instructions-file, not both")
+		return "", errors.New("flow create accepts either --instructions or --instructions-file, not both")
 	}
 	if file != "" {
 		data, err := os.ReadFile(file)

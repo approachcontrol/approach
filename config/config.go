@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -313,7 +314,7 @@ func normalizeFlowConfig(path string, cfg *FlowConfig) error {
 		}
 		seen[preset.Name] = struct{}{}
 		for j := range preset.Phases {
-			preset.Phases[j].Kind = strings.ToLower(strings.TrimSpace(preset.Phases[j].Kind))
+			preset.Phases[j].Kind = flowstore.PhaseKind(strings.ToLower(strings.TrimSpace(string(preset.Phases[j].Kind))))
 		}
 		if err := flowstore.ValidatePreset(*preset); err != nil {
 			return fmt.Errorf("parse config %s: flow.presets[%q]: %w", path, preset.Name, err)
@@ -428,7 +429,7 @@ func prepareAgentReasoningEffort(command, effort string) (string, string, error)
 		if err := agent.Validate(command); err != nil {
 			return "", "", err
 		}
-		return "", "", fmt.Errorf("reasoning effort is configurable only for codex or claude")
+		return "", "", errors.New("reasoning effort is configurable only for codex or claude")
 	}
 	effort = agent.NormalizeReasoningEffort(effort)
 	if effort == "" {
@@ -446,7 +447,7 @@ func prepareAgentModel(command, model string) (string, string, error) {
 		if err := agent.Validate(command); err != nil {
 			return "", "", err
 		}
-		return "", "", fmt.Errorf("model is configurable only for supported agents")
+		return "", "", errors.New("model is configurable only for supported agents")
 	}
 	model = agent.NormalizeModel(model)
 	if model == "" {

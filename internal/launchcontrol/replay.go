@@ -28,7 +28,7 @@ type phaseIdentity struct {
 }
 
 func identityOf(phase flowstore.FlowPhase) phaseIdentity {
-	return phaseIdentity{LaunchID: flowstore.LatestPhaseLaunchID(phase), Status: phase.Status}
+	return phaseIdentity{LaunchID: flowstore.LatestPhaseLaunchID(phase), Status: string(phase.Status)}
 }
 
 // replayLocked replays a launch's pending requests. The caller holds both the
@@ -138,11 +138,11 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 			continue
 		}
 		if targetReached(record, phase, env) {
-			if err := log.WriteApplied(AppliedState{AppliedSeq: env.Seq, Status: phase.Status, Result: ResultApplied, ObservedUpdatedAt: phase.UpdatedAt, AppliedAt: now}); err != nil {
+			if err := log.WriteApplied(AppliedState{AppliedSeq: env.Seq, Status: string(phase.Status), Result: ResultApplied, ObservedUpdatedAt: phase.UpdatedAt, AppliedAt: now}); err != nil {
 				return result, err
 			}
 			result.Applied++
-			comparison = phase.Status
+			comparison = string(phase.Status)
 			continue
 		}
 		if live.Status == comparison {
@@ -167,11 +167,11 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 			}
 			phase, _ = PhaseByID(record, phaseID)
 			live = identityOf(phase)
-			if err := log.WriteApplied(AppliedState{AppliedSeq: env.Seq, Status: phase.Status, Result: ResultApplied, ObservedUpdatedAt: phase.UpdatedAt, AppliedAt: now}); err != nil {
+			if err := log.WriteApplied(AppliedState{AppliedSeq: env.Seq, Status: string(phase.Status), Result: ResultApplied, ObservedUpdatedAt: phase.UpdatedAt, AppliedAt: now}); err != nil {
 				return result, err
 			}
 			result.Applied++
-			comparison = phase.Status
+			comparison = string(phase.Status)
 			continue
 		}
 		// Case 3: the phase moved underneath the launch.
@@ -183,7 +183,7 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 			fmt.Sprintf("phase status %s did not match the launch's last known status %s", live.Status, comparison)); err != nil {
 			return result, err
 		}
-		if live.Status == flowstore.PhaseRunning {
+		if live.Status == string(flowstore.PhaseRunning) {
 			update := reconcileUpdate(phase, ReasonPhaseResultStale, nil, flowID, log.LaunchID(), intended)
 			resp, err := c.demote(log, flowID, log.LaunchID(), update, last, now)
 			if err != nil {
@@ -204,7 +204,7 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 // validation — and records the demoted status as the launch's comparison
 // state, so a later replay measures against the reconciled phase.
 func (c *Controller) demote(log *Log, flowID, launchID string, update flowstore.PhaseUpdate, seq int, now time.Time) (Response, error) {
-	payload, err := json.Marshal(PhaseSetPayload{Status: update.Status, Outcome: update.Outcome, Notes: update.Notes})
+	payload, err := json.Marshal(PhaseSetPayload{Status: string(update.Status), Outcome: update.Outcome, Notes: update.Notes})
 	if err != nil {
 		return Response{}, err
 	}
@@ -220,7 +220,7 @@ func (c *Controller) demote(log *Log, flowID, launchID string, update flowstore.
 	if !resp.OK {
 		return resp, nil
 	}
-	if err := log.WriteApplied(AppliedState{AppliedSeq: seq, Status: update.Status, Result: ResultReconciled, AppliedAt: now}); err != nil {
+	if err := log.WriteApplied(AppliedState{AppliedSeq: seq, Status: string(update.Status), Result: ResultReconciled, AppliedAt: now}); err != nil {
 		return resp, err
 	}
 	c.notify(AppliedEvent{FlowID: flowID, PhaseID: update.PhaseID, LaunchID: launchID})
@@ -278,7 +278,7 @@ func targetReached(record flowstore.FlowRecord, phase flowstore.FlowPhase, env R
 		if json.Unmarshal(env.Payload, &payload) != nil {
 			return false
 		}
-		return phase.Status == payload.Status && fieldsMatch(payload.Outcome, payload.Notes, payload.Summary)
+		return string(phase.Status) == payload.Status && fieldsMatch(payload.Outcome, payload.Notes, payload.Summary)
 	case VerbPhaseComplete, VerbPhaseBlock, VerbPhaseNeedsAttention:
 		var payload PhaseActionPayload
 		if json.Unmarshal(env.Payload, &payload) != nil {
@@ -290,9 +290,9 @@ func targetReached(record flowstore.FlowRecord, phase flowstore.FlowPhase, env R
 		action := phaseActions[env.Verb]
 		outcome := strings.TrimSpace(payload.Outcome)
 		if outcome == "" {
-			outcome = defaultPhaseActionOutcome(flowstore.SemanticKind(phase), action)
+			outcome = defaultPhaseActionOutcome(string(flowstore.SemanticKind(phase)), action)
 		}
-		return phase.Status == action.status && fieldsMatch(outcome, payload.Notes, payload.Summary)
+		return string(phase.Status) == action.status && fieldsMatch(outcome, payload.Notes, payload.Summary)
 	case VerbPlanSet:
 		var payload PlanSetPayload
 		if json.Unmarshal(env.Payload, &payload) != nil {

@@ -16,24 +16,24 @@ func TestAllowedNextPhaseStatusesCanonicalTable(t *testing.T) {
 		current string
 		want    []string
 	}{
-		{flowstore.PhasePending, []string{flowstore.PhaseSkipped}},
-		{flowstore.PhaseReady, []string{
-			flowstore.PhaseRunning,
-			flowstore.PhaseNeedsAttention,
-			flowstore.PhaseCompleted,
-			flowstore.PhaseBlocked,
-			flowstore.PhaseSkipped,
+		{string(flowstore.PhasePending), []string{string(flowstore.PhaseSkipped)}},
+		{string(flowstore.PhaseReady), []string{
+			string(flowstore.PhaseRunning),
+			string(flowstore.PhaseNeedsAttention),
+			string(flowstore.PhaseCompleted),
+			string(flowstore.PhaseBlocked),
+			string(flowstore.PhaseSkipped),
 		}},
-		{flowstore.PhaseRunning, []string{
-			flowstore.PhaseNeedsAttention,
-			flowstore.PhaseCompleted,
-			flowstore.PhaseBlocked,
-			flowstore.PhaseSkipped,
+		{string(flowstore.PhaseRunning), []string{
+			string(flowstore.PhaseNeedsAttention),
+			string(flowstore.PhaseCompleted),
+			string(flowstore.PhaseBlocked),
+			string(flowstore.PhaseSkipped),
 		}},
-		{flowstore.PhaseNeedsAttention, []string{flowstore.PhaseRunning, flowstore.PhaseSkipped}},
-		{flowstore.PhaseBlocked, []string{flowstore.PhaseRunning, flowstore.PhaseSkipped}},
-		{flowstore.PhaseCompleted, []string{flowstore.PhaseRunning}},
-		{flowstore.PhaseSkipped, []string{flowstore.PhaseRunning}},
+		{string(flowstore.PhaseNeedsAttention), []string{string(flowstore.PhaseRunning), string(flowstore.PhaseSkipped)}},
+		{string(flowstore.PhaseBlocked), []string{string(flowstore.PhaseRunning), string(flowstore.PhaseSkipped)}},
+		{string(flowstore.PhaseCompleted), []string{string(flowstore.PhaseRunning)}},
+		{string(flowstore.PhaseSkipped), []string{string(flowstore.PhaseRunning)}},
 		{"unknown", nil},
 	} {
 		t.Run(tc.current, func(t *testing.T) {

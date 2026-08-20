@@ -172,10 +172,10 @@ func TestFlowDegradationWarningReflowsSelectionAndScrollGeometry(t *testing.T) {
 }
 
 func TestAutoAdvancePartialPollRetainsCompleteSnapshotAndDoesNotLaunch(t *testing.T) {
-	baseline := autoAdvanceTestFlow("flow-1", "/repo/a", true, map[string]string{
+	baseline := autoAdvanceTestFlow("flow-1", "/repo/a", true, map[string]flowstore.PhaseStatus{
 		"plan": flowstore.PhaseRunning,
 	})
-	incomplete := autoAdvanceTestFlow("flow-1", "/repo/a", true, map[string]string{
+	incomplete := autoAdvanceTestFlow("flow-1", "/repo/a", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -213,8 +213,8 @@ func TestAutoAdvancePartialPollRetainsCompleteSnapshotAndDoesNotLaunch(t *testin
 }
 
 func TestPartialDisplayResultsDoNotSeedAutoAdvanceSnapshot(t *testing.T) {
-	baseline := autoAdvanceTestFlow("baseline", "/repo/a", true, map[string]string{"plan": flowstore.PhaseRunning})
-	partialFlow := autoAdvanceTestFlow("partial", "/repo/a", true, map[string]string{"plan": flowstore.PhaseCompleted})
+	baseline := autoAdvanceTestFlow("baseline", "/repo/a", true, map[string]flowstore.PhaseStatus{"plan": flowstore.PhaseRunning})
+	partialFlow := autoAdvanceTestFlow("partial", "/repo/a", true, map[string]flowstore.PhaseStatus{"plan": flowstore.PhaseCompleted})
 	m := New([]scanner.Repo{{Path: "/repo/a"}})
 	m.autoAdvanceSnapshot = cloneFlowRecords([]flowstore.FlowRecord{baseline})
 	want := cloneFlowRecords(m.autoAdvanceSnapshot)

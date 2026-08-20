@@ -95,7 +95,7 @@ func flowRepairObstructionForRecord(record flowstore.FlowRecord) (flowRepairObst
 	}
 
 	if flowAutoreviewMissingPRTarget(record) {
-		if phase, ok := flowstore.FindPhaseByKind(record, flowstore.KindAutoreview); ok {
+		if phase, ok := flowstore.FindPhaseByKind(record, string(flowstore.KindAutoreview)); ok {
 			return phaseRepairObstruction(phase, fmt.Sprintf("phase %s is gated by missing PR metadata", phase.PhaseID)), true
 		}
 		return flowRepairObstruction{Description: "Flow is gated by missing PR metadata"}, true

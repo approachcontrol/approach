@@ -80,6 +80,11 @@ type BootstrapHook struct {
 	TimeoutSeconds int
 }
 
+// worktreeDirPerm is the world-readable directory mode for worktree parents
+// and newly created local repos. It is intentionally distinct from
+// artifacts.DirPerm (0700).
+const worktreeDirPerm os.FileMode = 0o755
+
 // WorktreeCreateKind identifies which create flow produced the worktree.
 type WorktreeCreateKind int
 
@@ -210,7 +215,7 @@ func createWorktreeMoveDestinationParent(finalPath string) (func(), error) {
 			break
 		}
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := os.MkdirAll(parent, worktreeDirPerm); err != nil {
 		return nil, err
 	}
 	return func() {
@@ -376,7 +381,7 @@ func CreateWorktree(repoPath, ref string) (string, error) {
 	}
 
 	worktreePath := DefaultWorktreePath(repoPath, ref)
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), worktreeDirPerm); err != nil {
 		return "", err
 	}
 
@@ -540,7 +545,7 @@ func CreateFlowWorktree(repoPath, title, baseRef string) (FlowWorktreeCreateResu
 		if flowBranchOrPathExists(repoPath, branch, worktreePath) {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), worktreeDirPerm); err != nil {
 			return FlowWorktreeCreateResult{}, err
 		}
 		args := []string{"-C", repoPath, "worktree", "add", "-b", branch, worktreePath}
@@ -609,7 +614,7 @@ func AttachFlowWorktree(repoPath, branch string) (FlowWorktreeCreateResult, erro
 		if _, err := os.Stat(worktreePath); err == nil {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), worktreeDirPerm); err != nil {
 			return FlowWorktreeCreateResult{}, err
 		}
 		out, err := exec.Command("git", "-C", repoPath, "worktree", "add", worktreePath, branch).CombinedOutput()
@@ -766,7 +771,7 @@ func CreatePullRequestWorktree(repoPath, input string) (string, error) {
 	if err := runGit(repoPath, "fetch", "origin", refspec); err != nil {
 		return "", fmt.Errorf("fetching PR #%d: %w", pr.Number, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), worktreeDirPerm); err != nil {
 		if cleanupErr := runGit(repoPath, "branch", "-D", branch); cleanupErr != nil {
 			return "", fmt.Errorf("%w; also failed to delete branch %s: %v", err, branch, cleanupErr)
 		}
@@ -1650,77 +1655,89 @@ type agentLaunchArgsOptions struct {
 func agentLaunchArgs(command, resumeSessionID string, headless bool, model string, reasoningEffort string, opts agentLaunchArgsOptions) []string {
 	switch command {
 	case "codex":
-		hookCommand := approachSessionHookCommand("codex", opts.executable)
-		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving approach session\"}]}]"
-		args := []string{"--config", hookConfig}
-		if model != "" && model != agent.ModelDefault {
-			args = append(args, "--model", model)
-		}
-		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
-			args = append(args, "--config", "model_reasoning_effort="+reasoningEffort)
-		}
-		if opts.embedded && !headless {
-			args = slices.Insert(args, 0, "--no-alt-screen")
-		}
-		if headless {
-			args = append(args, "exec")
-		}
-		if resumeSessionID != "" {
-			args = append(args, "resume", resumeSessionID)
-		}
-		return args
+		return codexLaunchArgs(resumeSessionID, headless, model, reasoningEffort, opts)
 	case "claude":
-		hookCommand := approachSessionHookCommand("claude", opts.executable)
-		settings := claudeSessionHookSettings(hookCommand)
-		args := []string{"--settings", settings}
-		if model != "" && model != agent.ModelDefault {
-			args = append(args, "--model", model)
-		}
-		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
-			args = append(args, "--effort", reasoningEffort)
-		}
-		if headless {
-			args = slices.Insert(args, 0, "--print")
-			// claude --print buffers plain-text output until completion, so an
-			// embedded headless launch would show a blank panel for the whole
-			// run. Stream stream-json (which requires --verbose) so approach can
-			// render readable progress as events arrive;
-			// --include-partial-messages adds token-by-token deltas so text and
-			// tool calls stream in rather than appearing only when each block
-			// completes. opts.streamJSON is UsesStreamJSONOutput for this
-			// context, so these args appear iff the renderer is attached.
-			if opts.streamJSON {
-				args = append(args, "--verbose", "--output-format", "stream-json", "--include-partial-messages")
-			}
-		}
-		if resumeSessionID != "" {
-			args = append(args, "--resume", resumeSessionID)
-		}
-		return args
+		return claudeLaunchArgs(resumeSessionID, headless, model, reasoningEffort, opts)
 	case agent.CommandCursor:
-		var args []string
-		if model != "" && model != agent.ModelDefault {
-			args = append(args, "--model", model)
-		}
-		if headless {
-			args = append(args, "-p", "--force", "--trust")
-			// cursor-agent --print text format waits for the final answer, so
-			// an embedded headless launch would show a blank panel for the
-			// whole run. Stream stream-json with partial deltas so approach
-			// can render readable progress as events arrive. opts.streamJSON
-			// is UsesStreamJSONOutput for this context, so these args appear
-			// iff the renderer is attached.
-			if opts.streamJSON {
-				args = append(args, "--output-format", "stream-json", "--stream-partial-output")
-			}
-		}
-		if resumeSessionID != "" {
-			args = append(args, "--resume", resumeSessionID)
-		}
-		return args
+		return cursorLaunchArgs(resumeSessionID, headless, model, opts)
 	default:
 		return nil
 	}
+}
+
+func codexLaunchArgs(resumeSessionID string, headless bool, model string, reasoningEffort string, opts agentLaunchArgsOptions) []string {
+	hookCommand := approachSessionHookCommand("codex", opts.executable)
+	hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving approach session\"}]}]"
+	args := []string{"--config", hookConfig}
+	if model != "" && model != agent.ModelDefault {
+		args = append(args, "--model", model)
+	}
+	if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
+		args = append(args, "--config", "model_reasoning_effort="+reasoningEffort)
+	}
+	if opts.embedded && !headless {
+		args = slices.Insert(args, 0, "--no-alt-screen")
+	}
+	if headless {
+		args = append(args, "exec")
+	}
+	if resumeSessionID != "" {
+		args = append(args, "resume", resumeSessionID)
+	}
+	return args
+}
+
+func claudeLaunchArgs(resumeSessionID string, headless bool, model string, reasoningEffort string, opts agentLaunchArgsOptions) []string {
+	hookCommand := approachSessionHookCommand("claude", opts.executable)
+	settings := claudeSessionHookSettings(hookCommand)
+	args := []string{"--settings", settings}
+	if model != "" && model != agent.ModelDefault {
+		args = append(args, "--model", model)
+	}
+	if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
+		args = append(args, "--effort", reasoningEffort)
+	}
+	if headless {
+		args = slices.Insert(args, 0, "--print")
+		// claude --print buffers plain-text output until completion, so an
+		// embedded headless launch would show a blank panel for the whole
+		// run. Stream stream-json (which requires --verbose) so approach can
+		// render readable progress as events arrive;
+		// --include-partial-messages adds token-by-token deltas so text and
+		// tool calls stream in rather than appearing only when each block
+		// completes. opts.streamJSON is UsesStreamJSONOutput for this
+		// context, so these args appear iff the renderer is attached.
+		if opts.streamJSON {
+			args = append(args, "--verbose", "--output-format", "stream-json", "--include-partial-messages")
+		}
+	}
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	}
+	return args
+}
+
+func cursorLaunchArgs(resumeSessionID string, headless bool, model string, opts agentLaunchArgsOptions) []string {
+	var args []string
+	if model != "" && model != agent.ModelDefault {
+		args = append(args, "--model", model)
+	}
+	if headless {
+		args = append(args, "-p", "--force", "--trust")
+		// cursor-agent --print text format waits for the final answer, so
+		// an embedded headless launch would show a blank panel for the
+		// whole run. Stream stream-json with partial deltas so approach
+		// can render readable progress as events arrive. opts.streamJSON
+		// is UsesStreamJSONOutput for this context, so these args appear
+		// iff the renderer is attached.
+		if opts.streamJSON {
+			args = append(args, "--output-format", "stream-json", "--stream-partial-output")
+		}
+	}
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	}
+	return args
 }
 
 func claudeSessionHookSettings(hookCommand string) string {

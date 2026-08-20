@@ -490,7 +490,7 @@ func observePhase(store *flowstore.Store, flowID, phaseID string) ObservedPhase 
 	if !ok {
 		return ObservedPhase{}
 	}
-	return ObservedPhase{Status: phase.Status, UpdatedAt: phase.UpdatedAt}
+	return ObservedPhase{Status: string(phase.Status), UpdatedAt: phase.UpdatedAt}
 }
 
 // RecoverReport summarizes a Recover pass.
@@ -565,7 +565,7 @@ func RecordBaseline(root string, next func(flowstore.PhaseLaunchUpdate) (flowsto
 		if openErr != nil {
 			return record, nil
 		}
-		_ = log.WriteBaseline(Baseline{BaselineStatus: phase.Status, ObservedUpdatedAt: phase.UpdatedAt})
+		_ = log.WriteBaseline(Baseline{BaselineStatus: string(phase.Status), ObservedUpdatedAt: phase.UpdatedAt})
 		return record, nil
 	}
 }

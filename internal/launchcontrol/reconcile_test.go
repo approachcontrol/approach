@@ -61,7 +61,7 @@ func TestSweepDemotesOnExitJSONWithCodeInNotes(t *testing.T) {
 	}
 	log, _ := OpenLog(root, "launch-1")
 	applied, ok, _ := log.Applied()
-	if !ok || applied.Result != ResultReconciled || applied.Status != flowstore.PhaseNeedsAttention {
+	if !ok || applied.Result != ResultReconciled || applied.Status != string(flowstore.PhaseNeedsAttention) {
 		t.Fatalf("applied = %#v", applied)
 	}
 	// Idempotent: a second sweep finds needs_attention and does nothing.
@@ -142,7 +142,7 @@ func TestReconcileReplaysFirstAndDoesNotDemoteALandedResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome.Action != ActionNone || outcome.Replayed != 1 || outcome.Status != flowstore.PhaseCompleted {
+	if outcome.Action != ActionNone || outcome.Replayed != 1 || outcome.Status != string(flowstore.PhaseCompleted) {
 		t.Fatalf("outcome = %#v", outcome)
 	}
 }
@@ -158,7 +158,7 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome.Action != ActionDemoted || outcome.Status != flowstore.PhaseBlocked || outcome.Reason != ReasonPhaseResultMissing {
+	if outcome.Action != ActionDemoted || outcome.Status != string(flowstore.PhaseBlocked) || outcome.Reason != ReasonPhaseResultMissing {
 		t.Fatalf("outcome = %#v", outcome)
 	}
 	phase := phaseOf(t, store, created.FlowID, "plan-review")

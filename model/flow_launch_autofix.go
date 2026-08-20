@@ -271,7 +271,7 @@ func autofixFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, to
 // completed, so counting terminal phases would be exactly that wider rule.
 func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessions.SessionRecord) bool {
 	for _, phase := range record.Phases {
-		if flowstore.PhaseStatusTerminal(phase.Status) {
+		if flowstore.PhaseStatusTerminal(string(phase.Status)) {
 			continue
 		}
 		if flowLaunchPhaseSessionOccupied(phase, records) {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestPhaseIsActionable(t *testing.T) {
-	actionable := []string{
+	actionable := []flowstore.PhaseStatus{
 		flowstore.PhaseReady,
 		flowstore.PhaseRunning,
 		flowstore.PhaseNeedsAttention,
@@ -18,7 +18,7 @@ func TestPhaseIsActionable(t *testing.T) {
 			t.Errorf("PhaseIsActionable(%q) = false, want true", status)
 		}
 	}
-	inert := []string{
+	inert := []flowstore.PhaseStatus{
 		flowstore.PhasePending,
 		flowstore.PhaseCompleted,
 		flowstore.PhaseSkipped,

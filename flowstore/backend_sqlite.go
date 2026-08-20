@@ -541,7 +541,7 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		return fmt.Errorf("validate flow database contents: %w", err)
 	}
 	if tables == 0 {
-		return fmt.Errorf("flow database is empty or was never initialized")
+		return errors.New("flow database is empty or was never initialized")
 	}
 	if err := validateSQLiteSchemaObjects(db, version); err != nil {
 		return err

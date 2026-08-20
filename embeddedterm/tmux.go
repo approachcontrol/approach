@@ -2,6 +2,7 @@ package embeddedterm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -39,7 +40,7 @@ func startTmuxBackedAgent(ctx context.Context, spec actions.EmbeddedTmuxAgentSpe
 		if spec.Cleanup != nil {
 			spec.Cleanup()
 		}
-		return nil, fmt.Errorf("tmux embedded terminal spec is incomplete")
+		return nil, errors.New("tmux embedded terminal spec is incomplete")
 	}
 	owned := false
 	if err := run(spec.HasSessionCommand); err != nil {

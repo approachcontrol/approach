@@ -899,7 +899,7 @@ func launchContextPhaseResumeContext(record flowstore.FlowRecord) actions.AgentL
 		PlanPath:          record.PlanPath,
 		FlowID:            record.FlowID,
 		FlowPhaseID:       "implementation",
-		FlowPhaseKind:     flowstore.KindImplementation,
+		FlowPhaseKind:     string(flowstore.KindImplementation),
 		FlowPhaseTerminal: false,
 		Embedded:          true,
 		FlowLaunchTracked: true,
@@ -924,7 +924,7 @@ func TestNewFlowLaunchContextFallsBackToTheReadPhaseWhenTheWriteReturnsNone(t *t
 	if !ctx.FlowPhaseTerminal {
 		t.Fatal("a phase-less persisted record must fall back to the read phase, not to the zero phase")
 	}
-	if ctx.FlowPhaseKind != flowstore.KindImplementation {
+	if ctx.FlowPhaseKind != string(flowstore.KindImplementation) {
 		t.Fatalf("phase kind = %q, want the read phase's", ctx.FlowPhaseKind)
 	}
 }

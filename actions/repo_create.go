@@ -87,7 +87,7 @@ func createRepoWithRunner(opts RepoCreateOptions, runner repoCreateRunner) (Repo
 	}
 
 	result := RepoCreateResult{DestinationPath: destination}
-	if err := os.Mkdir(destination, 0o755); err != nil {
+	if err := os.Mkdir(destination, worktreeDirPerm); err != nil {
 		return result, err
 	}
 	if err := runner.Run("git", "init", destination); err != nil {

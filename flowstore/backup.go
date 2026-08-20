@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,7 +95,7 @@ func backupBeforeMigration(db *sql.DB, path, canonicalRoot, backupDir string, fr
 	// clobbering one backup, and the rename below would not inherit it. Keep the
 	// property explicitly rather than lose it to the staging step.
 	if _, err := os.Lstat(destination); err == nil {
-		return "", backupFailure(destination, fmt.Errorf("a backup by that name already exists"))
+		return "", backupFailure(destination, errors.New("a backup by that name already exists"))
 	} else if !os.IsNotExist(err) {
 		return "", backupFailure(destination, err)
 	}

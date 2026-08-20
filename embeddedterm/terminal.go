@@ -81,7 +81,7 @@ func IsUnsupported(err error) bool {
 
 func (m *Manager) Start(ctx context.Context, req StartRequest) (*Terminal, error) {
 	if strings.TrimSpace(req.Command) == "" {
-		return nil, fmt.Errorf("embedded terminal command is required")
+		return nil, errors.New("embedded terminal command is required")
 	}
 	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
 	cmd.Dir = req.Dir
@@ -97,7 +97,7 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 // output transform applied to child output before rendering.
 func (m *Manager) StartCommandWithOptions(ctx context.Context, cmd *exec.Cmd, width, height int, opts StartOptions) (*Terminal, error) {
 	if cmd == nil {
-		return nil, fmt.Errorf("embedded terminal command is required")
+		return nil, errors.New("embedded terminal command is required")
 	}
 	width, height = normalizeSize(width, height)
 	ensureTerminalEnv(cmd)

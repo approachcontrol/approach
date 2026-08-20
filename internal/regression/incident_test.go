@@ -59,7 +59,7 @@ func TestUnpinnedPromptFallsBackInTheDocumentedOrder(t *testing.T) {
 		name      string
 		env       []string
 		wantStub  bool
-		wantPhase string
+		wantPhase flowstore.PhaseStatus
 	}{
 		{
 			name:      "APPROACH_EXECUTABLE outranks an inherited APPROACH_BIN",

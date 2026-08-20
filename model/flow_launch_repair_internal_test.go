@@ -437,7 +437,7 @@ func TestFlowRepairRefusesWhenAnyPhaseHasALiveSession(t *testing.T) {
 func TestFlowRepairLiveSessionRemedyMatchesPhaseStatus(t *testing.T) {
 	tests := []struct {
 		name   string
-		status string
+		status flowstore.PhaseStatus
 		want   string
 	}{
 		{

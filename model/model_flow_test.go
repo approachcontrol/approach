@@ -516,12 +516,12 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 }
 
 func TestModel_ActiveFlowsRefreshDoesNotPrepareAutoLaunch(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1232,7 +1232,7 @@ func flowWithEndedRunningImplementation() flowstore.FlowRecord {
 	return flow
 }
 
-func autoFlowWithPhaseStatuses(statuses map[string]string) flowstore.FlowRecord {
+func autoFlowWithPhaseStatuses(statuses map[string]flowstore.PhaseStatus) flowstore.FlowRecord {
 	defs := []struct {
 		id    string
 		title string
@@ -1346,12 +1346,12 @@ func flowEmbeddedLaunchesFromCommand(t *testing.T, m model.Model, cmd tea.Cmd) [
 }
 
 func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1399,10 +1399,10 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 }
 
 func TestModel_FlowAutoLaunchUsesStampedCrossProviderSettings(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan": flowstore.PhaseCompleted, "plan-review": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan": flowstore.PhaseCompleted, "plan-review": flowstore.PhaseCompleted, "implementation": flowstore.PhaseReady,
 	})
 	for i := range current.Phases {
@@ -1443,10 +1443,10 @@ func TestModel_FlowAutoLaunchUsesStampedCrossProviderSettings(t *testing.T) {
 func TestModel_FlowAutoLaunchIsAlwaysHeadlessRegardlessOfStoredManualPreference(t *testing.T) {
 	for _, stored := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stored_%v", stored), func(t *testing.T) {
-			previous := autoFlowWithPhaseStatuses(map[string]string{
+			previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 				"plan": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,
 			})
-			current := autoFlowWithPhaseStatuses(map[string]string{
+			current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 				"plan": flowstore.PhaseCompleted, "implementation": flowstore.PhaseReady,
 			})
 			previous.Headless = stored
@@ -3224,13 +3224,13 @@ func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing
 }
 
 func TestModel_FlowAutoModeLaunchesImplementationAfterPlanReviewCompletes(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 		"review-loop":    flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -3255,12 +3255,12 @@ func TestModel_FlowAutoModeLaunchesImplementationAfterPlanReviewCompletes(t *tes
 // still in flight. The deferral lasts exactly as long as the resume owns the
 // Flow: the drain stays armed, and the next free poll launches.
 func TestModel_PendingTrackedResumeDefersFlowAutoAdvanceUntilItClears(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -3468,12 +3468,12 @@ func TestModel_TrackedResumeAndAutoAdvanceStartEachTerminalOnce(t *testing.T) {
 }
 
 func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -3534,13 +3534,13 @@ func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testi
 }
 
 func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 		"review-loop":    flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -3638,12 +3638,12 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 }
 
 func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -3722,7 +3722,7 @@ func TestModel_ActiveFlowAutoCloseRefreshUsesGlobalFetch(t *testing.T) {
 	normalFlow := flowWithPhaseDetails()
 	normalFlow.FlowID = "alpha-flow"
 	normalFlow.Title = "Alpha Flow"
-	activeFlow := autoFlowWithPhaseStatuses(map[string]string{
+	activeFlow := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
@@ -3770,12 +3770,12 @@ func TestModel_ActiveFlowAutoCloseRefreshUsesGlobalFetch(t *testing.T) {
 }
 
 func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -3859,12 +3859,12 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 func TestModel_FlowAutoModeSuppressesWhenCompletionObservedWithNonAutoClosingSourceTerminal(t *testing.T) {
 	for _, state := range []string{"failed", "terminated"} {
 		t.Run(state, func(t *testing.T) {
-			previous := autoFlowWithPhaseStatuses(map[string]string{
+			previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 				"plan":           flowstore.PhaseCompleted,
 				"plan-review":    flowstore.PhaseRunning,
 				"implementation": flowstore.PhasePending,
 			})
-			current := autoFlowWithPhaseStatuses(map[string]string{
+			current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 				"plan":           flowstore.PhaseCompleted,
 				"plan-review":    flowstore.PhaseCompleted,
 				"implementation": flowstore.PhaseReady,
@@ -3921,7 +3921,7 @@ func TestModel_FlowAutoModeDeferredLaunchNoopsAfterAutoModeDisabled(t *testing.T
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4012,12 +4012,12 @@ func TestModel_FlowAutoModeDeferredLaunchNoopsAfterAutoModeDisabled(t *testing.T
 }
 
 func TestModel_FlowAutoModeDeferredLaunchWaitsOnFailedSourceTerminal(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4085,7 +4085,7 @@ func TestModel_FlowAutoModeDeferredLaunchWaitsOnFailedSourceTerminal(t *testing.
 }
 
 func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
@@ -4094,7 +4094,7 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 	rerun := previous
 	rerun.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
 	rerun.Phases[1].LaunchIDs = []string{"launch-old", "launch-new"}
-	completed := autoFlowWithPhaseStatuses(map[string]string{
+	completed := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4163,7 +4163,7 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 }
 
 func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
@@ -4172,7 +4172,7 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 	rerun := previous
 	rerun.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
 	rerun.Phases[1].LaunchIDs = []string{"launch-old", "launch-new"}
-	completed := autoFlowWithPhaseStatuses(map[string]string{
+	completed := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4295,7 +4295,7 @@ func TestModel_FlowAutoModeLaunchesNextImplementationChildOrReviewLoop(t *testin
 }
 
 func TestModel_FlowAutoModeLaunchesAutoreviewAfterPRCreationCompletesWithPRMetadata(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
@@ -4303,7 +4303,7 @@ func TestModel_FlowAutoModeLaunchesAutoreviewAfterPRCreationCompletesWithPRMetad
 		"pr-creation":    flowstore.PhaseRunning,
 		"autoreview":     flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
@@ -4330,12 +4330,12 @@ func TestModel_FlowAutoModeLaunchesAutoreviewAfterPRCreationCompletesWithPRMetad
 }
 
 func TestModel_FlowAutoModeLaunchesEveryEligibleFlowFromOneRefresh(t *testing.T) {
-	previousOne := autoFlowWithPhaseStatuses(map[string]string{
+	previousOne := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	currentOne := autoFlowWithPhaseStatuses(map[string]string{
+	currentOne := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4402,7 +4402,7 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4451,7 +4451,7 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 }
 
 func TestModel_FlowAutoModeDoesNotLaunchMergeAfterAutoreviewCompletes(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
@@ -4460,7 +4460,7 @@ func TestModel_FlowAutoModeDoesNotLaunchMergeAfterAutoreviewCompletes(t *testing
 		"autoreview":     flowstore.PhaseRunning,
 		"merge":          flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
@@ -4483,14 +4483,14 @@ func TestModel_FlowAutoModeDoesNotLaunchMergeAfterAutoreviewCompletes(t *testing
 }
 
 func TestModel_FlowAutoModeDoesNotLaunchForNonCompletedTransitions(t *testing.T) {
-	for _, status := range []string{flowstore.PhaseSkipped, flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
-		t.Run(status, func(t *testing.T) {
-			previous := autoFlowWithPhaseStatuses(map[string]string{
+	for _, status := range []flowstore.PhaseStatus{flowstore.PhaseSkipped, flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
+		t.Run(string(status), func(t *testing.T) {
+			previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 				"plan":           flowstore.PhaseCompleted,
 				"plan-review":    flowstore.PhaseRunning,
 				"implementation": flowstore.PhaseReady,
 			})
-			current := autoFlowWithPhaseStatuses(map[string]string{
+			current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 				"plan":           flowstore.PhaseCompleted,
 				"plan-review":    status,
 				"implementation": flowstore.PhaseReady,
@@ -4511,12 +4511,12 @@ func TestModel_FlowAutoModeDoesNotLaunchForNonCompletedTransitions(t *testing.T)
 }
 
 func TestModel_FlowAutoModeIgnoresStaleFlowResults(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4548,12 +4548,12 @@ func TestModel_FlowAutoModeIgnoresStaleFlowResults(t *testing.T) {
 }
 
 func TestModel_FlowAutoModeDoesNotLaunchAfterLeavingFlowsMode(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -4590,12 +4590,12 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterLeavingFlowsMode(t *testing.T) {
 }
 
 func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testing.T) {
-	previous := autoFlowWithPhaseStatuses(map[string]string{
+	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoFlowWithPhaseStatuses(map[string]string{
+	current := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -5416,8 +5416,8 @@ func TestModel_RRefusesWhenPersistedFlowIsNoLongerRepairable(t *testing.T) {
 }
 
 func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
-	for _, status := range []string{flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
-		t.Run(status, func(t *testing.T) {
+	for _, status := range []flowstore.PhaseStatus{flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
+		t.Run(string(status), func(t *testing.T) {
 			starts := 0
 			record := repairableFlowForShortcut()
 			record.Phases[0].Status = status
@@ -9678,7 +9678,7 @@ func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T)
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
-			if ctx.FlowPhaseKind != flowstore.KindPlanReview {
+			if ctx.FlowPhaseKind != string(flowstore.KindPlanReview) {
 				t.Fatalf("FlowPhaseKind = %q, want %q", ctx.FlowPhaseKind, flowstore.KindPlanReview)
 			}
 			return nil, errors.New("pty unavailable")
@@ -11718,7 +11718,7 @@ func TestModel_OffViewCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T) {
 		LaunchContext: actions.AgentLaunchContext{
 			FlowID:        "flow-1",
 			FlowPhaseID:   "design-review",
-			FlowPhaseKind: flowstore.KindPlanReview,
+			FlowPhaseKind: string(flowstore.KindPlanReview),
 			RepoPath:      "/dev/alpha",
 		},
 		Err: "terminal failed",

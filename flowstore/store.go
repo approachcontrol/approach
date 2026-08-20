@@ -138,14 +138,17 @@ const (
 	StatusClosed         = "closed"
 )
 
+// PhaseStatus is a persisted Flow phase status. JSON keeps the string values.
+type PhaseStatus string
+
 const (
-	PhasePending        = "pending"
-	PhaseReady          = "ready"
-	PhaseRunning        = "running"
-	PhaseNeedsAttention = "needs_attention"
-	PhaseCompleted      = "completed"
-	PhaseBlocked        = "blocked"
-	PhaseSkipped        = "skipped"
+	PhasePending        PhaseStatus = "pending"
+	PhaseReady          PhaseStatus = "ready"
+	PhaseRunning        PhaseStatus = "running"
+	PhaseNeedsAttention PhaseStatus = "needs_attention"
+	PhaseCompleted      PhaseStatus = "completed"
+	PhaseBlocked        PhaseStatus = "blocked"
+	PhaseSkipped        PhaseStatus = "skipped"
 )
 
 const (
@@ -161,15 +164,18 @@ const (
 	OutcomeBlocked              = "blocked"
 )
 
+// PhaseKind is a persisted Flow phase kind. JSON keeps the string values.
+type PhaseKind string
+
 const (
-	KindPlan                = "plan"
-	KindPlanReview          = "plan_review"
-	KindImplementation      = "implementation"
-	KindReviewLoop          = "review_loop"
-	KindPRCreation          = "pr_creation"
-	KindAutoreview          = "autoreview"
-	KindMerge               = "merge"
-	KindImplementationChild = "implementation_child"
+	KindPlan                PhaseKind = "plan"
+	KindPlanReview          PhaseKind = "plan_review"
+	KindImplementation      PhaseKind = "implementation"
+	KindReviewLoop          PhaseKind = "review_loop"
+	KindPRCreation          PhaseKind = "pr_creation"
+	KindAutoreview          PhaseKind = "autoreview"
+	KindMerge               PhaseKind = "merge"
+	KindImplementationChild PhaseKind = "implementation_child"
 )
 
 const (
@@ -238,25 +244,25 @@ func IsAutoLaunchOutdated(err error) bool {
 
 // FlowPhase is one phase in the persisted Flow pipeline.
 type FlowPhase struct {
-	PhaseID       string `json:"phase_id"`
-	ParentPhaseID string `json:"parent_phase_id,omitempty"`
-	Title         string `json:"title"`
-	Kind          string `json:"kind"`
+	PhaseID       string    `json:"phase_id"`
+	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
+	Title         string    `json:"title"`
+	Kind          PhaseKind `json:"kind"`
 	// Agent, Model, and ReasoningEffort are optional launch overrides; see
 	// PhaseAgentSettings and ResolvePhaseAgentSettings.
-	Agent           string    `json:"agent,omitempty"`
-	Model           string    `json:"model,omitempty"`
-	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
-	DependsOn       []string  `json:"depends_on"`
-	Status          string    `json:"status"`
-	Order           int       `json:"order"`
-	Outcome         string    `json:"outcome,omitempty"`
-	Notes           string    `json:"notes,omitempty"`
-	Summary         string    `json:"summary,omitempty"`
-	LaunchIDs       []string  `json:"launch_ids,omitempty"`
-	Sessions        []Session `json:"sessions,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Agent           string      `json:"agent,omitempty"`
+	Model           string      `json:"model,omitempty"`
+	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
+	DependsOn       []string    `json:"depends_on"`
+	Status          PhaseStatus `json:"status"`
+	Order           int         `json:"order"`
+	Outcome         string      `json:"outcome,omitempty"`
+	Notes           string      `json:"notes,omitempty"`
+	Summary         string      `json:"summary,omitempty"`
+	LaunchIDs       []string    `json:"launch_ids,omitempty"`
+	Sessions        []Session   `json:"sessions,omitempty"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
 // PhaseAgentSettings is the agent selection captured for a Flow phase.
@@ -618,7 +624,7 @@ type FlowFilter struct {
 type PhaseUpdate struct {
 	FlowID  string
 	PhaseID string
-	Status  string
+	Status  PhaseStatus
 	Outcome string
 	Notes   string
 	Summary string
@@ -804,7 +810,7 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 // when the caller supplies the returned ID in FlowRecord.FlowID.
 func (s *Store) AllocateID(title string) (string, error) {
 	if strings.TrimSpace(title) == "" {
-		return "", fmt.Errorf("flow title is required")
+		return "", errors.New("flow title is required")
 	}
 	return s.backend.allocateID(title, s.now())
 }
@@ -822,13 +828,13 @@ func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, prepara
 	record.PreparationNonce = strings.TrimSpace(preparationNonce)
 	record.PreparationGeneration = opts.preparationGeneration
 	if strings.TrimSpace(record.Title) == "" {
-		return FlowRecord{}, fmt.Errorf("flow title is required")
+		return FlowRecord{}, errors.New("flow title is required")
 	}
 	if strings.TrimSpace(record.Instructions) == "" {
-		return FlowRecord{}, fmt.Errorf("flow instructions are required")
+		return FlowRecord{}, errors.New("flow instructions are required")
 	}
 	if strings.TrimSpace(record.RepoPath) == "" {
-		return FlowRecord{}, fmt.Errorf("flow repo path is required")
+		return FlowRecord{}, errors.New("flow repo path is required")
 	}
 	if !filepath.IsAbs(record.RepoPath) {
 		return FlowRecord{}, fmt.Errorf("flow repo path must be absolute: %s", record.RepoPath)
@@ -924,7 +930,7 @@ func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, prepara
 			draft.Headless = *opts.Headless
 		}
 		if opts.Preset != nil && len(draft.Phases) > 0 {
-			return FlowRecord{}, fmt.Errorf("preset cannot be used with declared phases")
+			return FlowRecord{}, errors.New("preset cannot be used with declared phases")
 		}
 		if len(draft.Phases) == 0 {
 			preset := DefaultPreset()
@@ -1039,7 +1045,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, err
 		}
 		phase.Status = update.Status
-		if clearsPhaseOutcome(update.Status) {
+		if clearsPhaseOutcome(string(update.Status)) {
 			phase.Outcome = ""
 		}
 		if outcome := strings.TrimSpace(update.Outcome); outcome != "" {
@@ -1099,7 +1105,7 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 	}
 	normalizedPhaseID := artifacts.NormalizePhaseID(update.PhaseID)
 	if normalizedPhaseID == "" {
-		return FlowRecord{}, fmt.Errorf("phase id is required")
+		return FlowRecord{}, errors.New("phase id is required")
 	}
 	settings := update.Settings.Normalize()
 	if err := settings.Validate(); err != nil {
@@ -1221,7 +1227,7 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 // compensated phase behind a derived status — merged or blocked — that outranks
 // needs_attention.
 func recordedMergeKeepsItsPhasePairing(record FlowRecord) bool {
-	var want string
+	var want PhaseStatus
 	switch record.Merge.Status {
 	case MergeMerged:
 		want = PhaseCompleted
@@ -1277,7 +1283,7 @@ type phaseCommit struct {
 	stored FlowPhase
 	// priorStatus is the status the phase held BEFORE this update, which is what
 	// distinguishes a first completion from a repeat of one.
-	priorStatus string
+	priorStatus PhaseStatus
 }
 
 // manualMergeCommit is the same capture for MarkManualMerge, which needs the
@@ -1357,7 +1363,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	if strings.TrimSpace(update.Notes) == "" {
-		return FlowRecord{}, fmt.Errorf("phase restart requires notes")
+		return FlowRecord{}, errors.New("phase restart requires notes")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
@@ -1406,7 +1412,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("parent phase %q not found in flow %q", update.ParentPhaseID, update.FlowID)
 		}
 		if SemanticKind(record.Phases[parentIndex]) != KindImplementation {
-			return FlowRecord{}, fmt.Errorf("child phases can only be added under implementation")
+			return FlowRecord{}, errors.New("child phases can only be added under implementation")
 		}
 		childIndex := phaseIndexByID(record.Phases, update.PhaseID)
 		if childIndex >= 0 {
@@ -1458,13 +1464,13 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 }
 
 func clearsPhaseOutcome(status string) bool {
-	return status == PhaseRunning
+	return PhaseStatus(status) == PhaseRunning
 }
 
 // PhaseStatusTerminal reports whether a phase has finished (successfully or by
 // being skipped), as opposed to states that still expect agent work.
 func PhaseStatusTerminal(status string) bool {
-	return status == PhaseCompleted || status == PhaseSkipped
+	return PhaseStatus(status) == PhaseCompleted || PhaseStatus(status) == PhaseSkipped
 }
 
 func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) FlowPhase {
@@ -1562,7 +1568,7 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	}
 	planID := strings.TrimSpace(update.PlanID)
 	if planID == "" {
-		return FlowRecord{}, fmt.Errorf("plan id is required")
+		return FlowRecord{}, errors.New("plan id is required")
 	}
 	planPath, err := s.planLink.resolvePlanLink(planID, update.PlanPath)
 	if err != nil {
@@ -2002,11 +2008,11 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 	requestedPhaseID := strings.TrimSpace(update.PhaseID)
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if update.PhaseID == "" {
-		return FlowRecord{}, fmt.Errorf("phase id is required")
+		return FlowRecord{}, errors.New("phase id is required")
 	}
 	launchID := strings.TrimSpace(update.LaunchID)
 	if launchID == "" {
-		return FlowRecord{}, fmt.Errorf("launch id is required")
+		return FlowRecord{}, errors.New("launch id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if PreparationLaunchBlocked(record) {
@@ -2046,7 +2052,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 				return FlowRecord{}, err
 			}
 		}
-		if update.Resume && PhaseStatusTerminal(phase.Status) {
+		if update.Resume && PhaseStatusTerminal(string(phase.Status)) {
 			// Resuming a finished phase's session is read-back, not new work:
 			// record the launch so the session can re-link, but leave the
 			// phase's terminal status, outcome, and notes intact.
@@ -2071,7 +2077,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, err
 		}
 		phase.Status = PhaseRunning
-		if clearsPhaseOutcome(phase.Status) {
+		if clearsPhaseOutcome(string(phase.Status)) {
 			phase.Outcome = ""
 		}
 		if launchPhaseUpdate.Notes != "" {
@@ -2165,7 +2171,7 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 	requestedPhaseID := strings.TrimSpace(update.PhaseID)
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if update.PhaseID == "" {
-		return FlowRecord{}, fmt.Errorf("phase id is required")
+		return FlowRecord{}, errors.New("phase id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
@@ -2181,7 +2187,7 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		}
 		removedLaunchID := LatestPhaseLaunchID(selectedPhase)
 		if removedLaunchID == "" {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires a latest launch id")
+			return FlowRecord{}, errors.New("flow phase reset requires a latest launch id")
 		}
 		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
 		phaseIndex = phaseIndexByID(record.Phases, update.PhaseID)
@@ -2193,13 +2199,13 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires running recoverable phase; %s is %s", phase.PhaseID, phase.Status)
 		}
 		if PhaseSessionLaunchMismatch(phase) {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
+			return FlowRecord{}, errors.New("flow phase reset requires attached sessions to match phase launch ids")
 		}
 		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires satisfied predecessors for %s", phase.PhaseID)
 		}
 		if _, ok := recoverableRunningPhaseResetReasonForLaunch(phase, removedLaunchID); !ok {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires latest launch without a live attached session")
+			return FlowRecord{}, errors.New("flow phase reset requires latest launch without a live attached session")
 		}
 		phase.LaunchIDs = removePhaseLaunchID(phase.LaunchIDs, removedLaunchID)
 		phase.Sessions = removePhaseSessionsForLaunchID(phase.Sessions, removedLaunchID)
@@ -2208,7 +2214,7 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
 		if PhaseSessionLaunchMismatch(phase) {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
+			return FlowRecord{}, errors.New("flow phase reset requires attached sessions to match phase launch ids")
 		}
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
@@ -2259,11 +2265,11 @@ func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, e
 	requestedPhaseID := strings.TrimSpace(update.PhaseID)
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if update.PhaseID == "" {
-		return FlowRecord{}, fmt.Errorf("phase id is required")
+		return FlowRecord{}, errors.New("phase id is required")
 	}
 	launchID := strings.TrimSpace(update.LaunchID)
 	if launchID == "" {
-		return FlowRecord{}, fmt.Errorf("launch id is required")
+		return FlowRecord{}, errors.New("launch id is required")
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
@@ -2317,13 +2323,13 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 	requestedPhaseID := strings.TrimSpace(update.PhaseID)
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if update.PhaseID == "" {
-		return FlowRecord{}, fmt.Errorf("phase id is required")
+		return FlowRecord{}, errors.New("phase id is required")
 	}
 	if strings.TrimSpace(update.Session.Provider) == "" {
-		return FlowRecord{}, fmt.Errorf("session provider is required")
+		return FlowRecord{}, errors.New("session provider is required")
 	}
 	if strings.TrimSpace(update.Session.SessionID) == "" {
-		return FlowRecord{}, fmt.Errorf("session id is required")
+		return FlowRecord{}, errors.New("session id is required")
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		// Attaching a session is metadata-only and never changes phase status,
@@ -2496,17 +2502,17 @@ func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
 }
 
 func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
-	if strings.TrimSpace(update.Status) == "" {
-		return fmt.Errorf("phase status is required")
+	if strings.TrimSpace(string(update.Status)) == "" {
+		return errors.New("phase status is required")
 	}
 	if update.Status == PhaseReady {
-		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
+		return errors.New("cannot set phase status to ready; readiness is derived")
 	}
 	if !slices.Contains(agentSettablePhaseStatuses, update.Status) {
 		return fmt.Errorf("invalid phase status %q", update.Status)
 	}
 	if update.Status == PhaseSkipped && strings.TrimSpace(update.Notes) == "" {
-		return fmt.Errorf("skipped phase requires notes")
+		return errors.New("skipped phase requires notes")
 	}
 	if err := validatePlanReviewUpdate(current, update); err != nil {
 		return err
@@ -2514,8 +2520,8 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 	if current.Status == update.Status {
 		return nil
 	}
-	if !phaseTransitionAllowed(current.Status, update.Status) {
-		return invalidPhaseTransitionError(current.Status, update.Status)
+	if !phaseTransitionAllowed(string(current.Status), string(update.Status)) {
+		return invalidPhaseTransitionError(string(current.Status), string(update.Status))
 	}
 	restarting := current.Status == PhaseNeedsAttention || current.Status == PhaseBlocked
 	if restarting && update.Status == PhaseRunning && strings.TrimSpace(update.Notes) == "" {
@@ -2525,7 +2531,7 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 }
 
 func phaseTransitionAllowed(currentStatus, nextStatus string) bool {
-	return slices.Contains(phaseTransitions[currentStatus], nextStatus)
+	return slices.Contains(phaseTransitions[PhaseStatus(currentStatus)], PhaseStatus(nextStatus))
 }
 
 func invalidPhaseTransitionError(currentStatus, nextStatus string) error {
@@ -2533,7 +2539,7 @@ func invalidPhaseTransitionError(currentStatus, nextStatus string) error {
 	if allowed := AllowedNextPhaseStatuses(currentStatus); len(allowed) > 0 {
 		message += fmt.Sprintf("; allowed from %s: %s", currentStatus, strings.Join(allowed, ", "))
 	}
-	if (currentStatus == PhaseNeedsAttention || currentStatus == PhaseBlocked) && nextStatus == PhaseCompleted {
+	if (PhaseStatus(currentStatus) == PhaseNeedsAttention || PhaseStatus(currentStatus) == PhaseBlocked) && PhaseStatus(nextStatus) == PhaseCompleted {
 		message += "; restart with --status running --notes before completing"
 	}
 	return fmt.Errorf("%s", message)
@@ -2550,13 +2556,13 @@ func validateChildPhaseUpdate(update ChildPhaseUpdate) error {
 		return err
 	}
 	if update.PhaseID == update.ParentPhaseID {
-		return fmt.Errorf("child phase id must differ from parent phase id")
+		return errors.New("child phase id must differ from parent phase id")
 	}
 	if strings.TrimSpace(update.Title) == "" {
-		return fmt.Errorf("child phase title is required")
+		return errors.New("child phase title is required")
 	}
 	if update.Order < 1 {
-		return fmt.Errorf("child phase order must be positive")
+		return errors.New("child phase order must be positive")
 	}
 	return nil
 }
@@ -2682,8 +2688,8 @@ func PhaseGateSatisfied(record FlowRecord, phase FlowPhase) bool {
 
 // SemanticKind returns the normalized semantic kind for a phase. Persisted kind
 // wins; otherwise default preset phase IDs are inferred for legacy records.
-func SemanticKind(phase FlowPhase) string {
-	if kind := strings.ToLower(strings.TrimSpace(phase.Kind)); kind != "" {
+func SemanticKind(phase FlowPhase) PhaseKind {
+	if kind := PhaseKind(strings.ToLower(strings.TrimSpace(string(phase.Kind)))); kind != "" {
 		return kind
 	}
 	switch artifacts.NormalizePhaseID(phase.PhaseID) {
@@ -2708,9 +2714,9 @@ func SemanticKind(phase FlowPhase) string {
 
 // FindPhaseByKind returns the first phase with the requested semantic kind.
 func FindPhaseByKind(record FlowRecord, kind string) (FlowPhase, bool) {
-	kind = strings.ToLower(strings.TrimSpace(kind))
+	want := PhaseKind(strings.ToLower(strings.TrimSpace(kind)))
 	for _, phase := range OrderedPhases(record.Phases) {
-		if SemanticKind(phase) == kind {
+		if SemanticKind(phase) == want {
 			return phase, true
 		}
 	}
@@ -2764,27 +2770,27 @@ func validatePRUpdate(record FlowRecord, update PRUpdate) (PullRequest, error) {
 		return PullRequest{}, fmt.Errorf("unsupported PR provider %q", update.Provider)
 	}
 	if update.Number <= 0 {
-		return PullRequest{}, fmt.Errorf("PR number must be positive")
+		return PullRequest{}, errors.New("PR number must be positive")
 	}
 	prURL := strings.TrimSpace(update.URL)
 	parsed, err := url.Parse(prURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-		return PullRequest{}, fmt.Errorf("PR URL must be an absolute http(s) URL")
+		return PullRequest{}, errors.New("PR URL must be an absolute http(s) URL")
 	}
 	if err := validateGitHubPRURL(parsed, update.Number); err != nil {
 		return PullRequest{}, err
 	}
 	head := strings.TrimSpace(update.HeadBranch)
 	if head == "" {
-		return PullRequest{}, fmt.Errorf("PR head branch is required")
+		return PullRequest{}, errors.New("PR head branch is required")
 	}
 	base := strings.TrimSpace(update.BaseBranch)
 	if base == "" {
-		return PullRequest{}, fmt.Errorf("PR base branch is required")
+		return PullRequest{}, errors.New("PR base branch is required")
 	}
 	flowBranch := strings.TrimSpace(record.Branch)
 	if flowBranch == "" {
-		return PullRequest{}, fmt.Errorf("flow branch is required before recording PR metadata")
+		return PullRequest{}, errors.New("flow branch is required before recording PR metadata")
 	}
 	if head != flowBranch {
 		return PullRequest{}, fmt.Errorf("PR head branch %q must match flow branch %q", head, flowBranch)
@@ -2805,12 +2811,12 @@ func validateIssueUpdate(update IssueUpdate) (Issue, error) {
 		return Issue{}, fmt.Errorf("unsupported issue provider %q", update.Provider)
 	}
 	if update.Number <= 0 {
-		return Issue{}, fmt.Errorf("issue number must be positive")
+		return Issue{}, errors.New("issue number must be positive")
 	}
 	issueURL := strings.TrimSpace(update.URL)
 	parsed, err := url.Parse(issueURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-		return Issue{}, fmt.Errorf("issue URL must be an absolute http(s) URL")
+		return Issue{}, errors.New("issue URL must be an absolute http(s) URL")
 	}
 	if err := validateGitHubIssueURL(parsed, update.Number); err != nil {
 		return Issue{}, err
@@ -2825,15 +2831,15 @@ func validateIssueUpdate(update IssueUpdate) (Issue, error) {
 func validateGitHubPRURL(parsed *url.URL, number int) error {
 	host := strings.ToLower(parsed.Hostname())
 	if host != "github.com" && host != "www.github.com" {
-		return fmt.Errorf("GitHub PR URL must use github.com")
+		return errors.New("GitHub PR URL must use github.com")
 	}
 	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
 	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "pull" {
-		return fmt.Errorf("GitHub PR URL must have /owner/repo/pull/number path")
+		return errors.New("GitHub PR URL must have /owner/repo/pull/number path")
 	}
 	urlNumber, err := strconv.Atoi(parts[3])
 	if err != nil || urlNumber <= 0 {
-		return fmt.Errorf("GitHub PR URL must have numeric pull request number")
+		return errors.New("GitHub PR URL must have numeric pull request number")
 	}
 	if urlNumber != number {
 		return fmt.Errorf("GitHub PR URL number %d must match PR number %d", urlNumber, number)
@@ -2844,15 +2850,15 @@ func validateGitHubPRURL(parsed *url.URL, number int) error {
 func validateGitHubIssueURL(parsed *url.URL, number int) error {
 	host := strings.ToLower(parsed.Hostname())
 	if host != "github.com" && host != "www.github.com" {
-		return fmt.Errorf("GitHub issue URL must use github.com")
+		return errors.New("GitHub issue URL must use github.com")
 	}
 	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
 	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "issues" {
-		return fmt.Errorf("GitHub issue URL must have /owner/repo/issues/number path")
+		return errors.New("GitHub issue URL must have /owner/repo/issues/number path")
 	}
 	urlNumber, err := strconv.Atoi(parts[3])
 	if err != nil || urlNumber <= 0 {
-		return fmt.Errorf("GitHub issue URL must have numeric issue number")
+		return errors.New("GitHub issue URL must have numeric issue number")
 	}
 	if urlNumber != number {
 		return fmt.Errorf("GitHub issue URL number %d must match issue number %d", urlNumber, number)
@@ -2865,25 +2871,25 @@ func validateMergeUpdate(record FlowRecord, update MergeUpdate) (Merge, error) {
 	switch status {
 	case MergeMerged:
 		if !HasPRTarget(record.PR) {
-			return Merge{}, fmt.Errorf("merge status merged requires existing PR metadata")
+			return Merge{}, errors.New("merge status merged requires existing PR metadata")
 		}
 		commit := strings.TrimSpace(update.Commit)
 		if commit == "" {
-			return Merge{}, fmt.Errorf("merge status merged requires merge commit")
+			return Merge{}, errors.New("merge status merged requires merge commit")
 		}
 		if update.MergedAt.IsZero() {
-			return Merge{}, fmt.Errorf("merge status merged requires merge timestamp")
+			return Merge{}, errors.New("merge status merged requires merge timestamp")
 		}
 		phaseIndex := mergePhaseIndex(record)
 		if phaseIndex < 0 || record.Phases[phaseIndex].Status != PhaseCompleted {
-			return Merge{}, fmt.Errorf("merge status merged requires completed merge phase")
+			return Merge{}, errors.New("merge status merged requires completed merge phase")
 		}
 		mergedAt := update.MergedAt.UTC()
 		return Merge{Status: MergeMerged, Commit: commit, MergedAt: &mergedAt}, nil
 	case MergeBlocked:
 		phaseIndex := mergePhaseIndex(record)
 		if phaseIndex < 0 || record.Phases[phaseIndex].Status != PhaseBlocked || strings.TrimSpace(record.Phases[phaseIndex].Notes) == "" {
-			return Merge{}, fmt.Errorf("merge status blocked requires blocked merge phase notes")
+			return Merge{}, errors.New("merge status blocked requires blocked merge phase notes")
 		}
 		return Merge{Status: MergeBlocked}, nil
 	default:
@@ -2893,20 +2899,20 @@ func validateMergeUpdate(record FlowRecord, update MergeUpdate) (Merge, error) {
 
 func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update ManualMergeUpdate) (Merge, error) {
 	if !HasPRTarget(record.PR) {
-		return Merge{}, fmt.Errorf("manual merge requires existing PR metadata")
+		return Merge{}, errors.New("manual merge requires existing PR metadata")
 	}
 	if update.PRNumber <= 0 || strings.TrimSpace(update.PRURL) == "" {
-		return Merge{}, fmt.Errorf("manual merge requires verified PR target")
+		return Merge{}, errors.New("manual merge requires verified PR target")
 	}
 	if update.PRNumber != record.PR.Number || strings.TrimSpace(update.PRURL) != strings.TrimSpace(record.PR.URL) {
-		return Merge{}, fmt.Errorf("manual merge PR target changed after verification")
+		return Merge{}, errors.New("manual merge PR target changed after verification")
 	}
 	commit := strings.TrimSpace(update.Commit)
 	if commit == "" {
-		return Merge{}, fmt.Errorf("manual merge requires merge commit")
+		return Merge{}, errors.New("manual merge requires merge commit")
 	}
 	if update.MergedAt.IsZero() {
-		return Merge{}, fmt.Errorf("manual merge requires merge timestamp")
+		return Merge{}, errors.New("manual merge requires merge timestamp")
 	}
 	if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
 		return Merge{}, fmt.Errorf("manual merge requires satisfied predecessors for %s", phase.PhaseID)
@@ -2925,7 +2931,7 @@ func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update Manual
 		}
 	case PhaseCompleted:
 		if record.Merge.Status == MergeMerged && !mergeEqual(record.Merge, merge) {
-			return Merge{}, fmt.Errorf("manual merge metadata differs from existing merge metadata")
+			return Merge{}, errors.New("manual merge metadata differs from existing merge metadata")
 		}
 	default:
 		return Merge{}, fmt.Errorf("manual merge requires merge phase ready or completed; merge is %s", phase.Status)
@@ -2951,13 +2957,14 @@ func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {
 	if SemanticKind(current) != KindPlanReview {
 		return nil
 	}
-	if current.Status == PhasePending && update.Status != PhaseSkipped {
+	status := update.Status
+	if current.Status == PhasePending && status != PhaseSkipped {
 		return nil
 	}
 	outcome := strings.TrimSpace(update.Outcome)
 	notes := strings.TrimSpace(update.Notes)
 	if outcome == "" {
-		switch update.Status {
+		switch status {
 		case PhaseCompleted:
 			return fmt.Errorf("%s completed requires outcome approved or approved_with_concerns", reviewPhaseLabel(current))
 		case PhaseNeedsAttention:
@@ -2967,30 +2974,30 @@ func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {
 		}
 		return nil
 	}
-	if update.Status == PhaseBlocked && outcome != OutcomeBlocked {
+	if status == PhaseBlocked && outcome != OutcomeBlocked {
 		return fmt.Errorf("%s blocked requires outcome blocked", reviewPhaseLabel(current))
 	}
 	switch outcome {
 	case OutcomeApproved:
-		if update.Status != PhaseCompleted {
+		if status != PhaseCompleted {
 			return fmt.Errorf("%s outcome approved requires completed status", reviewPhaseLabel(current))
 		}
 	case OutcomeApprovedWithConcerns:
-		if update.Status != PhaseCompleted {
+		if status != PhaseCompleted {
 			return fmt.Errorf("%s outcome approved_with_concerns requires completed status", reviewPhaseLabel(current))
 		}
 		if notes == "" {
 			return fmt.Errorf("%s approved_with_concerns requires notes", reviewPhaseLabel(current))
 		}
 	case OutcomeChangesRequested:
-		if update.Status != PhaseNeedsAttention {
+		if status != PhaseNeedsAttention {
 			return fmt.Errorf("%s outcome changes_requested requires needs_attention status", reviewPhaseLabel(current))
 		}
 		if notes == "" {
 			return fmt.Errorf("%s changes_requested requires notes", reviewPhaseLabel(current))
 		}
 	case OutcomeBlocked:
-		if update.Status != PhaseBlocked {
+		if status != PhaseBlocked {
 			return fmt.Errorf("%s blocked requires outcome blocked", reviewPhaseLabel(current))
 		}
 		if notes == "" {
@@ -3302,7 +3309,7 @@ func normalizeReviewOutcomes(record FlowRecord) FlowRecord {
 
 func backfillPhaseKinds(phases []FlowPhase) []FlowPhase {
 	for i := range phases {
-		if strings.TrimSpace(phases[i].Kind) == "" {
+		if strings.TrimSpace(string(phases[i].Kind)) == "" {
 			phases[i].Kind = SemanticKind(phases[i])
 		}
 	}
@@ -3310,7 +3317,7 @@ func backfillPhaseKinds(phases []FlowPhase) []FlowPhase {
 }
 
 func hasPlanReviewKind(record FlowRecord) bool {
-	_, ok := FindPhaseByKind(record, KindPlanReview)
+	_, ok := FindPhaseByKind(record, string(KindPlanReview))
 	return ok
 }
 

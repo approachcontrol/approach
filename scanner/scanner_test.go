@@ -337,6 +337,29 @@ func TestScan_ExcludesLinkedWorktreeCheckoutWithRelativeRoot(t *testing.T) {
 	assertOnlyRepo(t, repos, scanner.Repo{Path: filepath.Join(rootName, "approach"), DisplayName: "approach", IsBare: false})
 }
 
+func TestScan_ExcludesLinkedWorktreeReachedThroughSymlink(t *testing.T) {
+	root := t.TempDir()
+	realRoot := filepath.Join(root, "real")
+	repoDir := filepath.Join(realRoot, "approach")
+	linkRoot := filepath.Join(root, "link")
+	worktreeDir := filepath.Join(root, "approach-bootstrap-hooks")
+
+	if err := os.Mkdir(realRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeCommittedGitRepo(t, repoDir)
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Fatal(err)
+	}
+	addLinkedWorktree(t, filepath.Join(linkRoot, "approach"), worktreeDir, "bootstrap-hooks")
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root, MaxDepth: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "real/approach", IsBare: false})
+}
+
 func TestScan_ExcludesNestedLinkedWorktreeCheckout(t *testing.T) {
 	root := t.TempDir()
 	orgDir := filepath.Join(root, "org")

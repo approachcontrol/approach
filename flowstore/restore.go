@@ -86,7 +86,7 @@ const restoreResultSchemaVersion = 1
 //  5. copy the live database aside, then replace it, then drop the stale WAL.
 func Restore(opts RestoreOptions) (RestoreResult, error) {
 	if strings.TrimSpace(opts.BackupPath) == "" {
-		return RestoreResult{}, fmt.Errorf("restore requires a backup path (--backup)")
+		return RestoreResult{}, errors.New("restore requires a backup path (--backup)")
 	}
 	root, err := secureCanonicalRoot(opts.Root)
 	if err != nil {

@@ -12,6 +12,7 @@ package planstore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,10 +182,10 @@ func (s *Store) ReadMetadata(planID string) (PlanRecord, error) {
 // supplies a new value.
 func (s *Store) Save(record PlanRecord) (string, error) {
 	if strings.TrimSpace(record.Title) == "" {
-		return "", fmt.Errorf("plan title is required")
+		return "", errors.New("plan title is required")
 	}
 	if record.Markdown == "" {
-		return "", fmt.Errorf("plan content (markdown) is required")
+		return "", errors.New("plan content (markdown) is required")
 	}
 	// Validate a supplied status; an empty status defaults to draft only for a
 	// brand-new plan (handled after the merge so updates keep the prior status).
@@ -269,11 +270,11 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 		return fmt.Errorf("invalid phase status %q", phase.Status)
 	}
 	if strings.TrimSpace(phase.Title) == "" {
-		return fmt.Errorf("phase title is required")
+		return errors.New("phase title is required")
 	}
 	phase.PhaseID = artifacts.NormalizePhaseID(phase.PhaseID)
 	if phase.PhaseID == "" {
-		return fmt.Errorf("phase id is required")
+		return errors.New("phase id is required")
 	}
 	release, err := s.acquireMutationLock()
 	if err != nil {
@@ -324,11 +325,11 @@ func (s *Store) SetPhaseIfMissing(planID string, phase PlanPhase) error {
 		return fmt.Errorf("invalid phase status %q", phase.Status)
 	}
 	if strings.TrimSpace(phase.Title) == "" {
-		return fmt.Errorf("phase title is required")
+		return errors.New("phase title is required")
 	}
 	phase.PhaseID = artifacts.NormalizePhaseID(phase.PhaseID)
 	if phase.PhaseID == "" {
-		return fmt.Errorf("phase id is required")
+		return errors.New("phase id is required")
 	}
 
 	release, err := s.acquireMutationLock()
@@ -369,7 +370,7 @@ func (s *Store) SetPhaseStatus(planID, phaseID, status string) error {
 	}
 	phaseID = artifacts.NormalizePhaseID(phaseID)
 	if phaseID == "" {
-		return fmt.Errorf("phase id is required")
+		return errors.New("phase id is required")
 	}
 
 	release, err := s.acquireMutationLock()
@@ -407,7 +408,7 @@ func (s *Store) SetPhaseStatus(planID, phaseID, status string) error {
 		return nil
 	}
 	if strings.TrimSpace(kept[keptIndex].Title) == "" {
-		return fmt.Errorf("phase title is required")
+		return errors.New("phase title is required")
 	}
 	record.Phases = kept
 	record.UpdatedAt = s.now()

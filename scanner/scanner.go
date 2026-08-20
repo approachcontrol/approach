@@ -240,9 +240,15 @@ func resolveGitPath(baseDir, path string) string {
 }
 
 func samePath(a, b string) bool {
-	a = canonicalPath(a)
-	b = canonicalPath(b)
-	return a == b
+	if canonicalPath(a) == canonicalPath(b) {
+		return true
+	}
+	infoA, errA := os.Stat(a)
+	infoB, errB := os.Stat(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return os.SameFile(infoA, infoB)
 }
 
 func canonicalPath(path string) string {

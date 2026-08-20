@@ -167,7 +167,7 @@ func TestCreateAllowsSecondFlowWhenTheFirstIsTerminal(t *testing.T) {
 func TestCreateRefusesWhenTheExistingFlowIsBlockedOrNeedsAttention(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
-		phaseState string
+		phaseState flowstore.PhaseStatus
 		wantStatus string
 	}{
 		{name: "blocked", phaseState: flowstore.PhaseBlocked, wantStatus: flowstore.StatusBlocked},

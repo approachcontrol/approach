@@ -109,7 +109,7 @@ func TestFlowLeavesProxyThroughEndpointWithoutOpeningTheDatabase(t *testing.T) {
 	}
 	log, _ := launchcontrol.OpenLog(controllerRoot, "launch-1")
 	applied, ok, _ := log.Applied()
-	if !ok || applied.AppliedSeq != 1 || applied.Status != flowstore.PhaseCompleted {
+	if !ok || applied.AppliedSeq != 1 || applied.Status != string(flowstore.PhaseCompleted) {
 		t.Fatalf("applied = %#v", applied)
 	}
 	// A refused write is final: exit non-zero, nothing spooled.
@@ -200,7 +200,7 @@ func TestReplayableWriteFallsBackToLoggedDirectOpenWhenEndpointUnreachable(t *te
 	log, _ := launchcontrol.OpenLog(root, "launch-1")
 	requests, _ := log.Requests()
 	applied, ok, _ := log.Applied()
-	if len(requests) != 1 || requests[0].WrittenBy != launchcontrol.WrittenByDirect || !ok || applied.AppliedSeq != 1 || applied.Status != flowstore.PhaseCompleted {
+	if len(requests) != 1 || requests[0].WrittenBy != launchcontrol.WrittenByDirect || !ok || applied.AppliedSeq != 1 || applied.Status != string(flowstore.PhaseCompleted) {
 		t.Fatalf("log = %#v applied = %#v", requests, applied)
 	}
 }
@@ -236,7 +236,7 @@ func TestReplayableWriteSpoolsWhenEndpointUnreachableAndDatabaseIncompatible(t *
 	}
 	log, _ := launchcontrol.OpenLog(root, "launch-1")
 	pending, _ := log.Pending()
-	if len(pending) != 1 || pending[0].WrittenBy != launchcontrol.WrittenBySpool || pending[0].Verb != launchcontrol.VerbPhaseComplete || pending[0].Observed.Status != flowstore.PhaseRunning {
+	if len(pending) != 1 || pending[0].WrittenBy != launchcontrol.WrittenBySpool || pending[0].Verb != launchcontrol.VerbPhaseComplete || pending[0].Observed.Status != string(flowstore.PhaseRunning) {
 		t.Fatalf("pending = %#v", pending)
 	}
 	after, _ := os.ReadFile(filepath.Join(root, "approach.db"))
