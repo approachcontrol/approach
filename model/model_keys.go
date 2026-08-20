@@ -1348,7 +1348,7 @@ func flowManualMergeEligible(record flowstore.FlowRecord) bool {
 	if record.Status == flowstore.StatusMerged || !flowstore.HasPRTarget(record.PR) {
 		return false
 	}
-	merge, ok := flowstore.FindPhaseByKind(record, flowstore.KindMerge)
+	merge, ok := flowstore.FindPhaseByKind(record, string(flowstore.KindMerge))
 	if !ok || !flowstore.PhasePredecessorsSatisfied(record, merge.PhaseID) {
 		return false
 	}
@@ -3007,7 +3007,7 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 	}
 	status := flowstore.PhaseNeedsAttention
 	outcome := ""
-	if ctx.FlowPhaseKind == flowstore.KindPlanReview {
+	if ctx.FlowPhaseKind == string(flowstore.KindPlanReview) {
 		status = flowstore.PhaseBlocked
 		outcome = flowstore.OutcomeBlocked
 	} else if _, phase, ok := m.flowPhaseByID(ctx.FlowID, ctx.FlowPhaseID); ok && flowstore.SemanticKind(phase) == flowstore.KindPlanReview {

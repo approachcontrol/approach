@@ -2601,11 +2601,11 @@ func TestStoreSetPhasePlanReviewOutcomeGatesImplementation(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		outcome          string
-		status           string
+		status           flowstore.PhaseStatus
 		notes            string
 		wantFlowStatus   string
-		wantReviewStatus string
-		wantImplStatus   string
+		wantReviewStatus flowstore.PhaseStatus
+		wantImplStatus   flowstore.PhaseStatus
 	}{
 		{
 			name:             "approved",
@@ -2928,7 +2928,7 @@ func TestStoreSetPhasePlanReviewRerunResetsImplementation(t *testing.T) {
 
 func TestStoreAddPhaseLaunchIDRerunsPlanReviewAndResetsImplementation(t *testing.T) {
 	for _, tc := range []struct {
-		status  string
+		status  flowstore.PhaseStatus
 		outcome string
 		notes   string
 	}{
@@ -2938,7 +2938,7 @@ func TestStoreAddPhaseLaunchIDRerunsPlanReviewAndResetsImplementation(t *testing
 		{status: flowstore.PhaseBlocked, notes: "Implementation is blocked."},
 		{status: flowstore.PhaseSkipped, notes: "Implementation was covered elsewhere."},
 	} {
-		t.Run(tc.status, func(t *testing.T) {
+		t.Run(string(tc.status), func(t *testing.T) {
 			root := t.TempDir()
 			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 			if err != nil {
@@ -4221,7 +4221,7 @@ func TestStoreMarkManualMergeValidatesEligibility(t *testing.T) {
 		withPR      bool
 		commit      string
 		mergedAt    time.Time
-		mergeStatus string
+		mergeStatus flowstore.PhaseStatus
 		skipAutoRev bool
 		mutate      func(*flowstore.FlowRecord)
 		want        string
@@ -4533,9 +4533,9 @@ func TestStoreSetPhaseReopeningMergeClearsTerminalMergeMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		merge        flowstore.MergeUpdate
-		phaseStatus  string
+		phaseStatus  flowstore.PhaseStatus
 		phaseNotes   string
-		reopenStatus string
+		reopenStatus flowstore.PhaseStatus
 		reopenNotes  string
 		wantStatus   string
 	}{
@@ -6506,7 +6506,7 @@ func TestCreateRejectsCyclicPhases(t *testing.T) {
 }
 
 func TestKindConstantsAndSemanticKind(t *testing.T) {
-	want := map[string]string{
+	want := map[string]flowstore.PhaseKind{
 		"plan":                 flowstore.KindPlan,
 		"plan_review":          flowstore.KindPlanReview,
 		"implementation":       flowstore.KindImplementation,
@@ -6517,7 +6517,7 @@ func TestKindConstantsAndSemanticKind(t *testing.T) {
 		"implementation_child": flowstore.KindImplementationChild,
 	}
 	for value, got := range want {
-		if got != value {
+		if string(got) != value {
 			t.Fatalf("kind constant = %q, want %q", got, value)
 		}
 	}
@@ -7049,7 +7049,7 @@ func graphRecord(root, flowID string, phases []flowstore.FlowPhase) flowstore.Fl
 	}
 }
 
-func graphPhase(now time.Time, phaseID, status string, dependsOn []string) flowstore.FlowPhase {
+func graphPhase(now time.Time, phaseID string, status flowstore.PhaseStatus, dependsOn []string) flowstore.FlowPhase {
 	return flowstore.FlowPhase{
 		PhaseID:   phaseID,
 		Title:     phaseID,

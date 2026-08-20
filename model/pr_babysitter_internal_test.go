@@ -18,7 +18,7 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-func babysitterFlow(id, repo string, phaseStatus, mergeStatus string) flowstore.FlowRecord {
+func babysitterFlow(id, repo string, phaseStatus flowstore.PhaseStatus, mergeStatus string) flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID: id, RepoPath: repo, Title: id, Status: flowstore.StatusInProgress,
 		PR:    flowstore.PullRequest{Provider: "github", Number: 42, URL: "https://github.com/acme/project/pull/42", HeadBranch: "flow/feature", BaseBranch: "main"},

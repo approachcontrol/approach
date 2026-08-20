@@ -744,8 +744,8 @@ func TestAutoFlowLaunchNeverLaunchesMergePhases(t *testing.T) {
 // human asked for attention, so AutoMode must leave it alone even though the
 // phase satisfies flowPhaseCanLaunch.
 func TestAutoFlowLaunchNeverLaunchesAutoreviewRecovery(t *testing.T) {
-	for _, status := range []string{flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked} {
-		t.Run(status, func(t *testing.T) {
+	for _, status := range []flowstore.PhaseStatus{flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked} {
+		t.Run(string(status), func(t *testing.T) {
 			record := autoLaunchFlowRecord()
 			record.PR = flowstore.PullRequest{
 				Provider:   "github",
@@ -1735,7 +1735,7 @@ func TestManualFlowLaunchFailureClassification(t *testing.T) {
 	tests := []struct {
 		name        string
 		record      flowstore.FlowRecord
-		wantStatus  string
+		wantStatus  flowstore.PhaseStatus
 		wantOutcome string
 	}{
 		{

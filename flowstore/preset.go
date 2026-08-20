@@ -1,6 +1,7 @@
 package flowstore
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,10 +11,10 @@ import (
 
 // PhaseSpec is a data-only phase declaration used by Flow phase graph presets.
 type PhaseSpec struct {
-	ID        string   `toml:"id"`
-	Title     string   `toml:"title"`
-	Kind      string   `toml:"kind"`
-	DependsOn []string `toml:"depends_on"`
+	ID        string    `toml:"id"`
+	Title     string    `toml:"title"`
+	Kind      PhaseKind `toml:"kind"`
+	DependsOn []string  `toml:"depends_on"`
 }
 
 // Preset declares a reusable graph of top-level Flow phases.
@@ -79,7 +80,7 @@ func normalizePresetName(name string) string {
 func validatePreset(preset Preset) error {
 	preset.Name = normalizePresetName(preset.Name)
 	if preset.Name == "" {
-		return fmt.Errorf("preset name is required")
+		return errors.New("preset name is required")
 	}
 	if len(preset.Phases) == 0 {
 		return fmt.Errorf("preset %q must include at least one phase", preset.Name)
@@ -97,7 +98,7 @@ func validatePreset(preset Preset) error {
 		if title == "" {
 			return fmt.Errorf("phase %q title is required", id)
 		}
-		kind := strings.ToLower(strings.TrimSpace(spec.Kind))
+		kind := normalizePhaseKind(spec.Kind)
 		if kind == KindImplementationChild {
 			return fmt.Errorf("%s cannot be used in a preset", KindImplementationChild)
 		}
@@ -122,7 +123,7 @@ func seedPhases(specs []PhaseSpec, phaseAgent PhaseAgentSettings, createdAt, upd
 		phases = append(phases, FlowPhase{
 			PhaseID:         artifacts.NormalizePhaseID(spec.ID),
 			Title:           strings.TrimSpace(spec.Title),
-			Kind:            strings.ToLower(strings.TrimSpace(spec.Kind)),
+			Kind:            normalizePhaseKind(spec.Kind),
 			Agent:           phaseAgent.Agent,
 			Model:           phaseAgent.Model,
 			ReasoningEffort: phaseAgent.ReasoningEffort,
@@ -136,7 +137,11 @@ func seedPhases(specs []PhaseSpec, phaseAgent PhaseAgentSettings, createdAt, upd
 	return normalizeDependsOnValues(phases)
 }
 
-func knownPresetPhaseKind(kind string) bool {
+func normalizePhaseKind(kind PhaseKind) PhaseKind {
+	return PhaseKind(strings.ToLower(strings.TrimSpace(string(kind))))
+}
+
+func knownPresetPhaseKind(kind PhaseKind) bool {
 	switch kind {
 	case KindPlan, KindPlanReview, KindImplementation, KindReviewLoop, KindPRCreation, KindAutoreview, KindMerge:
 		return true
@@ -147,12 +152,12 @@ func knownPresetPhaseKind(kind string) bool {
 
 func knownPresetPhaseKinds() []string {
 	return []string{
-		KindPlan,
-		KindPlanReview,
-		KindImplementation,
-		KindReviewLoop,
-		KindPRCreation,
-		KindAutoreview,
-		KindMerge,
+		string(KindPlan),
+		string(KindPlanReview),
+		string(KindImplementation),
+		string(KindReviewLoop),
+		string(KindPRCreation),
+		string(KindAutoreview),
+		string(KindMerge),
 	}
 }

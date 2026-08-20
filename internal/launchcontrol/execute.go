@@ -49,9 +49,9 @@ type phaseAction struct {
 }
 
 var phaseActions = map[Verb]phaseAction{
-	VerbPhaseComplete:       {command: "complete", status: flowstore.PhaseCompleted, defaultOutcome: flowstore.OutcomeApproved},
-	VerbPhaseBlock:          {command: "block", status: flowstore.PhaseBlocked, defaultOutcome: flowstore.OutcomeBlocked},
-	VerbPhaseNeedsAttention: {command: "needs-attention", status: flowstore.PhaseNeedsAttention, defaultOutcome: flowstore.OutcomeChangesRequested},
+	VerbPhaseComplete:       {command: "complete", status: string(flowstore.PhaseCompleted), defaultOutcome: flowstore.OutcomeApproved},
+	VerbPhaseBlock:          {command: "block", status: string(flowstore.PhaseBlocked), defaultOutcome: flowstore.OutcomeBlocked},
+	VerbPhaseNeedsAttention: {command: "needs-attention", status: string(flowstore.PhaseNeedsAttention), defaultOutcome: flowstore.OutcomeChangesRequested},
 }
 
 // Validate performs the request checks that need no store: identity fields,
@@ -83,7 +83,7 @@ func Validate(req Request) error {
 		if payload.Status == "" {
 			return fmt.Errorf("flow phase set requires --status")
 		}
-		if payload.Status == flowstore.PhaseReady {
+		if payload.Status == string(flowstore.PhaseReady) {
 			return fmt.Errorf("cannot set phase status to ready; readiness is derived")
 		}
 		if !slices.Contains(flowstore.AgentSettablePhaseStatuses(), payload.Status) {
@@ -305,7 +305,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
 			FlowID:  req.FlowID,
 			PhaseID: req.PhaseID,
-			Status:  payload.Status,
+			Status:  flowstore.PhaseStatus(payload.Status),
 			Outcome: payload.Outcome,
 			Notes:   payload.Notes,
 			Summary: payload.Summary,
@@ -327,12 +327,12 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			if !ok {
 				return nil, "", fmt.Errorf("phase %q not found in flow %q", req.PhaseID, req.FlowID)
 			}
-			outcome = defaultPhaseActionOutcome(flowstore.SemanticKind(phase), action)
+			outcome = defaultPhaseActionOutcome(string(flowstore.SemanticKind(phase)), action)
 		}
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
 			FlowID:  req.FlowID,
 			PhaseID: req.PhaseID,
-			Status:  action.status,
+			Status:  flowstore.PhaseStatus(action.status),
 			Outcome: outcome,
 			Notes:   payload.Notes,
 			Summary: payload.Summary,
@@ -449,15 +449,15 @@ func phaseActionResult(record flowstore.FlowRecord, phaseID string) (any, string
 
 func defaultPhaseActionOutcome(kind string, action phaseAction) string {
 	switch kind {
-	case flowstore.KindPlanReview:
+	case string(flowstore.KindPlanReview):
 		return action.defaultOutcome
-	case flowstore.KindAutoreview:
+	case string(flowstore.KindAutoreview):
 		switch action.status {
-		case flowstore.PhaseCompleted:
+		case string(flowstore.PhaseCompleted):
 			return "passed"
-		case flowstore.PhaseNeedsAttention:
+		case string(flowstore.PhaseNeedsAttention):
 			return "needs_attention"
-		case flowstore.PhaseBlocked:
+		case string(flowstore.PhaseBlocked):
 			return flowstore.OutcomeBlocked
 		}
 	}
@@ -480,8 +480,8 @@ func newPhaseActionState(phase flowstore.FlowPhase) *PhaseActionState {
 	return &PhaseActionState{
 		PhaseID:         phase.PhaseID,
 		Title:           phase.Title,
-		Status:          phase.Status,
-		AllowedStatuses: flowstore.AllowedNextPhaseStatuses(phase.Status),
+		Status:          string(phase.Status),
+		AllowedStatuses: flowstore.AllowedNextPhaseStatuses(string(phase.Status)),
 	}
 }
 

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -68,7 +69,7 @@ func Supported(command string) bool {
 
 func Validate(command string) error {
 	if Normalize(command) == "" {
-		return fmt.Errorf("agent is not set")
+		return errors.New("agent is not set")
 	}
 	if !Supported(command) {
 		return fmt.Errorf("unsupported agent %q; choose %s", command, supportedChoicePhrase)

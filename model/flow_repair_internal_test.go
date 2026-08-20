@@ -394,7 +394,7 @@ func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 			LaunchID:          launchID,
 			FlowID:            flowID,
 			FlowPhaseID:       phaseID,
-			FlowPhaseKind:     flowstore.KindImplementation,
+			FlowPhaseKind:     string(flowstore.KindImplementation),
 			FlowLaunchTracked: true,
 			FlowAutoLaunch:    true,
 			Embedded:          true,

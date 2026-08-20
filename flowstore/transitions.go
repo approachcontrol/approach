@@ -4,7 +4,7 @@ package flowstore
 // current phase statuses; values are the agent-settable statuses reachable
 // from that state, in canonical order. Readiness (pending -> ready) is derived
 // by approach and never settable, so it does not appear as a target here.
-var phaseTransitions = map[string][]string{
+var phaseTransitions = map[PhaseStatus][]PhaseStatus{
 	PhasePending:        {PhaseSkipped},
 	PhaseReady:          {PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseBlocked, PhaseSkipped},
 	PhaseRunning:        {PhaseNeedsAttention, PhaseCompleted, PhaseBlocked, PhaseSkipped},
@@ -16,7 +16,7 @@ var phaseTransitions = map[string][]string{
 
 // agentSettablePhaseStatuses lists every status agents may pass to phase
 // updates, in canonical order. Derived statuses (pending, ready) are excluded.
-var agentSettablePhaseStatuses = []string{
+var agentSettablePhaseStatuses = []PhaseStatus{
 	PhaseRunning,
 	PhaseNeedsAttention,
 	PhaseCompleted,
@@ -28,7 +28,9 @@ var agentSettablePhaseStatuses = []string{
 // set on a Flow phase, in canonical order.
 func AgentSettablePhaseStatuses() []string {
 	out := make([]string, len(agentSettablePhaseStatuses))
-	copy(out, agentSettablePhaseStatuses)
+	for i, status := range agentSettablePhaseStatuses {
+		out[i] = string(status)
+	}
 	return out
 }
 
@@ -37,11 +39,13 @@ func AgentSettablePhaseStatuses() []string {
 // unknown statuses. Same-status updates are idempotent no-ops handled
 // separately and are not listed.
 func AllowedNextPhaseStatuses(current string) []string {
-	next, ok := phaseTransitions[current]
+	next, ok := phaseTransitions[PhaseStatus(current)]
 	if !ok {
 		return nil
 	}
 	out := make([]string, len(next))
-	copy(out, next)
+	for i, status := range next {
+		out[i] = string(status)
+	}
 	return out
 }

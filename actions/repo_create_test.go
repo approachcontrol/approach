@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -140,6 +141,28 @@ func TestCreateRepoLocalOnlyInitializesGitRepository(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("expected initialized git repo: %v\n%s", err, out)
+	}
+}
+
+func TestCreateRepoDestinationIsWorldReadable(t *testing.T) {
+	previous := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(previous) })
+
+	root := t.TempDir()
+	result, err := createRepoWithRunner(RepoCreateOptions{
+		Root:         root,
+		Name:         "project",
+		CreateGitHub: false,
+	}, &fakeCreateRepoRunner{})
+	if err != nil {
+		t.Fatalf("createRepoWithRunner() error = %v", err)
+	}
+	info, err := os.Stat(result.DestinationPath)
+	if err != nil {
+		t.Fatalf("stat destination: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("destination perm = %04o, want 0755", got)
 	}
 }
 

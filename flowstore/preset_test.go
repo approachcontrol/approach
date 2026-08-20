@@ -333,7 +333,7 @@ func TestPresetValidationUnknownKindMessageOmitsChildKind(t *testing.T) {
 	if err == nil {
 		t.Fatal("validatePreset() error = nil, want unknown kind")
 	}
-	if strings.Contains(err.Error(), KindImplementationChild) {
+	if strings.Contains(err.Error(), string(KindImplementationChild)) {
 		t.Fatalf("validatePreset() error = %q, should not list child-only kind", err)
 	}
 }

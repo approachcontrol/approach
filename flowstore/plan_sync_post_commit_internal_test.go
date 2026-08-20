@@ -1005,7 +1005,7 @@ func TestSetPhaseSkipsCompensationWhenTheMergeWasRecordedDuringTheWindow(t *test
 // tests above do not reach. validateMergeUpdate enforces both, so a compensated
 // record that broke either would be one no ordinary write could produce.
 func TestRecordedMergeKeepsItsPhasePairing(t *testing.T) {
-	recordWith := func(mergeStatus, phaseStatus string) FlowRecord {
+	recordWith := func(mergeStatus string, phaseStatus PhaseStatus) FlowRecord {
 		return FlowRecord{
 			Merge:  Merge{Status: mergeStatus},
 			Phases: []FlowPhase{{PhaseID: "merge", Kind: KindMerge, Status: phaseStatus}},

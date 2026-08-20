@@ -67,7 +67,7 @@ func TestServeReflectsLiveStoreMutations(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%v)", status, payload)
 	}
 	before := flowFromPayload(t, payload)
-	if got := phaseByIDFromPayload(t, before, "plan")["status"]; got != flowstore.PhaseReady {
+	if got := phaseByIDFromPayload(t, before, "plan")["status"]; got != string(flowstore.PhaseReady) {
 		t.Fatalf("plan status = %v, want %q", got, flowstore.PhaseReady)
 	}
 	if current := before["currentPhase"].(map[string]any); current["id"] != "plan" {
@@ -93,7 +93,7 @@ func TestServeReflectsLiveStoreMutations(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%v)", status, payload)
 	}
 	after := flowFromPayload(t, payload)
-	if got := phaseByIDFromPayload(t, after, "plan")["status"]; got != flowstore.PhaseRunning {
+	if got := phaseByIDFromPayload(t, after, "plan")["status"]; got != string(flowstore.PhaseRunning) {
 		t.Fatalf("plan status = %v, want %q without a restart", got, flowstore.PhaseRunning)
 	}
 	if got := after["status"]; got != flowstore.StatusInProgress {
@@ -235,7 +235,7 @@ func TestServeReportsPresetRecoveredEdges(t *testing.T) {
 	if len(got) != len(wantDependsOn) || got[0] != wantDependsOn[0] {
 		t.Fatalf("GraphQL dependsOn = %v, want %v (the store was built without presets)", got, wantDependsOn)
 	}
-	if verify["status"] != flowstore.PhasePending {
+	if verify["status"] != string(flowstore.PhasePending) {
 		t.Fatalf("verify status = %v, want %q; a preset-less store would derive ready", verify["status"], flowstore.PhasePending)
 	}
 	if current := flow["currentPhase"].(map[string]any); current["id"] != "build" {

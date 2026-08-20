@@ -1579,7 +1579,7 @@ func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {
 		name     string
-		status   string
+		status   flowstore.PhaseStatus
 		notes    string
 		wantFlow string
 	}{
@@ -1597,7 +1597,7 @@ func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 				"approach", "flow", "phase", "set",
 				"--flow-id", created.FlowID,
 				"--phase-id", "plan",
-				"--status", tc.status,
+				"--status", string(tc.status),
 				"--summary", "Phase updated.",
 				"--state-root", root,
 			}
@@ -1630,9 +1630,9 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 	root := t.TempDir()
 	for _, tc := range []struct {
 		name             string
-		status           string
+		status           flowstore.PhaseStatus
 		wantFlow         string
-		wantReviewStatus string
+		wantReviewStatus flowstore.PhaseStatus
 	}{
 		{name: "completed", status: flowstore.PhaseCompleted, wantFlow: flowstore.StatusInProgress, wantReviewStatus: flowstore.PhaseReady},
 		{name: "needs attention", status: flowstore.PhaseNeedsAttention, wantFlow: flowstore.StatusNeedsAttention, wantReviewStatus: flowstore.PhasePending},
@@ -1649,7 +1649,7 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 				"approach", "flow", "phase", "set",
 				"--flow-id", created.FlowID,
 				"--phase-id", "implementation",
-				"--status", tc.status,
+				"--status", string(tc.status),
 				"--summary", "Implementation updated.",
 				"--state-root", root,
 			}, noScanDeps(t, runDeps{stdout: &stdout}))
@@ -1705,10 +1705,10 @@ func TestRunFlowPhaseActionCompletePrintsNextActionablePhase(t *testing.T) {
 	if result.NextPhase == nil {
 		t.Fatal("next phase is nil, want plan-review")
 	}
-	if result.NextPhase.PhaseID != "plan-review" || result.NextPhase.Status != flowstore.PhaseReady {
+	if result.NextPhase.PhaseID != "plan-review" || result.NextPhase.Status != string(flowstore.PhaseReady) {
 		t.Fatalf("next phase = %#v, want ready plan-review", result.NextPhase)
 	}
-	if strings.Join(result.NextPhase.AllowedStatuses, ",") != strings.Join(flowstore.AllowedNextPhaseStatuses(flowstore.PhaseReady), ",") {
+	if strings.Join(result.NextPhase.AllowedStatuses, ",") != strings.Join(flowstore.AllowedNextPhaseStatuses(string(flowstore.PhaseReady)), ",") {
 		t.Fatalf("next phase allowed statuses = %#v", result.NextPhase.AllowedStatuses)
 	}
 	if phaseByID(result.Flow, "plan-review").Status != flowstore.PhaseReady {
@@ -1757,7 +1757,7 @@ func TestRunFlowPhaseActionsMapToCanonicalStatuses(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		command    string
-		wantStatus string
+		wantStatus flowstore.PhaseStatus
 		notes      string
 	}{
 		{name: "block with notes", command: "block", wantStatus: flowstore.PhaseBlocked, notes: "Waiting on reviewer input."},
@@ -1791,10 +1791,10 @@ func TestRunFlowPhaseActionsMapToCanonicalStatuses(t *testing.T) {
 			if result.UpdatedPhase.Status != tc.wantStatus || result.UpdatedPhase.Notes != tc.notes {
 				t.Fatalf("updated phase = %#v", result.UpdatedPhase)
 			}
-			if result.NextPhase == nil || result.NextPhase.PhaseID != "plan" || result.NextPhase.Status != tc.wantStatus {
+			if result.NextPhase == nil || result.NextPhase.PhaseID != "plan" || result.NextPhase.Status != string(tc.wantStatus) {
 				t.Fatalf("next phase = %#v, want current phase still actionable", result.NextPhase)
 			}
-			if strings.Join(result.NextPhase.AllowedStatuses, ",") != strings.Join(flowstore.AllowedNextPhaseStatuses(tc.wantStatus), ",") {
+			if strings.Join(result.NextPhase.AllowedStatuses, ",") != strings.Join(flowstore.AllowedNextPhaseStatuses(string(tc.wantStatus)), ",") {
 				t.Fatalf("next phase allowed statuses = %#v", result.NextPhase.AllowedStatuses)
 			}
 		})
@@ -1807,7 +1807,7 @@ func TestRunFlowPhaseActionsDefaultPlanReviewOutcomes(t *testing.T) {
 		name        string
 		command     string
 		outcome     string
-		wantStatus  string
+		wantStatus  flowstore.PhaseStatus
 		wantOutcome string
 		notes       string
 	}{
@@ -1915,7 +1915,7 @@ func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
 		name        string
 		command     string
 		notes       string
-		wantStatus  string
+		wantStatus  flowstore.PhaseStatus
 		wantOutcome string
 	}{
 		{name: "complete", command: "complete", wantStatus: flowstore.PhaseCompleted, wantOutcome: "passed"},
@@ -1957,7 +1957,7 @@ func TestRunFlowPhaseRestartRerunsAttentionAndBlockedPhases(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {
 		name         string
-		startStatus  string
+		startStatus  flowstore.PhaseStatus
 		startOutcome string
 		startNotes   string
 	}{
@@ -2128,8 +2128,8 @@ func TestRunFlowPhaseResetReturnsEndedSessionPhaseToReady(t *testing.T) {
 	if len(implementation.Sessions) != 1 || implementation.Sessions[0].SessionID != "session-old" {
 		t.Fatalf("sessions = %#v, want old session only", implementation.Sessions)
 	}
-	if result.NextPhase == nil || result.NextPhase.PhaseID != "implementation" || result.NextPhase.Status != flowstore.PhaseReady ||
-		!slices.Contains(result.NextPhase.AllowedStatuses, flowstore.PhaseRunning) {
+	if result.NextPhase == nil || result.NextPhase.PhaseID != "implementation" || result.NextPhase.Status != string(flowstore.PhaseReady) ||
+		!slices.Contains(result.NextPhase.AllowedStatuses, string(flowstore.PhaseRunning)) {
 		t.Fatalf("next phase = %#v, want ready implementation with running allowed", result.NextPhase)
 	}
 }
@@ -2402,7 +2402,7 @@ func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
-		"--status", flowstore.PhaseBlocked,
+		"--status", string(flowstore.PhaseBlocked),
 		"--state-root", root,
 	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err != nil {
@@ -2413,7 +2413,7 @@ func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
-		"--status", flowstore.PhaseRunning,
+		"--status", string(flowstore.PhaseRunning),
 		"--state-root", root,
 	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil || !strings.Contains(err.Error(), "restarting blocked phase requires notes") {
@@ -2425,7 +2425,7 @@ func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
-		"--status", flowstore.PhaseRunning,
+		"--status", string(flowstore.PhaseRunning),
 		"--notes", "Unblocked after user confirmed scope.",
 		"--state-root", root,
 	}, noScanDeps(t, runDeps{stdout: &stdout}))
@@ -2454,7 +2454,7 @@ func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 		status string
 		want   string
 	}{
-		{name: "ready", status: flowstore.PhaseReady, want: "cannot set phase status to ready"},
+		{name: "ready", status: string(flowstore.PhaseReady), want: "cannot set phase status to ready"},
 		{name: "bogus", status: "done", want: `unsupported agent-facing phase status "done"; valid statuses: running, needs_attention, completed, blocked, skipped`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2481,7 +2481,7 @@ func TestRunFlowPhaseSetRejectsSkippedWithoutNotes(t *testing.T) {
 		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
-		"--status", flowstore.PhaseSkipped,
+		"--status", string(flowstore.PhaseSkipped),
 		"--state-root", root,
 	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil || !strings.Contains(err.Error(), "skipped phase requires notes") {
@@ -3010,13 +3010,13 @@ func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flo
 	})
 }
 
-func mustSetFlowPhase(t *testing.T, root, flowID, phaseID, status, outcome, summary, notes string) flowstore.FlowRecord {
+func mustSetFlowPhase(t *testing.T, root, flowID, phaseID string, status flowstore.PhaseStatus, outcome, summary, notes string) flowstore.FlowRecord {
 	t.Helper()
 	args := []string{
 		"approach", "flow", "phase", "set",
 		"--flow-id", flowID,
 		"--phase-id", phaseID,
-		"--status", status,
+		"--status", string(status),
 		"--state-root", root,
 	}
 	if outcome != "" {

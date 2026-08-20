@@ -580,7 +580,7 @@ func TestRender_FlowsModeSelectedActiveRowsPreserveSelectionAfterMarker(t *testi
 	if !strings.Contains(phaseRow, selectedSegment(flowTerminalStyle, "●")) {
 		t.Fatalf("selected active phase marker should keep semantic marker style:\n%q", phaseRow)
 	}
-	if want := selectedStyle.Render(fitSessionColumn(flowstore.PhaseRunning, flowStatusWidth)); !strings.Contains(phaseRow, want) {
+	if want := selectedStyle.Render(fitSessionColumn(string(flowstore.PhaseRunning), flowStatusWidth)); !strings.Contains(phaseRow, want) {
 		t.Fatalf("selected active phase row should restore selection style after marker:\n%q\nmissing %q", phaseRow, want)
 	}
 }

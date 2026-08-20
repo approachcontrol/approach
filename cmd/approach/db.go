@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,7 @@ func runDB(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: approach db <inspect|migrate|restore> [flags]")
+		return errors.New("usage: approach db <inspect|migrate|restore> [flags]")
 	}
 	switch args[2] {
 	case "inspect":

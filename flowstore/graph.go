@@ -1,6 +1,7 @@
 package flowstore
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -78,7 +79,7 @@ func validatePhaseGraph(phases []FlowPhase) error {
 		}
 	}
 	if topLevelCount > 0 && rootCount == 0 {
-		return fmt.Errorf("phase graph must include at least one root phase")
+		return errors.New("phase graph must include at least one root phase")
 	}
 	return nil
 }
@@ -91,7 +92,7 @@ func validateUniqueMergePhaseKind(phases []FlowPhase) error {
 		}
 	}
 	if mergeCount > 1 {
-		return fmt.Errorf("phase graph can include at most one merge phase")
+		return errors.New("phase graph can include at most one merge phase")
 	}
 	return nil
 }

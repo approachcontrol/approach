@@ -124,7 +124,7 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 	if !ok {
 		return outcome, nil
 	}
-	outcome.Status = phase.Status
+	outcome.Status = string(phase.Status)
 	if phase.Status != flowstore.PhaseRunning {
 		return outcome, nil
 	}
@@ -154,7 +154,7 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 		return outcome, errors.New(resp.Error)
 	}
 	outcome.Action = ActionDemoted
-	outcome.Status = update.Status
+	outcome.Status = string(update.Status)
 	outcome.Reason = ReasonPhaseResultMissing
 	return outcome, nil
 }

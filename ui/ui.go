@@ -3805,7 +3805,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 		}
 		rowActive := active.hasPhase(record.FlowID, phase.PhaseID)
 		line := formatFlowColumns(showRepo, flowPhaseRowPrefix(false, rowActive),
-			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
+			statusStyle.Render(fitSessionColumn(string(phase.Status), flowStatusWidth)),
 			"",
 			"",
 			diffHdrStyle.Render(fitSessionColumn(phase.PhaseID+":"+state, flowPhaseWidth)),
@@ -3817,7 +3817,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 		)
 		if phase.PhaseID == selectedPhaseID {
 			line = renderSelectedFlowColumns(showRepo, selectedFlowPhaseRowPrefix(rowActive),
-				phase.Status,
+				string(phase.Status),
 				"",
 				"",
 				phase.PhaseID+":"+state,
@@ -4039,7 +4039,7 @@ func phaseCanReportMissingPR(phase flowstore.FlowPhase) bool {
 }
 
 func flowBasePhaseState(phase flowstore.FlowPhase) string {
-	state := phase.Status
+	state := string(phase.Status)
 	if phase.Outcome != "" {
 		state = phase.Outcome
 	}

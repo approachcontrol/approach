@@ -443,8 +443,8 @@ func newPhaseResumeLaunchContext(
 		ResumeSessionID:  target.ResumeSessionID,
 		PlanID:           record.PlanID, PlanPath: target.PlanPath,
 		FlowID: record.FlowID, FlowPhaseID: target.PhaseID,
-		FlowPhaseKind:     flowstore.SemanticKind(launchPhase),
-		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(launchPhase.Status),
+		FlowPhaseKind:     string(flowstore.SemanticKind(launchPhase)),
+		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(string(launchPhase.Status)),
 		Embedded:          true, FlowLaunchTracked: true,
 	}, settings.stamp())
 	tmuxRoute, fellBack := tmuxLaunchRouteFor(routing.Backend, routing.TmuxAvailable, ctx)

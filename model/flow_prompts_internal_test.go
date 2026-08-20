@@ -50,7 +50,7 @@ func TestGeneratedPhasePromptsNeverNameABareApproachBinary(t *testing.T) {
 	record := promptRecord()
 	pinned := "/state/approach/sessions/v1/bin/approach-abc123"
 	for _, phase := range promptPhaseKinds() {
-		for _, status := range []string{flowstore.PhaseReady, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked} {
+		for _, status := range []flowstore.PhaseStatus{flowstore.PhaseReady, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked} {
 			phase := phase
 			phase.Status = status
 			// planPath is a dimension, not a constant. Several prompts branch on
@@ -58,7 +58,7 @@ func TestGeneratedPhasePromptsNeverNameABareApproachBinary(t *testing.T) {
 			// is empty — so a table that always passed a plan path would leave
 			// those branches unrendered and the guard would not cover them.
 			for _, planPath := range []string{record.PlanPath, ""} {
-				name := phase.PhaseID + "/" + status
+				name := phase.PhaseID + "/" + string(status)
 				if planPath == "" {
 					name += "/no-plan"
 				}

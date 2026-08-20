@@ -189,12 +189,12 @@ func newSchema() (graphql.Schema, error) {
 			"kind": &graphql.Field{
 				Type:        graphql.NewNonNull(graphql.String),
 				Description: "Phase kind, e.g. plan, plan_review, implementation, merge. See docs/flow-phases.md.",
-				Resolve:     phaseResolver(func(phase flowstore.FlowPhase) (any, error) { return phase.Kind, nil }),
+				Resolve:     phaseResolver(func(phase flowstore.FlowPhase) (any, error) { return string(phase.Kind), nil }),
 			},
 			"status": &graphql.Field{
 				Type:        graphql.NewNonNull(graphql.String),
 				Description: "Phase status: pending, ready, running, needs_attention, completed, blocked, or skipped.",
-				Resolve:     phaseResolver(func(phase flowstore.FlowPhase) (any, error) { return phase.Status, nil }),
+				Resolve:     phaseResolver(func(phase flowstore.FlowPhase) (any, error) { return string(phase.Status), nil }),
 			},
 			"order": &graphql.Field{
 				Type:    graphql.NewNonNull(graphql.Int),

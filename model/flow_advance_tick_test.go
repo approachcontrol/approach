@@ -92,7 +92,7 @@ func autoAdvanceDrain(m Model, records []flowstore.FlowRecord) (Model, tea.Cmd) 
 	return m.prepareAutoAdvanceDrainLaunches(records)
 }
 
-func autoAdvanceTestFlow(flowID, repoPath string, autoMode bool, statuses map[string]string) flowstore.FlowRecord {
+func autoAdvanceTestFlow(flowID, repoPath string, autoMode bool, statuses map[string]flowstore.PhaseStatus) flowstore.FlowRecord {
 	phaseDefs := []struct {
 		id    string
 		title string
@@ -130,7 +130,7 @@ func autoAdvanceTestFlow(flowID, repoPath string, autoMode bool, statuses map[st
 	}
 }
 
-func autoAdvanceCustomFlow(statuses map[string]string) flowstore.FlowRecord {
+func autoAdvanceCustomFlow(statuses map[string]flowstore.PhaseStatus) flowstore.FlowRecord {
 	phases := []flowstore.FlowPhase{
 		{PhaseID: "root", Title: "Root", Kind: flowstore.KindPlan, Status: statuses["root"], Order: 1, DependsOn: []string{}},
 		{PhaseID: "branch-a", Title: "Branch A", Kind: flowstore.KindImplementation, Status: statuses["branch-a"], Order: 2, DependsOn: []string{"root"}},
@@ -222,10 +222,10 @@ func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, m Model, cmd tea.Cmd) 
 }
 
 func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
-	previous := autoAdvanceCustomFlow(map[string]string{
+	previous := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root": flowstore.PhaseRunning,
 	})
-	rootCompleted := autoAdvanceCustomFlow(map[string]string{
+	rootCompleted := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhaseReady,
@@ -253,7 +253,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 	// with a terminal/session owner in the running program.
 	m = m.releaseFlowLaunchAttempt(launch.Context.FlowID, launch.Context.LaunchID)
 
-	branchARunning := autoAdvanceCustomFlow(map[string]string{
+	branchARunning := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseRunning,
 		"branch-b": flowstore.PhaseReady,
@@ -263,7 +263,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 		t.Fatalf("updates while branch-a running = %#v, want no additional launch", updates)
 	}
 
-	branchACompleted := autoAdvanceCustomFlow(map[string]string{
+	branchACompleted := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseCompleted,
 		"branch-b": flowstore.PhaseReady,
@@ -276,10 +276,10 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 }
 
 func TestAutoModeSkipDoesNotArmDrain(t *testing.T) {
-	previous := autoAdvanceCustomFlow(map[string]string{
+	previous := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root": flowstore.PhaseRunning,
 	})
-	skipped := autoAdvanceCustomFlow(map[string]string{
+	skipped := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseSkipped,
 		"branch-a": flowstore.PhaseReady,
 	})
@@ -304,17 +304,17 @@ func TestAutoModeSkipDoesNotArmDrain(t *testing.T) {
 }
 
 func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
-	rootCompleted := autoAdvanceCustomFlow(map[string]string{
+	rootCompleted := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhaseReady,
 	})
-	branchARunning := autoAdvanceCustomFlow(map[string]string{
+	branchARunning := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseRunning,
 		"branch-b": flowstore.PhaseReady,
 	})
-	branchASkipped := autoAdvanceCustomFlow(map[string]string{
+	branchASkipped := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseSkipped,
 		"branch-b": flowstore.PhaseReady,
@@ -328,7 +328,7 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 			return branchARunning, nil
 		},
 	})
-	m.autoAdvanceSnapshot = []flowstore.FlowRecord{autoAdvanceCustomFlow(map[string]string{
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root": flowstore.PhaseRunning,
 	})}
 
@@ -350,7 +350,7 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 	}
 }
 
-func repairAutoDrainTestFlow(status, kind string, autoMode bool) flowstore.FlowRecord {
+func repairAutoDrainTestFlow(status flowstore.PhaseStatus, kind flowstore.PhaseKind, autoMode bool) flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:       "flow-repair",
 		Title:        "Repair drain",
@@ -368,7 +368,7 @@ func repairAutoDrainTestFlow(status, kind string, autoMode bool) flowstore.FlowR
 	}
 }
 
-func repairCompletionEdgeTestFlow(repairStatus, successorStatus string) flowstore.FlowRecord {
+func repairCompletionEdgeTestFlow(repairStatus, successorStatus flowstore.PhaseStatus) flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:       "flow-repair",
 		Title:        "Repair completion edge",
@@ -781,7 +781,7 @@ func TestRepairAutoDrainRearmsAfterRunningToReadyStopTransition(t *testing.T) {
 }
 
 func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
-	record := autoAdvanceCustomFlow(map[string]string{
+	record := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhaseReady,
@@ -803,12 +803,12 @@ func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
 }
 
 func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
-	branchARunning := autoAdvanceCustomFlow(map[string]string{
+	branchARunning := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseRunning,
 		"branch-b": flowstore.PhaseReady,
 	})
-	branchAReset := autoAdvanceCustomFlow(map[string]string{
+	branchAReset := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhaseReady,
@@ -837,7 +837,7 @@ func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
 }
 
 func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"pr-creation": flowstore.PhaseCompleted,
 		"autoreview":  flowstore.PhaseRunning,
 	})
@@ -866,7 +866,7 @@ func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
 }
 
 func TestAutoModeDisableDisarmsDrain(t *testing.T) {
-	current := autoAdvanceCustomFlow(map[string]string{
+	current := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 	})
@@ -892,7 +892,7 @@ func TestAutoModeDisableDisarmsDrain(t *testing.T) {
 }
 
 func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -920,7 +920,7 @@ func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
 }
 
 func TestPendingFlowRepairReservationKeepsAutoAdvanceDrainQueued(t *testing.T) {
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1119,12 +1119,12 @@ func TestModel_AutoAdvanceTickRunsOffTheFlowSurface(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1163,7 +1163,7 @@ func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T)
 }
 
 func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *testing.T) {
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1204,21 +1204,21 @@ func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *te
 // the precedence — hence autoAdvanceRankTransition, which keeps the observable
 // outcome the same as before the launch lifecycle owned this.
 func TestModel_AutoAdvanceAsyncStatusLandsAfterSamePollTransitions(t *testing.T) {
-	launchingPrevious := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	launchingPrevious := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	launching := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	launching := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
 	})
-	attentionPrevious := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+	attentionPrevious := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"implementation": flowstore.PhaseRunning,
 	})
 	attentionPrevious.Title = "Charlie Flow"
-	attention := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+	attention := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"implementation": flowstore.PhaseNeedsAttention,
 	})
 	attention.Title = "Charlie Flow"
@@ -1294,12 +1294,12 @@ func TestModel_AutoAdvanceAsyncStatusLandsAfterSamePollTransitions(t *testing.T)
 }
 
 func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1321,12 +1321,12 @@ func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.
 }
 
 func TestModel_AutoAdvancePreflightFailureSetsAutoAdvanceStatus(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1346,12 +1346,12 @@ func TestModel_AutoAdvancePreflightFailureSetsAutoAdvanceStatus(t *testing.T) {
 }
 
 func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1418,12 +1418,12 @@ func TestModel_AutoAdvanceActionFailureSetsStatusOffRepo(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1481,12 +1481,12 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 }
 
 func TestModel_AutoAdvanceDelayedLaunchFailureCannotRearmAfterStop(t *testing.T) {
-	beforeStop := autoAdvanceCustomFlow(map[string]string{
+	beforeStop := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhasePending,
 	})
-	stopped := autoAdvanceCustomFlow(map[string]string{
+	stopped := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhaseBlocked,
@@ -1530,7 +1530,7 @@ func TestModel_AutoAdvanceDelayedLaunchFailureCannotRearmAfterStop(t *testing.T)
 }
 
 func TestModel_AutoAdvanceStopCannotDiscardPersistedPrepare(t *testing.T) {
-	beforeStop := autoAdvanceCustomFlow(map[string]string{
+	beforeStop := autoAdvanceCustomFlow(map[string]flowstore.PhaseStatus{
 		"root":     flowstore.PhaseCompleted,
 		"branch-a": flowstore.PhaseReady,
 		"branch-b": flowstore.PhasePending,
@@ -1569,7 +1569,7 @@ func TestModel_AutoAdvanceStopCannotDiscardPersistedPrepare(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1607,7 +1607,7 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 }
 
 func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1631,12 +1631,12 @@ func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	current := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1674,16 +1674,16 @@ func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testin
 }
 
 func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testing.T) {
-	existing := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]string{
+	existing := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]flowstore.PhaseStatus{
 		"plan":        flowstore.PhaseCompleted,
 		"plan-review": flowstore.PhaseRunning,
 	})
-	newRunning := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+	newRunning := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	newCompleted := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+	newCompleted := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1722,17 +1722,17 @@ func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testi
 }
 
 func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *testing.T) {
-	completedBaseline := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	completedBaseline := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhasePending,
 	})
-	rerunRunning := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	rerunRunning := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
-	rerunCompleted := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	rerunCompleted := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1771,13 +1771,13 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *test
 }
 
 func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testing.T) {
-	baseline := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	baseline := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
 		"review-loop":    flowstore.PhasePending,
 	})
-	childRunning := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	childRunning := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
@@ -1791,7 +1791,7 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testin
 		Status:        flowstore.PhaseRunning,
 		Order:         10,
 	})
-	childCompleted := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	childCompleted := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
@@ -1839,7 +1839,7 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testin
 }
 
 func TestModel_AutoAdvanceRequiresCompletionEdgeAndAutoMode(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1871,13 +1871,13 @@ func TestModel_AutoAdvanceRequiresCompletionEdgeAndAutoMode(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
 		"implementation": flowstore.PhasePending,
 	})
 	previous.Phases[1].LaunchIDs = []string{"source-launch"}
-	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
@@ -1924,7 +1924,7 @@ func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *te
 }
 
 func TestModel_AutoAdvanceFetchErrorKeepsLoopAliveWithoutConsumingSnapshotOrStatus(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"plan-review": flowstore.PhaseRunning,
 	})
 	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
@@ -1951,7 +1951,7 @@ func TestModel_AutoAdvanceFetchErrorKeepsLoopAliveWithoutConsumingSnapshotOrStat
 }
 
 func TestModel_AutoAdvanceStatusEventsExpireAndDoNotStompOtherStatus(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]flowstore.PhaseStatus{
 		"implementation": flowstore.PhaseRunning,
 		"merge":          flowstore.PhasePending,
 	})

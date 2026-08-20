@@ -50,7 +50,7 @@ func flowstoreNotFoundText(text string) bool { return strings.Contains(text, "no
 func TestExecutePhaseSetRefusesReadyWithoutTouchingStore(t *testing.T) {
 	store, _ := newTestStore(t)
 	created := createFlow(t, store, "Set Ready")
-	resp, err := Execute(store, mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "", PhaseSetPayload{Status: flowstore.PhaseReady}))
+	resp, err := Execute(store, mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "", PhaseSetPayload{Status: string(flowstore.PhaseReady)}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestExecutePhaseSetRefusesReadyWithoutTouchingStore(t *testing.T) {
 func TestExecutePhaseSetMatchesStoreSetPhase(t *testing.T) {
 	store, _ := newTestStore(t)
 	created := createFlow(t, store, "Set Phase")
-	resp, err := Execute(store, mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "", PhaseSetPayload{Status: flowstore.PhaseCompleted, Summary: "Saved plan"}))
+	resp, err := Execute(store, mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "", PhaseSetPayload{Status: string(flowstore.PhaseCompleted), Summary: "Saved plan"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +93,8 @@ func TestExecutePhaseActionsDefaultOutcomesByKindAndPrintNextPhase(t *testing.T)
 	if result.FlowID != created.FlowID || result.UpdatedPhase.PhaseID != "plan" || result.UpdatedPhase.Status != flowstore.PhaseCompleted || result.UpdatedPhase.Outcome != "" {
 		t.Fatalf("plan result = %#v", result.UpdatedPhase)
 	}
-	if result.NextPhase == nil || result.NextPhase.PhaseID != "plan-review" || result.NextPhase.Status != flowstore.PhaseReady ||
-		!reflect.DeepEqual(result.NextPhase.AllowedStatuses, flowstore.AllowedNextPhaseStatuses(flowstore.PhaseReady)) {
+	if result.NextPhase == nil || result.NextPhase.PhaseID != "plan-review" || result.NextPhase.Status != string(flowstore.PhaseReady) ||
+		!reflect.DeepEqual(result.NextPhase.AllowedStatuses, flowstore.AllowedNextPhaseStatuses(string(flowstore.PhaseReady))) {
 		t.Fatalf("next phase = %#v", result.NextPhase)
 	}
 	// plan-review kind fills approved on complete.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,7 +22,7 @@ func runPlan(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: approach plan <save|list|read|status|phase> [flags]")
+		return errors.New("usage: approach plan <save|list|read|status|phase> [flags]")
 	}
 	switch args[2] {
 	case "save":
@@ -114,7 +115,7 @@ func runPlanSave(args []string, deps runDeps) error {
 		return err
 	}
 	if strings.TrimSpace(*title) == "" {
-		return fmt.Errorf("plan save requires --title")
+		return errors.New("plan save requires --title")
 	}
 
 	markdown, err := readPlanInput(*file, deps.stdin)
@@ -255,7 +256,7 @@ func runPlanList(args []string, deps runDeps) error {
 		return err
 	}
 	if !*asJSON {
-		return fmt.Errorf("plan list requires --json in v1")
+		return errors.New("plan list requires --json in v1")
 	}
 	store, err := newPlanStore(*stateRoot, deps)
 	if err != nil {
@@ -289,7 +290,7 @@ func runPlanRead(args []string, deps runDeps) error {
 		return err
 	}
 	if *planID == "" {
-		return fmt.Errorf("plan read requires --plan-id")
+		return errors.New("plan read requires --plan-id")
 	}
 	store, err := newPlanStore(*stateRoot, deps)
 	if err != nil {
@@ -323,7 +324,7 @@ func runPlanRead(args []string, deps runDeps) error {
 
 func runPlanStatus(args []string, deps runDeps) error {
 	if len(args) < 1 || args[0] != "set" {
-		return fmt.Errorf("usage: approach plan status set [flags]")
+		return errors.New("usage: approach plan status set [flags]")
 	}
 	flags := flag.NewFlagSet("plan status set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -342,7 +343,7 @@ func runPlanStatus(args []string, deps runDeps) error {
 		return fmt.Errorf("unexpected argument %q\n\n%s", flags.Arg(0), planHelpText)
 	}
 	if *planID == "" || *status == "" {
-		return fmt.Errorf("plan status set requires --plan-id and --status")
+		return errors.New("plan status set requires --plan-id and --status")
 	}
 	store, err := newPlanStore(*stateRoot, deps)
 	if err != nil {
@@ -388,7 +389,7 @@ func runPlanPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: approach plan phase set [flags]")
+		return errors.New("usage: approach plan phase set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, planPhaseHelpText)
@@ -409,7 +410,7 @@ func runPlanPhase(args []string, deps runDeps) error {
 		return err
 	}
 	if *planID == "" || *phaseID == "" {
-		return fmt.Errorf("plan phase set requires --plan-id and --phase-id")
+		return errors.New("plan phase set requires --plan-id and --phase-id")
 	}
 	store, err := newPlanStore(*stateRoot, deps)
 	if err != nil {

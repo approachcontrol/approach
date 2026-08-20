@@ -69,7 +69,7 @@ func TestReplayCase1MarksAppliedWhenCommitLandedButMarkerDidNot(t *testing.T) {
 		t.Fatalf("phase after replay = %#v", phase)
 	}
 	applied, ok, _ := log.Applied()
-	if !ok || applied.AppliedSeq != 1 || applied.Status != flowstore.PhaseCompleted || applied.Result != ResultApplied {
+	if !ok || applied.AppliedSeq != 1 || applied.Status != string(flowstore.PhaseCompleted) || applied.Result != ResultApplied {
 		t.Fatalf("applied = %#v", applied)
 	}
 	if pending, _ := log.Pending(); len(pending) != 0 {
@@ -83,13 +83,13 @@ func TestReplayAppliesSpooledBatchInOrderRegardlessOfObservedTimestamps(t *testi
 	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
 	stale := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, req := range []Request{
-		mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{Status: flowstore.PhaseRunning, Notes: "still going"}),
+		mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{Status: string(flowstore.PhaseRunning), Notes: "still going"}),
 		mustRequest(t, VerbPlanSet, created.FlowID, "plan", "launch-1", PlanSetPayload{PlanID: "plan-9"}),
 		mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-1", PhaseActionPayload{Summary: "final"}),
 	} {
 		log, _ := OpenLog(root, "launch-1")
 		env := mustEnvelope(t, req, WrittenBySpool)
-		env.Observed = ObservedPhase{Status: flowstore.PhaseRunning, UpdatedAt: stale}
+		env.Observed = ObservedPhase{Status: string(flowstore.PhaseRunning), UpdatedAt: stale}
 		if _, err := log.Append(env); err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +114,7 @@ func TestReplayAppliesSpooledBatchInOrderRegardlessOfObservedTimestamps(t *testi
 		t.Fatalf("rejected = %#v", rejected)
 	}
 	applied, _, _ := log.Applied()
-	if applied.AppliedSeq != 3 || applied.Status != flowstore.PhaseCompleted {
+	if applied.AppliedSeq != 3 || applied.Status != string(flowstore.PhaseCompleted) {
 		t.Fatalf("applied = %#v", applied)
 	}
 }
@@ -140,7 +140,7 @@ func TestReplayRejectsBatchWhenPhaseRelaunchedUnderNewerLaunch(t *testing.T) {
 	}
 	log, _ := OpenLog(root, "launch-1")
 	rejected, ok, _ := log.Rejected()
-	if !ok || len(rejected.Batches) != 1 || rejected.Batches[0].Reason != ReasonPhaseResultStale || rejected.Batches[0].IntendedStatus != flowstore.PhaseCompleted || rejected.Batches[0].ObservedStatus != flowstore.PhaseRunning {
+	if !ok || len(rejected.Batches) != 1 || rejected.Batches[0].Reason != ReasonPhaseResultStale || rejected.Batches[0].IntendedStatus != string(flowstore.PhaseCompleted) || rejected.Batches[0].ObservedStatus != string(flowstore.PhaseRunning) {
 		t.Fatalf("rejected = %#v", rejected)
 	}
 	if pending, _ := log.Pending(); len(pending) != 0 {
@@ -167,7 +167,7 @@ func TestReplayCase3DemotesRunningPhaseOwnedByThisLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	log, _ := OpenLog(root, "launch-1")
-	if err := log.WriteApplied(AppliedState{AppliedSeq: 0, Status: flowstore.PhaseNeedsAttention, Result: ResultApplied}); err != nil {
+	if err := log.WriteApplied(AppliedState{AppliedSeq: 0, Status: string(flowstore.PhaseNeedsAttention), Result: ResultApplied}); err != nil {
 		t.Fatal(err)
 	}
 	spool(t, root, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-1", PhaseActionPayload{Summary: "late"}))
@@ -190,7 +190,7 @@ func TestReplayCase3DemotesRunningPhaseOwnedByThisLaunch(t *testing.T) {
 		}
 	}
 	applied, _, _ := log.Applied()
-	if applied.Status != flowstore.PhaseNeedsAttention || applied.Result != ResultReconciled || applied.AppliedSeq != 1 {
+	if applied.Status != string(flowstore.PhaseNeedsAttention) || applied.Result != ResultReconciled || applied.AppliedSeq != 1 {
 		t.Fatalf("applied = %#v", applied)
 	}
 }
@@ -207,7 +207,7 @@ func TestReplayCase3OnPlanReviewKindWritesBlockedAndSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	log, _ := OpenLog(root, "launch-1")
-	_ = log.WriteApplied(AppliedState{AppliedSeq: 0, Status: flowstore.PhaseBlocked, Result: ResultApplied})
+	_ = log.WriteApplied(AppliedState{AppliedSeq: 0, Status: string(flowstore.PhaseBlocked), Result: ResultApplied})
 	spool(t, root, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan-review", "launch-1", PhaseActionPayload{Outcome: flowstore.OutcomeApproved}))
 	c := newTestController(t, store, root)
 	if report := c.Sweep(); report.Reconciled != 1 {
@@ -250,7 +250,7 @@ func TestReplayCase3OnAutoreviewKindAcceptsLiteralReasonOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	log, _ := OpenLog(root, "launch-1")
-	_ = log.WriteApplied(AppliedState{AppliedSeq: 0, Status: flowstore.PhaseNeedsAttention, Result: ResultApplied})
+	_ = log.WriteApplied(AppliedState{AppliedSeq: 0, Status: string(flowstore.PhaseNeedsAttention), Result: ResultApplied})
 	spool(t, root, mustRequest(t, VerbPhaseComplete, created.FlowID, "autoreview", "launch-1", PhaseActionPayload{}))
 	c := newTestController(t, store, root)
 	if report := c.Sweep(); report.Reconciled != 1 {
@@ -333,7 +333,7 @@ func TestReplayNoOpFirstRequestAgainstNewerLaunchAppliesNothing(t *testing.T) {
 	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
 	// launch-1 spooled "running" (a no-op) then "completed"; the phase has since
 	// been relaunched under launch-2 and is coincidentally running.
-	spool(t, root, mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{Status: flowstore.PhaseRunning}))
+	spool(t, root, mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{Status: string(flowstore.PhaseRunning)}))
 	spool(t, root, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-1", PhaseActionPayload{}))
 	if _, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: created.FlowID, PhaseID: "plan"}); err != nil {
 		t.Fatal(err)
