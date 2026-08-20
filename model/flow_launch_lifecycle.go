@@ -907,7 +907,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		}
 		m = next.withFlowLaunchAttemptPhase(attempt.FlowID, attempt.Token, msg.PhaseID)
 		if msg.Kind == flowLaunchKindSavedSessionResume {
-			return m, m.savedSessionFlowLaunchPrepareCmd(msg)
+			return m, m.savedSessionFlowLaunchPrepareCmd(msg, settings)
 		}
 		return m, m.flowLaunchPrepareCmd(msg, settings)
 	case flowLaunchStagePrepared:

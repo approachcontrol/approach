@@ -7,6 +7,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // flowLaunchTarget is the payload half of a Flow launch: the role plus exactly
@@ -85,11 +86,40 @@ type autofixTarget struct {
 
 func (autofixTarget) role() actions.FlowLaunchRole { return actions.RoleAutofix }
 
+// savedSessionResumeTarget is the phase-untracked resume of a Flow's saved
+// session, started from the Sessions pane, the dock picker or an inline
+// worktree row. It carries the whole refreshed session record for the reason
+// worktreeAgentTarget carries its record: the mapping from session fields onto
+// context fields — WorkingDir being CWD-then-worktree, Command coming from the
+// provider — is the part that belongs inside the builder.
+type savedSessionResumeTarget struct {
+	// LaunchID is the admission token, never a fresh ID: the reservation and
+	// every LaunchID-keyed fence downstream are already on it.
+	LaunchID string
+	// Record is the reserved Flow record. Only its FlowID reaches the context —
+	// the resumed session's own branch, commit and plan are what the agent gets
+	// back, not the Flow's current ones.
+	Record flowstore.FlowRecord
+	// Session is the exact-key refreshed session record. It is the authority for
+	// command and provider identity here, unlike every other role, which takes
+	// them from the settings snapshot.
+	Session sessions.SessionRecord
+}
+
+func (savedSessionResumeTarget) role() actions.FlowLaunchRole {
+	return actions.RoleSavedSessionResume
+}
+
 // errIncompleteFlowLaunchTarget reports a payload that upstream admission
 // should already have guaranteed. The builder still checks: it is the one
 // place every Flow launch context is constructed, so it is the only place the
 // launch invariants can be enforced for all of them at once.
 var errIncompleteFlowLaunchTarget = errors.New("flow launch target is missing required fields")
+
+// errSavedSessionResumeNoWorkingDir reports a session with neither a cwd nor a
+// worktree to resume into. Its message is what the user sees, so it is the
+// prepare stage's wording verbatim rather than a builder-shaped restatement.
+var errSavedSessionResumeNoWorkingDir = errors.New("Session has no worktree path or cwd to resume from")
 
 // flowLaunchRouting is the routing input a role's builder decides against. It
 // is a snapshot rather than a receiver read: a lifecycle attempt takes both at
@@ -131,6 +161,8 @@ func newFlowLaunchContext(
 		return newRepairLaunchContext(payload, settings)
 	case autofixTarget:
 		return newAutofixLaunchContext(payload, settings, routing)
+	case savedSessionResumeTarget:
+		return newSavedSessionResumeLaunchContext(payload, settings)
 	default:
 		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
 	}
@@ -262,5 +294,54 @@ func newRepairLaunchContext(
 		SessionStateRoot: settings.SessionStateRoot, PlanID: record.PlanID, PlanPath: planPath,
 		FlowID: record.FlowID, FlowRepair: true, Embedded: true, Headless: record.Headless,
 		InitialPrompt: flowRepairPrompt(record, obstruction, settings.Pin.ExecutablePath),
+	}, settings.stamp()), flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}, nil
+}
+
+// newSavedSessionResumeLaunchContext ignores routing: tmuxRouteEligible refuses
+// FlowSavedSessionResume outright, so this kind's route is the constant
+// embedded slot rather than an unrouted gap. It is also the one role whose
+// command and provider identity come from the session record instead of the
+// settings snapshot — Model and ReasoningEffort must stay empty, because
+// agentCommandSpec refuses a resume that carries them.
+func newSavedSessionResumeLaunchContext(
+	target savedSessionResumeTarget,
+	settings flowLaunchAgentSettingsSnapshot,
+) (actions.AgentLaunchContext, flowLaunchRouteDecision, error) {
+	session := target.Session
+	if strings.TrimSpace(target.LaunchID) == "" ||
+		strings.TrimSpace(target.Record.FlowID) == "" ||
+		strings.TrimSpace(string(session.Provider)) == "" ||
+		strings.TrimSpace(session.SessionID) == "" {
+		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
+	}
+	workingDir := session.CWD
+	if strings.TrimSpace(workingDir) == "" {
+		workingDir = session.WorktreePath
+	}
+	if strings.TrimSpace(workingDir) == "" {
+		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errSavedSessionResumeNoWorkingDir
+	}
+	return applyLaunchStamp(actions.AgentLaunchContext{
+		// The provider is the command: a resume re-enters the agent that wrote
+		// the session, so the TUI's current preference has no say here.
+		Command: string(session.Provider), LaunchID: target.LaunchID,
+		RepoPath: session.RepoPath, WorktreePath: session.WorktreePath, WorkingDir: workingDir,
+		Branch: session.Branch,
+		// Commit is the session's, not a re-resolved one: agentCommandSpec skips
+		// ResolveWorktreeCommit exactly when FlowSavedSessionResume is set, and
+		// setting that marker here is what keeps that true.
+		Commit:           session.Commit,
+		SessionStateRoot: settings.SessionStateRoot,
+		// Assigned untrimmed: resumeSessionIDForContext returns this field
+		// verbatim for this role, so the trim above is a test for emptiness
+		// only, never a rewrite of the ID the provider stored.
+		ResumeSessionID: session.SessionID,
+		PlanID:          session.PlanID, PlanPath: session.PlanPath,
+		// The Flow ID is the reserved record's, while every other field is the
+		// session's: the reservation is what the lease and the release are keyed
+		// on. No Model or ReasoningEffort — agentCommandSpec errors with "model
+		// cannot be set for session resume" if the snapshot's ever leak in.
+		FlowID: target.Record.FlowID, FlowSavedSessionResume: true,
+		Embedded: true, Headless: false, InitialPrompt: "",
 	}, settings.stamp()), flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}, nil
 }
