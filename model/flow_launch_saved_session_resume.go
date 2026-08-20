@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -205,13 +204,18 @@ func validateSavedSessionResumeFlow(flowID string, record flowstore.FlowRecord, 
 	return nil
 }
 
-func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd {
+func (m Model) savedSessionFlowLaunchPrepareCmd(
+	msg flowLaunchEventMsg,
+	settings flowLaunchAgentSettingsSnapshot,
+) tea.Cmd {
 	reserve := m.reserveFlowLaunch
 	seams := m.launchSeams
-	stamp := m.launchStamp()
-	sessionStateRoot := m.sessionStateRoot
-	if root := strings.TrimSpace(m.flowLaunchAttempts[msg.FlowID].Settings.SessionStateRoot); root != "" {
-		sessionStateRoot = root
+	// The snapshot is frozen at admission and the Model field is live, but they
+	// are the same value: flowLaunchPreparation sources SessionStateRoot, Pin and
+	// Control from these Model fields. The fallback keeps a snapshot that never
+	// carried a root — a synthesized attempt in a test — pointed at the Model's.
+	if strings.TrimSpace(settings.SessionStateRoot) == "" {
+		settings.SessionStateRoot = m.sessionStateRoot
 	}
 	return func() tea.Msg {
 		event := flowLaunchEventMsg{
@@ -223,7 +227,6 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			Session:    msg.Session,
 			SessionKey: msg.SessionKey,
 			RepoPath:   msg.Session.RepoPath,
-			Route:      flowLaunchRouteEmbedded,
 		}
 		if reserve == nil {
 			event.Err = "Flow launch reservation is unavailable"
@@ -232,7 +235,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 		// Ahead of the reservation, as on every other route: a resume bakes the
 		// pinned path into the resumed session's hook argv just as a fresh
 		// launch does, so an unusable pin is refused before anything is held.
-		if refusal := refuseUnverifiedLaunchPin(stamp.Pin); refusal != "" {
+		if refusal := refuseUnverifiedLaunchPin(settings.Pin); refusal != "" {
 			event.Err = refusal
 			return event
 		}
@@ -286,33 +289,23 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd 
 			event.Err = err.Error()
 			return event
 		}
-		workingDir := refreshed.CWD
-		if strings.TrimSpace(workingDir) == "" {
-			workingDir = refreshed.WorktreePath
-		}
-		if strings.TrimSpace(workingDir) == "" {
-			event.Err = "Session has no worktree path or cwd to resume from"
-			return event
-		}
 		event.Record = record
 		event.Session = refreshed
 		event.RepoPath = refreshed.RepoPath
-		event.Context = applyLaunchStamp(actions.AgentLaunchContext{
-			Command:                string(refreshed.Provider),
-			LaunchID:               msg.Token,
-			RepoPath:               refreshed.RepoPath,
-			WorktreePath:           refreshed.WorktreePath,
-			WorkingDir:             workingDir,
-			Branch:                 refreshed.Branch,
-			Commit:                 refreshed.Commit,
-			SessionStateRoot:       sessionStateRoot,
-			ResumeSessionID:        refreshed.SessionID,
-			PlanID:                 refreshed.PlanID,
-			PlanPath:               refreshed.PlanPath,
-			FlowID:                 record.FlowID,
-			FlowSavedSessionResume: true,
-			Embedded:               true,
-		}, stamp)
+		// The builder owns the working-dir ladder and the resume marker, and it
+		// is what refuses a session with neither cwd nor worktree — including
+		// the wording of that refusal.
+		ctx, decision, err := newFlowLaunchContext(savedSessionResumeTarget{
+			LaunchID: msg.Token,
+			Record:   record,
+			Session:  refreshed,
+		}, settings, flowLaunchRouting{})
+		if err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		event.Context = ctx
+		event.Route = decision.Route
 		return event
 	}
 }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // launchContextVariantRecord is the fixture every variant row derives its
@@ -48,6 +50,7 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 	record := launchContextVariantRecord()
 	repair, repairRecord := launchContextRepairTarget(t)
 	autofixRecord := launchContextAutofixRecord()
+	resumeRecord, resumeSession := launchContextSavedSessionResumeTarget()
 	headlessAutofixRecord := launchContextAutofixRecord()
 	headlessAutofixRecord.Headless = true
 	for _, variant := range []struct {
@@ -218,6 +221,37 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 				InitialPrompt:       launchContextAutofixPrompt(autofixRecord, ""),
 			},
 			decision: flowLaunchRouteDecision{Route: flowLaunchRouteTmux},
+		},
+		{
+			// The one role whose command comes from the session rather than the
+			// snapshot, and the one that must leave Model and ReasoningEffort
+			// empty: agentCommandSpec refuses a resume that carries them, so the
+			// snapshot's gpt-5/high must not reach the context. Every
+			// phase/tracked/repair/agent/autofix marker stays zero, and the Flow
+			// ID is the reserved record's while everything else is the session's.
+			name: "saved session resume",
+			target: savedSessionResumeTarget{
+				LaunchID: "launch-1",
+				Record:   resumeRecord,
+				Session:  resumeSession,
+			},
+			want: actions.AgentLaunchContext{
+				Command:                "codex-cli",
+				LaunchID:               "launch-1",
+				RepoPath:               resumeSession.RepoPath,
+				WorktreePath:           resumeSession.WorktreePath,
+				WorkingDir:             resumeSession.CWD,
+				Branch:                 resumeSession.Branch,
+				Commit:                 resumeSession.Commit,
+				SessionStateRoot:       "/state",
+				ResumeSessionID:        resumeSession.SessionID,
+				PlanID:                 resumeSession.PlanID,
+				PlanPath:               resumeSession.PlanPath,
+				FlowID:                 resumeRecord.FlowID,
+				FlowSavedSessionResume: true,
+				Embedded:               true,
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
 		},
 	} {
 		t.Run(variant.name, func(t *testing.T) {
@@ -646,5 +680,125 @@ func TestNewFlowLaunchContextFallsBackToTheReadStageRepoPath(t *testing.T) {
 	}
 	if ctx.RepoPath != "/dev/read-stage" {
 		t.Fatalf("repo path = %q, want the read stage's", ctx.RepoPath)
+	}
+}
+
+// launchContextSavedSessionResumeTarget is the saved-resume fixture: the
+// reserved Flow record plus the exact-key refreshed session. They differ in
+// every overlapping field on purpose — the variant row is what pins that the
+// session wins everywhere except the Flow ID.
+func launchContextSavedSessionResumeTarget() (flowstore.FlowRecord, sessions.SessionRecord) {
+	record := launchContextVariantRecord()
+	record.Branch = "flow/record-branch"
+	record.Commit = "recordcommit"
+	return record, sessions.SessionRecord{
+		Provider:     sessions.Provider("codex-cli"),
+		SessionID:    "session-1",
+		CWD:          "/dev/alpha-worktree/nested",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktree",
+		Branch:       "flow/session-branch",
+		Commit:       "sessioncommit",
+		PlanID:       "plan-session",
+		PlanPath:     "/state/session-plan.md",
+		FlowID:       record.FlowID,
+	}
+}
+
+// TestNewFlowLaunchContextRejectsIncompleteSavedSessionResumePayloads pins the
+// four fields the role cannot do without. Provider and session ID are the strict
+// ones: resumeSessionIDForContext refuses a blank ResumeSessionID, and an empty
+// Command would leave agentCommandSpec with no binary to resume.
+func TestNewFlowLaunchContextRejectsIncompleteSavedSessionResumePayloads(t *testing.T) {
+	for _, missing := range []struct {
+		name   string
+		mutate func(*savedSessionResumeTarget)
+	}{
+		{name: "launch id", mutate: func(target *savedSessionResumeTarget) { target.LaunchID = "  " }},
+		{name: "flow id", mutate: func(target *savedSessionResumeTarget) { target.Record.FlowID = "  " }},
+		{name: "provider", mutate: func(target *savedSessionResumeTarget) { target.Session.Provider = "  " }},
+		{name: "session id", mutate: func(target *savedSessionResumeTarget) { target.Session.SessionID = "  " }},
+	} {
+		t.Run("missing "+missing.name, func(t *testing.T) {
+			record, session := launchContextSavedSessionResumeTarget()
+			target := savedSessionResumeTarget{LaunchID: "launch-1", Record: record, Session: session}
+			missing.mutate(&target)
+
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), flowLaunchRouting{})
+			if !errors.Is(err, errIncompleteFlowLaunchTarget) {
+				t.Fatalf("err = %v, want errIncompleteFlowLaunchTarget (context %#v)", err, ctx)
+			}
+			if decision != (flowLaunchRouteDecision{}) {
+				t.Fatalf("failed build returned decision %#v", decision)
+			}
+		})
+	}
+}
+
+// TestNewFlowLaunchContextResolvesSavedSessionResumeWorkingDir pins the ladder
+// the prepare stage used to own: the session's cwd wins, the worktree is the
+// fallback, and neither is a refusal whose wording is what the user reads.
+func TestNewFlowLaunchContextResolvesSavedSessionResumeWorkingDir(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		cwd      string
+		worktree string
+		want     string
+		wantErr  error
+	}{
+		{name: "cwd wins", cwd: "/dev/session-cwd", worktree: "/dev/alpha-worktree", want: "/dev/session-cwd"},
+		{name: "blank cwd falls back to the worktree", cwd: "  ", worktree: "/dev/alpha-worktree", want: "/dev/alpha-worktree"},
+		{name: "neither is refused", cwd: "", worktree: "", wantErr: errSavedSessionResumeNoWorkingDir},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record, session := launchContextSavedSessionResumeTarget()
+			session.CWD = tt.cwd
+			session.WorktreePath = tt.worktree
+
+			ctx, decision, err := newFlowLaunchContext(savedSessionResumeTarget{
+				LaunchID: "launch-1", Record: record, Session: session,
+			}, launchContextVariantSettings(), flowLaunchRouting{})
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tt.wantErr)
+				}
+				// The message is the user-visible status the prepare stage used to
+				// set inline, so it is pinned as copy, not just as an identity.
+				if err.Error() != "Session has no worktree path or cwd to resume from" {
+					t.Fatalf("refusal message = %q", err.Error())
+				}
+				if decision != (flowLaunchRouteDecision{}) {
+					t.Fatalf("failed build returned decision %#v", decision)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("newFlowLaunchContext: %v", err)
+			}
+			if ctx.WorkingDir != tt.want {
+				t.Fatalf("working dir = %q, want %q", ctx.WorkingDir, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewFlowLaunchContextKeepsTheSavedSessionIDVerbatim is the counterpart to
+// the trim in the emptiness check. resumeSessionIDForContext returns
+// ctx.ResumeSessionID unmodified for this role — every other path trims — so a
+// builder that assigned the trimmed value would silently rewrite the ID the
+// provider stored and resume the wrong session, or none.
+func TestNewFlowLaunchContextKeepsTheSavedSessionIDVerbatim(t *testing.T) {
+	record, session := launchContextSavedSessionResumeTarget()
+	session.SessionID = "  session-1  "
+
+	ctx, _, err := newFlowLaunchContext(savedSessionResumeTarget{
+		LaunchID: "launch-1", Record: record, Session: session,
+	}, launchContextVariantSettings(), flowLaunchRouting{})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if ctx.ResumeSessionID != "  session-1  " {
+		t.Fatalf("resume session id = %q, want the untrimmed session ID", ctx.ResumeSessionID)
 	}
 }
