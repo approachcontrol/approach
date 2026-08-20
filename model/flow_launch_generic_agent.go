@@ -288,15 +288,16 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event.RepoPath = record.RepoPath
 		event.WorktreePath = record.WorktreePath
 		event.PlanPath = planPath
-		ctx, route, err := newFlowLaunchContext(worktreeAgentTarget{
+		ctx, decision, err := newFlowLaunchContext(worktreeAgentTarget{
 			LaunchID: msg.Token, Record: record, PlanPath: planPath,
-		}, settings)
+		}, settings, flowLaunchRouting{})
 		if err != nil {
 			event.Err = err.Error()
 			return event
 		}
 		event.Context = ctx
-		event.Route = route
+		event.Route = decision.Route
+		event.FallbackNote = decision.FallbackNote
 		return event
 	}
 }

@@ -333,7 +333,9 @@ For each field the role does *not* carry, "which consumer proves it is payload?"
 4. **D3 makes `newFlowLaunchContext` take the routing probe**, which means the
    builder does I/O-adjacent work (`actions.TmuxAvailable`). Confirm, or keep
    routing outside and accept a two-step `(build, route)` with a documented
-   ordering contract.
+   ordering contract. *Answered in the code by the autofix slice
+   (`approach-hyl.4`): the builder takes `flowLaunchRouting` and returns a
+   `flowLaunchRouteDecision`.*
 5. **D1's six roles vs. seven** — splitting `RoleTrackedPhase` into
    manual/auto/create would make the enum mirror `flowLaunchKind` exactly, at
    the cost of three roles no consumer distinguishes. Confirm the collapse.
@@ -358,7 +360,8 @@ them:
 - **The builder takes no routing probe yet (D3 deferred).** The worktree agent
   has no tmux call site and no route to decide, so the builder returns
   `flowLaunchRoute` without taking a probe. The routing input arrives with the
-  first tmux-capable kind. Open question 4 remains open.
+  first tmux-capable kind. Open question 4 remains open. *(Answered in the
+  autofix slice below.)*
 
 `TestEveryFlowLaunchRouteRefusesAnUnverifiedPin` now follows
 `newFlowLaunchContext` call sites as well as `applyLaunchStamp` ones, so a
@@ -406,12 +409,59 @@ central claim.
 - **D3 is still deferred.** `docs/flow-launch-variant-matrix.md:54` records that
   `repair × tmux` is unreachable, so repair has no route to decide and the
   builder still returns `flowLaunchRoute` without taking a routing probe. Open
-  question 4 remains open, now for the second slice running.
+  question 4 remains open, now for the second slice running. *(Answered in the
+  autofix slice below.)*
 
 The acceptance evidence is that `model/flow_launch_repair_internal_test.go`
 passes unedited, as `model/flow_launch_generic_agent_internal_test.go` did for
 the tracer, and that the module-interface variant test's whole-struct comparison
 now has a repair row pinning the empty `FlowPhaseID`, `FlowLaunchTracked` false,
 and the empty `WorkingDir`.
+
+The ADR's status stays `proposed`.
+
+## Implementation note — autofix (`approach-hyl.4`)
+
+The third slice migrated `RoleAutofix`, the first tmux-capable kind, so it is
+the slice that answers **open question 4: the builder takes the routing input.**
+D3 is implemented, not deferred.
+
+- **Routing in, decision out.** `newFlowLaunchContext` takes a third argument,
+  `flowLaunchRouting{Backend, TmuxAvailable}` — the values a lifecycle attempt
+  snapshots at admission so its route is decided against what it was admitted
+  with — and its second return is a `flowLaunchRouteDecision{Route,
+  FallbackNote}`. The note rides on the decision rather than being recomputed at
+  the call site because `fellBack` is a second output of the same rule
+  (`tmuxLaunchRouteFor`); returning only the route would put two readers on one
+  decision. A fourth bare return value was rejected on Go style grounds.
+  `RoleWorktreeAgent` and `RoleRepair` ignore `routing` and keep returning
+  `{flowLaunchRouteEmbedded, ""}`: their route is a constant, not an unrouted
+  gap, and `tmuxRouteEligible` already refuses `FlowRepair` on its own.
+- **The ordering hazard is now structural.** The matrix's `any kind × tmux ×
+  headless` pruning rule holds only because headless is resolved *before* the
+  route is decided. Inside the builder that ordering is not a call-site
+  convention: the context's `Headless` comes off the payload's record and the
+  route is decided from the finished context, so the two cannot be reordered
+  from outside. The prepare stage still sets `event.Headless` for the
+  lifecycle's own consumers.
+- **`Embedded` is written in exactly one place for this role.** The tmux route's
+  cleared `Embedded` — what sends the prompt to argv instead of the dock — is
+  set inside the arm that decides the route, replacing a post-construction
+  `event.Context.Embedded = false` at the call site.
+- **The PR number comes off the record.** The sketch in this ADR had
+  `AutofixTarget{PRNumber int}`. The payload carries the whole record instead,
+  because the prompt needs the record anyway and two sources for one number is
+  exactly the drift this epic removes. Builder validation refuses `PR.Number <=
+  0` along with a blank launch ID, flow ID, or worktree path: nothing on this
+  path may emit `autofix pr #0`, and the worktree is the point of the shortcut.
+- **Stamp-last again.** As in the repair slice, the prompt renders from
+  `settings.Pin.ExecutablePath` rather than `ctx.Executable`, which has no value
+  yet when the prompt is composed. The embedded variant row pins the rendered
+  string.
+
+The acceptance evidence is that `model/flow_launch_autofix_internal_test.go`
+passes unedited — including the tmux row asserting a cleared `Embedded` — and
+that the module-interface variant test gained autofix rows for the embedded,
+headless, and tmux variants, each comparing the whole struct and the decision.
 
 The ADR's status stays `proposed`.

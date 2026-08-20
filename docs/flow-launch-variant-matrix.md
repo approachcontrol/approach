@@ -82,6 +82,13 @@ The reachable variants:
 | V16 | worktreeAgent | embedded | false | false |
 | V17 | savedSessionResume | embedded | false | false |
 
+V11–V12 (repair), V13–V15 (autofix) and V16 (worktreeAgent) are built by
+`newFlowLaunchContext` (`model/flow_launch_context.go`) rather than by a literal
+at their prepare stage. V13–V15 are also the first variants whose *route* the
+builder decides: it takes the snapshotted backend and tmux probe and returns the
+route with the fallback note, so V15's cleared `Embedded` is set where the rule
+lives rather than after construction.
+
 ## 3. Field values, with the pipeline point that sets them
 
 `C` = construction, `L` = lifecycle install (`installFlowLaunchEmbedded`),

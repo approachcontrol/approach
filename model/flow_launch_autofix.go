@@ -5,7 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
@@ -297,10 +296,10 @@ func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessio
 // reservation would launch in the previous mode, and on the wrong route with it,
 // since a headless launch is never tmux-eligible.
 //
-// The prompt is rendered here from the reserved record and the snapshotted
-// `[flow_prompts].autofix` template, so prepare still cannot compose a prompt
-// no stage authorized. Headless and tmux send that text on argv; interactive
-// embedded launches prefill the dock with it.
+// The prompt is rendered by the builder from the reserved record and the
+// snapshotted `[flow_prompts].autofix` template, so prepare still cannot compose
+// a prompt no stage authorized. Headless and tmux send that text on argv;
+// interactive embedded launches prefill the dock with it.
 func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveTrackedFlowLaunch
 	// Snapshotted at admission, as flowLaunchPreparation snapshots them, so the route
@@ -363,44 +362,23 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			// through: this agent needs no plan body.
 			event.PlanPath = record.PlanPath
 		}
-		ctx := applyLaunchStamp(actions.AgentLaunchContext{
-			Command: settings.Command,
-			// The admission token, never a fresh ID: every LaunchID-keyed fence and
-			// the tmux window registry key on it.
-			LaunchID:     msg.Token,
-			RepoPath:     repoPath,
-			WorktreePath: record.WorktreePath,
-			// WorkingDir is what actions turns into the agent's cwd, and it is the
-			// worktree by construction: the gate refuses a worktree-less Flow.
-			WorkingDir:       record.WorktreePath,
-			Branch:           record.Branch,
-			Commit:           record.Commit,
-			Model:            settings.Model,
-			ReasoningEffort:  settings.ReasoningEffort,
-			SessionStateRoot: settings.SessionStateRoot,
-			PlanID:           record.PlanID,
+		// The read stage's repo path is submitted as a fallback rather than
+		// applied here: the builder owns the precedence between it and the record,
+		// and it is the builder that sets autofix's markers and decides the route
+		// from the headless preference resolved just above.
+		ctx, decision, err := newFlowLaunchContext(autofixTarget{
+			LaunchID:         msg.Token,
+			Record:           record,
 			PlanPath:         event.PlanPath,
-			FlowID:           record.FlowID,
-			// No FlowPhaseID, no FlowLaunchTracked, no FlowRepair: this is the
-			// phase-untracked autofix agent. FlowAutofix is the explicit signal the
-			// prefill boundary reads rather than inferring it from those absences.
-			FlowAutofix:         true,
-			FlowAutofixPRNumber: record.PR.Number,
-			Embedded:            true,
-			Headless:            headless,
-			InitialPrompt:       autofixPrompt(record, settings.PromptTemplates, settings.Pin.ExecutablePath),
-		}, settings.stamp())
-		event.Context = ctx
-		event.Route = flowLaunchRouteEmbedded
-		tmuxRoute, tmuxFellBack := tmuxLaunchRouteFor(backend, tmuxAvailable, ctx)
-		if tmuxRoute {
-			// A tmux window has no dock to prefill and renders its own output,
-			// so clearing Embedded is what sends the prompt to argv instead.
-			event.Context.Embedded = false
-			event.Route = flowLaunchRouteTmux
-		} else if tmuxFellBack {
-			event.FallbackNote = tmuxFallbackNote
+			FallbackRepoPath: repoPath,
+		}, settings, flowLaunchRouting{Backend: backend, TmuxAvailable: tmuxAvailable})
+		if err != nil {
+			event.Err = err.Error()
+			return event
 		}
+		event.Context = ctx
+		event.Route = decision.Route
+		event.FallbackNote = decision.FallbackNote
 		return event
 	}
 }

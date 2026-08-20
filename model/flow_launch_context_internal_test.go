@@ -7,6 +7,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
 )
@@ -46,11 +47,15 @@ func launchContextVariantSettings() flowLaunchAgentSettingsSnapshot {
 func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 	record := launchContextVariantRecord()
 	repair, repairRecord := launchContextRepairTarget(t)
+	autofixRecord := launchContextAutofixRecord()
+	headlessAutofixRecord := launchContextAutofixRecord()
+	headlessAutofixRecord.Headless = true
 	for _, variant := range []struct {
-		name   string
-		target flowLaunchTarget
-		want   actions.AgentLaunchContext
-		route  flowLaunchRoute
+		name     string
+		target   flowLaunchTarget
+		routing  flowLaunchRouting
+		want     actions.AgentLaunchContext
+		decision flowLaunchRouteDecision
 	}{
 		{
 			name: "worktree agent",
@@ -76,7 +81,7 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 				Model:            "gpt-5",
 				ReasoningEffort:  "high",
 			},
-			route: flowLaunchRouteEmbedded,
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
 		},
 		{
 			// Repair sets no FlowPhaseID and leaves FlowLaunchTracked false. That
@@ -107,19 +112,125 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 				ReasoningEffort:  "medium",
 				InitialPrompt:    launchContextRepairPrompt(repairRecord, ""),
 			},
-			route: flowLaunchRouteEmbedded,
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// Autofix is phase-untracked like repair, but it chdirs into the
+			// worktree the gate guaranteed and it carries the two markers the
+			// prefill boundary reads. Every phase/tracked/repair/agent marker
+			// stays zero.
+			name: "autofix embedded",
+			target: autofixTarget{
+				LaunchID:         "launch-1",
+				Record:           autofixRecord,
+				PlanPath:         autofixRecord.PlanPath,
+				FallbackRepoPath: "/dev/read-stage",
+			},
+			want: actions.AgentLaunchContext{
+				Command:             "codex",
+				LaunchID:            "launch-1",
+				RepoPath:            autofixRecord.RepoPath,
+				WorktreePath:        autofixRecord.WorktreePath,
+				WorkingDir:          autofixRecord.WorktreePath,
+				Branch:              autofixRecord.Branch,
+				Commit:              autofixRecord.Commit,
+				SessionStateRoot:    "/state",
+				PlanID:              autofixRecord.PlanID,
+				PlanPath:            autofixRecord.PlanPath,
+				FlowID:              autofixRecord.FlowID,
+				FlowAutofix:         true,
+				FlowAutofixPRNumber: autofixRecord.PR.Number,
+				Embedded:            true,
+				Model:               "gpt-5",
+				ReasoningEffort:     "high",
+				InitialPrompt:       launchContextAutofixPrompt(autofixRecord, ""),
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// A headless launch is never tmux-eligible, so it stays embedded even
+			// with the tmux backend and tmux on PATH — and declining a route the
+			// design excludes is not a fallback, so no note is owed.
+			name: "autofix headless",
+			target: autofixTarget{
+				LaunchID:         "launch-1",
+				Record:           headlessAutofixRecord,
+				PlanPath:         headlessAutofixRecord.PlanPath,
+				FallbackRepoPath: "/dev/read-stage",
+			},
+			routing: flowLaunchRouting{
+				Backend:       config.LaunchBackendTmux,
+				TmuxAvailable: func() bool { return true },
+			},
+			want: actions.AgentLaunchContext{
+				Command:             "codex",
+				LaunchID:            "launch-1",
+				RepoPath:            headlessAutofixRecord.RepoPath,
+				WorktreePath:        headlessAutofixRecord.WorktreePath,
+				WorkingDir:          headlessAutofixRecord.WorktreePath,
+				Branch:              headlessAutofixRecord.Branch,
+				Commit:              headlessAutofixRecord.Commit,
+				SessionStateRoot:    "/state",
+				PlanID:              headlessAutofixRecord.PlanID,
+				PlanPath:            headlessAutofixRecord.PlanPath,
+				FlowID:              headlessAutofixRecord.FlowID,
+				FlowAutofix:         true,
+				FlowAutofixPRNumber: headlessAutofixRecord.PR.Number,
+				Embedded:            true,
+				Headless:            true,
+				Model:               "gpt-5",
+				ReasoningEffort:     "high",
+				InitialPrompt:       launchContextAutofixPrompt(headlessAutofixRecord, ""),
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// The tmux route's context is the embedded one with Embedded cleared:
+			// a tmux window has no dock to prefill, so clearing it is what sends
+			// the prompt to argv.
+			name: "autofix tmux",
+			target: autofixTarget{
+				LaunchID:         "launch-1",
+				Record:           autofixRecord,
+				PlanPath:         autofixRecord.PlanPath,
+				FallbackRepoPath: "/dev/read-stage",
+			},
+			routing: flowLaunchRouting{
+				Backend:       config.LaunchBackendTmux,
+				TmuxAvailable: func() bool { return true },
+			},
+			want: actions.AgentLaunchContext{
+				Command:             "codex",
+				LaunchID:            "launch-1",
+				RepoPath:            autofixRecord.RepoPath,
+				WorktreePath:        autofixRecord.WorktreePath,
+				WorkingDir:          autofixRecord.WorktreePath,
+				Branch:              autofixRecord.Branch,
+				Commit:              autofixRecord.Commit,
+				SessionStateRoot:    "/state",
+				PlanID:              autofixRecord.PlanID,
+				PlanPath:            autofixRecord.PlanPath,
+				FlowID:              autofixRecord.FlowID,
+				FlowAutofix:         true,
+				FlowAutofixPRNumber: autofixRecord.PR.Number,
+				Model:               "gpt-5",
+				ReasoningEffort:     "high",
+				InitialPrompt:       launchContextAutofixPrompt(autofixRecord, ""),
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteTmux},
 		},
 	} {
 		t.Run(variant.name, func(t *testing.T) {
-			ctx, route, err := newFlowLaunchContext(variant.target, launchContextVariantSettings())
+			ctx, decision, err := newFlowLaunchContext(
+				variant.target, launchContextVariantSettings(), variant.routing)
 			if err != nil {
 				t.Fatalf("newFlowLaunchContext: %v", err)
 			}
 			if ctx != variant.want {
 				t.Fatalf("context = %#v, want %#v", ctx, variant.want)
 			}
-			if route != variant.route {
-				t.Fatalf("route = %v, want %v", route, variant.route)
+			if decision != variant.decision {
+				t.Fatalf("decision = %#v, want %#v", decision, variant.decision)
 			}
 		})
 	}
@@ -138,7 +249,7 @@ func TestNewFlowLaunchContextStampsThePinnedBuild(t *testing.T) {
 	ctx, _, err := newFlowLaunchContext(worktreeAgentTarget{
 		LaunchID: "launch-1",
 		Record:   launchContextVariantRecord(),
-	}, settings)
+	}, settings, flowLaunchRouting{})
 	if err != nil {
 		t.Fatalf("newFlowLaunchContext: %v", err)
 	}
@@ -177,12 +288,13 @@ func TestNewFlowLaunchContextRejectsIncompletePayloads(t *testing.T) {
 		},
 	} {
 		t.Run("missing "+missing.name, func(t *testing.T) {
-			ctx, route, err := newFlowLaunchContext(missing.target, launchContextVariantSettings())
+			ctx, decision, err := newFlowLaunchContext(
+				missing.target, launchContextVariantSettings(), flowLaunchRouting{})
 			if err == nil {
 				t.Fatalf("incomplete payload built a context: %#v", ctx)
 			}
-			if route != 0 {
-				t.Fatalf("failed build returned route %v", route)
+			if decision != (flowLaunchRouteDecision{}) {
+				t.Fatalf("failed build returned decision %#v", decision)
 			}
 		})
 	}
@@ -261,7 +373,7 @@ func TestNewFlowLaunchContextBuildsRepairFromTheRecordsPlanRule(t *testing.T) {
 			target.PlanID = "plan-1"
 			target.PlanPath = "/state/read-plan.md"
 
-			ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings())
+			ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings(), flowLaunchRouting{})
 			if err != nil {
 				t.Fatalf("newFlowLaunchContext: %v", err)
 			}
@@ -327,7 +439,7 @@ func TestNewFlowLaunchContextResolvesRepairPathsThroughTheFallbackLadder(t *test
 			target.FallbackWorktreePath = tt.fallbackWorktree
 			target.FallbackRepoPath = tt.fallbackRepo
 
-			ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings())
+			ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings(), flowLaunchRouting{})
 			if err != nil {
 				t.Fatalf("newFlowLaunchContext: %v", err)
 			}
@@ -355,7 +467,7 @@ func TestNewFlowLaunchContextRendersTheRepairPromptWithThePinnedBinary(t *testin
 		Digest:         "abc123def456",
 	}
 
-	ctx, _, err := newFlowLaunchContext(target, settings)
+	ctx, _, err := newFlowLaunchContext(target, settings, flowLaunchRouting{})
 	if err != nil {
 		t.Fatalf("newFlowLaunchContext: %v", err)
 	}
@@ -394,22 +506,145 @@ func TestNewFlowLaunchContextRejectsIncompleteRepairPayloads(t *testing.T) {
 			target, _ := launchContextRepairTarget(t)
 			tt.mutate(&target)
 
-			ctx, route, err := newFlowLaunchContext(target, launchContextVariantSettings())
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), flowLaunchRouting{})
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("incomplete payload built a context: %#v", ctx)
 				}
-				if route != 0 {
-					t.Fatalf("failed build returned route %v", route)
+				if decision != (flowLaunchRouteDecision{}) {
+					t.Fatalf("failed build returned decision %#v", decision)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("newFlowLaunchContext: %v", err)
 			}
-			if route != flowLaunchRouteEmbedded {
-				t.Fatalf("route = %v, want embedded", route)
+			if decision != (flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}) {
+				t.Fatalf("decision = %#v, want embedded with no note", decision)
 			}
 		})
+	}
+}
+
+// launchContextAutofixRecord is the autofix fixture: the variant record plus the
+// PR target the gate guarantees. Nothing on this path may emit `autofix pr #0`,
+// so the number is what the prompt row and the validation row both turn on.
+func launchContextAutofixRecord() flowstore.FlowRecord {
+	record := launchContextVariantRecord()
+	record.PR = flowstore.PullRequest{Number: 116}
+	return record
+}
+
+// launchContextAutofixPrompt computes the expectation rather than pasting it,
+// for the same reason the repair helper does: the rows pin that the builder
+// renders autofix's prompt from this record with this binary, not the wording.
+func launchContextAutofixPrompt(record flowstore.FlowRecord, binary string) string {
+	return autofixPrompt(record, FlowPromptTemplates{}, binary)
+}
+
+// TestNewFlowLaunchContextFallsBackWhenTmuxIsMissing pins the one case that owes
+// the user a note: the tmux route was eligible and tmux was not on PATH. The
+// launch still lands in the embedded slot, so Embedded stays set.
+func TestNewFlowLaunchContextFallsBackWhenTmuxIsMissing(t *testing.T) {
+	record := launchContextAutofixRecord()
+	ctx, decision, err := newFlowLaunchContext(autofixTarget{
+		LaunchID: "launch-1",
+		Record:   record,
+		PlanPath: record.PlanPath,
+	}, launchContextVariantSettings(), flowLaunchRouting{
+		Backend:       config.LaunchBackendTmux,
+		TmuxAvailable: func() bool { return false },
+	})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if decision != (flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded, FallbackNote: tmuxFallbackNote}) {
+		t.Fatalf("decision = %#v, want the embedded route with the tmux fallback note", decision)
+	}
+	if !ctx.Embedded {
+		t.Fatal("a tmux fallback lands in the embedded slot, so Embedded must stay set")
+	}
+}
+
+// TestNewFlowLaunchContextRendersTheAutofixPromptWithThePinnedBinary is the same
+// ordering guard the repair prompt has: the builder stamps last, so the prompt
+// has to render from the pin rather than from the not-yet-stamped ctx.Executable.
+func TestNewFlowLaunchContextRendersTheAutofixPromptWithThePinnedBinary(t *testing.T) {
+	stubRetainLaunchPin(t)
+	record := launchContextAutofixRecord()
+	settings := launchContextVariantSettings()
+	settings.PromptTemplates = FlowPromptTemplates{Autofix: "run {approach_bin} autofix pr #{pr_number}"}
+	settings.Pin = controlplane.Pin{
+		ExecutablePath: "/state/bin/approach-abc123",
+		Version:        "v0.10.3",
+		SchemaVersion:  6,
+		Digest:         "abc123def456",
+	}
+
+	ctx, _, err := newFlowLaunchContext(autofixTarget{
+		LaunchID: "launch-1",
+		Record:   record,
+		PlanPath: record.PlanPath,
+	}, settings, flowLaunchRouting{})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if !strings.Contains(ctx.InitialPrompt, settings.Pin.ExecutablePath) {
+		t.Fatalf("autofix prompt does not name the pinned binary:\n%s", ctx.InitialPrompt)
+	}
+	if ctx.Executable != settings.Pin.ExecutablePath {
+		t.Fatalf("autofix context was not stamped: %#v", ctx)
+	}
+}
+
+// TestNewFlowLaunchContextRejectsIncompleteAutofixPayloads pins autofix's
+// validation as the strictest of the three: the worktree is the point of the
+// shortcut, and a zero PR number would emit `autofix pr #0` — the one string
+// this path may never produce.
+func TestNewFlowLaunchContextRejectsIncompleteAutofixPayloads(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(*autofixTarget)
+	}{
+		{name: "missing launch id", mutate: func(target *autofixTarget) { target.LaunchID = "  " }},
+		{name: "missing flow id", mutate: func(target *autofixTarget) { target.Record.FlowID = "  " }},
+		{name: "missing worktree path", mutate: func(target *autofixTarget) { target.Record.WorktreePath = " " }},
+		{name: "missing pr number", mutate: func(target *autofixTarget) { target.Record.PR.Number = 0 }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := launchContextAutofixRecord()
+			target := autofixTarget{LaunchID: "launch-1", Record: record, PlanPath: record.PlanPath}
+			tt.mutate(&target)
+
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), flowLaunchRouting{})
+			if err == nil {
+				t.Fatalf("incomplete payload built a context: %#v", ctx)
+			}
+			if decision != (flowLaunchRouteDecision{}) {
+				t.Fatalf("failed build returned decision %#v", decision)
+			}
+		})
+	}
+}
+
+// TestNewFlowLaunchContextFallsBackToTheReadStageRepoPath pins autofix's one
+// path precedence: the record's repo path wins, and the read stage's resolution
+// is used only when the record has none.
+func TestNewFlowLaunchContextFallsBackToTheReadStageRepoPath(t *testing.T) {
+	record := launchContextAutofixRecord()
+	record.RepoPath = ""
+	ctx, _, err := newFlowLaunchContext(autofixTarget{
+		LaunchID:         "launch-1",
+		Record:           record,
+		PlanPath:         record.PlanPath,
+		FallbackRepoPath: "/dev/read-stage",
+	}, launchContextVariantSettings(), flowLaunchRouting{})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if ctx.RepoPath != "/dev/read-stage" {
+		t.Fatalf("repo path = %q, want the read stage's", ctx.RepoPath)
 	}
 }
