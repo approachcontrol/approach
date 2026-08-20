@@ -661,7 +661,7 @@ func (m Model) createPullRequestWorktree(input string, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		worktreePath, err := actions.CreatePullRequestWorktree(repoPath, input)
 		if err != nil {
-			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), Kind: WorktreeCreatePullRequest, Request: request}
+			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), Kind: actions.WorktreeCreatePullRequest, Request: request}
 		}
 		ref, err := actions.NormalizePullRequestWorktreeRef(input)
 		if err != nil {

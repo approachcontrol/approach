@@ -399,54 +399,63 @@ func SaveAgentCommand(command string, options ...Option) error {
 // effort to approach's default config file, creating the config directory when
 // needed. An empty effort is saved as "default".
 func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
-	command = agent.Normalize(command)
-	if command != agent.CommandCodex && command != agent.CommandClaude {
-		if err := agent.Validate(command); err != nil {
-			return err
-		}
-		return fmt.Errorf("reasoning effort is configurable only for codex or claude")
-	}
-	effort = agent.NormalizeReasoningEffort(effort)
-	if effort == "" {
-		effort = agent.ReasoningEffortDefault
-	}
-	if err := agent.ValidateReasoningEffort(command, effort); err != nil {
-		return err
-	}
-
-	opts := defaultOptions(options...)
-	path, err := writableDefaultPath(opts)
-	if err != nil {
-		return err
-	}
-	return saveAgentReasoningEffortTo(path, command, effort, options...)
+	return saveAgentField(command, effort, options, prepareAgentReasoningEffort, saveAgentReasoningEffortTo)
 }
 
 // SaveAgentModel persists the selected provider-specific model to approach's
 // default config file, creating the config directory when needed. An empty
 // model is saved as "default".
 func SaveAgentModel(command, model string, options ...Option) error {
+	return saveAgentField(command, model, options, prepareAgentModel, saveAgentModelTo)
+}
+
+func saveAgentField(command, value string, options []Option, prepare func(string, string) (string, string, error), persist func(string, string, string, ...Option) error) error {
+	command, value, err := prepare(command, value)
+	if err != nil {
+		return err
+	}
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return persist(path, command, value, options...)
+}
+
+func prepareAgentReasoningEffort(command, effort string) (string, string, error) {
+	command = agent.Normalize(command)
+	if command != agent.CommandCodex && command != agent.CommandClaude {
+		if err := agent.Validate(command); err != nil {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("reasoning effort is configurable only for codex or claude")
+	}
+	effort = agent.NormalizeReasoningEffort(effort)
+	if effort == "" {
+		effort = agent.ReasoningEffortDefault
+	}
+	if err := agent.ValidateReasoningEffort(command, effort); err != nil {
+		return "", "", err
+	}
+	return command, effort, nil
+}
+
+func prepareAgentModel(command, model string) (string, string, error) {
 	command = agent.Normalize(command)
 	if !agent.Supported(command) {
 		if err := agent.Validate(command); err != nil {
-			return err
+			return "", "", err
 		}
-		return fmt.Errorf("model is configurable only for supported agents")
+		return "", "", fmt.Errorf("model is configurable only for supported agents")
 	}
 	model = agent.NormalizeModel(model)
 	if model == "" {
 		model = agent.ModelDefault
 	}
 	if err := agent.ValidateModel(command, model); err != nil {
-		return err
+		return "", "", err
 	}
-
-	opts := defaultOptions(options...)
-	path, err := writableDefaultPath(opts)
-	if err != nil {
-		return err
-	}
-	return saveAgentModelTo(path, command, model, options...)
+	return command, model, nil
 }
 
 // SavePromptTemplate persists a configurable prompt template to approach's default

@@ -2531,7 +2531,7 @@ func TestModel_PullRequestWorktreeInputEnterCreatesWorktree(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected WorktreeCreateFailedMsg from fake repo, got %T", msg)
 	}
-	if failed.Kind != model.WorktreeCreatePullRequest {
+	if failed.Kind != actions.WorktreeCreatePullRequest {
 		t.Fatalf("expected pull request create kind, got %d", failed.Kind)
 	}
 }
@@ -2581,7 +2581,7 @@ func TestModel_PullRequestWorktreeCreateFailedReopensPRInput(t *testing.T) {
 		RepoPath: "/dev/alpha",
 		Input:    "123",
 		Err:      "boom",
-		Kind:     model.WorktreeCreatePullRequest,
+		Kind:     actions.WorktreeCreatePullRequest,
 	})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
