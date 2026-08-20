@@ -92,6 +92,20 @@ const (
 
 type embeddedTerminalID int
 
+// embeddedTerminalState is the docked-terminal cluster on Model: slots, focus,
+// the starter seam, and the prefix/confirm command mode.
+type embeddedTerminalState struct {
+	startEmbeddedTerminal   EmbeddedTerminalStarter
+	embeddedTerminals       []embeddedTerminalSlot
+	nextEmbeddedTerminalID  int
+	activeTerminalNum       int
+	terminalDockVisible     bool
+	terminalFocus           terminalFocus
+	embeddedTerminalTickGen uint64
+	terminalPrefixActive    bool
+	terminalConfirmID       embeddedTerminalID
+}
+
 type embeddedTerminalRemovalReason int
 
 const (

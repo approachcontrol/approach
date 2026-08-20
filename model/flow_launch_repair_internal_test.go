@@ -1043,7 +1043,7 @@ func TestFlowRepairInstallBackstopRefusesAnyFlowTerminal(t *testing.T) {
 			slot.Terminal = flowPhaseLaunchTestTerminal{state: "running"}
 
 			attempt := flowLaunchAttempt{Token: "token-1", Kind: flowLaunchKindRepair, FlowID: record.FlowID}
-			m := Model{embeddedTerminals: []embeddedTerminalSlot{slot}}
+			m := Model{embeddedTerminalState: embeddedTerminalState{embeddedTerminals: []embeddedTerminalSlot{slot}}}
 
 			canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, record.FlowID)
 			if !blocked {
@@ -1058,12 +1058,12 @@ func TestFlowRepairInstallBackstopRefusesAnyFlowTerminal(t *testing.T) {
 	// The other kinds keep their narrower rung: a non-repair Flow terminal is
 	// their ordinary one-per-Flow case, refused at admission, not here.
 	record := repairLaunchFlowRecord(t)
-	m := Model{embeddedTerminals: []embeddedTerminalSlot{{
+	m := Model{embeddedTerminalState: embeddedTerminalState{embeddedTerminals: []embeddedTerminalSlot{{
 		Scope:       embeddedTerminalScopeFlow,
 		FlowID:      record.FlowID,
 		FlowPhaseID: "implementation",
 		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
-	}}}
+	}}}}
 	for _, kind := range []flowLaunchKind{flowLaunchKindManualPhase, flowLaunchKindAutoPhase, flowLaunchKindPhaseResume} {
 		if _, blocked := m.flowLaunchEmbeddedBackstop(kind, record.FlowID); blocked {
 			t.Fatalf("kind %v must not inherit repair's broad backstop", kind)

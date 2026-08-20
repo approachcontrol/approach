@@ -27,7 +27,7 @@ func TestEpicProgressionEnableIgnoresAlreadyInFlightTerminalSnapshot(t *testing.
 	terminal := cloneFlowRecord(pending)
 	terminal.Status = flowstore.StatusCompleted
 
-	m := Model{autoAdvanceRequestSeq: 1, autoAdvanceInFlight: 1}
+	m := Model{autoAdvanceState: autoAdvanceState{autoAdvanceRequestSeq: 1, autoAdvanceInFlight: 1}}
 	m, _ = m.handleEpicProgressionToggleResult(epicProgressionToggleResultMsg{
 		target:              beadExpansionTarget{repoPath: repo, epicID: epic},
 		flow:                pending,
@@ -54,9 +54,7 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 	linked := progressionAdvanceFlow("linked-a", repo, "epic.a", epic, flowstore.StatusCompleted)
 	beadQueries := 0
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		agentCommand:             "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -70,8 +68,9 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 		},
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{terminal, linked}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}, agentConfig: agentConfig{
+			agentCommand: "codex"}}
 
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
@@ -105,7 +104,6 @@ func TestEpicProgressionAdvanceSkipsAnEpicWhoseChildIsAlreadyInFlight(t *testing
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
 			key: {SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: "flow-b"},
@@ -113,8 +111,8 @@ func TestEpicProgressionAdvanceSkipsAnEpicWhoseChildIsAlreadyInFlight(t *testing
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			t.Fatal("advance ran for an epic with a child already in flight")
 			return flowstore.EpicProgression{}, false, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	for _, msg := range immediateFlowRefreshMessages(cmd) {
 		if _, ok := msg.(epicProgressionAdvanceResultMsg); ok {
@@ -139,15 +137,14 @@ func TestEpicProgressionAdvanceRotatesRetryingEpics(t *testing.T) {
 	secondTerminal.Status = flowstore.StatusCompleted
 
 	m := Model{
-		autoAdvanceInFlight: 1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{
 			firstKey:  firstSource,
 			secondKey: secondSource,
 		},
 		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{}, false, errors.New("store unavailable for " + key.EpicID)
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}}
 	terminalFlows := []flowstore.FlowRecord{firstTerminal, secondTerminal}
 
 	next, firstCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: terminalFlows, Request: 1})
@@ -175,7 +172,7 @@ func TestEpicProgressionRuntimeBaselineLifecycle(t *testing.T) {
 	terminal.Status = flowstore.StatusCompleted
 
 	t.Run("startup terminal snapshot does not catch up", func(t *testing.T) {
-		m := Model{autoAdvanceInFlight: 1}
+		m := Model{autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
 		next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 		for _, msg := range immediateFlowRefreshMessages(cmd) {
 			if _, ok := msg.(epicProgressionAdvanceResultMsg); ok {
@@ -188,7 +185,7 @@ func TestEpicProgressionRuntimeBaselineLifecycle(t *testing.T) {
 	})
 
 	t.Run("non terminal observation refreshes exact baseline", func(t *testing.T) {
-		m := Model{autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source}}
+		m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source}, autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
 		next, _ := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{nonSuccess}, Request: 1})
 		if next.epicProgressionBaselines[key].Title != "refreshed" {
 			t.Fatalf("baseline = %#v", next.epicProgressionBaselines[key])
@@ -204,7 +201,7 @@ func TestEpicProgressionRuntimeBaselineLifecycle(t *testing.T) {
 		{name: "missing tracked flow", msg: AutoAdvanceResultMsg{Flows: nil, Request: 1}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source}}
+			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source}, autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
 			next, _ := updateFlowRefreshTest(m, tt.msg)
 			if next.epicProgressionBaselines[key].FlowID != source.FlowID {
 				t.Fatalf("baseline changed: %#v", next.epicProgressionBaselines)
@@ -234,15 +231,14 @@ func TestEpicProgressionAdvanceChecksAuthoritativeStateBeforeSideEffects(t *test
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sideEffects := 0
-			m := Model{
-				autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					return tt.progression, tt.found, tt.err
 				},
 				listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { sideEffects++; return nil, nil },
 				listReadyBeads:    func(string) ([]beadsquery.Bead, error) { sideEffects++; return nil, nil },
-				listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { sideEffects++; return nil, nil },
-			}
+				listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { sideEffects++; return nil, nil }, autoAdvanceState: autoAdvanceState{
+					autoAdvanceInFlight: 1}}
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 			result := epicProgressionAdvanceMessage(t, cmd)
 			next, _ = updateFlowRefreshTest(next, result)
@@ -284,8 +280,7 @@ func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			reads := 0
-			m := Model{
-				autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					reads++
 					if reads == 1 {
@@ -305,8 +300,8 @@ func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 						t.Fatalf("exhaustion update = %#v, want enabled=false done=true", update)
 					}
 					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, tt.setErr
-				},
-			}
+				}, autoAdvanceState: autoAdvanceState{
+					autoAdvanceInFlight: 1}}
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 			result := epicProgressionAdvanceMessage(t, cmd)
 			next, _ = updateFlowRefreshTest(next, result)
@@ -324,9 +319,7 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
-	m := Model{
-		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		agentCommand: "codex",
+	m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -334,8 +327,9 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 		listReadyBeads:    func(string) ([]beadsquery.Bead, error) { return []beadsquery.Bead{{ID: "epic.b"}}, nil },
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{terminal}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}, agentConfig: agentConfig{
+			agentCommand: "codex"}}
 
 	next, firstCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	if !next.flowPreparationAdmission {
@@ -389,9 +383,7 @@ func TestEpicProgressionSelectionScopeDoesNotSuppressOtherRepositoryLink(t *test
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
-	m := Model{
-		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		agentCommand: "codex",
+	m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -404,8 +396,9 @@ func TestEpicProgressionSelectionScopeDoesNotSuppressOtherRepositoryLink(t *test
 		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
 			t.Fatal("noncanonical or foreign links exhausted the epic")
 			return flowstore.EpicProgression{}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}, agentConfig: agentConfig{
+			agentCommand: "codex"}}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
 	next, selectedCmd := updateFlowRefreshTest(next, result)
@@ -424,8 +417,7 @@ func TestEpicProgressionExhaustionReportsAllReadyChildrenAlreadyLinked(t *testin
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
 	linked := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	m := Model{
-		autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+	m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -434,8 +426,8 @@ func TestEpicProgressionExhaustionReportsAllReadyChildrenAlreadyLinked(t *testin
 		listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return []flowstore.FlowRecord{linked}, nil },
 		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
 	if result.disposition == epicProgressionAdvanceSelected {
@@ -544,8 +536,7 @@ func TestEpicProgressionSelectionMatchesBeadSlotGuard(t *testing.T) {
 			terminal := cloneFlowRecord(source)
 			terminal.Status = flowstore.StatusCompleted
 			existing := tt.existing()
-			m := Model{
-				autoAdvanceInFlight: 1, epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 				},
@@ -560,8 +551,8 @@ func TestEpicProgressionSelectionMatchesBeadSlotGuard(t *testing.T) {
 				},
 				setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
 					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, nil
-				},
-			}
+				}, autoAdvanceState: autoAdvanceState{
+					autoAdvanceInFlight: 1}}
 			_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
 			result := epicProgressionAdvanceMessage(t, cmd)
 			if tt.wantSelected {
@@ -672,9 +663,7 @@ func TestEpicProgressionAdvanceClosesMergedChildBeadBeforeReadyQuery(t *testing.
 	// whole point: a close that lands after the query selects nothing.
 	ready := []beadsquery.Bead{}
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		agentCommand:             "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -694,8 +683,9 @@ func TestEpicProgressionAdvanceClosesMergedChildBeadBeforeReadyQuery(t *testing.
 		},
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{merged}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}, agentConfig: agentConfig{
+			agentCommand: "codex"}}
 
 	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{merged}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
@@ -724,9 +714,7 @@ func TestEpicProgressionAdvanceDoesNotCloseUnmergedChildBead(t *testing.T) {
 
 	closes := 0
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		agentCommand:             "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -739,8 +727,9 @@ func TestEpicProgressionAdvanceDoesNotCloseUnmergedChildBead(t *testing.T) {
 		},
 		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{completed}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}, agentConfig: agentConfig{
+			agentCommand: "codex"}}
 
 	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{completed}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)
@@ -763,9 +752,7 @@ func TestEpicProgressionAdvanceCloseFailureIsRetryable(t *testing.T) {
 	queries := 0
 	setProgressionCalls := 0
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
-		agentCommand:             "codex",
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -781,8 +768,9 @@ func TestEpicProgressionAdvanceCloseFailureIsRetryable(t *testing.T) {
 		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
 			setProgressionCalls++
 			return flowstore.EpicProgression{}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}, agentConfig: agentConfig{
+			agentCommand: "codex"}}
 
 	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{merged}, Request: 1})
 	result := epicProgressionAdvanceMessage(t, cmd)

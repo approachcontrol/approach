@@ -325,14 +325,13 @@ func TestRender_PlansModeShowsNoPhasesOnlyWhenExpanded(t *testing.T) {
 
 func TestRender_PlanTextOverlayShowsBody(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:    0,
-		Width:       120,
-		Height:      10,
-		Mode:        ModePlans,
-		Overlay:     OverlayPlanText,
-		OverlayText: "# Persist plans\n\nfull body line\n",
-	})
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected: 0,
+		Width:    120,
+		Height:   10,
+		Mode:     ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayPlanText,
+			OverlayText: "# Persist plans\n\nfull body line\n"}})
 	for _, want := range []string{"# Persist plans", "full body line", "esc: close"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("plan text overlay missing %q:\n%s", want, view)

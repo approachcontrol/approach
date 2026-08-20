@@ -12,21 +12,20 @@ import (
 
 func editorParams(width, height int, value string, cursor int) RenderParams {
 	return RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       width,
-		Height:      height,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Edit Plan launch",
-		InputValue:  value,
-		InputCursor: cursor,
-		InputMode:   InputMultiLine,
-		Editor: EditorParams{
-			Enabled:  true,
-			Title:    "Plan launch",
-			Identity: "agent.plan_prompt  custom",
-		},
-	}
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  width,
+		Height: height,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Edit Plan launch",
+			InputValue:  value,
+			InputCursor: cursor,
+			InputMode:   InputMultiLine,
+			Editor: EditorParams{
+				Enabled:  true,
+				Title:    "Plan launch",
+				Identity: "agent.plan_prompt  custom",
+			}}}
 }
 
 // panelBounds reports the rendered editor panel's outer width and row count by
@@ -437,17 +436,16 @@ func TestRender_PromptTemplatePickerReservesANoteRow(t *testing.T) {
 		items[i] = SelectItem{Label: "Template", Value: "t"}
 	}
 	base := RenderParams{
-		Repos:           []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:           80,
-		Height:          24,
-		Mode:            ModePlans,
-		Overlay:         OverlaySelect,
-		SelectPrompt:    PromptTemplateSelectPrompt,
-		SelectItems:     items,
-		SelectWidth:     PromptPickerWidth,
-		SelectHeight:    len(items) + 3 + PromptPickerNoteRows,
-		SelectPlacement: SelectPlacementCenter,
-	}
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:         OverlaySelect,
+			SelectPrompt:    PromptTemplateSelectPrompt,
+			SelectItems:     items,
+			SelectWidth:     PromptPickerWidth,
+			SelectHeight:    len(items) + 3 + PromptPickerNoteRows,
+			SelectPlacement: SelectPlacementCenter}}
 
 	wantRows := len(items) + 3 + PromptPickerNoteRows
 	plainRows := overlaySelectPanelRows(t, Render(base), PromptPickerWidth)
@@ -502,14 +500,13 @@ func TestRenderSelectPanelDropsNoteBeforeStealingItemRows(t *testing.T) {
 func TestRender_SelectPanelWithoutANoteKeepsItsAutoGeometry(t *testing.T) {
 	items := []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}}
 	view := Render(RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:        80,
-		Height:       24,
-		Mode:         ModeWorktrees,
-		Overlay:      OverlaySelect,
-		SelectPrompt: "Choose agent",
-		SelectItems:  items,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:      OverlaySelect,
+			SelectPrompt: "Choose agent",
+			SelectItems:  items}})
 	if rows := overlaySelectPanelRows(t, view, autoSelectPanelWidth("Choose agent", items)); rows != 2+1+len(items) {
 		t.Fatalf("auto select panel rows = %d, want %d", rows, 2+1+len(items))
 	}
@@ -525,16 +522,15 @@ func TestRender_PromptEditorStatusBarReplacesTheGenericMultilineHints(t *testing
 	}
 
 	generic := ansi.Strip(Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       80,
-		Height:      24,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Launch instructions",
-		InputValue:  "body",
-		InputCursor: 4,
-		InputMode:   InputMultiLine,
-	}))
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Launch instructions",
+			InputValue:  "body",
+			InputCursor: 4,
+			InputMode:   InputMultiLine}}))
 	if !strings.Contains(generic, "alt+enter: newline") {
 		t.Fatalf("generic multiline input lost its hints:\n%s", generic)
 	}

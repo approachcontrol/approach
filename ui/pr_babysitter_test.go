@@ -87,24 +87,23 @@ func TestRenderPRBabysitterPaneExpandsPhasesAndTruncatesNarrowRows(t *testing.T)
 func TestRenderPRBabysitterTakeoverKeepsHeadersEmptyStatesWarningsAndTerminalDock(t *testing.T) {
 	flow := flowstore.FlowRecord{FlowID: "flow-1", Title: "Watch me", RepoPath: "/dev/approach"}
 	view := ansi.Strip(Render(RenderParams{
-		Width:                          150,
-		Height:                         30,
-		Mode:                           ModePRBabysitter,
-		TopMode:                        ModeWorktrees,
-		BottomMode:                     ModeFlows,
-		ContentPane:                    PaneBottom,
-		PRBabysitter:                   true,
-		Flows:                          []flowstore.FlowRecord{flow},
-		PRBabysitterRows:               []PRBabysitterRow{{Flow: flow, Repo: "approach", Title: "Watch me", Mergeability: "unknown", Checks: "pending"}},
-		PRBabysitterListError:          "temporary failure",
-		PRBabysitterDegradationWarning: "Skipped 1 unreadable Flow",
-		EmbeddedTerminals:              []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Active: true}},
-		EmbeddedTerminalVisible:        true,
-		EmbeddedTerminalLines:          []string{"terminal output"},
-		ActivePane:                     PaneBottom,
-		Selected:                       0,
-		FlowSelected:                   0,
-	}))
+		Width:       150,
+		Height:      30,
+		Mode:        ModePRBabysitter,
+		TopMode:     ModeWorktrees,
+		BottomMode:  ModeFlows,
+		ContentPane: PaneBottom,
+		ActivePane:  PaneBottom,
+		Selected:    0, FlowParams: FlowParams{
+			PRBabysitter:                   true,
+			Flows:                          []flowstore.FlowRecord{flow},
+			PRBabysitterRows:               []PRBabysitterRow{{Flow: flow, Repo: "approach", Title: "Watch me", Mergeability: "unknown", Checks: "pending"}},
+			PRBabysitterListError:          "temporary failure",
+			PRBabysitterDegradationWarning: "Skipped 1 unreadable Flow",
+			FlowSelected:                   0}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Active: true}},
+			EmbeddedTerminalVisible: true,
+			EmbeddedTerminalLines:   []string{"terminal output"}}}))
 	for _, want := range []string{"[^p] PR babysitter", "^a active flows", "showing cached data", "Skipped 1 unreadable Flow", "Watch me", "terminal output", "ctrl+p"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("takeover missing %q:\n%s", want, view)
@@ -112,9 +111,8 @@ func TestRenderPRBabysitterTakeoverKeepsHeadersEmptyStatesWarningsAndTerminalDoc
 	}
 
 	empty := ansi.Strip(Render(RenderParams{
-		Width: 100, Height: 20, Mode: ModePRBabysitter, TopMode: ModeWorktrees, BottomMode: ModeFlows,
-		PRBabysitter: true, RightEmptyMessage: "loading PR babysitter", Selected: 0,
-	}))
+		Width: 100, Height: 20, Mode: ModePRBabysitter, TopMode: ModeWorktrees, BottomMode: ModeFlows, RightEmptyMessage: "loading PR babysitter", Selected: 0, FlowParams: FlowParams{
+			PRBabysitter: true}}))
 	if !strings.Contains(empty, "loading PR babysitter") {
 		t.Fatalf("initial loading state missing:\n%s", empty)
 	}
