@@ -1,8 +1,11 @@
 # Flow launch variant matrix
 
 Evidence base for `approach-hyl` (typed Flow launch intent). Every cell cites
-`file:line` against commit `e1dd62e`. This document describes the code as it is
-today; the proposed redesign is ADR 0002.
+`file:line` against commit `e1dd62e`, the state of the code before the ADR 0002
+migration began; the proposed redesign is ADR 0002. Sections 1-3 are that
+frozen survey. What has moved since is recorded in "Migration status" at the end
+of section 2, which is the authority for where a kind is constructed and routed
+today.
 
 Scope: the eight launch kinds in `model/flow_launch_intent.go:14`, crossed with
 route (embedded/tmux), headless, and phase-terminal resume, and every consumer
@@ -82,12 +85,27 @@ The reachable variants:
 | V16 | worktreeAgent | embedded | false | false |
 | V17 | savedSessionResume | embedded | false | false |
 
-V11–V12 (repair), V13–V15 (autofix) and V16 (worktreeAgent) are built by
-`newFlowLaunchContext` (`model/flow_launch_context.go`) rather than by a literal
-at their prepare stage. V13–V15 are also the first variants whose *route* the
-builder decides: it takes the snapshotted backend and tmux probe and returns the
-route with the fallback note, so V15's cleared `Embedded` is set where the rule
-lives rather than after construction.
+### Migration status
+
+V7–V17 are built by `newFlowLaunchContext` (`model/flow_launch_context.go`)
+rather than by a literal at their prepare stage: V16 (worktreeAgent), V11–V12
+(repair), V13–V15 (autofix), V17 (savedSessionResume) and V7–V10
+(phaseResume), in that migration order. Only V1–V6 — manual, auto and create
+phase launches — still compose a literal at their call site, so the
+construction sites in section 1 and the `C:` line numbers in section 3 read as
+the pre-migration snapshot for every other row.
+
+Two of those roles decide their own *route*. V13–V15 were the first: the
+builder takes the snapshotted backend and tmux probe and returns the route with
+the fallback note, so V15's cleared `Embedded` is set where the rule lives
+rather than after construction. V7–V10 followed — the probe the call site used
+to run on the Model (formerly `model/flow_launch_resume.go:299`) is now the same
+decision taken against the finished context, and V9–V10's cleared `Embedded`
+moved with it. The remaining builder arms return a constant embedded route,
+which keeps the pruning rules at rows `repair × tmux`, `worktreeAgent × tmux`
+and `savedSessionResume × tmux` true by construction rather than by a missing
+call site. The `phaseResume × headless` and `savedSessionResume × headless`
+rules likewise now hold because neither builder arm assigns `Headless`.
 
 ## 3. Field values, with the pipeline point that sets them
 
@@ -141,7 +159,9 @@ Every kind additionally passes through `applyLaunchStamp`
 3. `Embedded` is forced false on the tmux route in four places:
    `model/flow_phase_launch.go:406`, `model/flow_launch_resume.go:388`,
    `model/flow_launch_autofix.go:399`, `model/tmux_mode.go:132`, and once more
-   inside actions at `actions/tmux_mode.go:313`.
+   inside actions at `actions/tmux_mode.go:313`. Two of those five have since
+   moved inside the builder with their roles: the autofix and phase-resume
+   clears now happen in the arm that decides the route.
 4. `Headless` is resolved twice for manual launches — from the record at
    `model/flow_launch_lifecycle.go:620` and again from the persisted reservation
    at `model/flow_phase_launch.go:398` — and for repair only at refresh time
