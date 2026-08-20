@@ -218,6 +218,59 @@ func TestSafeIDRejectsPathSegments(t *testing.T) {
 	}
 }
 
+func TestTimestampedIDCandidatesIncludesEveryAttemptThroughFinalSuffix(t *testing.T) {
+	now := time.Date(2026, 6, 8, 1, 44, 47, 0, time.UTC)
+	got := artifacts.TimestampedIDCandidates(artifacts.IDOptions{
+		Title:        "!!!",
+		FallbackSlug: "plan",
+		Now:          now,
+		MaxAttempts:  3,
+	})
+	want := []string{
+		"20260608T014447Z-plan",
+		"20260608T014447Z-plan-2",
+		"20260608T014447Z-plan-3",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("TimestampedIDCandidates() len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("TimestampedIDCandidates()[%d] = %q, want %q (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestAllocateTimestampedIDSucceedsWhenOnlyFinalCandidateIsFree(t *testing.T) {
+	root := t.TempDir()
+	if err := artifacts.EnsureCollection(root, "plans"); err != nil {
+		t.Fatalf("EnsureCollection() error = %v", err)
+	}
+	now := time.Date(2026, 6, 8, 1, 44, 47, 0, time.UTC)
+	opts := artifacts.IDOptions{
+		Root:         root,
+		Collection:   "plans",
+		Title:        "!!!",
+		FallbackSlug: "plan",
+		Kind:         "plan",
+		Now:          now,
+		MaxAttempts:  3,
+	}
+	for _, taken := range []string{"20260608T014447Z-plan", "20260608T014447Z-plan-2"} {
+		if _, err := artifacts.EnsureRecordDir(root, "plans", taken); err != nil {
+			t.Fatalf("create taken record dir %q: %v", taken, err)
+		}
+	}
+
+	id, err := artifacts.AllocateTimestampedID(opts)
+	if err != nil {
+		t.Fatalf("AllocateTimestampedID() error = %v, want final candidate", err)
+	}
+	if id != "20260608T014447Z-plan-3" {
+		t.Fatalf("AllocateTimestampedID() = %q, want final candidate", id)
+	}
+}
+
 func TestAllocateTimestampedIDSlugFallbackAndCollisionSuffix(t *testing.T) {
 	root := t.TempDir()
 	if err := artifacts.EnsureCollection(root, "plans"); err != nil {

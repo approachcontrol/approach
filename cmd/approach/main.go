@@ -684,16 +684,36 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 }
 
 func runtimeArtifactRoot(cfg config.Config) string {
-	if envRoot := os.Getenv("APPROACH_FLOW_STATE_ROOT"); envRoot != "" {
-		return envRoot
+	root, err := resolveArtifactRoot("", os.Getenv, func() (config.Config, error) {
+		return cfg, nil
+	})
+	if err != nil {
+		return cfg.Sessions.Root
 	}
-	if envRoot := os.Getenv("APPROACH_PLAN_STATE_ROOT"); envRoot != "" {
-		return envRoot
+	return root
+}
+
+// resolveArtifactRoot applies the documented precedence:
+// explicit --state-root > APPROACH_FLOW_STATE_ROOT > APPROACH_PLAN_STATE_ROOT >
+// APPROACH_SESSION_STATE_ROOT > [sessions].root from config.
+func resolveArtifactRoot(explicit string, getenv func(string) string, loadConfig func() (config.Config, error)) (string, error) {
+	if explicit != "" {
+		return explicit, nil
 	}
-	if envRoot := os.Getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
-		return envRoot
+	if root := getenv("APPROACH_FLOW_STATE_ROOT"); root != "" {
+		return root, nil
 	}
-	return cfg.Sessions.Root
+	if root := getenv("APPROACH_PLAN_STATE_ROOT"); root != "" {
+		return root, nil
+	}
+	if root := getenv("APPROACH_SESSION_STATE_ROOT"); root != "" {
+		return root, nil
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", fmt.Errorf("error loading config: %w", err)
+	}
+	return cfg.Sessions.Root, nil
 }
 
 func bootstrapHookResolver(cfg config.Config) func(string) (actions.BootstrapHook, bool) {

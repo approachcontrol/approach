@@ -4,15 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/gitmeta"
 	"github.com/approachcontrol/approach/internal/launchcontrol"
 )
 
@@ -298,52 +296,25 @@ func resolveGitMetadata(record *SessionRecord) {
 	if record.CWD == "" {
 		return
 	}
-	worktreePath := ""
-	if out, err := gitOutput(record.CWD, "rev-parse", "--show-toplevel"); err == nil {
-		worktreePath = out
+	info, err := gitmeta.Resolve(record.CWD)
+	if err != nil {
+		return
 	}
-	gitCommonDir := ""
-	if out, err := gitOutput(record.CWD, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
-		gitCommonDir = out
-	}
-	gitDir := ""
-	if out, err := gitOutput(record.CWD, "rev-parse", "--path-format=absolute", "--git-dir"); err == nil {
-		gitDir = out
-	}
-	isBare := false
-	if out, err := gitOutput(record.CWD, "rev-parse", "--is-bare-repository"); err == nil {
-		isBare = out == "true"
-	}
-	commonDirIsBare := false
-	if gitCommonDir != "" {
-		if out, err := gitOutput(gitCommonDir, "rev-parse", "--is-bare-repository"); err == nil {
-			commonDirIsBare = out == "true"
-		}
-	}
-	repoPath := repoPathFromGitMetadata(worktreePath, gitDir, gitCommonDir, isBare, commonDirIsBare)
 	if record.RepoPath == "" {
-		if repoPath != "" {
-			record.RepoPath = repoPath
-		} else if worktreePath != "" {
-			record.RepoPath = worktreePath
-		}
+		record.RepoPath = info.RepoPath
 	}
 	if record.WorktreePath == "" {
-		if worktreePath != "" {
-			record.WorktreePath = worktreePath
+		if info.WorktreePath != "" {
+			record.WorktreePath = info.WorktreePath
 		} else {
 			record.WorktreePath = record.RepoPath
 		}
 	}
 	if record.Branch == "" {
-		if out, err := gitOutput(record.CWD, "branch", "--show-current"); err == nil {
-			record.Branch = out
-		}
+		record.Branch = info.Branch
 	}
 	if record.Commit == "" {
-		if out, err := gitOutput(record.CWD, "rev-parse", "HEAD"); err == nil {
-			record.Commit = out
-		}
+		record.Commit = info.Commit
 	}
 }
 
@@ -486,79 +457,4 @@ func flowStateRoot(opts IngestOptions) (string, bool) {
 		return opts.StateRoot, opts.StateRootExplicit
 	}
 	return opts.Env["APPROACH_SESSION_STATE_ROOT"], false
-}
-
-func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {
-	if isBare {
-		if commonDir != "" {
-			return filepath.Clean(commonDir)
-		}
-		if gitDir == "" {
-			return ""
-		}
-		return filepath.Clean(gitDir)
-	}
-	if commonDir != "" && gitDir != "" && isLinkedWorktreeGitDir(gitDir, commonDir) {
-		if commonDirIsBare {
-			return filepath.Clean(commonDir)
-		}
-		if filepath.Base(filepath.Clean(commonDir)) != ".git" {
-			return worktreePath
-		}
-		return repoPathFromGitCommonDir(commonDir)
-	}
-	if worktreePath != "" {
-		return worktreePath
-	}
-	if commonDir != "" {
-		return repoPathFromGitCommonDir(commonDir)
-	}
-	if gitDir == "" {
-		return ""
-	}
-	return repoPathFromGitCommonDir(gitDir)
-}
-
-func isLinkedWorktreeGitDir(gitDir, commonDir string) bool {
-	rel, err := filepath.Rel(filepath.Join(filepath.Clean(commonDir), "worktrees"), filepath.Clean(gitDir))
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func repoPathFromGitCommonDir(commonDir string) string {
-	commonDir = filepath.Clean(commonDir)
-	if filepath.Base(commonDir) == ".git" {
-		return filepath.Dir(commonDir)
-	}
-	return commonDir
-}
-
-func gitOutput(cwd string, args ...string) (string, error) {
-	cleaned, err := plausibleGitCWD(cwd)
-	if err != nil {
-		return "", err
-	}
-	cmd := exec.Command("git", append([]string{"-C", cleaned}, args...)...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func plausibleGitCWD(cwd string) (string, error) {
-	cwd = filepath.Clean(strings.TrimSpace(cwd))
-	if cwd == "." || !filepath.IsAbs(cwd) {
-		return "", fmt.Errorf("git cwd must be an absolute path")
-	}
-	info, err := os.Stat(cwd)
-	if err != nil {
-		return "", fmt.Errorf("inspect git cwd %q: %w", cwd, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("git cwd %q is not a directory", cwd)
-	}
-	return cwd, nil
 }

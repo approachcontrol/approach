@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/google/shlex"
 )
 
@@ -528,7 +529,7 @@ func CreateFlowWorktree(repoPath, title, baseRef string) (FlowWorktreeCreateResu
 		return FlowWorktreeCreateResult{}, fmt.Errorf("flow title cannot be empty")
 	}
 	baseRef = strings.TrimSpace(baseRef)
-	slug := slugPathPart(title)
+	slug := artifacts.Slug(title, "flow")
 	for i := 1; i < 1000; i++ {
 		suffix := ""
 		if i > 1 {
@@ -1299,6 +1300,10 @@ func agentSessionName(worktreePath, launchID string) string {
 }
 
 func sanitizeSessionSuffix(s string) string {
+	return sanitizeIdentifierPart(s, "")
+}
+
+func sanitizeIdentifierPart(s, fallback string) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range s {
@@ -1312,7 +1317,11 @@ func sanitizeSessionSuffix(s string) string {
 			lastDash = true
 		}
 	}
-	return strings.Trim(b.String(), ".-")
+	name := strings.Trim(b.String(), ".-")
+	if name == "" {
+		return fallback
+	}
+	return name
 }
 
 // AgentCommand builds the direct command for launching a supported coding agent
@@ -2367,25 +2376,7 @@ func WorktreeSessionName(path string) string {
 		hashPath = absPath
 	}
 
-	name := filepath.Base(cleanPath)
-	var b strings.Builder
-	lastDash := false
-	for _, r := range name {
-		allowed := unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.'
-		if allowed {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	name = strings.Trim(b.String(), ".-")
-	if name == "" {
-		name = "worktree"
-	}
+	name := sanitizeIdentifierPart(filepath.Base(cleanPath), "worktree")
 
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(hashPath))
@@ -2507,31 +2498,6 @@ func sanitizePathPart(s string) string {
 		return "worktree"
 	}
 	return s
-}
-
-func slugPathPart(s string) string {
-	var b strings.Builder
-	prevDash := false
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			prevDash = false
-		default:
-			if !prevDash && b.Len() > 0 {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > 48 {
-		out = strings.Trim(out[:48], "-")
-	}
-	if out == "" {
-		return "flow"
-	}
-	return out
 }
 
 const tmuxSwitchScript = `

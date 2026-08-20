@@ -609,6 +609,7 @@ func TestRepoTmuxWindowNameNeverEmpty(t *testing.T) {
 		// Nothing sanitizable in the launch ID, so the name carries no suffix.
 		{name: "unusable launch id", phaseKind: "review", launchID: "...", wantPrefix: "review", wantNoTrailer: true},
 		{name: "no launch id", phaseKind: "review", wantPrefix: "review", wantNoTrailer: true},
+		{name: "unicode phase kind", phaseKind: "café", launchID: "...", wantPrefix: "café", wantNoTrailer: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

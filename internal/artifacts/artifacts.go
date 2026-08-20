@@ -359,11 +359,13 @@ func TimestampedIDCandidates(opts IDOptions) []string {
 		opts.MaxAttempts = defaultCollisionTries
 	}
 	base := opts.Now.UTC().Format("20060102T150405Z") + "-" + Slug(opts.Title, opts.FallbackSlug)
-	candidates := make([]string, 0, opts.MaxAttempts-1)
-	candidate := base
-	for i := 2; i < opts.MaxAttempts; i++ {
-		candidates = append(candidates, candidate)
-		candidate = fmt.Sprintf("%s-%d", base, i)
+	candidates := make([]string, 0, opts.MaxAttempts)
+	for attempt := 1; attempt <= opts.MaxAttempts; attempt++ {
+		if attempt == 1 {
+			candidates = append(candidates, base)
+			continue
+		}
+		candidates = append(candidates, fmt.Sprintf("%s-%d", base, attempt))
 	}
 	return candidates
 }
