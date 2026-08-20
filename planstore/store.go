@@ -488,15 +488,35 @@ func (s *Store) write(record PlanRecord) error {
 	// non-empty Markdown; metadata-only updates such as SetPhase carry whatever
 	// readRecord loaded, so guarding here avoids clobbering an existing plan.md
 	// if its body could not be read back.
+	markdownPath := filepath.Join(dir, "plan.md")
+	var commitBody, rollbackBody func() error
 	if record.Markdown != "" {
-		if err := artifacts.WriteFileAtomic(filepath.Join(dir, "plan.md"), []byte(record.Markdown)); err != nil {
+		var err error
+		commitBody, rollbackBody, err = artifacts.StageReplace(markdownPath)
+		if err != nil {
+			return fmt.Errorf("stage plan markdown: %w", err)
+		}
+		if err := artifacts.WriteFileAtomic(markdownPath, []byte(record.Markdown)); err != nil {
+			if rollbackErr := rollbackBody(); rollbackErr != nil {
+				return fmt.Errorf("write plan markdown: %w; %v", err, rollbackErr)
+			}
 			return fmt.Errorf("write plan markdown: %w", err)
 		}
 	}
 	// Metadata is the publication marker used by List and ReadMetadata. Write it
 	// last so a failed body write cannot expose a torn plan record.
 	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
+		if rollbackBody != nil {
+			if rollbackErr := rollbackBody(); rollbackErr != nil {
+				return fmt.Errorf("write plan metadata: %w; %v", err, rollbackErr)
+			}
+		}
 		return fmt.Errorf("write plan metadata: %w", err)
+	}
+	if commitBody != nil {
+		if err := commitBody(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

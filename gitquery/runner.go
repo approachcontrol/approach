@@ -10,6 +10,7 @@ import (
 )
 
 const defaultGitTimeout = 30 * time.Second
+const gitWaitDelay = 2 * time.Second
 
 // Runner is the seam between query orchestration and the git CLI.
 type Runner interface {
@@ -55,6 +56,7 @@ func (r execRunner) Run(dir string, args ...string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.WaitDelay = gitWaitDelay
 	// Output captures stderr into (*exec.ExitError).Stderr when cmd.Stderr is
 	// nil, but its error string is only "exit status N". Fold the git stderr
 	// diagnostic into the returned error while keeping stdout clean for parsing.
@@ -80,6 +82,7 @@ func (r execRunner) Predicate(dir string, args ...string) (bool, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.WaitDelay = gitWaitDelay
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return false, fmt.Errorf("git %s timed out after %s: %w", gitOperation(args), timeout, ctx.Err())

@@ -225,6 +225,94 @@ func WriteFileAtomicFunc(path string, write func(io.Writer) error) error {
 	return os.Rename(tempName, path)
 }
 
+// StageReplace snapshots path so a replacement can be published without
+// buffering the previous contents or leaving the canonical name empty.
+// The replacement must be a new inode (WriteFileAtomic); an in-place
+// truncate would mutate a hardlinked backup. commit deletes the backup;
+// rollback restores it by renaming over the canonical path, or removes
+// path when there was no previous file.
+//
+// Backups are for in-process rollback only. A crash after WriteFileAtomic
+// publishes the replacement has the same torn window as WriteFileAtomic
+// alone: metadata remains the publication marker. A leftover sibling named
+// path+".prev" is removed the next time StageReplace runs.
+func StageReplace(path string) (commit, rollback func() error, err error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if rmErr := os.Remove(path + ".prev"); rmErr != nil && !os.IsNotExist(rmErr) {
+			return nil, nil, rmErr
+		}
+		return func() error { return nil }, func() error {
+			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+				return rmErr
+			}
+			return nil
+		}, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("replace %s: not a regular file", path)
+	}
+	backup := path + ".prev"
+	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+		return nil, nil, err
+	}
+	if err := cloneFile(path, backup); err != nil {
+		return nil, nil, err
+	}
+	return func() error {
+			if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		}, func() error {
+			pathInfo, pathErr := os.Lstat(path)
+			backupInfo, backupErr := os.Lstat(backup)
+			if pathErr == nil && backupErr == nil && os.SameFile(pathInfo, backupInfo) {
+				if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("remove unused backup %s: %w", path, err)
+				}
+				return nil
+			}
+			if err := os.Rename(backup, path); err != nil {
+				return fmt.Errorf("restore %s: %w", path, err)
+			}
+			return nil
+		}, nil
+}
+
+func cloneFile(src, dst string) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	input, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, FilePerm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		_ = output.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := output.Chmod(FilePerm); err != nil {
+		_ = output.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := output.Close(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
+}
+
 // IsSafeID reports whether id can be used as one artifact path segment.
 func IsSafeID(id string) bool {
 	return safeIDPattern.MatchString(id) && id != "." && id != ".."

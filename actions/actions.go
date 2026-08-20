@@ -128,6 +128,17 @@ type PullRequestStatus struct {
 	Checks       string
 }
 
+// ErrWorktreePruneFailed reports that git removed the worktree but failed to
+// prune stale admin references. Callers should treat the worktree as gone.
+var ErrWorktreePruneFailed = errors.New("worktree removed but prune failed")
+
+func pruneAfterWorktreeRemove(repoPath string) error {
+	if err := runGit(repoPath, "worktree", "prune"); err != nil {
+		return fmt.Errorf("%w: %w", ErrWorktreePruneFailed, err)
+	}
+	return nil
+}
+
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
 // then prunes stale references to ensure the worktree no longer appears
 // in listings.
@@ -135,10 +146,7 @@ func RemoveWorktree(repoPath, worktreePath string) error {
 	if err := runGit(repoPath, "worktree", "remove", worktreePath); err != nil {
 		return err
 	}
-	if err := runGit(repoPath, "worktree", "prune"); err != nil {
-		return fmt.Errorf("worktree removed but prune failed: %w", err)
-	}
-	return nil
+	return pruneAfterWorktreeRemove(repoPath)
 }
 
 // ForceRemoveWorktree runs `git worktree remove --force`, then prunes
@@ -147,10 +155,7 @@ func ForceRemoveWorktree(repoPath, worktreePath string) error {
 	if err := runGit(repoPath, "worktree", "remove", "--force", worktreePath); err != nil {
 		return err
 	}
-	if err := runGit(repoPath, "worktree", "prune"); err != nil {
-		return fmt.Errorf("worktree removed but prune failed: %w", err)
-	}
-	return nil
+	return pruneAfterWorktreeRemove(repoPath)
 }
 
 // PruneWorktree runs `git worktree prune` to remove stale admin references.

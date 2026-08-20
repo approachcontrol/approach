@@ -194,10 +194,18 @@ exit 2
 	if err == nil {
 		t.Fatal("RemoveWorktree() error = nil, want prune failure")
 	}
+	if !errors.Is(err, actions.ErrWorktreePruneFailed) {
+		t.Fatalf("RemoveWorktree() error = %v, want ErrWorktreePruneFailed", err)
+	}
 	for _, want := range []string{"worktree removed but prune failed", "prune unavailable"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("RemoveWorktree() error = %q, want %q", err, want)
 		}
+	}
+
+	err = actions.ForceRemoveWorktree("/repo", "/worktree")
+	if !errors.Is(err, actions.ErrWorktreePruneFailed) {
+		t.Fatalf("ForceRemoveWorktree() error = %v, want ErrWorktreePruneFailed", err)
 	}
 }
 

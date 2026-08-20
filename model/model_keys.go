@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -3486,7 +3487,7 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 
 	m.modal = modal.OpenConfirm(fmt.Sprintf("Remove worktree at %s? (y/n)", wtPath), func() tea.Cmd {
 		return func() tea.Msg {
-			if err := actions.RemoveWorktree(repoPath, wtPath); err != nil {
+			if err := actions.RemoveWorktree(repoPath, wtPath); err != nil && !errors.Is(err, actions.ErrWorktreePruneFailed) {
 				return DeleteFailedMsg{
 					RepoPath:    repoPath,
 					Target:      wtPath,

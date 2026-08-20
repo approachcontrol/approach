@@ -1,8 +1,10 @@
 package gitquery
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -185,17 +187,13 @@ func (q *Querier) readDirtyStatus(path string) (files, added, deleted int, err e
 
 func (q *Querier) populateWorktreeDirtyStatus(wt *Worktree) error {
 	files, added, deleted, err := q.readDirtyStatus(wt.Path)
-	if err != nil {
-		return err
+	if files > 0 {
+		wt.Dirty = true
+		wt.FilesChanged = files
+		wt.LinesAdded = added
+		wt.LinesDeleted = deleted
 	}
-	if files == 0 {
-		return nil
-	}
-	wt.Dirty = true
-	wt.FilesChanged = files
-	wt.LinesAdded = added
-	wt.LinesDeleted = deleted
-	return nil
+	return err
 }
 
 // ListCommits returns the most recent 50 commits for the given repo path.
@@ -461,6 +459,9 @@ func (q *Querier) defaultCleanupBranch(repoPath string, branchLines []string, fa
 	}
 	out, err := q.git.Run(repoPath, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
 	if err != nil {
+		if isQuietRefMiss(err) {
+			return "", nil
+		}
 		return "", err
 	}
 	ref := strings.TrimSpace(out)
@@ -486,18 +487,21 @@ func (q *Querier) unpushedCommits(repoPath, branchName, upstream string) ([]stri
 func (q *Querier) populateDirtyStatus(b *Branch, paths []string, warnings *queryWarnings) {
 	for _, path := range paths {
 		files, added, deleted, err := q.readDirtyStatus(path)
+		if files > 0 {
+			b.Dirty = true
+			b.FilesChanged += files
+			b.LinesAdded += added
+			b.LinesDeleted += deleted
+		}
 		if err != nil {
 			warnings.add("dirty status", path, err)
-			continue
 		}
-		if files == 0 {
-			continue
-		}
-		b.Dirty = true
-		b.FilesChanged += files
-		b.LinesAdded += added
-		b.LinesDeleted += deleted
 	}
+}
+
+func isQuietRefMiss(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 func checkStale(paths []string) []bool {

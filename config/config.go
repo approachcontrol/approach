@@ -597,10 +597,32 @@ func lockedConfigUpdate(path string, options []Option, createIfMissing bool, pat
 	if bytes.Equal(patched, data) {
 		return nil
 	}
-	if err := artifacts.WriteFileAtomic(path, patched); err != nil {
+	writePath, err := resolveConfigWritePath(path)
+	if err != nil {
+		return err
+	}
+	if err := artifacts.WriteFileAtomic(writePath, patched); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+func resolveConfigWritePath(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve config symlink %s: %w", path, err)
+	}
+	return target, nil
 }
 
 func patchAgentCommand(data []byte, command string) []byte {

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -1401,7 +1402,7 @@ func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {
 		forceAction := msg.ForceAction
 		m.modal = modal.OpenForce(fmt.Sprintf("Force delete %s? (y/n)", msg.Target), func() tea.Cmd {
 			return func() tea.Msg {
-				if err := forceAction(); err != nil {
+				if err := forceAction(); err != nil && !errors.Is(err, actions.ErrWorktreePruneFailed) {
 					return ForceDeleteFailedMsg{
 						RepoPath: repoPath,
 						Target:   target,

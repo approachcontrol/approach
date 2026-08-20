@@ -835,6 +835,51 @@ func TestSaveAgentCommand_UpdatesExistingAgentSection(t *testing.T) {
 	}
 }
 
+func TestSaveAgentCommand_UpdatesSymlinkTarget(t *testing.T) {
+	xdg := t.TempDir()
+	managed := filepath.Join(t.TempDir(), "managed-config.toml")
+	if err := os.WriteFile(managed, []byte("[agent]\ncommand = \"codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(xdg, "approach", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(managed, path); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentCommand("claude",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("config.toml should remain a symlink")
+	}
+	raw, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `command = "claude"`) {
+		t.Fatalf("managed target = %q, want updated command", raw)
+	}
+}
+
 func TestSaveAgentReasoningEffort_CreatesMissingConfig(t *testing.T) {
 	xdg := t.TempDir()
 	err := config.SaveAgentReasoningEffort("codex", "high",

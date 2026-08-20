@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -6911,6 +6912,40 @@ func TestModel_DKeyOnWorktreeRequiresDestructiveMode(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d without destructive mode should be no-op, got overlay %d", m.Overlay())
+	}
+}
+
+func TestModel_WorktreeRemoveSucceedsWhenPruneFails(t *testing.T) {
+	binDir := t.TempDir()
+	script := `#!/bin/sh
+case " $* " in
+  *" worktree remove "*) exit 0 ;;
+  *" worktree prune "*) echo "prune unavailable" >&2; exit 1 ;;
+esac
+exit 2
+`
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	m := modelWithWorktrees([]gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-feat", BranchName: "feat"},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("expected cmd from confirm, got nil")
+	}
+	msg := cmd()
+	removed, ok := msg.(model.WorktreeRemovedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeRemovedMsg after successful remove + prune failure, got %T (%v)", msg, msg)
+	}
+	if removed.RepoPath != "/dev/alpha" || removed.BranchName != "feat" {
+		t.Fatalf("WorktreeRemovedMsg = %#v", removed)
 	}
 }
 

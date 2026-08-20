@@ -50,3 +50,29 @@ func TestExecRunnerPredicateTimesOutHungGit(t *testing.T) {
 		t.Fatalf("Predicate() error = %q, want operation and timeout", err)
 	}
 }
+
+func TestExecRunnerWaitDelayUnblocksOrphanedStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test git shim is a shell script")
+	}
+	bin := t.TempDir()
+	script := `#!/bin/sh
+sleep 30 &
+exec sleep 30
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := execRunner{timeout: 200 * time.Millisecond}
+	start := time.Now()
+	_, err := r.Run(t.TempDir(), "status")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("Run() error = nil, want timeout after the parent git process is killed")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("Run hung for %s; WaitDelay should unblock orphaned stdout", elapsed)
+	}
+}

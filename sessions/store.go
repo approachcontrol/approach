@@ -36,12 +36,13 @@ const (
 )
 
 type Store struct {
-	root               string
-	copyRawTranscripts bool
-	lockTimeout        time.Duration
-	env                map[string]string
-	launchStale        launchStaleFunc
-	acquireFileLock    acquireFileLockFunc
+	root                string
+	copyRawTranscripts  bool
+	lockTimeout         time.Duration
+	env                 map[string]string
+	launchStale         launchStaleFunc
+	acquireFileLock     acquireFileLockFunc
+	beforeMetadataWrite func()
 }
 
 type launchStaleFunc func(existing, incoming SessionRecord) (stale, known bool)
@@ -173,14 +174,34 @@ func (s *Store) upsert(record SessionRecord) (SessionRecord, error) {
 	if record.SchemaVersion == 0 {
 		record.SchemaVersion = schemaVersion
 	}
+	var payloadStages []payloadStage
 	if hasIncomingTranscript && record.Provider != ProviderCursor {
-		if err := s.writeTranscriptFiles(record, transcript); err != nil {
+		dir := s.sessionDir(record.Provider, record.SessionID)
+		transcriptStage, err := stageSessionPayload(filepath.Join(dir, "transcript.jsonl"))
+		if err != nil {
 			return SessionRecord{}, err
+		}
+		payloadStages = append(payloadStages, transcriptStage)
+		if s.copyRawTranscripts {
+			rawStage, err := stageSessionPayload(filepath.Join(dir, "raw.jsonl"))
+			if err != nil {
+				return SessionRecord{}, rollbackPayloadStages(payloadStages, err)
+			}
+			payloadStages = append(payloadStages, rawStage)
+		}
+		if err := s.writeTranscriptFiles(record, transcript); err != nil {
+			return SessionRecord{}, rollbackPayloadStages(payloadStages, err)
 		}
 	}
 	// Metadata is the publication marker used by List. Write payloads first so
 	// a failed transcript copy or normalization cannot expose a torn record.
 	if err := s.writeMetadata(record); err != nil {
+		if len(payloadStages) > 0 {
+			return SessionRecord{}, rollbackPayloadStages(payloadStages, err)
+		}
+		return SessionRecord{}, err
+	}
+	if err := commitPayloadStages(payloadStages); err != nil {
 		return SessionRecord{}, err
 	}
 	return record, nil
@@ -198,32 +219,120 @@ func (s *Store) writeMetadata(record SessionRecord) error {
 	if err != nil {
 		return fmt.Errorf("encode session metadata: %w", err)
 	}
+	if s.beforeMetadataWrite != nil {
+		s.beforeMetadataWrite()
+	}
 	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
 		return fmt.Errorf("write session metadata: %w", err)
 	}
 	return nil
 }
 
+type payloadStage struct {
+	commit   func() error
+	rollback func() error
+}
+
+func stageSessionPayload(path string) (payloadStage, error) {
+	commit, rollback, err := artifacts.StageReplace(path)
+	if err != nil {
+		return payloadStage{}, fmt.Errorf("stage %s: %w", filepath.Base(path), err)
+	}
+	return payloadStage{commit: commit, rollback: rollback}, nil
+}
+
+func rollbackPayloadStages(stages []payloadStage, cause ...error) error {
+	var first error
+	if len(cause) > 0 {
+		first = cause[0]
+	}
+	for i := len(stages) - 1; i >= 0; i-- {
+		if err := stages[i].rollback(); err != nil && first == nil {
+			first = err
+		} else if err != nil {
+			first = fmt.Errorf("%w; %v", first, err)
+		}
+	}
+	return first
+}
+
+func commitPayloadStages(stages []payloadStage) error {
+	var first error
+	for _, stage := range stages {
+		if err := stage.commit(); err != nil {
+			if first == nil {
+				first = err
+			} else {
+				first = fmt.Errorf("%w; %v", first, err)
+			}
+		}
+	}
+	return first
+}
+
 func (s *Store) List(filter SessionFilter) ([]SessionRecord, error) {
 	var records []SessionRecord
 	root := filepath.Join(s.root, "sessions")
+	if info, statErr := os.Lstat(root); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
+		return nil, fmt.Errorf("list sessions: %s is not a directory", root)
+	}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || d.Name() != "meta.json" {
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if d.Name() != "meta.json" {
+			if rel != "." && len(parts) <= 2 && parts[0] != ".locks" {
+				info, infoErr := d.Info()
+				if infoErr != nil {
+					if os.IsNotExist(infoErr) {
+						return nil
+					}
+					return infoErr
+				}
+				if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+					return fmt.Errorf("session path %s is not a directory", path)
+				}
+			}
+			// Directories without meta.json are unpublished. Metadata is the
+			// publication marker, so those leftovers are not occupancy records.
 			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			if os.IsNotExist(infoErr) {
+				if _, dirErr := os.Lstat(filepath.Dir(path)); os.IsNotExist(dirErr) {
+					return nil
+				}
+			}
+			return infoErr
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("session metadata %s is not a regular file", path)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			// A single unreadable record should not make every other session
-			// unavailable, just as corrupt metadata below is record-local.
-			return nil
+			if os.IsNotExist(err) {
+				if _, dirErr := os.Lstat(filepath.Dir(path)); os.IsNotExist(dirErr) {
+					return nil
+				}
+			}
+			return err
 		}
 		var record SessionRecord
 		if err := json.Unmarshal(data, &record); err != nil {
-			// Corrupt metadata should not make every other session unavailable.
-			return nil
+			return fmt.Errorf("decode %s: %w", path, err)
+		}
+		if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
+			return fmt.Errorf("session metadata %s: %w", path, err)
+		}
+		expected := filepath.Join(s.sessionDir(record.Provider, record.SessionID), "meta.json")
+		if filepath.Clean(path) != filepath.Clean(expected) {
+			return fmt.Errorf("session metadata %s does not match key %q/%q", path, record.Provider, record.SessionID)
 		}
 		if matchesFilter(record, filter) {
 			records = append(records, record)
@@ -350,6 +459,23 @@ func (s *Store) sessionDir(provider Provider, sessionID string) string {
 	return filepath.Join(s.root, "sessions", providerPathPart(provider), safeSessionDirName(sessionID))
 }
 
+func (s *Store) rejectSessionPathSymlinks(provider Provider, sessionID string) error {
+	for _, path := range []string{
+		filepath.Join(s.root, "sessions"),
+		filepath.Join(s.root, "sessions", providerPathPart(provider)),
+		s.sessionDir(provider, sessionID),
+	} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("session path %s is not a directory", path)
+		}
+	}
+	return nil
+}
+
 func safeSessionDirName(sessionID string) string {
 	sum := sha256.Sum256([]byte(sessionID))
 	return hex.EncodeToString(sum[:])
@@ -373,16 +499,37 @@ func (s *Store) acquireSessionLock(provider Provider, sessionID string) (func(),
 }
 
 func (s *Store) readMetadata(provider Provider, sessionID string) (SessionRecord, bool, error) {
-	data, err := os.ReadFile(filepath.Join(s.sessionDir(provider, sessionID), "meta.json"))
+	dir := s.sessionDir(provider, sessionID)
+	if err := s.rejectSessionPathSymlinks(provider, sessionID); err != nil {
+		if os.IsNotExist(err) {
+			return SessionRecord{}, false, nil
+		}
+		return SessionRecord{}, false, err
+	}
+	metaPath := filepath.Join(dir, "meta.json")
+	info, err := os.Lstat(metaPath)
 	if os.IsNotExist(err) {
 		return SessionRecord{}, false, nil
 	}
 	if err != nil {
 		return SessionRecord{}, false, fmt.Errorf("read session metadata: %w", err)
 	}
+	if !info.Mode().IsRegular() {
+		return SessionRecord{}, false, fmt.Errorf("session metadata %s is not a regular file", metaPath)
+	}
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return SessionRecord{}, false, fmt.Errorf("read session metadata: %w", err)
+	}
 	var record SessionRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return SessionRecord{}, false, fmt.Errorf("decode session metadata: %w", err)
+	}
+	if record.Provider != provider || record.SessionID != sessionID {
+		return SessionRecord{}, false, fmt.Errorf(
+			"session metadata key %q/%q does not match requested key %q/%q",
+			record.Provider, record.SessionID, provider, sessionID,
+		)
 	}
 	return record, true, nil
 }

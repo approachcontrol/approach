@@ -2,12 +2,23 @@ package gitquery_test
 
 import (
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/approachcontrol/approach/gitquery"
 )
+
+func quietRefMissingError(t *testing.T) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit 1").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("quietRefMissingError() = %v, want exit status 1", err)
+	}
+	return err
+}
 
 type fakeReply struct {
 	out string
@@ -309,6 +320,35 @@ func TestQuerierListBranches_ReportsMergedPredicateFailure(t *testing.T) {
 	}
 }
 
+func TestQuerierListBranches_MissingOriginHEADIsNotAFailure(t *testing.T) {
+	featurePath := t.TempDir()
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+				out: "dev\t\t\nfeature\t\t\n",
+			},
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree " + featurePath + "\nHEAD abc123\nbranch refs/heads/feature\n",
+			},
+			fakeKey("/repo", "branch", "--show-current"): {},
+			fakeKey("/repo", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"): {
+				err: quietRefMissingError(t),
+			},
+			fakeKey(featurePath, "status", "--porcelain"): {},
+		},
+		ok: map[string]error{},
+	}
+
+	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
+	if err != nil {
+		t.Fatalf("ListBranches() error = %v, want no warning for a missing origin HEAD", err)
+	}
+	if len(branches) != 2 {
+		t.Fatalf("ListBranches() = %#v, want retained rows", branches)
+	}
+}
+
 func TestQuerierListBranches_ReportsRootAndDefaultBranchFallbackFailures(t *testing.T) {
 	wantRootErr := errors.New("cannot identify current branch")
 	wantDefaultErr := errors.New("origin HEAD is corrupt")
@@ -381,6 +421,69 @@ func TestQuerierListWorktrees_UsesInjectedRunnerForDirtyStatus(t *testing.T) {
 	}
 	if fakeCallContains(f.calls, stalePath+" | status --porcelain") {
 		t.Fatalf("stale worktree should not read dirty status; calls: %v", f.calls)
+	}
+}
+
+func TestQuerierListWorktrees_KeepsDirtyFlagWhenDiffHEADFails(t *testing.T) {
+	worktreePath := t.TempDir()
+	wantErr := errors.New("fatal: bad revision 'HEAD'")
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree " + worktreePath + "\nHEAD abc123\nbranch refs/heads/main\n",
+			},
+			fakeKey(worktreePath, "status", "--porcelain"): {
+				out: "?? new.txt\n",
+			},
+			fakeKey(worktreePath, "diff", "HEAD", "--numstat"): {err: wantErr},
+		},
+	}
+
+	worktrees, err := gitquery.NewQuerier(f).ListWorktrees("/repo")
+	if len(worktrees) != 1 || !worktrees[0].Dirty || worktrees[0].FilesChanged != 1 {
+		t.Fatalf("ListWorktrees() = %#v, want dirty row with file count", worktrees)
+	}
+	if worktrees[0].LinesAdded != 0 || worktrees[0].LinesDeleted != 0 {
+		t.Fatalf("line counts = +%d/-%d, want zeros when numstat fails", worktrees[0].LinesAdded, worktrees[0].LinesDeleted)
+	}
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok || len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "dirty status" || !errors.Is(partial.Warnings[0].Cause, wantErr) {
+		t.Fatalf("partial = %#v, err = %v, want dirty-status warning", partial, err)
+	}
+}
+
+func TestQuerierListBranches_KeepsDirtyFlagWhenDiffHEADFails(t *testing.T) {
+	featurePath := t.TempDir()
+	wantErr := errors.New("fatal: bad revision 'HEAD'")
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+				out: "feature\t\t\nmain\t\t\n",
+			},
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree " + featurePath + "\nHEAD def456\nbranch refs/heads/feature\n",
+			},
+			fakeKey("/repo", "status", "--porcelain"): {},
+			fakeKey(featurePath, "status", "--porcelain"): {
+				out: "?? new.txt\n",
+			},
+			fakeKey(featurePath, "diff", "HEAD", "--numstat"): {err: wantErr},
+		},
+		ok: map[string]error{
+			fakeKey("/repo", "merge-base", "--is-ancestor", "feature", "main"): errors.New("not merged"),
+		},
+	}
+
+	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
+	feature := findBranch(branches, "feature")
+	if feature == nil || !feature.Dirty || feature.FilesChanged != 1 {
+		t.Fatalf("feature = %#v, want dirty row with file count", feature)
+	}
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok || len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "dirty status" || !errors.Is(partial.Warnings[0].Cause, wantErr) {
+		t.Fatalf("partial = %#v, err = %v, want dirty-status warning", partial, err)
 	}
 }
 
