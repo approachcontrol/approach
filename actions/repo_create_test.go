@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -144,6 +145,9 @@ func TestCreateRepoLocalOnlyInitializesGitRepository(t *testing.T) {
 }
 
 func TestCreateRepoDestinationIsWorldReadable(t *testing.T) {
+	previous := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(previous) })
+
 	root := t.TempDir()
 	result, err := createRepoWithRunner(RepoCreateOptions{
 		Root:         root,
