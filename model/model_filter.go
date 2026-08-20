@@ -332,64 +332,46 @@ func (m Model) selectFilteredRepo(repoPath string) Model {
 }
 
 func (m Model) filteredRepos() []scanner.Repo {
-	repos, _, _ := m.repos.View()
-	return repos
+	return viewItems(m.repos.View())
 }
 
 func (m Model) filteredStashes() []gitquery.Stash {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	stashes, _, _ := m.stashes.View()
-	return stashes
+	return filteredIfRepoVisible(m, viewItems(m.stashes.View()))
 }
 
 func (m Model) filteredWorktrees() []gitquery.Worktree {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	worktrees, _, _ := m.worktrees.View()
-	return worktrees
+	return filteredIfRepoVisible(m, viewItems(m.worktrees.View()))
 }
 
 func (m Model) filteredCommits() []gitquery.Commit {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	commits, _, _ := m.commits.View()
-	return commits
+	return filteredIfRepoVisible(m, viewItems(m.commits.View()))
 }
 
 func (m Model) filteredReflogs() []gitquery.ReflogEntry {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	reflogs, _, _ := m.reflogs.View()
-	return reflogs
+	return filteredIfRepoVisible(m, viewItems(m.reflogs.View()))
 }
 
 func (m Model) filteredSessions() []sessions.SessionRecord {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	sessions, _, _ := m.sessions.View()
-	return sessions
+	return filteredIfRepoVisible(m, viewItems(m.sessions.View()))
 }
 
 func (m Model) filteredPlans() []planstore.PlanRecord {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	plans, _, _ := m.plans.View()
-	return plans
+	return filteredIfRepoVisible(m, viewItems(m.plans.View()))
 }
 
 func (m Model) filteredFlows() []flowstore.FlowRecord {
+	return filteredIfRepoVisible(m, viewItems(m.flows.View()))
+}
+
+func viewItems[T any](items []T, _ int, _ int) []T {
+	return items
+}
+
+func filteredIfRepoVisible[T any](m Model, items []T) []T {
 	if len(m.filteredRepos()) == 0 {
 		return nil
 	}
-	flows, _, _ := m.flows.View()
-	return flows
+	return items
 }
 
 func planSearchText(record planstore.PlanRecord) string {

@@ -46,7 +46,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if outcome == modal.Accepted && cmd != nil && isPromptTemplateEditor(view) {
 			cmd = tagPromptTemplateCursor(cmd, view.InputCursor)
 		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
-			if m.activeFlowCreate != 0 {
+			if m.flowCreateReq.current != 0 {
 				return m.setStatus(statusOther, flowCreateInProgressStatus), nil
 			}
 			var request uint64
