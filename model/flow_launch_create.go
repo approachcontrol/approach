@@ -361,7 +361,14 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 		if err != nil {
 			return m.beginCreateFlowRecovery(attempt, msg, []string{"resolve phase agent settings: " + err.Error()}, false, true)
 		}
-		msg.Context = createFlowLaunchContext(attempt, msg, phase, settings)
+		launchContext, decision, err := newFlowLaunchContext(createPhaseTarget{
+			LaunchID: attempt.Token, Record: msg.Record, Request: createFlowStartRequest(attempt),
+			Worktree: msg.Worktree, Commit: msg.Commit, Phase: phase, Agent: settings,
+		}, attempt.Settings, flowLaunchRouting{})
+		if err != nil {
+			return m.beginCreateFlowRecovery(attempt, msg, []string{"build launch context: " + err.Error()}, false, true)
+		}
+		msg.Context = launchContext
 		if phase.Status != flowstore.PhaseRunning {
 			return m.failCreateFlowLaunchEmbedded(attempt, msg.Context, "launch proof changed before embedded install", msg.Release)
 		}
@@ -370,7 +377,7 @@ func (m Model) handleCreateFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.C
 			releaseFlowLaunchReservation(msg.Release)
 			return m, nil
 		}
-		msg.Route = flowLaunchRouteEmbedded
+		msg.Route = decision.Route
 		msg.From = flowLaunchStatePreparing
 		msg.Stage = flowLaunchStagePrepared
 		msg.WorktreeNote = createdFlowWorktreeNote(msg.Record)
@@ -796,25 +803,6 @@ func createFlowStartRequest(attempt flowLaunchAttempt) FlowStartRequest {
 		AgentPreferences: attempt.Settings.Preferences, AgentPreferencesProvided: true,
 		Headless: &headless,
 	}
-}
-
-func createFlowLaunchContext(attempt flowLaunchAttempt, msg flowLaunchEventMsg, phase flowstore.FlowPhase, settings agent.Settings) actions.AgentLaunchContext {
-	req := createFlowStartRequest(attempt)
-	record := flowStartPromptRecord(msg.Record, req, msg.Worktree, msg.Commit)
-	title := phase.Title
-	if strings.TrimSpace(title) == "" {
-		title = phase.PhaseID
-	}
-	ctx := actions.AgentLaunchContext{
-		Command: settings.Command, Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
-		LaunchID: attempt.Token, RepoPath: req.RepoPath, WorktreePath: msg.Worktree.WorktreePath,
-		Branch: msg.Worktree.Branch, Commit: msg.Commit, SessionStateRoot: attempt.Settings.SessionStateRoot,
-		PlanPhaseID: phase.PhaseID, PlanPhaseTitle: title, PlanPhaseStatus: string(flowstore.PhaseRunning),
-		FlowID: msg.FlowID, FlowPhaseID: phase.PhaseID, FlowPhaseKind: string(flowstore.SemanticKind(phase)),
-		Headless:      msg.Record.Headless,
-		InitialPrompt: initialFlowLaunchPrompt(record, phase, attempt.Settings.PromptTemplates, attempt.Settings.Pin.ExecutablePath),
-	}
-	return applyLaunchStamp(ctx, attempt.Settings.stamp())
 }
 
 func flowPhaseContainsLaunch(phase flowstore.FlowPhase, launchID string) bool {

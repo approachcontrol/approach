@@ -60,6 +60,9 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 	terminalPhase := terminalPhaseResume.ReadPhase
 	terminalPhase.Status = flowstore.PhaseCompleted
 	terminalPhaseResume.PersistedRecord.Phases = []flowstore.FlowPhase{terminalPhase}
+	createPhase := launchContextCreatePhaseTarget()
+	headlessCreatePhase := launchContextCreatePhaseTarget()
+	headlessCreatePhase.Record.Headless = true
 	for _, variant := range []struct {
 		name     string
 		target   flowLaunchTarget
@@ -287,6 +290,34 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 				return ctx
 			}(),
 			decision: flowLaunchRouteDecision{Route: flowLaunchRouteTmux},
+		},
+		{
+			// V5: the first launch of a freshly created Flow. It is the only role
+			// that sets the PlanPhase trio, and the only tracked-in-the-end role
+			// whose FlowLaunchTracked and Embedded are deliberately zero here:
+			// both are stamped at install, and the window between construction
+			// and install is a real failure path (failCreateFlowLaunchEmbedded)
+			// whose behavior turns on FlowLaunchTracked being false. PlanID,
+			// PlanPath and WorkingDir stay zero too — no plan exists yet, and
+			// actions falls back to WorktreePath.
+			name:     "create phase interactive",
+			target:   createPhase,
+			want:     launchContextCreatePhaseContext(createPhase),
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// V6: the headless create launch, with the tmux backend and tmux on
+			// PATH to pin that this role's route is a constant rather than a
+			// decision: create always takes the embedded slot, so no note is owed
+			// and Embedded is not cleared for argv.
+			name:   "create phase headless",
+			target: headlessCreatePhase,
+			routing: flowLaunchRouting{
+				Backend:       config.LaunchBackendTmux,
+				TmuxAvailable: func() bool { return true },
+			},
+			want:     launchContextCreatePhaseContext(headlessCreatePhase),
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
 		},
 		{
 			// The persisted phase decides the terminal flag, not the read one:
@@ -1174,6 +1205,116 @@ func TestNewFlowLaunchContextRejectsIncompleteTrackedPhasePayloads(t *testing.T)
 	} {
 		t.Run("missing "+missing.name, func(t *testing.T) {
 			target := launchContextTrackedPhaseTarget()
+			missing.mutate(&target)
+
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), flowLaunchRouting{})
+			if !errors.Is(err, errIncompleteFlowLaunchTarget) {
+				t.Fatalf("err = %v, want errIncompleteFlowLaunchTarget (context %#v)", err, ctx)
+			}
+			if decision != (flowLaunchRouteDecision{}) {
+				t.Fatalf("failed build returned decision %#v", decision)
+			}
+		})
+	}
+}
+
+// launchContextCreatePhaseTarget is the create fixture. Its record carries no
+// worktree, branch or commit on purpose: the just-written record often has none
+// yet, and the bootstrap results travelling alongside it are what
+// flowStartPromptRecord merges in for the prompt.
+func launchContextCreatePhaseTarget() createPhaseTarget {
+	return createPhaseTarget{
+		LaunchID: "launch-1",
+		Record: flowstore.FlowRecord{
+			FlowID:    "flow-1",
+			Title:     "Flow one",
+			Status:    flowstore.StatusInProgress,
+			UpdatedAt: time.Now(),
+		},
+		Request: FlowStartRequest{
+			RepoPath:     "/dev/alpha",
+			Title:        "Flow one",
+			Instructions: "ship the thing",
+			BaseRef:      "main",
+		},
+		Worktree: actions.FlowWorktreeCreateResult{
+			WorktreePath: "/dev/alpha-worktree",
+			Branch:       "flow/one",
+		},
+		Commit: "abc123",
+		Phase: flowstore.FlowPhase{
+			PhaseID: "plan",
+			Title:   "Plan",
+			Kind:    flowstore.KindPlan,
+			Status:  flowstore.PhaseRunning,
+			Order:   1,
+		},
+		Agent: agent.Settings{Command: "codex", Model: "gpt-5", ReasoningEffort: "high"},
+	}
+}
+
+// launchContextCreatePhaseContext computes the expectation from the target for
+// the reason the repair prompt helper does: what the rows pin is the mapping,
+// not the prompt copy. The zero fields it never names — FlowLaunchTracked,
+// Embedded, PlanID, PlanPath, WorkingDir — are the load-bearing ones.
+func launchContextCreatePhaseContext(target createPhaseTarget) actions.AgentLaunchContext {
+	promptRecord := flowStartPromptRecord(target.Record, target.Request, target.Worktree, target.Commit)
+	return actions.AgentLaunchContext{
+		Command:          "codex",
+		Model:            "gpt-5",
+		ReasoningEffort:  "high",
+		LaunchID:         "launch-1",
+		RepoPath:         target.Request.RepoPath,
+		WorktreePath:     target.Worktree.WorktreePath,
+		Branch:           target.Worktree.Branch,
+		Commit:           target.Commit,
+		SessionStateRoot: "/state",
+		PlanPhaseID:      target.Phase.PhaseID,
+		PlanPhaseTitle:   target.Phase.Title,
+		PlanPhaseStatus:  string(flowstore.PhaseRunning),
+		FlowID:           target.Record.FlowID,
+		FlowPhaseID:      target.Phase.PhaseID,
+		FlowPhaseKind:    string(flowstore.SemanticKind(target.Phase)),
+		Headless:         target.Record.Headless,
+		InitialPrompt: initialFlowLaunchPrompt(
+			promptRecord, target.Phase, FlowPromptTemplates{}, ""),
+	}
+}
+
+// TestNewFlowLaunchContextTitlesTheCreatePhaseByIDWhenItHasNoTitle pins the
+// fallback that travelled into the builder with the PlanPhase trio: the prefill
+// names the phase, so an untitled startup root must show its ID rather than an
+// empty label.
+func TestNewFlowLaunchContextTitlesTheCreatePhaseByIDWhenItHasNoTitle(t *testing.T) {
+	target := launchContextCreatePhaseTarget()
+	target.Phase.Title = "   "
+
+	ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings(), flowLaunchRouting{})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if ctx.PlanPhaseTitle != target.Phase.PhaseID {
+		t.Fatalf("plan phase title = %q, want the phase ID %q", ctx.PlanPhaseTitle, target.Phase.PhaseID)
+	}
+}
+
+// TestNewFlowLaunchContextRejectsIncompleteCreatePhasePayloads pins the
+// builder-side invariants. They are defensive: admission's launch-proof check
+// and resolveFlowStartPhaseAgentSettings refuse first and keep their own
+// messages.
+func TestNewFlowLaunchContextRejectsIncompleteCreatePhasePayloads(t *testing.T) {
+	for _, missing := range []struct {
+		name   string
+		mutate func(*createPhaseTarget)
+	}{
+		{name: "launch id", mutate: func(target *createPhaseTarget) { target.LaunchID = "  " }},
+		{name: "flow id", mutate: func(target *createPhaseTarget) { target.Record.FlowID = "  " }},
+		{name: "phase id", mutate: func(target *createPhaseTarget) { target.Phase.PhaseID = "  " }},
+		{name: "agent command", mutate: func(target *createPhaseTarget) { target.Agent.Command = "  " }},
+	} {
+		t.Run("missing "+missing.name, func(t *testing.T) {
+			target := launchContextCreatePhaseTarget()
 			missing.mutate(&target)
 
 			ctx, decision, err := newFlowLaunchContext(

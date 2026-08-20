@@ -21,7 +21,7 @@ automatic phase launches share one builder and differ only by `req.AutoLaunch`.
 | --- | --- | --- |
 | `manualPhase` | `model/flow_phase_launch.go:371` | `model/flow_phase_launch.go:402` |
 | `autoPhase` | `model/flow_phase_launch.go:371` (same literal, `req.AutoLaunch` true) | `model/flow_phase_launch.go:402` |
-| `createPhase` | `model/flow_launch_create.go:808` (`createFlowLaunchContext`) | none — hardcoded embedded at `model/flow_launch_create.go:373` |
+| `createPhase` | `newFlowLaunchContext` (`model/flow_launch_context.go:619`, `createPhaseTarget`) | none — the builder returns a constant embedded route |
 | `phaseResume` | `model/flow_launch_resume.go:360` | `model/flow_launch_resume.go:299` (taken on the Model, before the closure) |
 | `repair` | `model/flow_launch_repair.go:420`, refreshed at `model/flow_repair.go:182` | none — hardcoded embedded at `model/flow_launch_repair.go:440` |
 | `autofix` | `model/flow_launch_autofix.go:366` | `model/flow_launch_autofix.go:395` |
@@ -55,7 +55,7 @@ marker" from "constructs a Flow launch".
 | `autoPhase` × interactive | Both AutoMode read commands hardcode `Headless: true` (`model/flow_launch_lifecycle.go:665`, `:692`), and the tracked-phase builder skips the reservation override when `target.AutoLaunch` (`model/flow_launch_context.go:286`). |
 | `autoPhase` × tmux | Follows from the previous two rows: auto ⇒ headless ⇒ embedded. |
 | `repair` × tmux | Refused twice: `tmuxRouteEligible` rejects `ctx.FlowRepair` (`model/tmux_mode.go:64`), and prepare has no tmux call site (`model/flow_launch_repair.go:440`). |
-| `createPhase` × tmux | No call site; route is hardcoded embedded (`model/flow_launch_create.go:373`). |
+| `createPhase` × tmux | The builder returns a constant embedded route (`model/flow_launch_context.go:619`); creation has no tmux call site either. |
 | `worktreeAgent` × tmux | No call site (`model/flow_launch_generic_agent.go:299`). |
 | `savedSessionResume` × tmux | No call site (`model/flow_launch_saved_session_resume.go:226`). |
 | `phaseResume` × headless | `Headless` is never assigned by the resume builder (`model/flow_launch_resume.go:360–383`). |
@@ -87,14 +87,13 @@ The reachable variants:
 
 ### Migration status
 
-V1–V4 and V7–V17 are built by `newFlowLaunchContext`
-(`model/flow_launch_context.go`) rather than by a literal at their prepare
-stage: V16 (worktreeAgent), V11–V12 (repair), V13–V15 (autofix), V17
-(savedSessionResume), V7–V10 (phaseResume) and V1–V4 (manual and auto phase),
-in that migration order. Only V5–V6 — the create-phase launch — still composes
-a literal at its call site, so the construction sites in section 1 and the `C:`
-line numbers in section 3 read as the pre-migration snapshot for every other
-row.
+Every reachable variant is now built by `newFlowLaunchContext`
+(`model/flow_launch_context.go`) rather than by a literal at its prepare stage:
+V16 (worktreeAgent), V11–V12 (repair), V13–V15 (autofix), V17
+(savedSessionResume), V7–V10 (phaseResume), V1–V4 (manual and auto phase) and
+V5–V6 (createPhase), in that migration order. The `C:` line numbers in section 3
+therefore read as the pre-migration snapshot throughout; section 1's builder
+column is the authority for where a kind is constructed today.
 
 Two of those roles decide their own *route*. V13–V15 were the first: the
 builder takes the snapshotted backend and tmux probe and returns the route with
@@ -114,7 +113,16 @@ route against the finished context, which is what keeps the
 `any kind × tmux × headless` pruning rule true by construction rather than by
 call-site ordering. `prepare` now maps the builder's route onto
 `flowPhaseLaunchRoute`, and an unmapped route is an error rather than a silent
-embedded default. Unifying those two route enums is the remaining follow-up.
+embedded default.
+
+V5–V6 moved last. Their arm returns a constant embedded route like the repair,
+worktree-agent and saved-session-resume arms, so the `createPhase × tmux`
+pruning rule now holds by construction rather than by a missing call site, and
+the create call site takes the builder's route instead of assigning
+`flowLaunchRouteEmbedded` itself. What did *not* move is createPhase's
+tracked-ness: `FlowLaunchTracked` and `Embedded` are still stamped at install
+(see F4). Unifying `flowLaunchRoute` with `flowPhaseLaunchRoute` remains the
+standing follow-up.
 
 ## 3. Field values, with the pipeline point that sets them
 
@@ -253,9 +261,16 @@ policy classes everywhere else in the matrix; `launch.json` cannot tell them
 apart.
 
 **F4 — `createPhase` is the only kind whose tracked-ness is established outside
-its builder**, and it is also the only kind that sets `PlanPhase*`. Both are
-consequences of it being the one kind whose builder runs before the Flow record
-exists.
+its builder.** The `PlanPhase*` trio now lives in the builder with the rest of
+the role (`model/flow_launch_context.go:619`), and createPhase is still the only
+kind that sets it. Its `FlowLaunchTracked` and `Embedded` remain deliberately
+false at construction and are stamped at install
+(`model/flow_launch_lifecycle.go:1105`, `:1097`): between the two, the create
+call site can take `failCreateFlowLaunchEmbedded`, whose
+`flowLaunchFailureUpdate` reads `FlowLaunchTracked` to decide whether the
+failure persists a phase update. Setting either early would change that path, so
+closing this gap is `approach-hyl.9`'s "context is final at prepare", not this
+migration's.
 
 **F5 — `WorkingDir` is unset for manual, auto, create and repair launches**, so
 those four rely on the actions-side fallback chain while resume, autofix,

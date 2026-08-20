@@ -192,6 +192,38 @@ type trackedPhaseTarget struct {
 
 func (trackedPhaseTarget) role() actions.FlowLaunchRole { return actions.RoleTrackedPhase }
 
+// createPhaseTarget is the first launch of a freshly created Flow's startup
+// root, started by Plan Now and by Ready-Bead F. It is the only role whose
+// prompt record is synthesized rather than persisted: the record was written a
+// moment ago and may not carry the worktree, branch or commit the bootstrap
+// just produced, so those travel alongside it and are merged in here.
+type createPhaseTarget struct {
+	// LaunchID is the attempt token, never a fresh ID: the launch proof the
+	// create stage just verified is keyed on it.
+	LaunchID string
+	// Record is the just-written Flow record — the authority for FlowID and for
+	// the headless preference the creation was admitted with.
+	Record flowstore.FlowRecord
+	// Request is the create request admission already built. It is the authority
+	// for RepoPath and the fallback source for the prompt record's title,
+	// instructions and base ref.
+	Request FlowStartRequest
+	// Worktree and Commit are the bootstrap results. They are the context's
+	// worktree, branch and commit outright, because the record may still carry
+	// none of them.
+	Worktree actions.FlowWorktreeCreateResult
+	Commit   string
+	// Phase is the resolved startup root, running by construction: the call site
+	// refuses a root whose status has moved before install.
+	Phase flowstore.FlowPhase
+	// Agent is the phase's resolved settings, carried for the reason
+	// trackedPhaseTarget carries its own: resolution can fail with a typed
+	// refusal that belongs to admission, not to the builder.
+	Agent agent.Settings
+}
+
+func (createPhaseTarget) role() actions.FlowLaunchRole { return actions.RoleCreatePhase }
+
 // errIncompleteFlowLaunchTarget reports a payload that upstream admission
 // should already have guaranteed. The builder still checks: it is the one
 // place every Flow launch context is constructed, so it is the only place the
@@ -239,6 +271,8 @@ func newFlowLaunchContext(
 	switch payload := target.(type) {
 	case trackedPhaseTarget:
 		return newTrackedPhaseLaunchContext(payload, settings, routing)
+	case createPhaseTarget:
+		return newCreatePhaseLaunchContext(payload, settings)
 	case worktreeAgentTarget:
 		return newWorktreeAgentLaunchContext(payload, settings)
 	case repairTarget:
@@ -568,4 +602,66 @@ func newPhaseResumeLaunchContext(
 		decision.FallbackNote = tmuxFallbackNote
 	}
 	return ctx, decision, nil
+}
+
+// newCreatePhaseLaunchContext ignores routing: this role's route is a constant,
+// not an unrouted gap. Creation has no tmux call site, so the embedded slot is
+// the rule rather than the leftover branch.
+//
+// Two zero fields are load-bearing and deliberately not set here. It leaves
+// FlowLaunchTracked false because the create call site can still take
+// failCreateFlowLaunchEmbedded between this build and install, and
+// flowLaunchFailureUpdate reads that flag to decide whether a failure persists a
+// phase update. It leaves Embedded unset because install forces it true, and
+// setting it early would change what the pre-install failure path and the
+// registered launch record carry. Both stamps stay where they are today; moving
+// them is approach-hyl.9's "context is final at prepare".
+func newCreatePhaseLaunchContext(
+	target createPhaseTarget,
+	settings flowLaunchAgentSettingsSnapshot,
+) (actions.AgentLaunchContext, flowLaunchRouteDecision, error) {
+	// Defensive invariants, not new user-reachable refusals: the create stage's
+	// launch-proof check and resolveFlowStartPhaseAgentSettings refuse first and
+	// keep their own messages. No worktree check — the bootstrap result is the
+	// only source, and the stage above already failed the launch without one.
+	if strings.TrimSpace(target.LaunchID) == "" ||
+		strings.TrimSpace(target.Record.FlowID) == "" ||
+		strings.TrimSpace(target.Phase.PhaseID) == "" ||
+		strings.TrimSpace(target.Agent.Command) == "" {
+		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
+	}
+	// The prompt reads a record with the bootstrap's gaps filled, while every
+	// other field below reads the persisted record and the request directly:
+	// the synthesis is the prompt's fallback ladder, not a second authority.
+	promptRecord := flowStartPromptRecord(target.Record, target.Request, target.Worktree, target.Commit)
+	// An untitled startup root shows its ID: the prefill names the phase, so an
+	// empty label would be what the user reads.
+	title := target.Phase.Title
+	if strings.TrimSpace(title) == "" {
+		title = target.Phase.PhaseID
+	}
+	// The stamp is applied last, after every field is set, for the reason the
+	// other arms give: registration reads the finished context.
+	return applyLaunchStamp(actions.AgentLaunchContext{
+		Command: target.Agent.Command, Model: target.Agent.Model,
+		ReasoningEffort: target.Agent.ReasoningEffort,
+		LaunchID:        target.LaunchID, RepoPath: target.Request.RepoPath,
+		WorktreePath: target.Worktree.WorktreePath, Branch: target.Worktree.Branch,
+		Commit: target.Commit, SessionStateRoot: settings.SessionStateRoot,
+		// The PlanPhase trio is this role's alone: the create prefill names the
+		// phase it is about to run, and no other launch has one to announce.
+		PlanPhaseID: target.Phase.PhaseID, PlanPhaseTitle: title,
+		PlanPhaseStatus: string(flowstore.PhaseRunning),
+		// No PlanID or PlanPath: the plan this Flow will have does not exist yet.
+		FlowID: target.Record.FlowID, FlowPhaseID: target.Phase.PhaseID,
+		FlowPhaseKind: string(flowstore.SemanticKind(target.Phase)),
+		// Headless is the persisted record's, not the synthesized one's: the
+		// preference is what creation was admitted with.
+		Headless: target.Record.Headless,
+		// The prompt renders settings.Pin.ExecutablePath, not the stamped
+		// ctx.Executable, for the reason every other arm gives: the stamp is
+		// applied last, so there is no stamped value to read yet.
+		InitialPrompt: initialFlowLaunchPrompt(
+			promptRecord, target.Phase, settings.PromptTemplates, settings.Pin.ExecutablePath),
+	}, settings.stamp()), flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}, nil
 }
