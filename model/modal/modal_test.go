@@ -172,6 +172,86 @@ func TestInputInvalidSubmitStaysOpenWithError(t *testing.T) {
 	}
 }
 
+func TestTextEditSharedKeysMatchOnInputAndFormPaths(t *testing.T) {
+	type path struct {
+		name  string
+		setup func(text string, cursor int) modal.Modal
+		read  func(modal.Modal) (string, int)
+	}
+	paths := []path{
+		{
+			name: "input",
+			setup: func(text string, cursor int) modal.Modal {
+				m := modal.OpenSingleLineInput("Edit", "text", text, nil, nil)
+				for m.View().InputCursor > cursor {
+					m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+				}
+				return m
+			},
+			read: func(m modal.Modal) (string, int) {
+				view := m.View()
+				return view.Input, view.InputCursor
+			},
+		},
+		{
+			name: "form",
+			setup: func(text string, cursor int) modal.Modal {
+				m := modal.OpenForm(modal.FormSpec{
+					Title: "Edit",
+					Fields: []modal.FormField{{
+						ID:    "text",
+						Kind:  modal.FormText,
+						Label: "Text",
+						Value: text,
+					}},
+				})
+				for m.View().Form.Fields[0].Cursor > cursor {
+					m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+				}
+				return m
+			},
+			read: func(m modal.Modal) (string, int) {
+				field := m.View().Form.Fields[0]
+				return field.Value, field.Cursor
+			},
+		},
+	}
+	cases := []struct {
+		name       string
+		text       string
+		cursor     int
+		keys       []tea.KeyMsg
+		wantText   string
+		wantCursor int
+	}{
+		{name: "insert at cursor", text: "ab", cursor: 1, keys: []tea.KeyMsg{keyRunes("x")}, wantText: "axb", wantCursor: 2},
+		{name: "backspace at start", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyBackspace}}, wantText: "ab", wantCursor: 0},
+		{name: "backspace at end", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyBackspace}}, wantText: "a", wantCursor: 1},
+		{name: "delete at end", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyDelete}}, wantText: "ab", wantCursor: 2},
+		{name: "delete at start", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyDelete}}, wantText: "b", wantCursor: 0},
+		{name: "left clamps at start", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyLeft}}, wantText: "ab", wantCursor: 0},
+		{name: "right clamps at end", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyRight}}, wantText: "ab", wantCursor: 2},
+		{name: "home", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyHome}}, wantText: "ab", wantCursor: 0},
+		{name: "end", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyEnd}}, wantText: "ab", wantCursor: 2},
+		{name: "ctrl+u clears", text: "ab", cursor: 1, keys: []tea.KeyMsg{{Type: tea.KeyCtrlU}}, wantText: "", wantCursor: 0},
+		{name: "space insert", text: "ab", cursor: 1, keys: []tea.KeyMsg{{Type: tea.KeySpace}}, wantText: "a b", wantCursor: 2},
+	}
+	for _, p := range paths {
+		for _, tc := range cases {
+			t.Run(p.name+"/"+tc.name, func(t *testing.T) {
+				m := p.setup(tc.text, tc.cursor)
+				for _, key := range tc.keys {
+					m, _, _ = m.Update(key)
+				}
+				gotText, gotCursor := p.read(m)
+				if gotText != tc.wantText || gotCursor != tc.wantCursor {
+					t.Fatalf("text/cursor = %q/%d, want %q/%d", gotText, gotCursor, tc.wantText, tc.wantCursor)
+				}
+			})
+		}
+	}
+}
+
 func TestSingleLineInputOpensWithCursorAtEndAndInsertsAtCursor(t *testing.T) {
 	m := modal.OpenSingleLineInput(
 		"New branch",

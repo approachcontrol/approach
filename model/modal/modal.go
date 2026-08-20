@@ -518,20 +518,16 @@ func (m Modal) updateConfirm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 }
 
 func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
-	m.inputCursor = clampInputCursor(m.input, m.inputCursor)
+	edit := textEditState{content: m.input, cursor: m.inputCursor, column: m.inputColumn}.clamped()
 	switch msg.String() {
 	case "alt+enter":
 		if m.inputMode == InputMultiLine {
-			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{'\n'})
-			m.inputColumn = -1
-			m.clearInputFeedback()
+			m.applyInputEdit(edit.insert([]rune{'\n'}), true)
 		}
 		return m, Consumed, nil
 	case "enter":
 		if m.editor {
-			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{'\n'})
-			m.inputColumn = -1
-			m.clearInputFeedback()
+			m.applyInputEdit(edit.insert([]rune{'\n'}), true)
 			return m, Consumed, nil
 		}
 		return m.submitInput()
@@ -543,73 +539,63 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	case "esc", "ctrl+c":
 		return Modal{}, Cancelled, deferCancel(m.cancel, m.View())
 	case "backspace", "ctrl+h":
-		m.input, m.inputCursor = deleteRuneBefore(m.input, m.inputCursor)
-		m.inputColumn = -1
-		m.clearInputFeedback()
+		m.applyInputEdit(edit.deleteBefore(), true)
 		return m, Consumed, nil
 	case "delete":
-		m.input, m.inputCursor = deleteRuneAt(m.input, m.inputCursor)
-		m.inputColumn = -1
-		m.clearInputFeedback()
+		m.applyInputEdit(edit.deleteAt(), true)
 		return m, Consumed, nil
 	case "left":
-		if m.inputCursor > 0 {
-			m.inputCursor--
-		}
-		m.inputColumn = -1
+		m.applyInputEdit(edit.left(), false)
 		return m, Consumed, nil
 	case "right":
-		if m.inputCursor < inputLength(m.input) {
-			m.inputCursor++
-		}
-		m.inputColumn = -1
+		m.applyInputEdit(edit.right(), false)
 		return m, Consumed, nil
 	case "up":
 		if m.inputMode == InputMultiLine {
-			m.inputCursor, m.inputColumn = moveCursorVertically(m.input, m.inputCursor, -1, m.inputColumn)
+			m.applyInputEdit(edit.vertical(-1), false)
 		}
 		return m, Consumed, nil
 	case "down":
 		if m.inputMode == InputMultiLine {
-			m.inputCursor, m.inputColumn = moveCursorVertically(m.input, m.inputCursor, 1, m.inputColumn)
+			m.applyInputEdit(edit.vertical(1), false)
 		}
 		return m, Consumed, nil
 	case "home", "ctrl+a":
 		if m.editor {
-			m.inputCursor = editorLineStart(m.input, m.inputCursor)
+			m.applyInputEdit(edit.homeLine(), false)
 		} else {
-			m.inputCursor = 0
+			m.applyInputEdit(edit.homeBuffer(), false)
 		}
-		m.inputColumn = -1
 		return m, Consumed, nil
 	case "end", "ctrl+e":
 		if m.editor {
-			m.inputCursor = editorLineEnd(m.input, m.inputCursor)
+			m.applyInputEdit(edit.endLine(), false)
 		} else {
-			m.inputCursor = inputLength(m.input)
+			m.applyInputEdit(edit.endBuffer(), false)
 		}
-		m.inputColumn = -1
 		return m, Consumed, nil
 	case "ctrl+u":
-		m.input = ""
-		m.inputCursor = 0
-		m.inputColumn = -1
-		m.clearInputFeedback()
+		m.applyInputEdit(edit.clear(), true)
 		return m, Consumed, nil
 	default:
 		if msg.Type == tea.KeySpace {
-			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{' '})
-			m.inputColumn = -1
-			m.clearInputFeedback()
+			m.applyInputEdit(edit.insert([]rune{' '}), true)
 			return m, Consumed, nil
 		}
 		if msg.Type == tea.KeyRunes {
-			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, msg.Runes)
-			m.inputColumn = -1
-			m.clearInputFeedback()
+			m.applyInputEdit(edit.insert(msg.Runes), true)
 			return m, Consumed, nil
 		}
 		return m, Consumed, nil
+	}
+}
+
+func (m *Modal) applyInputEdit(edit textEditState, mutated bool) {
+	m.input = edit.content
+	m.inputCursor = edit.cursor
+	m.inputColumn = edit.column
+	if mutated {
+		m.clearInputFeedback()
 	}
 }
 
@@ -890,50 +876,47 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 }
 
 func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Outcome, tea.Cmd) {
-	field.Cursor = clampInputCursor(field.Value, field.Cursor)
+	edit := textEditState{content: field.Value, cursor: field.Cursor, column: -1}.clamped()
 	switch msg.String() {
 	case "alt+enter":
 		if field.Kind == FormMultilineText {
-			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, []rune{'\n'})
+			edit = edit.insert([]rune{'\n'})
 		}
 	case "backspace", "ctrl+h":
-		field.Value, field.Cursor = deleteRuneBefore(field.Value, field.Cursor)
+		edit = edit.deleteBefore()
 	case "delete":
-		field.Value, field.Cursor = deleteRuneAt(field.Value, field.Cursor)
+		edit = edit.deleteAt()
 	case "left":
-		if field.Cursor > 0 {
-			field.Cursor--
-		}
+		edit = edit.left()
 	case "right":
-		if field.Cursor < inputLength(field.Value) {
-			field.Cursor++
-		}
+		edit = edit.right()
 	case "up":
 		if field.Kind == FormMultilineText {
-			field.Cursor, _ = moveCursorVertically(field.Value, field.Cursor, -1, -1)
+			edit = edit.vertical(-1)
 		} else {
 			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
 		}
 	case "down":
 		if field.Kind == FormMultilineText {
-			field.Cursor, _ = moveCursorVertically(field.Value, field.Cursor, 1, -1)
+			edit = edit.vertical(1)
 		} else {
 			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
 		}
 	case "home", "ctrl+a":
-		field.Cursor = 0
+		edit = edit.homeBuffer()
 	case "end", "ctrl+e":
-		field.Cursor = inputLength(field.Value)
+		edit = edit.endBuffer()
 	case "ctrl+u":
-		field.Value = ""
-		field.Cursor = 0
+		edit = edit.clear()
 	default:
 		if msg.Type == tea.KeySpace {
-			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, []rune{' '})
+			edit = edit.insert([]rune{' '})
 		} else if msg.Type == tea.KeyRunes {
-			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, msg.Runes)
+			edit = edit.insert(msg.Runes)
 		}
 	}
+	field.Value = edit.content
+	field.Cursor = edit.cursor
 	m.formErr = ""
 	return m, Consumed, nil
 }
