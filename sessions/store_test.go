@@ -458,6 +458,37 @@ func TestStoreListSkipsCorruptMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreListSkipsUnreadableMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "unreadable")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(badDir, "missing.json"), filepath.Join(badDir, "meta.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].SessionID != "good-session" {
+		t.Fatalf("List() = %#v, want only good-session", records)
+	}
+}
+
 func TestStoreWritesArtifactsWithRestrictivePermissions(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "provider.jsonl")
@@ -487,6 +518,73 @@ func TestStoreWritesArtifactsWithRestrictivePermissions(t *testing.T) {
 	assertMode(t, metaPath, 0o600)
 	assertMode(t, filepath.Join(sessionDir, "transcript.jsonl"), 0o600)
 	assertMode(t, filepath.Join(sessionDir, "raw.jsonl"), 0o600)
+}
+
+func TestStoreDoesNotPublishNewMetadataWhenTranscriptNormalizationFails(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "invalid.jsonl")
+	if err := os.WriteFile(providerTranscript, []byte("{not-json}\n"), 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root, CopyRawTranscripts: true})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	err = store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "failed-transcript",
+		Status:         "ended",
+		TranscriptPath: providerTranscript,
+	})
+	if err == nil {
+		t.Fatal("Upsert() error = nil, want transcript normalization failure")
+	}
+	records, listErr := store.List(sessions.SessionFilter{})
+	if listErr != nil {
+		t.Fatalf("List() error = %v", listErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("List() = %#v, want no published session", records)
+	}
+}
+
+func TestStoreKeepsExistingMetadataWhenTranscriptNormalizationFails(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "invalid-update.jsonl")
+	if err := os.WriteFile(providerTranscript, []byte("{not-json}\n"), 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "running",
+		Summary:   "before",
+	}); err != nil {
+		t.Fatalf("seed Upsert() error = %v", err)
+	}
+
+	err = store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "existing-session",
+		Status:         "ended",
+		Summary:        "after",
+		TranscriptPath: providerTranscript,
+	})
+	if err == nil {
+		t.Fatal("update Upsert() error = nil, want transcript normalization failure")
+	}
+	record, readErr := store.Read(sessions.ProviderCodex, "existing-session")
+	if readErr != nil {
+		t.Fatalf("Read() error = %v", readErr)
+	}
+	if record.Status != "running" || record.Summary != "before" || record.TranscriptPath != "" {
+		t.Fatalf("Read() = %#v, want unchanged existing metadata", record)
+	}
 }
 
 func TestStoreMarksLaunchEnded(t *testing.T) {

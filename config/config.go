@@ -563,8 +563,12 @@ func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte)
 
 func lockedConfigUpdate(path string, options []Option, createIfMissing bool, patch func([]byte) []byte) error {
 	opts := defaultOptions(options...)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
+	configDir := filepath.Dir(path)
+	if err := os.MkdirAll(configDir, artifacts.DirPerm); err != nil {
+		return fmt.Errorf("create config dir %s: %w", configDir, err)
+	}
+	if err := os.Chmod(configDir, artifacts.DirPerm); err != nil {
+		return fmt.Errorf("secure config dir %s: %w", configDir, err)
 	}
 	release, err := acquireConfigFileLock(path+".lock", fmt.Sprintf("config lock %q", path), opts.lockTimeout)
 	if err != nil {
@@ -580,15 +584,20 @@ func lockedConfigUpdate(path string, options []Option, createIfMissing bool, pat
 		if !createIfMissing {
 			return nil
 		}
-	} else if _, err := parseConfigData(path, data, opts); err != nil {
-		return err
+	} else {
+		if err := os.Chmod(path, artifacts.FilePerm); err != nil {
+			return fmt.Errorf("secure config %s: %w", path, err)
+		}
+		if _, err := parseConfigData(path, data, opts); err != nil {
+			return err
+		}
 	}
 
 	patched := patch(data)
 	if bytes.Equal(patched, data) {
 		return nil
 	}
-	if err := os.WriteFile(path, patched, 0o644); err != nil {
+	if err := artifacts.WriteFileAtomic(path, patched); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil

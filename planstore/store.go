@@ -484,9 +484,6 @@ func (s *Store) write(record PlanRecord) error {
 	if err != nil {
 		return fmt.Errorf("encode plan metadata: %w", err)
 	}
-	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
-		return fmt.Errorf("write plan metadata: %w", err)
-	}
 	// Only (re)write the body when we actually have one. Save always supplies
 	// non-empty Markdown; metadata-only updates such as SetPhase carry whatever
 	// readRecord loaded, so guarding here avoids clobbering an existing plan.md
@@ -495,6 +492,11 @@ func (s *Store) write(record PlanRecord) error {
 		if err := artifacts.WriteFileAtomic(filepath.Join(dir, "plan.md"), []byte(record.Markdown)); err != nil {
 			return fmt.Errorf("write plan markdown: %w", err)
 		}
+	}
+	// Metadata is the publication marker used by List and ReadMetadata. Write it
+	// last so a failed body write cannot expose a torn plan record.
+	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
+		return fmt.Errorf("write plan metadata: %w", err)
 	}
 	return nil
 }

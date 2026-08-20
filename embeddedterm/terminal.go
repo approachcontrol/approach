@@ -61,6 +61,14 @@ var newEmulator = func(width, height int) (*vt.SafeEmulator, error) {
 	return vt.NewSafeEmulator(width, height), nil
 }
 
+var closeFailedStartPTY = func(ptmx *os.File) error {
+	return ptmx.Close()
+}
+
+var terminateFailedStartProcess = terminateProcessGroup
+
+var waitFailedStartProcess = waitForTerminatedCommandExit
+
 type Manager struct{}
 
 func NewManager() *Manager {
@@ -100,10 +108,7 @@ func (m *Manager) StartCommandWithOptions(ctx context.Context, cmd *exec.Cmd, wi
 	}
 	emu, err := newEmulator(width, height)
 	if err != nil {
-		_ = ptmx.Close()
-		_ = terminateProcessGroup(cmd)
-		_ = waitForCommandExit(cmd, terminateWaitTimeout)
-		return nil, err
+		return nil, errors.Join(err, cleanupFailedStart(ptmx, cmd))
 	}
 	emu.SetScrollbackSize(defaultScrollbackLines)
 	t := &Terminal{
@@ -490,6 +495,30 @@ func waitForCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return context.DeadlineExceeded
 	}
+}
+
+func waitForTerminatedCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
+	err := waitForCommandExit(cmd, timeout)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil
+	}
+	return err
+}
+
+func cleanupFailedStart(ptmx *os.File, cmd *exec.Cmd) error {
+	return errors.Join(
+		wrapCleanupError("close pty", closeFailedStartPTY(ptmx)),
+		wrapCleanupError("terminate process", terminateFailedStartProcess(cmd)),
+		wrapCleanupError("wait for process", waitFailedStartProcess(cmd, terminateWaitTimeout)),
+	)
+}
+
+func wrapCleanupError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 type terminalQueryFilter struct {

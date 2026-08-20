@@ -15,10 +15,11 @@ type fakeReply struct {
 }
 
 type fakeRunner struct {
-	t     *testing.T
-	run   map[string]fakeReply
-	ok    map[string]error
-	calls []string
+	t                 *testing.T
+	run               map[string]fakeReply
+	ok                map[string]error
+	predicateFailures map[string]error
+	calls             []string
 }
 
 func (f *fakeRunner) Run(dir string, args ...string) (string, error) {
@@ -31,14 +32,17 @@ func (f *fakeRunner) Run(dir string, args ...string) (string, error) {
 	return reply.out, reply.err
 }
 
-func (f *fakeRunner) Ok(dir string, args ...string) error {
+func (f *fakeRunner) Predicate(dir string, args ...string) (bool, error) {
 	key := fakeKey(dir, args...)
 	f.calls = append(f.calls, "ok "+key)
+	if err, ok := f.predicateFailures[key]; ok {
+		return false, err
+	}
 	err, ok := f.ok[key]
 	if !ok {
 		f.t.Fatalf("unexpected Ok call: %s", key)
 	}
-	return err
+	return err == nil, nil
 }
 
 func fakeKey(dir string, args ...string) string {
@@ -75,8 +79,12 @@ func TestQuerierListBranches_AheadBehindFailureLeavesCountsZero(t *testing.T) {
 	}
 
 	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
-	if err != nil {
-		t.Fatalf("unexpected hard error: %v", err)
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok {
+		t.Fatalf("AsPartialQuery(%v) = false, want non-fatal enrichment diagnostic", err)
+	}
+	if len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "ahead/behind" || partial.Warnings[0].Subject != "feature" {
+		t.Fatalf("partial warnings = %#v, want feature ahead/behind failure", partial.Warnings)
 	}
 
 	feature := findBranch(branches, "feature")
@@ -165,6 +173,37 @@ func TestQuerierListBranches_UnpushedCommitsOnlyReadForAheadBranches(t *testing.
 	}
 }
 
+func TestQuerierListBranches_ReportsUnpushedCommitFailure(t *testing.T) {
+	wantErr := errors.New("cannot read commit graph")
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+				out: "feature\trefs/remotes/origin/feature\t[ahead 2]\nmain\t\t\n",
+			},
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n",
+			},
+			fakeKey("/repo", "rev-list", "--count", "--left-right", "feature...refs/remotes/origin/feature"): {out: "2 0\n"},
+			fakeKey("/repo", "log", "--oneline", "refs/remotes/origin/feature..feature"):                     {err: wantErr},
+			fakeKey("/repo", "status", "--porcelain"):                                                        {},
+		},
+		ok: map[string]error{
+			fakeKey("/repo", "merge-base", "--is-ancestor", "feature", "main"): errors.New("not merged"),
+		},
+	}
+
+	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
+	feature := findBranch(branches, "feature")
+	if feature == nil || len(feature.Unpushed) != 0 {
+		t.Fatalf("feature = %#v, want retained row without unpushed details", feature)
+	}
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok || len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "unpushed commits" || !errors.Is(partial.Warnings[0].Cause, wantErr) {
+		t.Fatalf("partial = %#v, err = %v, want unpushed-commit failure", partial, err)
+	}
+}
+
 func TestQuerierListBranches_DirtyStatusFailureIsBestEffort(t *testing.T) {
 	featurePath := t.TempDir()
 	f := &fakeRunner{
@@ -187,8 +226,12 @@ func TestQuerierListBranches_DirtyStatusFailureIsBestEffort(t *testing.T) {
 	}
 
 	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
-	if err != nil {
-		t.Fatalf("unexpected hard error: %v", err)
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok {
+		t.Fatalf("AsPartialQuery(%v) = false, want non-fatal enrichment diagnostic", err)
+	}
+	if len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "dirty status" || partial.Warnings[0].Subject != featurePath {
+		t.Fatalf("partial warnings = %#v, want feature dirty-status failure", partial.Warnings)
 	}
 
 	feature := findBranch(branches, "feature")
@@ -237,6 +280,69 @@ func TestQuerierListBranches_OkProbeMarksMergedBranches(t *testing.T) {
 	}
 }
 
+func TestQuerierListBranches_ReportsMergedPredicateFailure(t *testing.T) {
+	wantErr := errors.New("merge-base unavailable")
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+				out: "feature\t\t\nmain\t\t\n",
+			},
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n",
+			},
+			fakeKey("/repo", "status", "--porcelain"): {},
+		},
+		predicateFailures: map[string]error{
+			fakeKey("/repo", "merge-base", "--is-ancestor", "feature", "main"): wantErr,
+		},
+	}
+
+	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
+	feature := findBranch(branches, "feature")
+	if feature == nil || feature.Merged {
+		t.Fatalf("feature = %#v, want retained unmerged row", feature)
+	}
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok || len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "merged status" || !errors.Is(partial.Warnings[0].Cause, wantErr) {
+		t.Fatalf("partial = %#v, err = %v, want merged-status failure", partial, err)
+	}
+}
+
+func TestQuerierListBranches_ReportsRootAndDefaultBranchFallbackFailures(t *testing.T) {
+	wantRootErr := errors.New("cannot identify current branch")
+	wantDefaultErr := errors.New("origin HEAD is corrupt")
+	featurePath := t.TempDir()
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+				out: "dev\t\t\nfeature\t\t\n",
+			},
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree " + featurePath + "\nHEAD abc123\nbranch refs/heads/feature\n",
+			},
+			fakeKey("/repo", "branch", "--show-current"):                                       {err: wantRootErr},
+			fakeKey("/repo", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"): {err: wantDefaultErr},
+			fakeKey(featurePath, "status", "--porcelain"):                                      {},
+		},
+		ok: map[string]error{},
+	}
+
+	branches, err := gitquery.NewQuerier(f).ListBranches("/repo")
+	if len(branches) != 2 {
+		t.Fatalf("ListBranches() = %#v, want retained rows", branches)
+	}
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok || len(partial.Warnings) != 2 {
+		t.Fatalf("partial = %#v, err = %v, want two fallback warnings", partial, err)
+	}
+	if partial.Warnings[0].Operation != "root branch" || !errors.Is(partial.Warnings[0].Cause, wantRootErr) ||
+		partial.Warnings[1].Operation != "default branch" || !errors.Is(partial.Warnings[1].Cause, wantDefaultErr) {
+		t.Fatalf("partial warnings = %#v", partial.Warnings)
+	}
+}
+
 func TestQuerierListWorktrees_UsesInjectedRunnerForDirtyStatus(t *testing.T) {
 	mainPath := t.TempDir()
 	dirtyPath := t.TempDir()
@@ -275,6 +381,32 @@ func TestQuerierListWorktrees_UsesInjectedRunnerForDirtyStatus(t *testing.T) {
 	}
 	if fakeCallContains(f.calls, stalePath+" | status --porcelain") {
 		t.Fatalf("stale worktree should not read dirty status; calls: %v", f.calls)
+	}
+}
+
+func TestQuerierListWorktrees_ReturnsRowsWithDirtyStatusDiagnostic(t *testing.T) {
+	worktreePath := t.TempDir()
+	wantErr := errors.New("fatal: cannot read index")
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+				out: "worktree " + worktreePath + "\nHEAD abc123\nbranch refs/heads/main\n",
+			},
+			fakeKey(worktreePath, "status", "--porcelain"): {err: wantErr},
+		},
+	}
+
+	worktrees, err := gitquery.NewQuerier(f).ListWorktrees("/repo")
+	if len(worktrees) != 1 || worktrees[0].Path != worktreePath {
+		t.Fatalf("ListWorktrees() = %#v, want usable worktree row", worktrees)
+	}
+	partial, ok := gitquery.AsPartialQuery(err)
+	if !ok {
+		t.Fatalf("AsPartialQuery(%v) = false, want non-fatal enrichment diagnostic", err)
+	}
+	if len(partial.Warnings) != 1 || partial.Warnings[0].Operation != "dirty status" || partial.Warnings[0].Subject != worktreePath || !errors.Is(partial.Warnings[0].Cause, wantErr) {
+		t.Fatalf("partial warnings = %#v, want worktree dirty-status failure", partial.Warnings)
 	}
 }
 

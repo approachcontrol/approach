@@ -3746,6 +3746,7 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 	}
 	rows -= m.paneCachedWarningRows(mode)
 	rows -= m.paneFlowDegradationWarningRows(mode)
+	rows -= m.paneGitDegradationWarningRows(mode)
 	// The positive floor predates the warning row and also covers hidden
 	// background panes, which are allocated no rows at all. Viewports this
 	// small cannot show a cached row either way, so the floor stays.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -535,10 +536,29 @@ func repoPathFromGitCommonDir(commonDir string) string {
 }
 
 func gitOutput(cwd string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", cwd}, args...)...)
+	cleaned, err := plausibleGitCWD(cwd)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", append([]string{"-C", cleaned}, args...)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func plausibleGitCWD(cwd string) (string, error) {
+	cwd = filepath.Clean(strings.TrimSpace(cwd))
+	if cwd == "." || !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("git cwd must be an absolute path")
+	}
+	info, err := os.Stat(cwd)
+	if err != nil {
+		return "", fmt.Errorf("inspect git cwd %q: %w", cwd, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("git cwd %q is not a directory", cwd)
+	}
+	return cwd, nil
 }

@@ -66,6 +66,11 @@ type flowDegradationState struct {
 	diagnostic *flowstore.PartialListError
 }
 
+type gitDegradationState struct {
+	repoPath   string
+	diagnostic *gitquery.PartialQueryError
+}
+
 type takeoverMode uint8
 
 const (
@@ -143,6 +148,7 @@ type Model struct {
 	listRequests              [listRequestSlots]uint64
 	listErrors                [listRequestSlots]string
 	flowDegradations          [listRequestSlots]flowDegradationState
+	gitDegradations           [listRequestSlots]gitDegradationState
 	activePane                ui.Pane
 	repoPaneCollapsed         bool
 	activeFlowSurface         bool
@@ -1655,6 +1661,8 @@ func (m Model) View() string {
 		RightEmptyMessage:              rightEmptyMessage,
 		TopListError:                   m.currentListError(m.topMode),
 		BottomListError:                m.currentListError(m.bottomMode),
+		TopDegradationWarning:          m.gitDegradationWarning(m.topMode),
+		BottomDegradationWarning:       m.gitDegradationWarning(m.bottomMode),
 		ActiveFlowsListError:           m.currentListError(ui.ModeActiveFlows),
 		PRBabysitterListError:          m.currentListError(ui.ModePRBabysitter),
 		FetchAvailable:                 m.canFetch(),

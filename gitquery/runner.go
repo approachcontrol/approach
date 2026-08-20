@@ -1,25 +1,31 @@
 package gitquery
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const defaultGitTimeout = 30 * time.Second
 
 // Runner is the seam between query orchestration and the git CLI.
 type Runner interface {
 	// Run executes git and returns stdout. On failure, git stderr is folded
 	// into the error, matching the historical gitCmd contract.
 	Run(dir string, args ...string) (string, error)
-	// Ok executes git only for its exit code. Predicate commands such as
-	// merge-base --is-ancestor use nil as the affirmative answer.
-	Ok(dir string, args ...string) error
+	// Predicate executes a Git predicate. Exit 0 is true, exit 1 is false, and
+	// execution failures remain distinguishable from an ordinary false result.
+	Predicate(dir string, args ...string) (bool, error)
 }
 
-type execRunner struct{}
+type execRunner struct {
+	timeout time.Duration
+}
 
-var defaultRunner Runner = execRunner{}
+var defaultRunner Runner = execRunner{timeout: defaultGitTimeout}
 
 // DefaultRunner is used by package-level query functions. Override it only for
 // process-wide integration hooks; tests should prefer NewQuerier with a fake.
@@ -43,14 +49,20 @@ func defaultQuery() *Querier {
 	return NewQuerier(DefaultRunner)
 }
 
-func (execRunner) Run(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+func (r execRunner) Run(dir string, args ...string) (string, error) {
+	timeout := r.commandTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	// Output captures stderr into (*exec.ExitError).Stderr when cmd.Stderr is
 	// nil, but its error string is only "exit status N". Fold the git stderr
 	// diagnostic into the returned error while keeping stdout clean for parsing.
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git %s timed out after %s: %w", gitOperation(args), timeout, ctx.Err())
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if msg := strings.TrimSpace(string(exitErr.Stderr)); msg != "" {
@@ -62,8 +74,36 @@ func (execRunner) Run(dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-func (execRunner) Ok(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
+func (r execRunner) Predicate(dir string, args ...string) (bool, error) {
+	timeout := r.commandTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	return cmd.Run()
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("git %s timed out after %s: %w", gitOperation(args), timeout, ctx.Err())
+	}
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+func (r execRunner) commandTimeout() time.Duration {
+	if r.timeout <= 0 {
+		return defaultGitTimeout
+	}
+	return r.timeout
+}
+
+func gitOperation(args []string) string {
+	if len(args) == 0 {
+		return "command"
+	}
+	return args[0]
 }

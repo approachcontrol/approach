@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -354,6 +355,21 @@ func TestRunPlanStatusSetPreservesPlanContentAndPhases(t *testing.T) {
 	}
 }
 
+func TestRunPlanStatusSetReturnsWriterFailure(t *testing.T) {
+	root := t.TempDir()
+	mustRun(t, []string{"approach", "plan", "save", "--title", "Lifecycle", "--plan-id", "lifecycle", "--state-root", root}, "body")
+	wantErr := errors.New("stdout unavailable")
+	err := run([]string{
+		"approach", "plan", "status", "set",
+		"--plan-id", "lifecycle",
+		"--status", "in_progress",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: failingWriter{err: wantErr}}))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("run error = %v, want stdout writer failure", err)
+	}
+}
+
 func TestRunPlanStatusSetRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
 	root := t.TempDir()
 	if err := run([]string{
@@ -558,6 +574,24 @@ func TestRunPlanSaveFromLinkedWorktreeUsesRootRepoPath(t *testing.T) {
 	}
 	if record.Commit == "" {
 		t.Fatal("expected commit metadata from linked worktree")
+	}
+}
+
+func TestRunPlanSaveDoesNotResolveGitMetadataFromRelativeCWD(t *testing.T) {
+	stateRoot := t.TempDir()
+	var stdout bytes.Buffer
+	err := run([]string{"approach", "plan", "save", "--title", "Relative", "--plan-id", "relative", "--state-root", stateRoot},
+		noScanDeps(t, runDeps{
+			getwd:  func() (string, error) { return ".", nil },
+			stdin:  strings.NewReader("body"),
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	record := readPlanRecord(t, stateRoot, "relative")
+	if record.RepoPath != "" || record.WorktreePath != "" || record.Branch != "" || record.Commit != "" {
+		t.Fatalf("relative cwd resolved process-directory Git metadata: %#v", record)
 	}
 }
 
@@ -766,6 +800,17 @@ func TestRunPlanListRequiresJSON(t *testing.T) {
 	}
 }
 
+func TestRunPlanListReturnsWriterFailure(t *testing.T) {
+	root := t.TempDir()
+	mustRun(t, []string{"approach", "plan", "save", "--title", "Alpha", "--plan-id", "alpha", "--state-root", root}, "body")
+	wantErr := errors.New("stdout unavailable")
+	err := run([]string{"approach", "plan", "list", "--json", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: failingWriter{err: wantErr}}))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("run error = %v, want stdout writer failure", err)
+	}
+}
+
 func TestRunPlanReadPrintsMarkdownOnly(t *testing.T) {
 	root := t.TempDir()
 	mustRun(t, []string{"approach", "plan", "save", "--title", "Readable", "--plan-id", "readable", "--state-root", root}, "# Readable\n\nbody\n")
@@ -781,11 +826,53 @@ func TestRunPlanReadPrintsMarkdownOnly(t *testing.T) {
 	}
 }
 
+func TestRunPlanReadReturnsWriterFailure(t *testing.T) {
+	root := t.TempDir()
+	mustRun(t, []string{"approach", "plan", "save", "--title", "Readable", "--plan-id", "readable", "--state-root", root}, "body")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "markdown", args: []string{"approach", "plan", "read", "--plan-id", "readable", "--state-root", root}},
+		{name: "json", args: []string{"approach", "plan", "read", "--plan-id", "readable", "--state-root", root, "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wantErr := errors.New("stdout unavailable")
+			err := run(tc.args, noScanDeps(t, runDeps{stdout: failingWriter{err: wantErr}}))
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("run error = %v, want stdout writer failure", err)
+			}
+		})
+	}
+}
+
 func TestRunPlanSaveRequiresTitle(t *testing.T) {
 	err := run([]string{"approach", "plan", "save", "--state-root", t.TempDir()},
 		noScanDeps(t, runDeps{stdin: strings.NewReader("body"), stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --title")
+	}
+}
+
+func TestRunPlanSaveReturnsWriterFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		json bool
+	}{
+		{name: "plain"},
+		{name: "json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"approach", "plan", "save", "--title", "Writable", "--plan-id", "writable", "--state-root", t.TempDir()}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			wantErr := errors.New("stdout unavailable")
+			err := run(args, noScanDeps(t, runDeps{stdin: strings.NewReader("body"), stdout: failingWriter{err: wantErr}}))
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("run error = %v, want stdout writer failure", err)
+			}
+		})
 	}
 }
 

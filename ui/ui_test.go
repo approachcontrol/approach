@@ -5149,6 +5149,27 @@ func TestRender_StackedPaneRetainedRowsShowPersistentFetchWarning(t *testing.T) 
 	}
 }
 
+func TestRender_StackedPaneShowsPartialGitMetadataWarningWithFreshRows(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:                 160,
+		Height:                26,
+		Repos:                 []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:              0,
+		Mode:                  ModeWorktrees,
+		TopMode:               ModeWorktrees,
+		BottomMode:            ModePlans,
+		ContentPane:           PaneTop,
+		ActivePane:            PaneTop,
+		Worktrees:             []gitquery.Worktree{{Path: "/repo", BranchName: "main"}},
+		TopDegradationWarning: "Git metadata incomplete: cannot read index",
+	}))
+	for _, want := range []string{"Git metadata incomplete: cannot read index", "main"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("partial metadata view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestRender_StackedPaneFilterEmptyKeepsPersistentFetchWarning(t *testing.T) {
 	view := ansi.Strip(Render(RenderParams{
 		Width:              160,

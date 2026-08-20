@@ -173,13 +173,15 @@ func (s *Store) upsert(record SessionRecord) (SessionRecord, error) {
 	if record.SchemaVersion == 0 {
 		record.SchemaVersion = schemaVersion
 	}
-	if err := s.writeMetadata(record); err != nil {
-		return SessionRecord{}, err
-	}
 	if hasIncomingTranscript && record.Provider != ProviderCursor {
 		if err := s.writeTranscriptFiles(record, transcript); err != nil {
 			return SessionRecord{}, err
 		}
+	}
+	// Metadata is the publication marker used by List. Write payloads first so
+	// a failed transcript copy or normalization cannot expose a torn record.
+	if err := s.writeMetadata(record); err != nil {
+		return SessionRecord{}, err
 	}
 	return record, nil
 }
@@ -214,7 +216,9 @@ func (s *Store) List(filter SessionFilter) ([]SessionRecord, error) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			// A single unreadable record should not make every other session
+			// unavailable, just as corrupt metadata below is record-local.
+			return nil
 		}
 		var record SessionRecord
 		if err := json.Unmarshal(data, &record); err != nil {
@@ -524,6 +528,12 @@ func sortTime(record SessionRecord) time.Time {
 }
 
 func (s *Store) writeTranscriptFiles(record SessionRecord, input *os.File) error {
+	if err := artifacts.EnsureCollection(filepath.Join(s.root, "sessions"), providerPathPart(record.Provider)); err != nil {
+		return fmt.Errorf("create session provider directory: %w", err)
+	}
+	if _, err := artifacts.EnsureRecordDir(filepath.Join(s.root, "sessions", providerPathPart(record.Provider)), "", safeSessionDirName(record.SessionID)); err != nil {
+		return fmt.Errorf("secure session directory: %w", err)
+	}
 	dir := s.sessionDir(record.Provider, record.SessionID)
 	if s.copyRawTranscripts {
 		if _, err := input.Seek(0, 0); err != nil {
