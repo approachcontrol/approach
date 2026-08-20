@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 )
@@ -289,14 +288,13 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 	readPhase, _ := flowPhaseByID(msg.Record, msg.PhaseID)
 	reserve := m.reserveTrackedFlowLaunch
 	addPhaseLaunchID := m.launchSeams.AddPhaseLaunchID
-	sessionStateRoot := settings.SessionStateRoot
-	// A resume does not go through flowLaunchPreparation.prepare, so the tmux
-	// decision is made here instead. It is taken on the Model, before the
-	// closure runs, for the same reason the launcher snapshots it at admission:
-	// the route this launch takes must be the one it was admitted with. A resume
-	// is interactive by construction and never a repair, so the command is the
-	// whole input.
-	tmuxRoute, tmuxFellBack := m.tmuxLaunchRoute(actions.AgentLaunchContext{Command: msg.ResumeCommand})
+	// A resume does not go through flowLaunchPreparation.prepare, but it
+	// snapshots the routing inputs the same way that stage does, so the route
+	// this launch takes is still the one it was admitted with. Only the decision
+	// moves into the closure, where the builder makes it against the finished
+	// context.
+	backend := m.launchBackend
+	tmuxAvailable := m.tmuxLaunchAvailable
 	return func() tea.Msg {
 		event := msg
 		event.Stage = flowLaunchStagePrepared
@@ -344,52 +342,30 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 			event.Err = fmt.Sprintf("failed to mark flow phase resume: %v", err)
 			return event
 		}
-		// The write's record decides whether this resume preserved a terminal
-		// phase or reopened a running one, and that flag is what stops a failed
-		// resume from regressing a completed phase. The kind is taken from the
-		// same phase rather than the key press's, which is wider than the old
-		// plumbing and deliberate: both values feed failure handling, and
-		// splitting their sources would let one describe a phase the other no
-		// longer does. The guard matters: seams routinely return phase-less
-		// records, and an unguarded lookup would silently answer "not terminal"
-		// for every one of them.
-		launchPhase := readPhase
-		if persistedPhase, ok := flowPhaseByID(updated, msg.PhaseID); ok {
-			launchPhase = persistedPhase
+		// The read stage's phase and the write's record both travel on the
+		// payload: the builder owns which of them decides FlowPhaseKind and
+		// FlowPhaseTerminal, and that flag is what stops a failed resume from
+		// regressing a completed phase. The read stage's repo path rides along as
+		// a fallback for the same reason autofix's does — the precedence between
+		// it and the record is the builder's, not this stage's.
+		ctx, decision, buildErr := newFlowLaunchContext(phaseResumeTarget{
+			LaunchID:         msg.Token,
+			Record:           msg.Record,
+			PersistedRecord:  updated,
+			ReadPhase:        readPhase,
+			PhaseID:          msg.PhaseID,
+			Command:          msg.ResumeCommand,
+			ResumeSessionID:  msg.ProviderSessionID,
+			PlanPath:         msg.PlanPath,
+			FallbackRepoPath: msg.RepoPath,
+		}, settings, flowLaunchRouting{Backend: backend, TmuxAvailable: tmuxAvailable})
+		if buildErr != nil {
+			event.Err = buildErr.Error()
+			return event
 		}
-		event.Context = applyLaunchStamp(actions.AgentLaunchContext{
-			Command: msg.ResumeCommand,
-			// The admission token, never a fresh ID: the prefill-failure
-			// re-reservation and the failure-persisted fence both key on it.
-			LaunchID:     msg.Token,
-			RepoPath:     msg.RepoPath,
-			WorktreePath: msg.WorktreePath,
-			WorkingDir:   msg.Record.WorktreePath,
-			Branch:       msg.Record.Branch,
-			Commit:       msg.Record.Commit,
-			// Model and ReasoningEffort stay empty, as they are today. The
-			// settings snapshot is in scope, and setting them would silently
-			// change the resumed command line.
-			SessionStateRoot:  sessionStateRoot,
-			ResumeSessionID:   msg.ProviderSessionID,
-			PlanID:            msg.Record.PlanID,
-			PlanPath:          msg.PlanPath,
-			FlowID:            msg.Record.FlowID,
-			FlowPhaseID:       msg.PhaseID,
-			FlowPhaseKind:     flowstore.SemanticKind(launchPhase),
-			FlowPhaseTerminal: flowstore.PhaseStatusTerminal(launchPhase.Status),
-			Embedded:          true,
-			FlowLaunchTracked: true,
-		}, settings.stamp())
-		event.Route = flowLaunchRouteEmbedded
-		if tmuxRoute {
-			// A tmux window has no dock to prefill and renders its own output,
-			// so clearing Embedded is what sends the resume to argv instead.
-			event.Context.Embedded = false
-			event.Route = flowLaunchRouteTmux
-		} else if tmuxFellBack {
-			event.FallbackNote = tmuxFallbackNote
-		}
+		event.Context = ctx
+		event.Route = decision.Route
+		event.FallbackNote = decision.FallbackNote
 		return event
 	}
 }

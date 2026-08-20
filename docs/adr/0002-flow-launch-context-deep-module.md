@@ -465,3 +465,77 @@ that the module-interface variant test gained autofix rows for the embedded,
 headless, and tmux variants, each comparing the whole struct and the decision.
 
 The ADR's status stays `proposed`.
+
+## Implementation note — saved-session resume (`approach-hyl.5`)
+
+The fourth slice migrated `RoleSavedSessionResume`, the first role whose
+*identity* comes from somewhere other than the settings snapshot.
+
+- **The session record is the authority, not the snapshot.** Command is
+  `string(session.Provider)`, and `Model`/`ReasoningEffort` must stay empty:
+  `agentCommandSpec` errors with "model cannot be set for session resume" if the
+  snapshot's preferences leak in. Passing the whole `sessions.SessionRecord` on
+  the target rather than pre-mapped fields is what keeps that rule inside the
+  builder — the CWD-then-worktree `WorkingDir` fallback and the "no usable
+  directory" refusal (`errSavedSessionResumeNoWorkingDir`) moved with it.
+- **`Commit` is the session's, and the marker is what keeps it so.**
+  `agentCommandSpec` skips `ResolveWorktreeCommit` exactly when
+  `FlowSavedSessionResume` is set, so the marker and the carried commit are one
+  decision, now made in one place.
+- **The Flow ID is the reserved record's while every other field is the
+  session's.** The lease and the release key on the reservation; the resumed
+  session's own branch, commit and plan are what the agent gets back. Two
+  records on one target is the honest shape of that split.
+- **Route stays a constant.** `tmuxRouteEligible` refuses
+  `FlowSavedSessionResume` outright, so this arm ignores `routing` and returns
+  `{flowLaunchRouteEmbedded, ""}` — a constant, not an unrouted gap.
+
+The acceptance evidence is that `model/flow_launch_saved_session_resume.go`'s
+prepare stage no longer composes a literal and that the module-interface variant
+test gained a saved-session-resume row comparing the whole struct and the
+decision.
+
+The ADR's status stays `proposed`.
+
+## Implementation note — phase resume (`approach-hyl.6`)
+
+The fifth slice migrated `RolePhaseResume` — V7–V10, the only variants with
+`FlowPhaseTerminal` and the last tracked kind before manual/auto/create.
+
+- **The route probe stopped being a Model-side literal.** Resume used to build a
+  throwaway `AgentLaunchContext` on the Model purely to ask
+  `tmuxRouteEligible` a question (formerly `model/flow_launch_resume.go:299`),
+  then clear `Embedded` after construction. The prepare stage now snapshots only
+  `flowLaunchRouting{Backend, TmuxAvailable}` and the builder decides against
+  the finished context. That is not a refactor of equals: `tmuxRouteEligible`
+  reads `Headless`, `FlowRepair` and `Command`, and this role sets neither
+  marker, so the finished-context decision is identical to the Command-only
+  probe — but it can no longer drift from the context it routes.
+- **`FlowPhaseTerminal` is the flag that stops a failed resume from regressing a
+  completed phase**, so which phase decides it is load-bearing. The persisted
+  record from `AddPhaseLaunchID` wins, with the read stage's phase as the
+  fallback, and the lookup is guarded: an unguarded `flowPhaseByID` would answer
+  with the zero phase — "not terminal" — for every phase-less record a seam
+  returns. `FlowPhaseKind` comes off the same phase so one cannot describe a
+  phase the other no longer does.
+- **Two records, again, for a different reason than saved-session resume.**
+  Resume reads a record and then writes one. `Record` is the read stage's and
+  stays the authority for branch, commit, plan ID and worktree — prepare never
+  refreshes it, so the worktree it names is the one the read stage validated.
+  `PersistedRecord` is consulted only for the phase.
+- **Model and effort stay empty here too**, for the same `agentCommandSpec`
+  reason as saved-session resume: the snapshot is in scope and deliberately
+  unread.
+- **The builder's worktree check is an invariant, not a new refusal path.** The
+  read stage already refuses a worktree-less resume with
+  `flowPhaseResumeNoWorktreeStatus`; the builder-side check exists because this
+  role chdirs into the worktree and the builder is the one place every Flow
+  launch context is constructed.
+
+The acceptance evidence is that `model/flow_launch_resume.go`'s prepare stage
+carries no context literal and no post-construction `Embedded` mutation, and
+that the module-interface variant test gained phase-resume rows for the
+embedded, tmux and terminal-phase variants, each comparing the whole struct and
+the decision.
+
+The ADR's status stays `proposed`.

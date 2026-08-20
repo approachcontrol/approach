@@ -110,6 +110,47 @@ func (savedSessionResumeTarget) role() actions.FlowLaunchRole {
 	return actions.RoleSavedSessionResume
 }
 
+// phaseResumeTarget is the phase-tracked resume of a Flow phase's saved
+// provider session, started by r. Unlike savedSessionResumeTarget it re-enters
+// the phase itself: the launch is tracked, carries the phase's ID, kind and
+// terminal flag, and its failure handling turns on that flag. It carries two
+// records rather than one because the resume reads a record and then writes
+// one, and the two answer different questions.
+type phaseResumeTarget struct {
+	// LaunchID is the admission token, never a fresh ID: the prefill-failure
+	// re-reservation and the failure-persisted fence both key on it.
+	LaunchID string
+	// Record is the read stage's record — the authority for branch, commit,
+	// plan ID, worktree and Flow ID. Prepare never refreshes it, so the
+	// worktree it names is the same value the read stage validated.
+	Record flowstore.FlowRecord
+	// PersistedRecord is the record AddPhaseLaunchID returned, consulted only
+	// for the phase. It decides whether this resume preserved a terminal phase
+	// or reopened a running one, and seams routinely return phase-less records,
+	// which is why the lookup below is guarded rather than direct.
+	PersistedRecord flowstore.FlowRecord
+	// ReadPhase is the read stage's phase, used when PersistedRecord carries
+	// none. Falling back rather than defaulting to the zero phase is what keeps
+	// a phase-less write from silently reporting "not terminal".
+	ReadPhase flowstore.FlowPhase
+	PhaseID   string
+	// Command is the provider the session was written by, resolved by the read
+	// stage — not the settings snapshot's preference, which may have moved on
+	// since the session was recorded.
+	Command string
+	// ResumeSessionID is the provider's own session ID, carried verbatim: the
+	// trim in the validation below is an emptiness test, never a rewrite.
+	ResumeSessionID string
+	// PlanPath is the read stage's resolution, passed through with no
+	// PlanMarkdownPath step, exactly as resume has always resolved it.
+	PlanPath string
+	// FallbackRepoPath is the intent's repository, used only when the record
+	// carries none of its own.
+	FallbackRepoPath string
+}
+
+func (phaseResumeTarget) role() actions.FlowLaunchRole { return actions.RolePhaseResume }
+
 // errIncompleteFlowLaunchTarget reports a payload that upstream admission
 // should already have guaranteed. The builder still checks: it is the one
 // place every Flow launch context is constructed, so it is the only place the
@@ -163,6 +204,8 @@ func newFlowLaunchContext(
 		return newAutofixLaunchContext(payload, settings, routing)
 	case savedSessionResumeTarget:
 		return newSavedSessionResumeLaunchContext(payload, settings)
+	case phaseResumeTarget:
+		return newPhaseResumeLaunchContext(payload, settings, routing)
 	default:
 		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
 	}
@@ -344,4 +387,76 @@ func newSavedSessionResumeLaunchContext(
 		FlowID: target.Record.FlowID, FlowSavedSessionResume: true,
 		Embedded: true, Headless: false, InitialPrompt: "",
 	}, settings.stamp()), flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}, nil
+}
+
+// newPhaseResumeLaunchContext is the second arm whose route is a decision
+// rather than a constant, after autofix. Phase resume is genuinely
+// tmux-eligible where repair and saved-session resume are not:
+// tmuxRouteEligible reads only Headless, FlowRepair and Command, and this role
+// sets neither marker, so deciding against the finished context is identical to
+// the Command-only probe the call site used to make on the Model.
+//
+// Like saved-session resume it must leave Model and ReasoningEffort empty:
+// agentCommandSpec refuses a resume that carries a model, and setting either
+// would silently change the resumed command line.
+func newPhaseResumeLaunchContext(
+	target phaseResumeTarget,
+	settings flowLaunchAgentSettingsSnapshot,
+	routing flowLaunchRouting,
+) (actions.AgentLaunchContext, flowLaunchRouteDecision, error) {
+	record := target.Record
+	// The worktree is required here even though the read stage already refuses a
+	// worktree-less resume with flowPhaseResumeNoWorktreeStatus: this is the
+	// builder-side invariant for a role that chdirs into the worktree, not a new
+	// refusal path the user can reach.
+	if strings.TrimSpace(target.LaunchID) == "" ||
+		strings.TrimSpace(record.FlowID) == "" ||
+		strings.TrimSpace(record.WorktreePath) == "" ||
+		strings.TrimSpace(target.PhaseID) == "" ||
+		strings.TrimSpace(target.Command) == "" ||
+		strings.TrimSpace(target.ResumeSessionID) == "" {
+		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
+	}
+	repoPath := strings.TrimSpace(record.RepoPath)
+	if repoPath == "" {
+		repoPath = target.FallbackRepoPath
+	}
+	// The persisted phase wins, and the guard is load-bearing: an unguarded
+	// lookup would answer with the zero phase — "not terminal" — for every
+	// phase-less record a seam returns, which is exactly the case the read
+	// stage's phase exists to cover. Kind and terminal come from the same phase
+	// so one cannot describe a phase the other no longer does.
+	launchPhase := target.ReadPhase
+	if persistedPhase, ok := flowPhaseByID(target.PersistedRecord, target.PhaseID); ok {
+		launchPhase = persistedPhase
+	}
+	ctx := applyLaunchStamp(actions.AgentLaunchContext{
+		// The command is the provider that wrote the session, resolved by the
+		// read stage, for the reason saved-session resume takes it off the
+		// session record: a resume re-enters the agent it came from.
+		Command: target.Command, LaunchID: target.LaunchID,
+		RepoPath: repoPath, WorktreePath: record.WorktreePath, WorkingDir: record.WorktreePath,
+		Branch: record.Branch, Commit: record.Commit,
+		// No Model or ReasoningEffort: the snapshot is in scope and deliberately
+		// unread here.
+		SessionStateRoot: settings.SessionStateRoot,
+		ResumeSessionID:  target.ResumeSessionID,
+		PlanID:           record.PlanID, PlanPath: target.PlanPath,
+		FlowID: record.FlowID, FlowPhaseID: target.PhaseID,
+		FlowPhaseKind:     flowstore.SemanticKind(launchPhase),
+		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(launchPhase.Status),
+		Embedded:          true, FlowLaunchTracked: true,
+	}, settings.stamp())
+	tmuxRoute, fellBack := tmuxLaunchRouteFor(routing.Backend, routing.TmuxAvailable, ctx)
+	if tmuxRoute {
+		// A tmux window has no dock to prefill and renders its own output, so
+		// clearing Embedded is what sends the resume to argv instead.
+		ctx.Embedded = false
+		return ctx, flowLaunchRouteDecision{Route: flowLaunchRouteTmux}, nil
+	}
+	decision := flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}
+	if fellBack {
+		decision.FallbackNote = tmuxFallbackNote
+	}
+	return ctx, decision, nil
 }
