@@ -31,6 +31,9 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 			errorPrefix: "failed to load worktrees",
 			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
 				worktrees, err := gitquery.ListWorktrees(repoPath)
+				if partial, ok := gitquery.AsPartialQuery(err); ok {
+					return WorktreeResultMsg{RepoPath: repoPath, Worktrees: worktrees, ListRequest: request, Degradation: partial}, nil
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -44,6 +47,9 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 			errorPrefix: "failed to load branches",
 			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
 				branches, err := gitquery.ListBranches(repoPath)
+				if partial, ok := gitquery.AsPartialQuery(err); ok {
+					return BranchResultMsg{RepoPath: repoPath, Branches: branches, ListRequest: request, Degradation: partial}, nil
+				}
 				if err != nil {
 					return nil, err
 				}

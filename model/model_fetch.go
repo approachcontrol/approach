@@ -141,6 +141,44 @@ func (m Model) currentListError(mode ui.Mode) string {
 	return m.listErrors[int(mode)]
 }
 
+func (m Model) gitDegradationWarning(mode ui.Mode) string {
+	if mode != ui.ModeWorktrees && mode != ui.ModeBranches {
+		return ""
+	}
+	state := m.gitDegradations[int(mode)]
+	if state.diagnostic == nil || len(state.diagnostic.Warnings) == 0 {
+		return ""
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok || !sameRepoPath(repoPath, state.repoPath) {
+		return ""
+	}
+	return "Git metadata incomplete: " + state.diagnostic.Error()
+}
+
+func (m Model) setGitDegradation(mode ui.Mode, repoPath string, diagnostic *gitquery.PartialQueryError) Model {
+	if mode != ui.ModeWorktrees && mode != ui.ModeBranches {
+		return m
+	}
+	beforeRows := m.paneGitDegradationWarningRows(mode)
+	state := gitDegradationState{repoPath: repoPath}
+	if diagnostic != nil && len(diagnostic.Warnings) > 0 {
+		state.diagnostic = &gitquery.PartialQueryError{Warnings: append([]gitquery.QueryWarning(nil), diagnostic.Warnings...)}
+	}
+	m.gitDegradations[int(mode)] = state
+	if m.paneGitDegradationWarningRows(mode) != beforeRows {
+		m = m.reflowMode(mode)
+	}
+	return m
+}
+
+func (m Model) paneGitDegradationWarningRows(mode ui.Mode) int {
+	if m.gitDegradationWarning(mode) == "" {
+		return 0
+	}
+	return 1
+}
+
 func (m Model) setCurrentListError(mode ui.Mode, detail string) Model {
 	if int(mode) < 0 || int(mode) >= len(m.listErrors) {
 		return m

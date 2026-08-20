@@ -563,8 +563,12 @@ func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte)
 
 func lockedConfigUpdate(path string, options []Option, createIfMissing bool, patch func([]byte) []byte) error {
 	opts := defaultOptions(options...)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
+	configDir := filepath.Dir(path)
+	if err := os.MkdirAll(configDir, artifacts.DirPerm); err != nil {
+		return fmt.Errorf("create config dir %s: %w", configDir, err)
+	}
+	if err := os.Chmod(configDir, artifacts.DirPerm); err != nil {
+		return fmt.Errorf("secure config dir %s: %w", configDir, err)
 	}
 	release, err := acquireConfigFileLock(path+".lock", fmt.Sprintf("config lock %q", path), opts.lockTimeout)
 	if err != nil {
@@ -580,18 +584,45 @@ func lockedConfigUpdate(path string, options []Option, createIfMissing bool, pat
 		if !createIfMissing {
 			return nil
 		}
-	} else if _, err := parseConfigData(path, data, opts); err != nil {
-		return err
+	} else {
+		if err := os.Chmod(path, artifacts.FilePerm); err != nil {
+			return fmt.Errorf("secure config %s: %w", path, err)
+		}
+		if _, err := parseConfigData(path, data, opts); err != nil {
+			return err
+		}
 	}
 
 	patched := patch(data)
 	if bytes.Equal(patched, data) {
 		return nil
 	}
-	if err := os.WriteFile(path, patched, 0o644); err != nil {
+	writePath, err := resolveConfigWritePath(path)
+	if err != nil {
+		return err
+	}
+	if err := artifacts.WriteFileAtomic(writePath, patched); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+func resolveConfigWritePath(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve config symlink %s: %w", path, err)
+	}
+	return target, nil
 }
 
 func patchAgentCommand(data []byte, command string) []byte {

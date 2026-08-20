@@ -170,6 +170,43 @@ func TestRemoveWorktree_Error(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for nonexistent paths, got nil")
 	}
+	if !strings.Contains(err.Error(), "cannot change to") {
+		t.Fatalf("RemoveWorktree() error = %q, want git stderr diagnostic", err)
+	}
+}
+
+func TestRemoveWorktreeReportsSuccessfulRemovalWhenPruneFails(t *testing.T) {
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	script := `#!/bin/sh
+case " $* " in
+  *" worktree remove "*) exit 0 ;;
+  *" worktree prune "*) echo "prune unavailable" >&2; exit 1 ;;
+esac
+exit 2
+`
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := actions.RemoveWorktree("/repo", "/worktree")
+	if err == nil {
+		t.Fatal("RemoveWorktree() error = nil, want prune failure")
+	}
+	if !errors.Is(err, actions.ErrWorktreePruneFailed) {
+		t.Fatalf("RemoveWorktree() error = %v, want ErrWorktreePruneFailed", err)
+	}
+	for _, want := range []string{"worktree removed but prune failed", "prune unavailable"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("RemoveWorktree() error = %q, want %q", err, want)
+		}
+	}
+
+	err = actions.ForceRemoveWorktree("/repo", "/worktree")
+	if !errors.Is(err, actions.ErrWorktreePruneFailed) {
+		t.Fatalf("ForceRemoveWorktree() error = %v, want ErrWorktreePruneFailed", err)
+	}
 }
 
 func TestMoveWorktree(t *testing.T) {

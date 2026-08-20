@@ -469,6 +469,8 @@ type RenderParams struct {
 	FlowDegradationWarning         string
 	ActiveFlowDegradationWarning   string
 	PRBabysitterDegradationWarning string
+	TopDegradationWarning          string
+	BottomDegradationWarning       string
 	BeadsOpen                      []beadsquery.Bead
 	BeadsOpenSelected              int
 	BeadsOpenScroll                int
@@ -1051,7 +1053,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	hasRows := stackedModePaneHasRows(p, mode, takeover)
 	_, sourceCount := paneItemFilterState(p, mode)
 	showCachedWarning := ShowsCachedListWarning(paneListError(p, mode), hasRows, sourceCount)
-	degradationWarning := paneFlowDegradationWarning(p, mode)
+	degradationWarning := paneDegradationWarning(p, mode)
 	bodyRows := listRows
 	if showCachedWarning && bodyRows > 0 {
 		bodyRows--
@@ -1105,7 +1107,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	}
 	var warnings []string
 	if degradationWarning != "" {
-		warnings = append(warnings, truncateToWidth(aheadBehindStyle.Render(" "+degradationWarning), width))
+		warnings = append(warnings, truncateToWidth(aheadBehindStyle.Render(" "+terminalSafeSingleLine(degradationWarning)), width))
 	}
 	if showCachedWarning {
 		warning := " Could not refresh " + modeDataLabel(mode) + "; showing cached data"
@@ -1249,7 +1251,7 @@ func paneListError(p RenderParams, mode Mode) string {
 	}
 }
 
-func paneFlowDegradationWarning(p RenderParams, mode Mode) string {
+func paneDegradationWarning(p RenderParams, mode Mode) string {
 	switch mode {
 	case ModeFlows:
 		return p.FlowDegradationWarning
@@ -1257,9 +1259,15 @@ func paneFlowDegradationWarning(p RenderParams, mode Mode) string {
 		return p.ActiveFlowDegradationWarning
 	case ModePRBabysitter:
 		return p.PRBabysitterDegradationWarning
-	default:
+	}
+	pane, ok := PaneForMode(mode)
+	if !ok {
 		return ""
 	}
+	if pane == PaneTop {
+		return p.TopDegradationWarning
+	}
+	return p.BottomDegradationWarning
 }
 
 func paneItemFilterState(p RenderParams, mode Mode) (string, int) {

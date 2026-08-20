@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -3486,7 +3487,7 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 
 	m.modal = modal.OpenConfirm(fmt.Sprintf("Remove worktree at %s? (y/n)", wtPath), func() tea.Cmd {
 		return func() tea.Msg {
-			if err := actions.RemoveWorktree(repoPath, wtPath); err != nil {
+			if err := actions.RemoveWorktree(repoPath, wtPath); err != nil && !errors.Is(err, actions.ErrWorktreePruneFailed) {
 				return DeleteFailedMsg{
 					RepoPath:    repoPath,
 					Target:      wtPath,
@@ -3746,6 +3747,7 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 	}
 	rows -= m.paneCachedWarningRows(mode)
 	rows -= m.paneFlowDegradationWarningRows(mode)
+	rows -= m.paneGitDegradationWarningRows(mode)
 	// The positive floor predates the warning row and also covers hidden
 	// background panes, which are allocated no rows at all. Viewports this
 	// small cannot show a cached row either way, so the floor stays.

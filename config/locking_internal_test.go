@@ -132,7 +132,8 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	if strings.Contains(text, "plan_prompt") {
 		t.Fatalf("config retained reset target:\n%s", text)
 	}
-	assertConfigLockMode(t, path, 0o644)
+	assertConfigLockMode(t, filepath.Dir(path), 0o700)
+	assertConfigLockMode(t, path, 0o600)
 	assertConfigLockMode(t, lockPath, 0o600)
 }
 

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,7 @@ type BranchResultMsg struct {
 	RepoPath    string
 	Branches    []gitquery.Branch
 	ListRequest uint64
+	Degradation *gitquery.PartialQueryError
 }
 
 type StashResultMsg struct {
@@ -75,6 +77,7 @@ type WorktreeResultMsg struct {
 	RepoPath    string
 	Worktrees   []gitquery.Worktree
 	ListRequest uint64
+	Degradation *gitquery.PartialQueryError
 }
 
 type CommitResultMsg struct {
@@ -802,6 +805,7 @@ func (m Model) handleWorktreeResult(msg WorktreeResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	m = m.setGitDegradation(ui.ModeWorktrees, msg.RepoPath, msg.Degradation)
 	inlineRefreshPath, refreshInline := m.pendingInlineSessionRefresh(msg.RepoPath, msg.ListRequest)
 	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
 	m = m.clearInlineWorktreeSessions()
@@ -1257,6 +1261,7 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 	if !ok {
 		return m
 	}
+	m = m.setGitDegradation(ui.ModeBranches, msg.RepoPath, msg.Degradation)
 	repo, _ := m.currentRepo()
 	m.rows = m.rows.SetItems(branchRowsForRepo(repo, msg.Branches))
 	if m.pendingBranchSelection != "" {
@@ -1397,7 +1402,7 @@ func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {
 		forceAction := msg.ForceAction
 		m.modal = modal.OpenForce(fmt.Sprintf("Force delete %s? (y/n)", msg.Target), func() tea.Cmd {
 			return func() tea.Msg {
-				if err := forceAction(); err != nil {
+				if err := forceAction(); err != nil && !errors.Is(err, actions.ErrWorktreePruneFailed) {
 					return ForceDeleteFailedMsg{
 						RepoPath: repoPath,
 						Target:   target,

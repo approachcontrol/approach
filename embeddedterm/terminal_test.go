@@ -761,6 +761,48 @@ func TestTerminalStartCommandCleansUpProcessWhenEmulatorCreationFails(t *testing
 	}
 }
 
+func TestTerminalStartCommandJoinsEmulatorAndCleanupFailures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	emulatorErr := errors.New("emulator failed")
+	closeErr := errors.New("close pty failed")
+	terminateErr := errors.New("terminate process failed")
+	waitErr := errors.New("wait process failed")
+	originalFactory := newEmulator
+	originalClose := closeFailedStartPTY
+	originalTerminate := terminateFailedStartProcess
+	originalWait := waitFailedStartProcess
+	t.Cleanup(func() {
+		newEmulator = originalFactory
+		closeFailedStartPTY = originalClose
+		terminateFailedStartProcess = originalTerminate
+		waitFailedStartProcess = originalWait
+	})
+	newEmulator = func(int, int) (*vt.SafeEmulator, error) { return nil, emulatorErr }
+	closeFailedStartPTY = func(ptmx *os.File) error {
+		_ = originalClose(ptmx)
+		return closeErr
+	}
+	terminateFailedStartProcess = func(cmd *exec.Cmd) error {
+		_ = originalTerminate(cmd)
+		return terminateErr
+	}
+	waitFailedStartProcess = func(cmd *exec.Cmd, timeout time.Duration) error {
+		_ = originalWait(cmd, timeout)
+		return waitErr
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := NewManager().StartCommand(ctx, exec.CommandContext(ctx, "sh", "-c", "sleep 30"), 20, 2)
+	for _, want := range []error{emulatorErr, closeErr, terminateErr, waitErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("StartCommand() error = %v, want joined %v", err, want)
+		}
+	}
+}
+
 func TestTerminalAddsTermOnlyWhenAbsentOrDumb(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

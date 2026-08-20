@@ -128,35 +128,44 @@ type PullRequestStatus struct {
 	Checks       string
 }
 
+// ErrWorktreePruneFailed reports that git removed the worktree but failed to
+// prune stale admin references. Callers should treat the worktree as gone.
+var ErrWorktreePruneFailed = errors.New("worktree removed but prune failed")
+
+func pruneAfterWorktreeRemove(repoPath string) error {
+	if err := runGit(repoPath, "worktree", "prune"); err != nil {
+		return fmt.Errorf("%w: %w", ErrWorktreePruneFailed, err)
+	}
+	return nil
+}
+
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
 // then prunes stale references to ensure the worktree no longer appears
 // in listings.
 func RemoveWorktree(repoPath, worktreePath string) error {
-	err := exec.Command("git", "-C", repoPath, "worktree", "remove", worktreePath).Run()
-	if err == nil {
-		_ = exec.Command("git", "-C", repoPath, "worktree", "prune").Run()
+	if err := runGit(repoPath, "worktree", "remove", worktreePath); err != nil {
+		return err
 	}
-	return err
+	return pruneAfterWorktreeRemove(repoPath)
 }
 
 // ForceRemoveWorktree runs `git worktree remove --force`, then prunes
 // stale references.
 func ForceRemoveWorktree(repoPath, worktreePath string) error {
-	err := exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreePath).Run()
-	if err == nil {
-		_ = exec.Command("git", "-C", repoPath, "worktree", "prune").Run()
+	if err := runGit(repoPath, "worktree", "remove", "--force", worktreePath); err != nil {
+		return err
 	}
-	return err
+	return pruneAfterWorktreeRemove(repoPath)
 }
 
 // PruneWorktree runs `git worktree prune` to remove stale admin references.
 func PruneWorktree(repoPath string) error {
-	return exec.Command("git", "-C", repoPath, "worktree", "prune").Run()
+	return runGit(repoPath, "worktree", "prune")
 }
 
 // UnlockWorktree runs `git worktree unlock` for the given worktree path.
 func UnlockWorktree(repoPath, worktreePath string) error {
-	return exec.Command("git", "-C", repoPath, "worktree", "unlock", worktreePath).Run()
+	return runGit(repoPath, "worktree", "unlock", worktreePath)
 }
 
 // MoveWorktree runs `git worktree move` for a linked worktree and returns the
@@ -243,10 +252,18 @@ func runGit(path string, args ...string) error {
 		if msg == "" {
 			return err
 		}
-		return errors.New(msg)
+		return gitCommandError{message: msg, cause: err}
 	}
 	return nil
 }
+
+type gitCommandError struct {
+	message string
+	cause   error
+}
+
+func (e gitCommandError) Error() string { return e.message }
+func (e gitCommandError) Unwrap() error { return e.cause }
 
 // RunBootstrapHook executes a configured bootstrap script directly, with the
 // created worktree as its working directory.
@@ -1719,7 +1736,9 @@ func claudeSessionHookSettings(hookCommand string) string {
 // approachSessionHookCommand builds the provider hook argv. It takes the pinned
 // executable rather than calling os.Executable itself so the hook and
 // APPROACH_EXECUTABLE can never name different builds; an empty pin keeps the
-// previous running-binary behaviour for untracked launches.
+// previous running-binary behaviour for untracked launches. The executable is
+// path data crossing a shell boundary and must remain shellQuote'd. Provider is
+// a closed value supplied only by agentLaunchArgs, never untrusted input.
 func approachSessionHookCommand(provider, executable string) string {
 	if strings.TrimSpace(executable) == "" {
 		resolved, err := os.Executable()

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -156,6 +157,9 @@ func TestStoreReadRejectsInvalidMissingCorruptAndMismatchedMetadata(t *testing.T
 	}
 	if _, err := store.Read(sessions.ProviderCodex, "requested"); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("Read(mismatch) error = %v, want key mismatch", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "requested", Status: "ended"}); err == nil {
+		t.Fatal("Upsert(mismatch) error = nil, want fail-closed key mismatch")
 	}
 }
 
@@ -427,7 +431,7 @@ func TestStoreUpsertReportsSessionLockTimeout(t *testing.T) {
 	}
 }
 
-func TestStoreListSkipsCorruptMetadata(t *testing.T) {
+func TestStoreListFailsClosedOnCorruptMetadata(t *testing.T) {
 	root := t.TempDir()
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
 	if err != nil {
@@ -450,11 +454,426 @@ func TestStoreListSkipsCorruptMetadata(t *testing.T) {
 	}
 
 	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed corrupt metadata")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreListFailsClosedOnUnreadableMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "blocked")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(badDir, filepath.Join(badDir, "meta.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed unreadable metadata")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreRejectsLiveMetadataSymlinkOnListAndUpsert(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "running",
+	}); err != nil {
+		t.Fatalf("seed Upsert() error = %v", err)
+	}
+	metaPath := singleSessionFile(t, root, sessions.ProviderCodex, "meta.json")
+	realPath := metaPath + ".real"
+	if err := os.Rename(metaPath, realPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realPath, metaPath); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed metadata symlink")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+	if _, err := store.Read(sessions.ProviderCodex, "existing-session"); err == nil {
+		t.Fatal("Read() error = nil, want fail-closed metadata symlink")
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "ended",
+	}); err == nil {
+		t.Fatal("Upsert() error = nil, want fail-closed metadata symlink")
+	}
+}
+
+func TestStoreListFailsClosedOnNonRegularMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "fifo")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fifoPath := filepath.Join(badDir, "meta.json")
+	if err := syscall.Mkfifo(fifoPath, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed non-regular metadata")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreListFailsClosedOnDanglingMetadataSymlink(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "unreadable")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(badDir, "missing.json"), filepath.Join(badDir, "meta.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed dangling metadata symlink")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreListFailsClosedOnDirectoryMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "blocked-dir")
+	if err := os.MkdirAll(filepath.Join(badDir, "meta.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed directory metadata")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreListFailsClosedOnInvalidDecodedMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "empty")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "meta.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed empty metadata")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreListFailsClosedOnNonDirectorySessionsRoot(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	sessionsDir := filepath.Join(root, "sessions")
+	if err := os.RemoveAll(sessionsDir); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionsDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed non-directory sessions root")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreUpsertPublishesExistingDirectoryWithoutMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	sum := sha256.Sum256([]byte("existing-session"))
+	dir := filepath.Join(root, "sessions", "codex", hex.EncodeToString(sum[:]))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "running",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	got, err := store.Read(sessions.ProviderCodex, "existing-session")
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got.Status != "running" {
+		t.Fatalf("Read() status = %q, want running", got.Status)
+	}
+}
+
+func TestStoreListFailsClosedOnSymlinkedSessionsRoot(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	sessionsDir := filepath.Join(root, "sessions")
+	hidden := filepath.Join(root, "hidden-sessions")
+	if err := os.Rename(sessionsDir, hidden); err != nil {
+		t.Fatalf("rename sessions dir: %v", err)
+	}
+	if err := os.Symlink(hidden, sessionsDir); err != nil {
+		t.Fatalf("symlink sessions dir: %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed symlinked sessions root")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+}
+
+func TestStoreListIgnoresPayloadSymlinksInUnpublishedDirs(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	leftover := filepath.Join(root, "sessions", "codex", "unpublished")
+	if err := os.MkdirAll(leftover, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(leftover, "missing.jsonl"), filepath.Join(leftover, "transcript.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
 	if len(records) != 1 || records[0].SessionID != "good-session" {
 		t.Fatalf("List() = %#v, want only good-session", records)
+	}
+}
+
+func TestStoreListFailsClosedOnSymlinkedProviderDir(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	providerDir := filepath.Join(root, "sessions", "codex")
+	hidden := filepath.Join(root, "hidden-codex")
+	if err := os.Rename(providerDir, hidden); err != nil {
+		t.Fatalf("rename provider dir: %v", err)
+	}
+	if err := os.Symlink(hidden, providerDir); err != nil {
+		t.Fatalf("symlink provider dir: %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed symlinked provider directory")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		Status:    "running",
+	}); err == nil {
+		t.Fatal("Upsert() error = nil, want fail-closed symlinked provider directory")
+	}
+}
+
+func TestStoreUpsertFailsClosedOnDanglingMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "running",
+	}); err != nil {
+		t.Fatalf("seed Upsert() error = %v", err)
+	}
+	metaPath := singleSessionFile(t, root, sessions.ProviderCodex, "meta.json")
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(filepath.Dir(metaPath), "missing.json"), metaPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "ended",
+	}); err == nil {
+		t.Fatal("Upsert() error = nil, want fail-closed dangling metadata")
+	}
+	info, err := os.Lstat(metaPath)
+	if err != nil {
+		t.Fatalf("dangling metadata was removed: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("dangling metadata was replaced, want original symlink left in place")
+	}
+}
+
+func TestStoreListFailsClosedOnMismatchedMetadataPath(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	wrongDir := filepath.Join(root, "sessions", "codex", "not-the-hash")
+	if err := os.MkdirAll(wrongDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wrongDir, "meta.json"), []byte(`{"provider":"codex","session_id":"good-session","status":"running"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err == nil {
+		t.Fatal("List() error = nil, want fail-closed mismatched metadata path")
+	}
+	if records != nil {
+		t.Fatalf("List() = %#v, want no rows when occupancy cannot be inspected", records)
 	}
 }
 
@@ -487,6 +906,73 @@ func TestStoreWritesArtifactsWithRestrictivePermissions(t *testing.T) {
 	assertMode(t, metaPath, 0o600)
 	assertMode(t, filepath.Join(sessionDir, "transcript.jsonl"), 0o600)
 	assertMode(t, filepath.Join(sessionDir, "raw.jsonl"), 0o600)
+}
+
+func TestStoreDoesNotPublishNewMetadataWhenTranscriptNormalizationFails(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "invalid.jsonl")
+	if err := os.WriteFile(providerTranscript, []byte("{not-json}\n"), 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root, CopyRawTranscripts: true})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	err = store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "failed-transcript",
+		Status:         "ended",
+		TranscriptPath: providerTranscript,
+	})
+	if err == nil {
+		t.Fatal("Upsert() error = nil, want transcript normalization failure")
+	}
+	records, listErr := store.List(sessions.SessionFilter{})
+	if listErr != nil {
+		t.Fatalf("List() error = %v", listErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("List() = %#v, want no published session", records)
+	}
+}
+
+func TestStoreKeepsExistingMetadataWhenTranscriptNormalizationFails(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "invalid-update.jsonl")
+	if err := os.WriteFile(providerTranscript, []byte("{not-json}\n"), 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "existing-session",
+		Status:    "running",
+		Summary:   "before",
+	}); err != nil {
+		t.Fatalf("seed Upsert() error = %v", err)
+	}
+
+	err = store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "existing-session",
+		Status:         "ended",
+		Summary:        "after",
+		TranscriptPath: providerTranscript,
+	})
+	if err == nil {
+		t.Fatal("update Upsert() error = nil, want transcript normalization failure")
+	}
+	record, readErr := store.Read(sessions.ProviderCodex, "existing-session")
+	if readErr != nil {
+		t.Fatalf("Read() error = %v", readErr)
+	}
+	if record.Status != "running" || record.Summary != "before" || record.TranscriptPath != "" {
+		t.Fatalf("Read() = %#v, want unchanged existing metadata", record)
+	}
 }
 
 func TestStoreMarksLaunchEnded(t *testing.T) {
@@ -617,7 +1103,7 @@ func TestStoreMarkLaunchEndedAdvancesResumedLaunch(t *testing.T) {
 	}
 }
 
-func TestStoreMarkLaunchEndedSkipsLegacyBlankSessionIDRecords(t *testing.T) {
+func TestStoreMarkLaunchEndedFailsClosedOnLegacyBlankSessionIDRecords(t *testing.T) {
 	root := t.TempDir()
 	endedAt := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
@@ -642,16 +1128,16 @@ func TestStoreMarkLaunchEndedSkipsLegacyBlankSessionIDRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.MarkLaunchEnded("launch-1", endedAt); err != nil {
-		t.Fatalf("MarkLaunchEnded() error = %v, want legacy blank-ID record skipped", err)
+	if err := store.MarkLaunchEnded("launch-1", endedAt); err == nil {
+		t.Fatal("MarkLaunchEnded() error = nil, want fail-closed blank-ID metadata")
 	}
 
-	records, err := store.List(sessions.SessionFilter{RepoPath: "/repo"})
+	good, err := store.Read(sessions.ProviderClaude, "claude-1")
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
-	if len(records) != 1 || records[0].Status != "ended" {
-		t.Fatalf("valid launch record was not ended: %#v", records)
+	if good.Status != "last_seen" {
+		t.Fatalf("valid launch record status = %q, want left unchanged when occupancy cannot be inspected", good.Status)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -727,6 +728,34 @@ func TestSessionHookCommandFallsBackToRunningBinary(t *testing.T) {
 	}
 	if got := approachSessionHookCommand("claude", ""); got != shellQuote(executable)+" session-hook --provider claude" {
 		t.Fatalf("hook command = %q", got)
+	}
+}
+
+func TestSessionHookCommandTreatsExecutablePathAsOneShellWord(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("session hooks use a POSIX shell command")
+	}
+	tmp := t.TempDir()
+	executable := filepath.Join(tmp, "approach $(touch pwned_hook) 'quoted'")
+	argsPath := filepath.Join(tmp, "hook-args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argsPath) + "\n"
+	if err := os.WriteFile(executable, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", approachSessionHookCommand("claude", executable))
+	cmd.Dir = tmp
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("session hook command failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "pwned_hook")); !os.IsNotExist(err) {
+		t.Fatalf("command substitution escaped executable quoting: %v", err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(args), "session-hook\n--provider\nclaude\n"; got != want {
+		t.Fatalf("hook argv = %q, want %q", got, want)
 	}
 }
 

@@ -272,6 +272,17 @@ func TestIngestHookResolvesGitMetadataFromCWD(t *testing.T) {
 	}
 }
 
+func TestIngestHookDoesNotResolveGitMetadataFromRelativeCWD(t *testing.T) {
+	stateRoot := t.TempDir()
+	record, err := sessions.IngestHook(sessions.ProviderCodex, strings.NewReader(`{"session_id":"relative-cwd","cwd":"."}`), sessions.IngestOptions{StateRoot: stateRoot})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.RepoPath != "" || record.WorktreePath != "" || record.Branch != "" || record.Commit != "" {
+		t.Fatalf("relative cwd resolved process-directory Git metadata: %#v", record)
+	}
+}
+
 func TestIngestHookResolvesLinkedWorktreeToMainRepoPath(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

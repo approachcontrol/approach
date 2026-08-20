@@ -182,10 +182,22 @@ func runPlanSave(args []string, deps runDeps) error {
 		if err != nil {
 			return fmt.Errorf("encode saved plan: %w", err)
 		}
-		fmt.Fprintln(deps.stdout, string(data))
-		return nil
+		return writePlanLine(deps.stdout, string(data), "saved plan JSON")
 	}
-	fmt.Fprintln(deps.stdout, savedID)
+	return writePlanLine(deps.stdout, savedID, "saved plan id")
+}
+
+func writePlanLine(w io.Writer, value, label string) error {
+	if _, err := fmt.Fprintln(w, value); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+	return nil
+}
+
+func writePlanText(w io.Writer, value, label string) error {
+	if _, err := fmt.Fprint(w, value); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
 	return nil
 }
 
@@ -276,8 +288,7 @@ func runPlanList(args []string, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("encode plan list: %w", err)
 	}
-	fmt.Fprintln(deps.stdout, string(data))
-	return nil
+	return writePlanLine(deps.stdout, string(data), "plan list JSON")
 }
 
 func runPlanRead(args []string, deps runDeps) error {
@@ -321,11 +332,9 @@ func runPlanRead(args []string, deps runDeps) error {
 		if err != nil {
 			return fmt.Errorf("encode plan: %w", err)
 		}
-		fmt.Fprintln(deps.stdout, string(data))
-		return nil
+		return writePlanLine(deps.stdout, string(data), "plan JSON")
 	}
-	fmt.Fprint(deps.stdout, markdown)
-	return nil
+	return writePlanText(deps.stdout, markdown, "plan Markdown")
 }
 
 func runPlanStatus(args []string, deps runDeps) error {
@@ -371,8 +380,7 @@ func runPlanStatus(args []string, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("encode plan: %w", err)
 	}
-	fmt.Fprintln(deps.stdout, string(data))
-	return nil
+	return writePlanLine(deps.stdout, string(data), "plan status JSON")
 }
 
 func printPlanStatusSetHelp(w io.Writer) {
@@ -629,10 +637,29 @@ func planRepoPathFromGitCommonDir(commonDir string) string {
 }
 
 func planGitOutput(cwd string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", cwd}, args...)...)
+	cleaned, err := plausiblePlanGitCWD(cwd)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", append([]string{"-C", cleaned}, args...)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func plausiblePlanGitCWD(cwd string) (string, error) {
+	cwd = filepath.Clean(strings.TrimSpace(cwd))
+	if cwd == "." || !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("git cwd must be an absolute path")
+	}
+	info, err := os.Stat(cwd)
+	if err != nil {
+		return "", fmt.Errorf("inspect git cwd %q: %w", cwd, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("git cwd %q is not a directory", cwd)
+	}
+	return cwd, nil
 }

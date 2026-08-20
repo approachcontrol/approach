@@ -546,6 +546,18 @@ func TestSaveAgentCommand_CreatesMissingConfig(t *testing.T) {
 	if cfg.Agent.Command != "claude" {
 		t.Fatalf("expected saved agent claude, got %q", cfg.Agent.Command)
 	}
+	for checkedPath, want := range map[string]os.FileMode{
+		filepath.Dir(path): 0o700,
+		path:               0o600,
+	} {
+		info, err := os.Stat(checkedPath)
+		if err != nil {
+			t.Fatalf("Stat(%s) error = %v", checkedPath, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %o, want %o", checkedPath, got, want)
+		}
+	}
 }
 
 func TestLoadFrom_NormalizesStoredCodexAppAgent(t *testing.T) {
@@ -652,6 +664,35 @@ func TestLoadFrom_RejectsInvalidModels(t *testing.T) {
 				t.Fatalf("expected error to mention %q, got %q", tt.want, err.Error())
 			}
 		})
+	}
+}
+
+func TestSaveAgentCommand_RepairsPermissiveConfigOnNoOp(t *testing.T) {
+	configHome := t.TempDir()
+	configDir := filepath.Join(configHome, "approach")
+	path := filepath.Join(configDir, "config.toml")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[agent]\ncommand = \"codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAgentCommand("codex", config.WithGetenv(func(key string) string {
+		if key == "XDG_CONFIG_HOME" {
+			return configHome
+		}
+		return ""
+	})); err != nil {
+		t.Fatalf("SaveAgentCommand() error = %v", err)
+	}
+	for checkedPath, want := range map[string]os.FileMode{configDir: 0o700, path: 0o600} {
+		info, err := os.Stat(checkedPath)
+		if err != nil {
+			t.Fatalf("Stat(%s) error = %v", checkedPath, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %o, want %o", checkedPath, got, want)
+		}
 	}
 }
 
@@ -791,6 +832,51 @@ func TestSaveAgentCommand_UpdatesExistingAgentSection(t *testing.T) {
 	}
 	if !strings.Contains(text, `codex_reasoning_effort = "high"`) {
 		t.Fatalf("expected saved agent command to preserve reasoning effort, got:\n%s", text)
+	}
+}
+
+func TestSaveAgentCommand_UpdatesSymlinkTarget(t *testing.T) {
+	xdg := t.TempDir()
+	managed := filepath.Join(t.TempDir(), "managed-config.toml")
+	if err := os.WriteFile(managed, []byte("[agent]\ncommand = \"codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(xdg, "approach", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(managed, path); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentCommand("claude",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("config.toml should remain a symlink")
+	}
+	raw, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `command = "claude"`) {
+		t.Fatalf("managed target = %q, want updated command", raw)
 	}
 }
 

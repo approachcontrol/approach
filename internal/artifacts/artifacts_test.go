@@ -64,6 +64,105 @@ func TestEnsureRecordDirSecuresRecordDirectory(t *testing.T) {
 	assertMode(t, dir, 0o700)
 }
 
+func TestStageReplaceRestoresAndRemovesWithoutBuffering(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(existing, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, rollback, err := artifacts.StageReplace(existing)
+	if err != nil {
+		t.Fatalf("StageReplace(existing) error = %v", err)
+	}
+	assertFile(t, existing, "old")
+	if err := rollback(); err != nil {
+		t.Fatalf("rollback unchanged() error = %v", err)
+	}
+	assertFile(t, existing, "old")
+	if _, statErr := os.Stat(existing + ".prev"); !os.IsNotExist(statErr) {
+		t.Fatalf("unused backup still present: %v", statErr)
+	}
+
+	_, rollback, err = artifacts.StageReplace(existing)
+	if err != nil {
+		t.Fatalf("StageReplace(existing rewrite) error = %v", err)
+	}
+	assertFile(t, existing, "old")
+	if err := artifacts.WriteFileAtomic(existing, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollback(); err != nil {
+		t.Fatalf("rollback() error = %v", err)
+	}
+	assertFile(t, existing, "old")
+
+	missing := filepath.Join(dir, "new.md")
+	if err := os.WriteFile(missing+".prev", []byte("stale missing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, rollback, err = artifacts.StageReplace(missing)
+	if err != nil {
+		t.Fatalf("StageReplace(missing) error = %v", err)
+	}
+	if err := artifacts.WriteFileAtomic(missing, []byte("created")); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollback(); err != nil {
+		t.Fatalf("rollback missing() error = %v", err)
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Fatalf("unpublished file still present: %v", statErr)
+	}
+	if _, statErr := os.Stat(missing + ".prev"); !os.IsNotExist(statErr) {
+		t.Fatalf("leftover backup still present after missing-file stage: %v", statErr)
+	}
+
+	if err := os.WriteFile(existing, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commit, _, err := artifacts.StageReplace(existing)
+	if err != nil {
+		t.Fatalf("StageReplace(commit) error = %v", err)
+	}
+	if err := artifacts.WriteFileAtomic(existing, []byte("next")); err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit() error = %v", err)
+	}
+	assertFile(t, existing, "next")
+	if _, statErr := os.Stat(existing + ".prev"); !os.IsNotExist(statErr) {
+		t.Fatalf("backup still present after commit: %v", statErr)
+	}
+
+	if err := os.WriteFile(existing+".prev", []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commit, _, err = artifacts.StageReplace(existing)
+	if err != nil {
+		t.Fatalf("StageReplace(leftover) error = %v", err)
+	}
+	assertFile(t, existing, "next")
+	if err := artifacts.WriteFileAtomic(existing, []byte("newer")); err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit leftover() error = %v", err)
+	}
+	assertFile(t, existing, "newer")
+	if _, statErr := os.Stat(existing + ".prev"); !os.IsNotExist(statErr) {
+		t.Fatalf("leftover backup still present: %v", statErr)
+	}
+
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.Mkdir(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := artifacts.StageReplace(blocked); err == nil {
+		t.Fatal("StageReplace(directory) error = nil, want refusal")
+	}
+}
+
 func TestWriteFileAtomicWrites0600AndReplacesContents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.json")
 

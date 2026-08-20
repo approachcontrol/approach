@@ -75,6 +75,224 @@ func TestStoreReadMetadataReturnsPlanMetadataAndReportsCorruptMetadata(t *testin
 	}
 }
 
+func TestStoreDoesNotPublishMetadataWhenMarkdownWriteFails(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planDir := filepath.Join(root, "plans", "failed-markdown")
+	if err := os.MkdirAll(filepath.Join(planDir, "plan.md"), 0o700); err != nil {
+		t.Fatalf("create blocking plan.md directory: %v", err)
+	}
+
+	_, err = store.Save(planstore.PlanRecord{
+		PlanID:   "failed-markdown",
+		Title:    "Failed Markdown",
+		Markdown: "new body",
+		Status:   "draft",
+	})
+	if err == nil {
+		t.Fatal("Save() error = nil, want Markdown write failure")
+	}
+	if _, readErr := store.ReadMetadata("failed-markdown"); readErr == nil {
+		t.Fatal("ReadMetadata() error = nil, metadata was published before Markdown")
+	}
+}
+
+func TestStoreKeepsExistingMetadataWhenMarkdownWriteFails(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "Before",
+		Markdown: "old body",
+		Status:   "draft",
+	}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	markdownPath := filepath.Join(root, "plans", "existing-plan", "plan.md")
+	if err := os.Remove(markdownPath); err != nil {
+		t.Fatalf("remove plan.md: %v", err)
+	}
+	if err := os.Mkdir(markdownPath, 0o700); err != nil {
+		t.Fatalf("create blocking plan.md directory: %v", err)
+	}
+
+	_, err = store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "After",
+		Markdown: "new body",
+		Status:   "completed",
+	})
+	if err == nil {
+		t.Fatal("update Save() error = nil, want Markdown write failure")
+	}
+	metadata, readErr := store.ReadMetadata("existing-plan")
+	if readErr != nil {
+		t.Fatalf("ReadMetadata() error = %v", readErr)
+	}
+	if metadata.Title != "Before" || metadata.Status != "draft" {
+		t.Fatalf("ReadMetadata() = %#v, want unchanged existing metadata", metadata)
+	}
+}
+
+func TestStoreRemovesNewPlanBodyWhenMetadataWriteFails(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planDir := filepath.Join(root, "plans", "new-plan")
+	if err := os.MkdirAll(planDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(planDir, "meta.json"), 0o700); err != nil {
+		t.Fatalf("create blocking meta.json directory: %v", err)
+	}
+
+	_, err = store.Save(planstore.PlanRecord{
+		PlanID:   "new-plan",
+		Title:    "New",
+		Markdown: "new body",
+		Status:   "draft",
+	})
+	if err == nil {
+		t.Fatal("Save() error = nil, want metadata write failure")
+	}
+	if _, statErr := os.Stat(filepath.Join(planDir, "plan.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("unpublished plan.md still present: %v", statErr)
+	}
+}
+
+func TestStoreRestoresPlanBodyWhenMetadataWriteFails(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "Before",
+		Markdown: "old body",
+		Status:   "draft",
+	}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	metaPath := filepath.Join(root, "plans", "existing-plan", "meta.json")
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatalf("remove meta.json: %v", err)
+	}
+	if err := os.Mkdir(metaPath, 0o700); err != nil {
+		t.Fatalf("create blocking meta.json directory: %v", err)
+	}
+
+	_, err = store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "After",
+		Markdown: "new body",
+		Status:   "completed",
+	})
+	if err == nil {
+		t.Fatal("update Save() error = nil, want metadata write failure")
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, "plans", "existing-plan", "plan.md"))
+	if readErr != nil {
+		t.Fatalf("read plan.md: %v", readErr)
+	}
+	if string(got) != "old body" {
+		t.Fatalf("plan.md = %q, want restored previous body", got)
+	}
+}
+
+func TestStoreFailsClosedOnUnreadablePreviousPlanBody(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "Before",
+		Markdown: "old body",
+		Status:   "draft",
+	}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	bodyPath := filepath.Join(root, "plans", "existing-plan", "plan.md")
+	if err := os.Remove(bodyPath); err != nil {
+		t.Fatalf("remove plan.md: %v", err)
+	}
+	if err := os.Mkdir(bodyPath, 0o700); err != nil {
+		t.Fatalf("block plan.md: %v", err)
+	}
+
+	_, err = store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "After",
+		Markdown: "new body",
+		Status:   "completed",
+	})
+	if err == nil {
+		t.Fatal("update Save() error = nil, want unreadable previous plan body")
+	}
+	info, statErr := os.Stat(bodyPath)
+	if statErr != nil {
+		t.Fatalf("previous plan.md was removed: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("previous plan.md = file, want blocking directory left in place")
+	}
+	metadata, readErr := store.ReadMetadata("existing-plan")
+	if readErr != nil {
+		t.Fatalf("ReadMetadata() error = %v", readErr)
+	}
+	if metadata.Title != "Before" || metadata.Status != "draft" {
+		t.Fatalf("ReadMetadata() = %#v, want unchanged existing metadata", metadata)
+	}
+}
+
+func TestStoreKeepsUnreadablePlanBodyOnMetadataOnlyUpdate(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:   "existing-plan",
+		Title:    "Before",
+		Markdown: "old body",
+		Status:   "draft",
+	}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	bodyPath := filepath.Join(root, "plans", "existing-plan", "plan.md")
+	if err := os.Remove(bodyPath); err != nil {
+		t.Fatalf("remove plan.md: %v", err)
+	}
+	if err := os.Mkdir(bodyPath, 0o700); err != nil {
+		t.Fatalf("block plan.md: %v", err)
+	}
+
+	updated, err := store.SetStatus("existing-plan", "approved")
+	if err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+	if updated.Status != "approved" {
+		t.Fatalf("SetStatus() status = %q, want approved", updated.Status)
+	}
+	info, statErr := os.Stat(bodyPath)
+	if statErr != nil {
+		t.Fatalf("previous plan.md was removed: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("previous plan.md = file, want blocking directory left in place")
+	}
+}
+
 func TestStoreSavesAndListsPlansByRepoPath(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
