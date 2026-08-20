@@ -51,8 +51,8 @@ marker" from "constructs a Flow launch".
 
 | Pruned | Why unreachable |
 | --- | --- |
-| any kind × tmux × headless | `tmuxRouteEligible` refuses `ctx.Headless` (`model/tmux_mode.go:64`). The route is decided *after* headless resolution (`model/flow_phase_launch.go:396–402`), so this holds for every kind. |
-| `autoPhase` × interactive | Both AutoMode read commands hardcode `Headless: true` (`model/flow_launch_lifecycle.go:665`, `:692`), and prepare's reservation override is skipped when `req.AutoLaunch` (`model/flow_phase_launch.go:396`). |
+| any kind × tmux × headless | `tmuxRouteEligible` refuses `ctx.Headless` (`model/tmux_mode.go:64`). The route is decided *after* headless resolution (`model/flow_launch_context.go:286–309`), so this holds for every kind. |
+| `autoPhase` × interactive | Both AutoMode read commands hardcode `Headless: true` (`model/flow_launch_lifecycle.go:665`, `:692`), and the tracked-phase builder skips the reservation override when `target.AutoLaunch` (`model/flow_launch_context.go:286`). |
 | `autoPhase` × tmux | Follows from the previous two rows: auto ⇒ headless ⇒ embedded. |
 | `repair` × tmux | Refused twice: `tmuxRouteEligible` rejects `ctx.FlowRepair` (`model/tmux_mode.go:64`), and prepare has no tmux call site (`model/flow_launch_repair.go:440`). |
 | `createPhase` × tmux | No call site; route is hardcoded embedded (`model/flow_launch_create.go:373`). |
@@ -87,13 +87,14 @@ The reachable variants:
 
 ### Migration status
 
-V7–V17 are built by `newFlowLaunchContext` (`model/flow_launch_context.go`)
-rather than by a literal at their prepare stage: V16 (worktreeAgent), V11–V12
-(repair), V13–V15 (autofix), V17 (savedSessionResume) and V7–V10
-(phaseResume), in that migration order. Only V1–V6 — manual, auto and create
-phase launches — still compose a literal at their call site, so the
-construction sites in section 1 and the `C:` line numbers in section 3 read as
-the pre-migration snapshot for every other row.
+V1–V4 and V7–V17 are built by `newFlowLaunchContext`
+(`model/flow_launch_context.go`) rather than by a literal at their prepare
+stage: V16 (worktreeAgent), V11–V12 (repair), V13–V15 (autofix), V17
+(savedSessionResume), V7–V10 (phaseResume) and V1–V4 (manual and auto phase),
+in that migration order. Only V5–V6 — the create-phase launch — still composes
+a literal at its call site, so the construction sites in section 1 and the `C:`
+line numbers in section 3 read as the pre-migration snapshot for every other
+row.
 
 Two of those roles decide their own *route*. V13–V15 were the first: the
 builder takes the snapshotted backend and tmux probe and returns the route with
@@ -106,6 +107,14 @@ which keeps the pruning rules at rows `repair × tmux`, `worktreeAgent × tmux`
 and `savedSessionResume × tmux` true by construction rather than by a missing
 call site. The `phaseResume × headless` and `savedSessionResume × headless`
 rules likewise now hold because neither builder arm assigns `Headless`.
+
+V1–V4 were the last route-deciding arm to move. The tracked-phase builder
+resolves the reservation-vs-requested headless rule and *then* decides the
+route against the finished context, which is what keeps the
+`any kind × tmux × headless` pruning rule true by construction rather than by
+call-site ordering. `prepare` now maps the builder's route onto
+`flowPhaseLaunchRoute`, and an unmapped route is an error rather than a silent
+embedded default. Unifying those two route enums is the remaining follow-up.
 
 ## 3. Field values, with the pipeline point that sets them
 

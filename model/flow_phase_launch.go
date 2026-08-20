@@ -362,58 +362,49 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 	if err != nil {
 		return flowPhaseLaunchResult{}, flowPhaseLaunchValidationError{Message: err.Error()}
 	}
-	command := settings.Command
 	// AddFlowPhaseLaunchID is the linearization point for the target phase only.
 	// Keep every other launch input on the prepared snapshot: the linked plan
 	// body and path were already read from it, and mixing later record metadata
 	// into that context could identify a different plan or worktree.
-	launchRecord := req.Record
-	ctx := actions.AgentLaunchContext{
-		Command:          command,
-		Model:            settings.Model,
-		ReasoningEffort:  settings.ReasoningEffort,
-		LaunchID:         req.LaunchID,
-		RepoPath:         req.RepoPath,
-		WorktreePath:     req.WorktreePath,
-		Branch:           launchRecord.Branch,
-		Commit:           launchRecord.Commit,
-		SessionStateRoot: l.SessionStateRoot,
-		PlanID:           launchRecord.PlanID,
-		PlanPath:         req.PlanPath,
-		FlowID:           launchRecord.FlowID,
-		FlowPhaseID:      launchPhase.PhaseID,
-		FlowPhaseKind:    string(flowstore.SemanticKind(launchPhase)),
-		FlowAutoLaunch:   req.AutoLaunch,
-		InitialPrompt:    flowPhasePrompt(launchRecord, launchPhase, req.PlanPath, planBody, l.PromptTemplates, l.Pin.ExecutablePath),
+	ctx, decision, err := newFlowLaunchContext(trackedPhaseTarget{
+		LaunchID:          req.LaunchID,
+		Record:            req.Record,
+		PersistedRecord:   updated,
+		Phase:             launchPhase,
+		Agent:             settings,
+		RepoPath:          req.RepoPath,
+		WorktreePath:      req.WorktreePath,
+		PlanPath:          req.PlanPath,
+		PlanBody:          planBody,
+		AutoLaunch:        req.AutoLaunch,
+		RequestedHeadless: req.Headless,
+	}, snapshotFlowLaunchAgentSettings(l), flowLaunchRouting{
+		Backend:       l.Backend,
+		TmuxAvailable: l.TmuxAvailable,
+	})
+	if err != nil {
+		return flowPhaseLaunchResult{}, err
 	}
-	ctx = applyLaunchStamp(ctx, l.stamp())
-	route := flowPhaseLaunchEmbedded
-	fallbackNote := ""
-	ctx.FlowLaunchTracked = true
-	ctx.Embedded = true
-	ctx.Headless = req.Headless
-	// Persisted reservations carry UpdatedAt. A zero-time partial result from
-	// an injected launcher seam cannot authoritatively replace preferences.
-	if !req.AutoLaunch && !updated.UpdatedAt.IsZero() {
-		ctx.Headless = updated.Headless
+	route, err := flowPhaseLaunchRouteFor(decision.Route)
+	if err != nil {
+		return flowPhaseLaunchResult{}, err
 	}
-	// Headless is resolved above, so the tmux decision is made against the
-	// value that actually launches rather than the requested one.
-	if tmuxRoute, fellBack := l.tmuxLaunchRoute(ctx); tmuxRoute {
-		route = flowPhaseLaunchTmux
-		// A tmux window has no dock to prefill and renders its own output,
-		// so it is external-style: the TUI owns no part of the process.
-		ctx.Embedded = false
-	} else if fellBack {
-		fallbackNote = tmuxFallbackNote
-	}
-	return flowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: fallbackNote}, nil
+	return flowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: decision.FallbackNote}, nil
 }
 
-// tmuxLaunchRoute applies the shared routing rule to the launcher's own copy of
-// the backend and probe, which a lifecycle attempt snapshots at admission.
-func (l flowLaunchPreparation) tmuxLaunchRoute(ctx actions.AgentLaunchContext) (route bool, fellBack bool) {
-	return tmuxLaunchRouteFor(l.Backend, l.TmuxAvailable, ctx)
+// flowPhaseLaunchRouteFor maps the builder's route onto the phase launch's own
+// enum. An unmapped route is an error rather than a silent embedded default: a
+// routing bug that fell through to embedded would launch a wrong-but-plausible
+// agent instead of announcing itself.
+func flowPhaseLaunchRouteFor(route flowLaunchRoute) (flowPhaseLaunchRoute, error) {
+	switch route {
+	case flowLaunchRouteEmbedded:
+		return flowPhaseLaunchEmbedded, nil
+	case flowLaunchRouteTmux:
+		return flowPhaseLaunchTmux, nil
+	default:
+		return 0, fmt.Errorf("unroutable flow phase launch: route %d", route)
+	}
 }
 
 func (l flowLaunchPreparation) readPlan(planID string) (string, error) {

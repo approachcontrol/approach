@@ -977,3 +977,213 @@ func TestNewFlowLaunchContextKeepsThePhaseResumeSessionIDVerbatim(t *testing.T) 
 		t.Fatalf("resume session id = %q, want the untrimmed session ID", ctx.ResumeSessionID)
 	}
 }
+
+// launchContextTrackedPhaseTarget is the tracked-phase fixture: the variant
+// record plus a running implementation phase, with PersistedRecord carrying a
+// non-zero UpdatedAt so the reservation override rule is live by default. Rows
+// that need the zero-time guard clear it explicitly.
+func launchContextTrackedPhaseTarget() trackedPhaseTarget {
+	record := launchContextVariantRecord()
+	phase := flowstore.FlowPhase{
+		PhaseID: "implementation",
+		Title:   "Implementation",
+		Kind:    flowstore.KindImplementation,
+		Status:  flowstore.PhaseRunning,
+		Order:   1,
+	}
+	record.Phases = []flowstore.FlowPhase{phase}
+	return trackedPhaseTarget{
+		LaunchID:        "launch-1",
+		Record:          record,
+		PersistedRecord: record,
+		Phase:           phase,
+		Agent: agent.Settings{
+			Command:         "codex",
+			Model:           "gpt-5",
+			ReasoningEffort: "high",
+		},
+		RepoPath:     record.RepoPath,
+		WorktreePath: record.WorktreePath,
+		PlanPath:     record.PlanPath,
+	}
+}
+
+// launchContextTrackedPhaseContext is the embedded, interactive, manual context
+// every tracked-phase row starts from. WorkingDir stays empty on purpose: this
+// role has never set it, and actions falls back to WorktreePath, so adding it
+// here would be a silent behavior change rather than a tidy-up.
+func launchContextTrackedPhaseContext(target trackedPhaseTarget) actions.AgentLaunchContext {
+	return actions.AgentLaunchContext{
+		Command:           "codex",
+		Model:             "gpt-5",
+		ReasoningEffort:   "high",
+		LaunchID:          "launch-1",
+		RepoPath:          target.RepoPath,
+		WorktreePath:      target.WorktreePath,
+		Branch:            target.Record.Branch,
+		Commit:            target.Record.Commit,
+		SessionStateRoot:  "/state",
+		PlanID:            target.Record.PlanID,
+		PlanPath:          target.PlanPath,
+		FlowID:            target.Record.FlowID,
+		FlowPhaseID:       "implementation",
+		FlowPhaseKind:     string(flowstore.KindImplementation),
+		FlowLaunchTracked: true,
+		Embedded:          true,
+		InitialPrompt: flowPhasePrompt(
+			target.Record, target.Phase, target.PlanPath, target.PlanBody, FlowPromptTemplates{}, ""),
+	}
+}
+
+// TestNewFlowLaunchContextPinsTheTrackedPhaseVariants covers the four reachable
+// tracked-phase variants from docs/flow-launch-variant-matrix.md. It compares
+// whole structs for the reason the shared variant table does: a field this role
+// starts setting has to be declared here before it can ship.
+func TestNewFlowLaunchContextPinsTheTrackedPhaseVariants(t *testing.T) {
+	for _, variant := range []struct {
+		name     string
+		mutate   func(*trackedPhaseTarget)
+		routing  flowLaunchRouting
+		want     func(trackedPhaseTarget) actions.AgentLaunchContext
+		decision flowLaunchRouteDecision
+	}{
+		{
+			// V1: the ordinary g launch. The reservation answered with an
+			// interactive record, so the requested value and the persisted one
+			// agree and Headless stays false.
+			name:     "tracked phase manual embedded",
+			want:     launchContextTrackedPhaseContext,
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// V2: the reservation override. The caller asked for an interactive
+			// launch and the persisted record says headless, so the persisted
+			// value wins. A row that merely requested headless would pass without
+			// the rule.
+			name: "tracked phase manual headless",
+			mutate: func(target *trackedPhaseTarget) {
+				target.RequestedHeadless = false
+				target.PersistedRecord.Headless = true
+			},
+			want: func(target trackedPhaseTarget) actions.AgentLaunchContext {
+				ctx := launchContextTrackedPhaseContext(target)
+				ctx.Headless = true
+				return ctx
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// V3: interactive plus a tmux backend with tmux on PATH. Embedded
+			// clears because a tmux window has no dock to prefill.
+			name: "tracked phase manual tmux",
+			routing: flowLaunchRouting{
+				Backend:       config.LaunchBackendTmux,
+				TmuxAvailable: func() bool { return true },
+			},
+			want: func(target trackedPhaseTarget) actions.AgentLaunchContext {
+				ctx := launchContextTrackedPhaseContext(target)
+				ctx.Embedded = false
+				return ctx
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteTmux},
+		},
+		{
+			// V4: AutoMode. The persisted record says interactive and the request
+			// says headless, and headless wins — auto launches skip the
+			// reservation override entirely.
+			name: "tracked phase auto headless",
+			mutate: func(target *trackedPhaseTarget) {
+				target.AutoLaunch = true
+				target.RequestedHeadless = true
+				target.PersistedRecord.Headless = false
+			},
+			want: func(target trackedPhaseTarget) actions.AgentLaunchContext {
+				ctx := launchContextTrackedPhaseContext(target)
+				ctx.FlowAutoLaunch = true
+				ctx.Headless = true
+				return ctx
+			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			target := launchContextTrackedPhaseTarget()
+			if variant.mutate != nil {
+				variant.mutate(&target)
+			}
+
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), variant.routing)
+			if err != nil {
+				t.Fatalf("newFlowLaunchContext: %v", err)
+			}
+			if want := variant.want(target); ctx != want {
+				t.Fatalf("context = %#v, want %#v", ctx, want)
+			}
+			if decision != variant.decision {
+				t.Fatalf("decision = %#v, want %#v", decision, variant.decision)
+			}
+		})
+	}
+}
+
+// TestNewFlowLaunchContextKeepsRequestedHeadlessOnAZeroTimeReservation pins the
+// guard that travelled with the rule: a zero-time partial result from an
+// injected launcher seam is not a persisted reservation, so it cannot replace
+// the requested preference.
+func TestNewFlowLaunchContextKeepsRequestedHeadlessOnAZeroTimeReservation(t *testing.T) {
+	for _, tt := range []struct {
+		name              string
+		requestedHeadless bool
+		persistedHeadless bool
+	}{
+		{name: "requested interactive", requestedHeadless: false, persistedHeadless: true},
+		{name: "requested headless", requestedHeadless: true, persistedHeadless: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			target := launchContextTrackedPhaseTarget()
+			target.RequestedHeadless = tt.requestedHeadless
+			target.PersistedRecord.Headless = tt.persistedHeadless
+			target.PersistedRecord.UpdatedAt = time.Time{}
+
+			ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings(), flowLaunchRouting{})
+			if err != nil {
+				t.Fatalf("newFlowLaunchContext: %v", err)
+			}
+			if ctx.Headless != tt.requestedHeadless {
+				t.Fatalf("headless = %v, want the requested %v", ctx.Headless, tt.requestedHeadless)
+			}
+		})
+	}
+}
+
+// TestNewFlowLaunchContextRejectsIncompleteTrackedPhasePayloads pins the
+// builder-side invariants. These are defensive: prepare's
+// flowPhaseLaunchNoWorktreeStatus refusal and preflight's agent.Validate still
+// fire first and keep their own messages.
+func TestNewFlowLaunchContextRejectsIncompleteTrackedPhasePayloads(t *testing.T) {
+	for _, missing := range []struct {
+		name   string
+		mutate func(*trackedPhaseTarget)
+	}{
+		{name: "launch id", mutate: func(target *trackedPhaseTarget) { target.LaunchID = "  " }},
+		{name: "flow id", mutate: func(target *trackedPhaseTarget) { target.Record.FlowID = "  " }},
+		{name: "worktree path", mutate: func(target *trackedPhaseTarget) { target.WorktreePath = " " }},
+		{name: "phase id", mutate: func(target *trackedPhaseTarget) { target.Phase.PhaseID = "  " }},
+		{name: "agent command", mutate: func(target *trackedPhaseTarget) { target.Agent.Command = "  " }},
+	} {
+		t.Run("missing "+missing.name, func(t *testing.T) {
+			target := launchContextTrackedPhaseTarget()
+			missing.mutate(&target)
+
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), flowLaunchRouting{})
+			if !errors.Is(err, errIncompleteFlowLaunchTarget) {
+				t.Fatalf("err = %v, want errIncompleteFlowLaunchTarget (context %#v)", err, ctx)
+			}
+			if decision != (flowLaunchRouteDecision{}) {
+				t.Fatalf("failed build returned decision %#v", decision)
+			}
+		})
+	}
+}

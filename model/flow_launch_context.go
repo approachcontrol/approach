@@ -151,6 +151,47 @@ type phaseResumeTarget struct {
 
 func (phaseResumeTarget) role() actions.FlowLaunchRole { return actions.RolePhaseResume }
 
+// trackedPhaseTarget is the phase-attached launch started by g and by AutoMode.
+// It is the only role that reserves the Flow lease and writes phase attempt
+// history, and it carries two records for the reason phase resume does: the
+// launch reads a record and then writes one, and the two answer different
+// questions.
+type trackedPhaseTarget struct {
+	// LaunchID is the admission token, never a fresh ID: the reservation and
+	// every LaunchID-keyed fence downstream are already on it.
+	LaunchID string
+	// Record is the prepared snapshot, not the reservation's return value.
+	// AddFlowPhaseLaunchID linearizes the target phase only; branch, commit,
+	// plan ID and worktree stay on the snapshot the plan body and plan path
+	// were already read from.
+	Record flowstore.FlowRecord
+	// PersistedRecord is what AddFlowPhaseLaunchID returned, consulted only for
+	// the headless reservation rule below.
+	PersistedRecord flowstore.FlowRecord
+	// Phase is the launch phase prepare already resolved (the persisted phase
+	// when the write returned one, the requested phase otherwise). It arrives
+	// resolved because prepare must resolve agent settings against it first, and
+	// that refusal is prepare's flowPhaseLaunchValidationError to raise.
+	Phase flowstore.FlowPhase
+	// Agent is the phase's resolved settings, carried for the reason
+	// repairTarget carries its own: resolution can fail with a typed refusal
+	// that belongs to admission, not to the builder.
+	Agent        agent.Settings
+	RepoPath     string
+	WorktreePath string
+	PlanPath     string
+	// PlanBody is the linked plan's markdown when this phase's prompt needs it,
+	// read by prepare through the ReadPlan seam.
+	PlanBody string
+	// AutoLaunch is the FlowAutoLaunch marker and half of the headless rule.
+	AutoLaunch bool
+	// RequestedHeadless is the caller's requested value, which the reservation
+	// may override for a manual launch.
+	RequestedHeadless bool
+}
+
+func (trackedPhaseTarget) role() actions.FlowLaunchRole { return actions.RoleTrackedPhase }
+
 // errIncompleteFlowLaunchTarget reports a payload that upstream admission
 // should already have guaranteed. The builder still checks: it is the one
 // place every Flow launch context is constructed, so it is the only place the
@@ -196,6 +237,8 @@ func newFlowLaunchContext(
 	routing flowLaunchRouting,
 ) (actions.AgentLaunchContext, flowLaunchRouteDecision, error) {
 	switch payload := target.(type) {
+	case trackedPhaseTarget:
+		return newTrackedPhaseLaunchContext(payload, settings, routing)
 	case worktreeAgentTarget:
 		return newWorktreeAgentLaunchContext(payload, settings)
 	case repairTarget:
@@ -209,6 +252,72 @@ func newFlowLaunchContext(
 	default:
 		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
 	}
+}
+
+// newTrackedPhaseLaunchContext is the third arm whose route is a decision
+// rather than a constant, after autofix and phase resume. The order below is
+// load-bearing and now enforced by construction: headless is resolved before
+// the route is decided, because a headless launch is never tmux-eligible.
+//
+// Unlike the two resume roles this one does set Model and ReasoningEffort —
+// they come from the phase's resolved settings, which is what agentCommandSpec
+// expects from a fresh launch. It sets no WorkingDir: actions falls back to
+// WorktreePath, and copying the worktree agent's explicit assignment here would
+// be a silent behavior change rather than a tidy-up.
+func newTrackedPhaseLaunchContext(
+	target trackedPhaseTarget,
+	settings flowLaunchAgentSettingsSnapshot,
+	routing flowLaunchRouting,
+) (actions.AgentLaunchContext, flowLaunchRouteDecision, error) {
+	// Defensive invariants, not new user-reachable refusals: prepare's
+	// flowPhaseLaunchNoWorktreeStatus check and preflight's agent.Validate fire
+	// first and keep their own messages.
+	if strings.TrimSpace(target.LaunchID) == "" ||
+		strings.TrimSpace(target.Record.FlowID) == "" ||
+		strings.TrimSpace(target.WorktreePath) == "" ||
+		strings.TrimSpace(target.Phase.PhaseID) == "" ||
+		strings.TrimSpace(target.Agent.Command) == "" {
+		return actions.AgentLaunchContext{}, flowLaunchRouteDecision{}, errIncompleteFlowLaunchTarget
+	}
+	record := target.Record
+	headless := target.RequestedHeadless
+	// Persisted reservations carry UpdatedAt. A zero-time partial result from an
+	// injected launcher seam cannot authoritatively replace preferences.
+	if !target.AutoLaunch && !target.PersistedRecord.UpdatedAt.IsZero() {
+		headless = target.PersistedRecord.Headless
+	}
+	ctx := applyLaunchStamp(actions.AgentLaunchContext{
+		Command: target.Agent.Command, LaunchID: target.LaunchID,
+		RepoPath: target.RepoPath, WorktreePath: target.WorktreePath,
+		Branch: record.Branch, Commit: record.Commit,
+		Model: target.Agent.Model, ReasoningEffort: target.Agent.ReasoningEffort,
+		SessionStateRoot: settings.SessionStateRoot, PlanID: record.PlanID, PlanPath: target.PlanPath,
+		FlowID: record.FlowID, FlowPhaseID: target.Phase.PhaseID,
+		FlowPhaseKind: string(flowstore.SemanticKind(target.Phase)),
+		// FlowPhaseTerminal stays unset: the variant matrix prunes it for every
+		// role but phase resume, which is the only one that re-enters a phase
+		// that may already be terminal.
+		FlowAutoLaunch: target.AutoLaunch, FlowLaunchTracked: true,
+		Embedded: true, Headless: headless,
+		// The prompt renders settings.Pin.ExecutablePath, not the stamped
+		// ctx.Executable, for the reason repair and autofix give: the stamp is
+		// applied last, so there is no stamped value to read yet.
+		InitialPrompt: flowPhasePrompt(
+			record, target.Phase, target.PlanPath, target.PlanBody,
+			settings.PromptTemplates, settings.Pin.ExecutablePath),
+	}, settings.stamp())
+	tmuxRoute, fellBack := tmuxLaunchRouteFor(routing.Backend, routing.TmuxAvailable, ctx)
+	if tmuxRoute {
+		// A tmux window has no dock to prefill and renders its own output, so
+		// clearing Embedded is what sends the prompt to argv instead.
+		ctx.Embedded = false
+		return ctx, flowLaunchRouteDecision{Route: flowLaunchRouteTmux}, nil
+	}
+	decision := flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded}
+	if fellBack {
+		decision.FallbackNote = tmuxFallbackNote
+	}
+	return ctx, decision, nil
 }
 
 // newWorktreeAgentLaunchContext ignores routing: this kind's route is a
