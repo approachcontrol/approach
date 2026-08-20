@@ -218,12 +218,11 @@ func TestRenderConfirmDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
 func TestRenderInputDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
 	const unsafePrompt = "Close Flow bd-1: \x1b]52;c;dGVzdA==\aUnsafe\nTitle? Reason"
 	view := Render(RenderParams{
-		Width:            120,
-		Height:           12,
-		Overlay:          OverlayInput,
-		InputPrompt:      unsafePrompt,
-		InputPlaceholder: "why this Flow is closed",
-	})
+		Width:  120,
+		Height: 12, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      unsafePrompt,
+			InputPlaceholder: "why this Flow is closed"}})
 
 	if strings.Contains(view, "\x1b]52;") {
 		t.Fatalf("input dialog retained OSC sequence: %q", view)
@@ -383,23 +382,22 @@ func TestRender_LeftPaneHidesNewRepoWhenUnavailable(t *testing.T) {
 
 func TestRenderRepoCreateFormOverlayShowsFieldsDefaultsFocusAndError(t *testing.T) {
 	view := Render(RenderParams{
-		Width:   72,
-		Height:  12,
-		Overlay: OverlayForm,
-		Form: FormView{
-			Title:      "New repo",
-			FocusIndex: 0,
-			Error:      "repo name cannot be empty",
-			Fields: []FormField{
-				{ID: "name", Kind: FormText, Label: "Repo name", Placeholder: "my-repo", Value: "app", Cursor: 3},
-				{ID: "github", Kind: FormCheckbox, Label: "Create GitHub repo", Checked: true},
-				{ID: "visibility", Kind: FormChoice, Label: "Visibility", Options: []SelectItem{
-					{Label: "Public", Value: "public"},
-					{Label: "Private", Value: "private"},
-				}, SelectedIndex: 0},
-			},
-		},
-	})
+		Width:  72,
+		Height: 12, OverlayParams: OverlayParams{
+			Overlay: OverlayForm,
+			Form: FormView{
+				Title:      "New repo",
+				FocusIndex: 0,
+				Error:      "repo name cannot be empty",
+				Fields: []FormField{
+					{ID: "name", Kind: FormText, Label: "Repo name", Placeholder: "my-repo", Value: "app", Cursor: 3},
+					{ID: "github", Kind: FormCheckbox, Label: "Create GitHub repo", Checked: true},
+					{ID: "visibility", Kind: FormChoice, Label: "Visibility", Options: []SelectItem{
+						{Label: "Public", Value: "public"},
+						{Label: "Private", Value: "private"},
+					}, SelectedIndex: 0},
+				},
+			}}})
 	text := ansi.Strip(view)
 	for _, want := range []string{
 		"New repo",
@@ -419,16 +417,15 @@ func TestRenderRepoCreateFormOverlayShowsFieldsDefaultsFocusAndError(t *testing.
 
 func TestRenderRepoCreateFormStatusBarUsesFormControls(t *testing.T) {
 	view := Render(RenderParams{
-		Width:   90,
-		Height:  8,
-		Overlay: OverlayForm,
-		Form: FormView{
-			Title: "New repo",
-			Fields: []FormField{
-				{ID: "name", Kind: FormText, Label: "Repo name"},
-			},
-		},
-	})
+		Width:  90,
+		Height: 8, OverlayParams: OverlayParams{
+			Overlay: OverlayForm,
+			Form: FormView{
+				Title: "New repo",
+				Fields: []FormField{
+					{ID: "name", Kind: FormText, Label: "Repo name"},
+				},
+			}}})
 	lines := strippedLines(view)
 	status := lines[len(lines)-1]
 	for _, want := range []string{"tab/shift+tab", "space", "enter: submit", "esc: cancel"} {
@@ -476,10 +473,9 @@ func TestRenderFlowCreateFormOverlayIsCompactAndLeavesBackgroundVisible(t *testi
 		Selected: 0,
 		Width:    120,
 		Height:   16,
-		Mode:     ModeFlows,
-		Overlay:  OverlayForm,
-		Form:     form,
-	})
+		Mode:     ModeFlows, OverlayParams: OverlayParams{
+			Overlay: OverlayForm,
+			Form:    form}})
 	text := ansi.Strip(view)
 	for _, want := range []string{"alpha", "New flow", "Title", "Instructions", "Base ref", "main", shortcutOverflowMarker, "alt+enter: newline"} {
 		if !strings.Contains(text, want) {
@@ -521,20 +517,19 @@ func TestRenderFlowCreateFormOverlayFitsNarrowTerminal(t *testing.T) {
 		Selected: 0,
 		Width:    38,
 		Height:   14,
-		Mode:     ModeFlows,
-		Overlay:  OverlayForm,
-		Form: FormView{
-			Purpose:    "flow-create",
-			Title:      "New flow",
-			FocusIndex: 1,
-			Error:      "flow instructions must explain the work to perform",
-			Fields: []FormField{
-				{ID: "title", Kind: FormText, Label: "Title", Placeholder: FlowTitleInputPlaceholder, Value: "Very long flow title that wraps", Cursor: len([]rune("Very long flow title that wraps"))},
-				{ID: "instructions", Kind: FormMultilineText, Label: "Instructions", Placeholder: FlowInstructionsInputPlaceholder, Value: "Implement a compact single form with multiline instructions and narrow terminal wrapping.", Cursor: len([]rune("Implement a compact single form with multiline instructions and narrow terminal wrapping."))},
-				{ID: "base-ref", Kind: FormText, Label: "Base ref", Placeholder: FlowBaseRefInputPlaceholder, Value: "feature/some-long-base-ref", Cursor: len([]rune("feature/some-long-base-ref"))},
-			},
-		},
-	})
+		Mode:     ModeFlows, OverlayParams: OverlayParams{
+			Overlay: OverlayForm,
+			Form: FormView{
+				Purpose:    "flow-create",
+				Title:      "New flow",
+				FocusIndex: 1,
+				Error:      "flow instructions must explain the work to perform",
+				Fields: []FormField{
+					{ID: "title", Kind: FormText, Label: "Title", Placeholder: FlowTitleInputPlaceholder, Value: "Very long flow title that wraps", Cursor: len([]rune("Very long flow title that wraps"))},
+					{ID: "instructions", Kind: FormMultilineText, Label: "Instructions", Placeholder: FlowInstructionsInputPlaceholder, Value: "Implement a compact single form with multiline instructions and narrow terminal wrapping.", Cursor: len([]rune("Implement a compact single form with multiline instructions and narrow terminal wrapping."))},
+					{ID: "base-ref", Kind: FormText, Label: "Base ref", Placeholder: FlowBaseRefInputPlaceholder, Value: "feature/some-long-base-ref", Cursor: len([]rune("feature/some-long-base-ref"))},
+				},
+			}}})
 
 	requireLinesWithinWidth(t, strippedLines(view), 38)
 }
@@ -595,18 +590,17 @@ func TestRender_SessionsModeShowsSessionRowsAboveEmbeddedTerminalDock(t *testing
 			Branch:    "feature/saved",
 			Summary:   "saved session row",
 		}},
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number:   1,
-			Provider: "codex",
-			Identity: "feature/api",
-			State:    "running",
-			Active:   true,
-		}},
-		EmbeddedTerminalLines:   []string{"agent output"},
-		EmbeddedTerminalVisible: true,
-		ActivePane:              PaneTop,
-		SessionSelected:         0,
-	})
+		ActivePane:      PaneTop,
+		SessionSelected: 0, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number:   1,
+				Provider: "codex",
+				Identity: "feature/api",
+				State:    "running",
+				Active:   true,
+			}},
+			EmbeddedTerminalLines:   []string{"agent output"},
+			EmbeddedTerminalVisible: true}})
 
 	for _, want := range []string{"[2] sessions", "Provider", "saved session row", "1 codex feature/api running", "agent output"} {
 		if !strings.Contains(view, want) {
@@ -735,17 +729,16 @@ func TestRenderEmbeddedTerminalDockPaneShowsCollapsedChip(t *testing.T) {
 
 func TestRenderExpandedTerminalDockIsTopLevelFullWidthPane(t *testing.T) {
 	p := RenderParams{
-		Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:                0,
-		Width:                   120,
-		Height:                  24,
-		Mode:                    ModeSessions,
-		ActivePane:              PaneTop,
-		Sessions:                []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
-		EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
-		EmbeddedTerminalLines:   []string{"persistent terminal output"},
-		EmbeddedTerminalVisible: true,
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      120,
+		Height:     24,
+		Mode:       ModeSessions,
+		ActivePane: PaneTop,
+		Sessions:   []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
+			EmbeddedTerminalLines:   []string{"persistent terminal output"},
+			EmbeddedTerminalVisible: true}}
 	view := Render(p)
 	lines := strippedLines(view)
 	dockRows := EmbeddedTerminalDockRows(p.Height, EmbeddedTerminalDockExpanded)
@@ -788,21 +781,20 @@ func TestRenderResponsiveTerminalPreservesStackedPanesAtThreshold(t *testing.T) 
 		flows[i] = flowstore.FlowRecord{FlowID: fmt.Sprintf("flow-%d", i+1), Title: fmt.Sprintf("bottom-%d", i+1), Branch: fmt.Sprintf("bottom-%d", i+1), WorktreePath: fmt.Sprintf("/dev/bottom-%d", i+1), Status: flowstore.StatusPending}
 	}
 	p := RenderParams{
-		Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:                0,
-		Width:                   180,
-		Height:                  24,
-		Mode:                    ModeFlows,
-		TopMode:                 ModeWorktrees,
-		BottomMode:              ModeFlows,
-		ContentPane:             PaneBottom,
-		ActivePane:              PaneBottom,
-		Worktrees:               worktrees,
-		Flows:                   flows,
-		EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}},
-		EmbeddedTerminalLines:   []string{"threshold output"},
-		EmbeddedTerminalVisible: true,
-	}
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:    0,
+		Width:       180,
+		Height:      24,
+		Mode:        ModeFlows,
+		TopMode:     ModeWorktrees,
+		BottomMode:  ModeFlows,
+		ContentPane: PaneBottom,
+		ActivePane:  PaneBottom,
+		Worktrees:   worktrees, FlowParams: FlowParams{
+			Flows: flows}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}},
+			EmbeddedTerminalLines:   []string{"threshold output"},
+			EmbeddedTerminalVisible: true}}
 
 	plain := ansi.Strip(Render(p))
 	for _, want := range []string{"[1] git", "[3] flows", "top-1", "top-6", "Status", "bottom-1", "bottom-5", "threshold output"} {
@@ -820,18 +812,17 @@ func TestRenderResponsiveTerminalPreservesStackedPanesAtThreshold(t *testing.T) 
 
 func TestRenderAutoCollapsedTerminalChipAndShortcutRailAgree(t *testing.T) {
 	p := RenderParams{
-		Repos:                 []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:              0,
-		Width:                 180,
-		Height:                23,
-		Mode:                  ModeSessions,
-		TopMode:               ModeWorktrees,
-		BottomMode:            ModeSessions,
-		ContentPane:           PaneBottom,
-		ActivePane:            PaneBottom,
-		EmbeddedTerminals:     []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}},
-		EmbeddedTerminalLines: []string{"invisible output"},
-	}
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:    0,
+		Width:       180,
+		Height:      23,
+		Mode:        ModeSessions,
+		TopMode:     ModeWorktrees,
+		BottomMode:  ModeSessions,
+		ContentPane: PaneBottom,
+		ActivePane:  PaneBottom, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals:     []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}},
+			EmbeddedTerminalLines: []string{"invisible output"}}}
 
 	p.EmbeddedTerminalVisible = true
 	autoCollapsed := ansi.Strip(Render(p))
@@ -858,15 +849,14 @@ func TestRenderAutoCollapsedTerminalChipAndShortcutRailAgree(t *testing.T) {
 
 func TestRenderCollapsedTerminalDockChipIsFullWidthAboveStatusBar(t *testing.T) {
 	p := RenderParams{
-		Repos:             []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:          0,
-		Width:             120,
-		Height:            16,
-		Mode:              ModeSessions,
-		ActivePane:        PaneTop,
-		Sessions:          []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
-		EmbeddedTerminals: []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      120,
+		Height:     16,
+		Mode:       ModeSessions,
+		ActivePane: PaneTop,
+		Sessions:   []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}}}}
 	view := Render(p)
 	lines := strippedLines(view)
 	if len(lines) != p.Height {
@@ -898,14 +888,13 @@ func TestRenderNeverOverflowsViewportHeight(t *testing.T) {
 		for _, state := range states {
 			for height := 5; height <= 30; height++ {
 				view := Render(RenderParams{
-					Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-					Width:                   90,
-					Height:                  height,
-					Mode:                    mode,
-					ActivePane:              PaneTop,
-					EmbeddedTerminals:       state.terminals,
-					EmbeddedTerminalVisible: state.visible,
-				})
+					Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+					Width:      90,
+					Height:     height,
+					Mode:       mode,
+					ActivePane: PaneTop, EmbeddedTerminalParams: EmbeddedTerminalParams{
+						EmbeddedTerminals:       state.terminals,
+						EmbeddedTerminalVisible: state.visible}})
 				if got := len(strippedLines(view)); got != height {
 					t.Fatalf("mode %d %s dock at height %d rendered %d lines:\n%s", mode, state.name, height, got, view)
 				}
@@ -925,9 +914,8 @@ func TestRenderStackedStoredPanesUsesPaneLocalHeaders(t *testing.T) {
 		BottomMode:  ModeFlows,
 		ContentPane: PaneTop,
 		ActivePane:  PaneTop,
-		BeadsOpen:   nil,
-		Flows:       []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Bottom flow", RepoPath: "/dev/approach", Branch: "flow/bottom"}},
-	}
+		BeadsOpen:   nil, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Bottom flow", RepoPath: "/dev/approach", Branch: "flow/bottom"}}}}
 	view := Render(p)
 	if got := len(strippedLines(view)); got != p.Height {
 		t.Fatalf("stacked view line count = %d, want %d:\n%s", got, p.Height, view)
@@ -953,10 +941,9 @@ func TestRenderActiveFlowsTakesOverCombinedStackedColumn(t *testing.T) {
 		TopMode:     ModeBeadsOpen,
 		BottomMode:  ModeFlows,
 		ContentPane: PaneTop,
-		ActivePane:  PaneRepos,
-		ActiveFlows: true,
-		Flows:       []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/dev/approach", Branch: "flow/takeover"}},
-	}
+		ActivePane:  PaneRepos, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows:       []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/dev/approach", Branch: "flow/takeover"}}}}
 	plain := ansi.Strip(Render(p))
 	if strings.Count(plain, "[^a] active flows") != 1 || !strings.Contains(plain, "flow/takeover") {
 		t.Fatalf("Active Flows did not render once across the content column:\n%s", plain)
@@ -979,12 +966,11 @@ func TestRender_ShortcutRailSurvivesExpandedDock(t *testing.T) {
 		Height:     60,
 		Mode:       ModeSessions,
 		ActivePane: PaneTop,
-		Sessions:   []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true,
-		}},
-		EmbeddedTerminalVisible: true,
-	})
+		Sessions:   []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true,
+			}},
+			EmbeddedTerminalVisible: true}})
 	pane := shortcutPaneText(view)
 	for _, want := range []string{"Actions", "r      resume"} {
 		if !strings.Contains(pane, want) {
@@ -1069,8 +1055,8 @@ func TestRenderCollapsedTerminalChipPersistsInEveryMode(t *testing.T) {
 		{name: "worktrees", params: RenderParams{Mode: ModeWorktrees, Worktrees: []gitquery.Worktree{{Path: "/dev/dock", BranchName: "feature/dock"}}}, listText: "feature/dock"},
 		{name: "sessions", params: RenderParams{Mode: ModeSessions, Sessions: []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}}}, listText: "feature/dock"},
 		{name: "plans", params: RenderParams{Mode: ModePlans, Plans: []planstore.PlanRecord{{PlanID: "plan-1", Title: "Dock plan", Status: "approved"}}}, listText: "Dock plan"},
-		{name: "flows", params: RenderParams{Mode: ModeFlows, Flows: []flowstore.FlowRecord{flow}}, listText: "flow/dock"},
-		{name: "active flows", params: RenderParams{Mode: ModeSessions, ActiveFlows: true, Flows: []flowstore.FlowRecord{flow}}, listText: "flow/dock"},
+		{name: "flows", params: RenderParams{Mode: ModeFlows, FlowParams: FlowParams{Flows: []flowstore.FlowRecord{flow}}}, listText: "flow/dock"},
+		{name: "active flows", params: RenderParams{Mode: ModeSessions, FlowParams: FlowParams{ActiveFlows: true, Flows: []flowstore.FlowRecord{flow}}}, listText: "flow/dock"},
 	}
 
 	for _, tt := range tests {
@@ -1102,8 +1088,8 @@ func TestRenderEmptyTerminalChipPersistsInEveryMode(t *testing.T) {
 		{name: "worktrees", params: RenderParams{Mode: ModeWorktrees, Worktrees: []gitquery.Worktree{{Path: "/dev/dock", BranchName: "feature/dock"}}}, listText: "feature/dock"},
 		{name: "sessions", params: RenderParams{Mode: ModeSessions, Sessions: []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}}}, listText: "feature/dock"},
 		{name: "plans", params: RenderParams{Mode: ModePlans, Plans: []planstore.PlanRecord{{PlanID: "plan-1", Title: "Dock plan", Status: "approved"}}}, listText: "Dock plan"},
-		{name: "flows", params: RenderParams{Mode: ModeFlows, Flows: []flowstore.FlowRecord{flow}}, listText: "flow/dock"},
-		{name: "active flows", params: RenderParams{Mode: ModeSessions, ActiveFlows: true, Flows: []flowstore.FlowRecord{flow}}, listText: "flow/dock"},
+		{name: "flows", params: RenderParams{Mode: ModeFlows, FlowParams: FlowParams{Flows: []flowstore.FlowRecord{flow}}}, listText: "flow/dock"},
+		{name: "active flows", params: RenderParams{Mode: ModeSessions, FlowParams: FlowParams{ActiveFlows: true, Flows: []flowstore.FlowRecord{flow}}}, listText: "flow/dock"},
 	}
 
 	for _, tt := range tests {
@@ -1257,23 +1243,22 @@ func TestRenderEmbeddedTerminalPaneBorderUsesFocusColor(t *testing.T) {
 
 func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   24,
-		Mode:     ModeSessions,
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number:   1,
-			Provider: "codex",
-			Identity: "feature/api",
-			State:    "running",
-			Active:   true,
-		}},
-		EmbeddedTerminalLines:   []string{"agent output"},
-		EmbeddedTerminalPrefix:  true,
-		EmbeddedTerminalVisible: true,
-		ActivePane:              PaneTop,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     24,
+		Mode:       ModeSessions,
+		ActivePane: PaneTop, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number:   1,
+				Provider: "codex",
+				Identity: "feature/api",
+				State:    "running",
+				Active:   true,
+			}},
+			EmbeddedTerminalLines:   []string{"agent output"},
+			EmbeddedTerminalPrefix:  true,
+			EmbeddedTerminalVisible: true}})
 
 	if !strings.Contains(view, "ctrl+]") {
 		t.Fatalf("embedded terminal prefix cue missing:\n%s", view)
@@ -1824,13 +1809,12 @@ func TestRender_OmitsDefaultViewSetting(t *testing.T) {
 
 func TestStatusBar_InputOverlayShowsSingleLineHints(t *testing.T) {
 	bar := Render(RenderParams{
-		Width:       120,
-		Height:      8,
-		Mode:        ModeWorktrees,
-		Overlay:     OverlayInput,
-		InputPrompt: "Create worktree from",
-		InputMode:   InputSingleLine,
-	})
+		Width:  120,
+		Height: 8,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Create worktree from",
+			InputMode:   InputSingleLine}})
 	status := strings.Split(bar, "\n")[7]
 	for _, hint := range []string{"enter: submit", "esc: cancel", "bksp/del: edit"} {
 		if !strings.Contains(bar, hint) {
@@ -1844,13 +1828,12 @@ func TestStatusBar_InputOverlayShowsSingleLineHints(t *testing.T) {
 
 func TestStatusBar_InputOverlayShowsMultiLineHints(t *testing.T) {
 	view := Render(RenderParams{
-		Width:       120,
-		Height:      8,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: LaunchInstructionsPrompt,
-		InputMode:   InputMultiLine,
-	})
+		Width:  120,
+		Height: 8,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: LaunchInstructionsPrompt,
+			InputMode:   InputMultiLine}})
 	status := strings.Split(view, "\n")[7]
 	for _, hint := range []string{"enter: submit", "alt+enter: newline", "esc: cancel"} {
 		if !strings.Contains(status, hint) {
@@ -1875,16 +1858,15 @@ func TestStatusBar_SelectOverlayShowsSelectHints(t *testing.T) {
 
 func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            120,
-		Height:           12,
-		Mode:             ModePlans,
-		Overlay:          OverlayInput,
-		InputPrompt:      LaunchInstructionsPrompt,
-		InputPlaceholder: "launch instructions",
-		InputValue:       "Implement the selected plan",
-		InputMode:        InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  120,
+		Height: 12,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      LaunchInstructionsPrompt,
+			InputPlaceholder: "launch instructions",
+			InputValue:       "Implement the selected plan",
+			InputMode:        InputMultiLine}})
 	status := strings.Split(view, "\n")[11]
 	for _, hint := range []string{"enter: submit", "alt+enter: newline", "esc: cancel"} {
 		if !strings.Contains(status, hint) {
@@ -3407,13 +3389,12 @@ func TestRender_CombinesPanesWithDivider(t *testing.T) {
 
 func TestRender_ConfirmDialogShowsPrompt(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:         []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:         80,
-		Height:        24,
-		Mode:          1,
-		Overlay:       OverlayConfirm,
-		ConfirmPrompt: "Remove worktree /dev/alpha/feat? (y/n)",
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:       OverlayConfirm,
+			ConfirmPrompt: "Remove worktree /dev/alpha/feat? (y/n)"}})
 	if !strings.Contains(view, "Remove worktree /dev/alpha/feat") {
 		t.Error("confirm dialog should show prompt text")
 	}
@@ -3424,14 +3405,13 @@ func TestRender_ConfirmDialogShowsPrompt(t *testing.T) {
 
 func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:         []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:         80,
-		Height:        24,
-		Mode:          1,
-		Overlay:       OverlayConfirm,
-		ConfirmPrompt: "Force delete /dev/alpha/feat? (y/n)",
-		ConfirmForce:  true,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:       OverlayConfirm,
+			ConfirmPrompt: "Force delete /dev/alpha/feat? (y/n)",
+			ConfirmForce:  true}})
 	if !strings.Contains(view, "Force delete /dev/alpha/feat") {
 		t.Error("force confirm dialog should show prompt text")
 	}
@@ -3439,17 +3419,16 @@ func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             1,
-		Overlay:          OverlayInput,
-		InputPrompt:      "Create worktree from",
-		InputPlaceholder: WorktreeInputPlaceholder,
-		InputValue:       "feature/new",
-		InputCursor:      len([]rune("feature/new")),
-		InputError:       "already exists",
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      "Create worktree from",
+			InputPlaceholder: WorktreeInputPlaceholder,
+			InputValue:       "feature/new",
+			InputCursor:      len([]rune("feature/new")),
+			InputError:       "already exists"}})
 	if !strings.Contains(view, "Create worktree from: feature/new") {
 		t.Error("worktree input dialog should show typed input")
 	}
@@ -3462,14 +3441,13 @@ func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 	forceTrueColor(t)
 
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             1,
-		Overlay:          OverlayInput,
-		InputPrompt:      "Create worktree from",
-		InputPlaceholder: WorktreeInputPlaceholder,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      "Create worktree from",
+			InputPlaceholder: WorktreeInputPlaceholder}})
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "Create worktree from: "+WorktreeInputPlaceholder) {
 		t.Fatalf("worktree input dialog should show prompt and placeholder when input is empty:\n%s", stripped)
@@ -3493,14 +3471,13 @@ func TestRender_InputDialogWrappedPlaceholderUsesPlaceholderStyle(t *testing.T) 
 
 	placeholder := "alpha beta gamma delta epsilon zeta"
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            36,
-		Height:           18,
-		Mode:             ModeWorktrees,
-		Overlay:          OverlayInput,
-		InputPrompt:      "Create worktree from",
-		InputPlaceholder: placeholder,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  36,
+		Height: 18,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      "Create worktree from",
+			InputPlaceholder: placeholder}})
 
 	stripped := ansi.Strip(view)
 	for _, want := range []string{
@@ -3533,16 +3510,15 @@ func TestRender_InputDialogNonEmptyDoesNotRenderPlaceholderStyle(t *testing.T) {
 	forceTrueColor(t)
 
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             ModeWorktrees,
-		Overlay:          OverlayInput,
-		InputPrompt:      "Create worktree from",
-		InputPlaceholder: WorktreeInputPlaceholder,
-		InputValue:       "feature/new",
-		InputCursor:      len([]rune("feature/new")),
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      "Create worktree from",
+			InputPlaceholder: WorktreeInputPlaceholder,
+			InputValue:       "feature/new",
+			InputCursor:      len([]rune("feature/new"))}})
 
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "Create worktree from: feature/new") {
@@ -3559,16 +3535,15 @@ func TestRender_InputDialogNonEmptyDoesNotRenderPlaceholderStyle(t *testing.T) {
 func TestRender_InputDialogWrapsLongSingleLineAndShowsCursorInPlace(t *testing.T) {
 	longWord := strings.Repeat("x", 90)
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       60,
-		Height:      18,
-		Mode:        ModeWorktrees,
-		Overlay:     OverlayInput,
-		InputPrompt: "New branch",
-		InputValue:  "feature/" + longWord,
-		InputCursor: len([]rune("feature/xxx")),
-		InputMode:   InputSingleLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  60,
+		Height: 18,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "New branch",
+			InputValue:  "feature/" + longWord,
+			InputCursor: len([]rune("feature/xxx")),
+			InputMode:   InputSingleLine}})
 	stripped := ansi.Strip(view)
 	if strings.Contains(stripped, "feature/"+longWord) {
 		t.Fatalf("long input should wrap instead of rendering on one line:\n%s", view)
@@ -3590,18 +3565,17 @@ func TestRender_InputDialogWrapsLongSingleLineAndShowsCursorInPlace(t *testing.T
 
 func TestRender_InputDialogPreservesMultiLineBreaksAndWrapsError(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            72,
-		Height:           18,
-		Mode:             ModePlans,
-		Overlay:          OverlayInput,
-		InputPrompt:      LaunchInstructionsPrompt,
-		InputPlaceholder: "launch instructions",
-		InputValue:       "first line\nsecond line with detail",
-		InputCursor:      len([]rune("first line\nsecond")),
-		InputMode:        InputMultiLine,
-		InputError:       "this validation message is intentionally long enough to wrap inside the input modal",
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  72,
+		Height: 18,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      LaunchInstructionsPrompt,
+			InputPlaceholder: "launch instructions",
+			InputValue:       "first line\nsecond line with detail",
+			InputCursor:      len([]rune("first line\nsecond")),
+			InputMode:        InputMultiLine,
+			InputError:       "this validation message is intentionally long enough to wrap inside the input modal"}})
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "first line") || !strings.Contains(stripped, "second█ line with detail") {
 		t.Fatalf("multi-line input should preserve breaks and cursor position:\n%s", view)
@@ -3616,16 +3590,15 @@ func TestRender_InputDialogPreservesMultiLineBreaksAndWrapsError(t *testing.T) {
 
 func TestRender_InputDialogPreservesEditableSpacing(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       90,
-		Height:      18,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: LaunchInstructionsPrompt,
-		InputValue:  "first  line\n  - second  item",
-		InputCursor: len([]rune("first  line\n  - second")),
-		InputMode:   InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  90,
+		Height: 18,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: LaunchInstructionsPrompt,
+			InputValue:  "first  line\n  - second  item",
+			InputCursor: len([]rune("first  line\n  - second")),
+			InputMode:   InputMultiLine}})
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "first  line") {
 		t.Fatalf("input dialog collapsed repeated spaces on first line:\n%s", stripped)
@@ -3647,16 +3620,15 @@ func TestRender_InputDialogOverflowKeepsCursorVisible(t *testing.T) {
 		"target line",
 	}, "\n")
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       64,
-		Height:      10,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Instructions",
-		InputValue:  value,
-		InputCursor: len([]rune(value)) - len([]rune(" line")),
-		InputMode:   InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  64,
+		Height: 10,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Instructions",
+			InputValue:  value,
+			InputCursor: len([]rune(value)) - len([]rune(" line")),
+			InputMode:   InputMultiLine}})
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "target█ line") {
 		t.Fatalf("overflow window should keep cursor line visible:\n%s", view)
@@ -3683,28 +3655,26 @@ func TestRender_InputDialogConfiguredHeightShowsMoreText(t *testing.T) {
 	}, "\n")
 
 	defaultView := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       72,
-		Height:      22,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Edit Plan launch",
-		InputValue:  value,
-		InputCursor: len([]rune(value)),
-		InputMode:   InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  72,
+		Height: 22,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Edit Plan launch",
+			InputValue:  value,
+			InputCursor: len([]rune(value)),
+			InputMode:   InputMultiLine}})
 	tallView := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       72,
-		Height:      22,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Edit Plan launch",
-		InputValue:  value,
-		InputCursor: len([]rune(value)),
-		InputMode:   InputMultiLine,
-		InputHeight: 16,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  72,
+		Height: 22,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Edit Plan launch",
+			InputValue:  value,
+			InputCursor: len([]rune(value)),
+			InputMode:   InputMultiLine,
+			InputHeight: 16}})
 
 	if strings.Contains(ansi.Strip(defaultView), "line 01") {
 		t.Fatalf("default input height unexpectedly shows the first line:\n%s", ansi.Strip(defaultView))
@@ -3724,16 +3694,15 @@ func TestRender_InputDialogTinyHeightKeepsCursorVisible(t *testing.T) {
 		"line three",
 	}, "\n")
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       64,
-		Height:      4,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Instructions",
-		InputValue:  value,
-		InputCursor: len([]rune("line one\nline")),
-		InputMode:   InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  64,
+		Height: 4,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Instructions",
+			InputValue:  value,
+			InputCursor: len([]rune("line one\nline")),
+			InputMode:   InputMultiLine}})
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "line█ two") {
 		t.Fatalf("tiny input dialog should keep the cursor line visible:\n%s", stripped)
@@ -3747,17 +3716,16 @@ func TestRender_InputDialogTinyHeightWithErrorKeepsCursorVisible(t *testing.T) {
 		"line three",
 	}, "\n")
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:       64,
-		Height:      4,
-		Mode:        ModePlans,
-		Overlay:     OverlayInput,
-		InputPrompt: "Instructions",
-		InputValue:  value,
-		InputCursor: len([]rune("line one\nline two\nline")),
-		InputMode:   InputMultiLine,
-		InputError:  "validation failed",
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  64,
+		Height: 4,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:     OverlayInput,
+			InputPrompt: "Instructions",
+			InputValue:  value,
+			InputCursor: len([]rune("line one\nline two\nline")),
+			InputMode:   InputMultiLine,
+			InputError:  "validation failed"}})
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "line█ three") {
 		t.Fatalf("tiny input dialog with error should keep the cursor line visible:\n%s", stripped)
@@ -3766,14 +3734,13 @@ func TestRender_InputDialogTinyHeightWithErrorKeepsCursorVisible(t *testing.T) {
 
 func TestRender_WorktreeMoveInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             1,
-		Overlay:          OverlayInput,
-		InputPrompt:      WorktreeMovePrompt,
-		InputPlaceholder: WorktreeMoveInputPlaceholder,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      WorktreeMovePrompt,
+			InputPlaceholder: WorktreeMoveInputPlaceholder}})
 	if !strings.Contains(view, "Move worktree to:") {
 		t.Error("move input dialog should show move prompt")
 	}
@@ -3784,14 +3751,13 @@ func TestRender_WorktreeMoveInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 
 func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             2,
-		Overlay:          OverlayInput,
-		InputPrompt:      BranchPrompt,
-		InputPlaceholder: BranchInputPlaceholder,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   2, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      BranchPrompt,
+			InputPlaceholder: BranchInputPlaceholder}})
 	if !strings.Contains(view, "Create branch:") {
 		t.Error("branch input dialog should show prompt")
 	}
@@ -3802,14 +3768,13 @@ func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 
 func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             1,
-		Overlay:          OverlayInput,
-		InputPrompt:      PRWorktreePrompt,
-		InputPlaceholder: PRWorktreeInputPlaceholder,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      PRWorktreePrompt,
+			InputPlaceholder: PRWorktreeInputPlaceholder}})
 	if !strings.Contains(view, "Create PR worktree from:") {
 		t.Error("PR input dialog should show prompt")
 	}
@@ -3820,15 +3785,14 @@ func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testi
 
 func TestRender_SelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:          80,
-		Height:         24,
-		Mode:           1,
-		Overlay:        OverlaySelect,
-		SelectPrompt:   "Choose interactive helper",
-		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
-		SelectSelected: 1,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  80,
+		Height: 24,
+		Mode:   1, OverlayParams: OverlayParams{
+			Overlay:        OverlaySelect,
+			SelectPrompt:   "Choose interactive helper",
+			SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
+			SelectSelected: 1}})
 	stripped := ansi.Strip(view)
 	for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
 		if !strings.Contains(stripped, want) {
@@ -3842,15 +3806,14 @@ func TestRender_SelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 
 func TestRender_PromptTemplateSelectShowsPromptSpecificFooter(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:          90,
-		Height:         16,
-		Mode:           ModeWorktrees,
-		Overlay:        OverlaySelect,
-		SelectPrompt:   "Prompt templates",
-		SelectItems:    []SelectItem{{Label: "Plan launch     default", Value: "agent.plan_prompt"}},
-		SelectSelected: 0,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  90,
+		Height: 16,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:        OverlaySelect,
+			SelectPrompt:   "Prompt templates",
+			SelectItems:    []SelectItem{{Label: "Plan launch     default", Value: "agent.plan_prompt"}},
+			SelectSelected: 0}})
 
 	stripped := ansi.Strip(view)
 	for _, want := range []string{"enter: edit", "r: reset", "v: preview", "esc: cancel"} {
@@ -3872,14 +3835,13 @@ func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 		Mode:             ModeWorktrees,
 		ActivePane:       PaneTop,
 		Worktrees:        []gitquery.Worktree{{Path: "/dev/alpha-worktrees/feature", BranchName: "feature/picker"}},
-		WorktreeSelected: 0,
-		Overlay:          OverlaySelect,
-		SelectPrompt:     "Choose helper",
-		SelectItems:      []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
-		SelectWidth:      32,
-		SelectHeight:     6,
-		SelectPlacement:  SelectPlacementTopCenter,
-	})
+		WorktreeSelected: 0, OverlayParams: OverlayParams{
+			Overlay:         OverlaySelect,
+			SelectPrompt:    "Choose helper",
+			SelectItems:     []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
+			SelectWidth:     32,
+			SelectHeight:    6,
+			SelectPlacement: SelectPlacementTopCenter}})
 
 	bounds := requireSelectPanelBounds(t, view, "Choose helper")
 	if bounds.width != 32 || bounds.height != 6 {
@@ -3909,15 +3871,14 @@ func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 
 func TestRender_SelectOverlayAutoSizesFromPromptAndItems(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:          40,
-		Height:         10,
-		Mode:           ModeWorktrees,
-		Overlay:        OverlaySelect,
-		SelectPrompt:   "Pick",
-		SelectItems:    []SelectItem{{Label: "", Value: "fallback-value"}, {Label: "tiny", Value: "tiny"}},
-		SelectSelected: 0,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  40,
+		Height: 10,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:        OverlaySelect,
+			SelectPrompt:   "Pick",
+			SelectItems:    []SelectItem{{Label: "", Value: "fallback-value"}, {Label: "tiny", Value: "tiny"}},
+			SelectSelected: 0}})
 
 	bounds := requireSelectPanelBounds(t, view, "Pick")
 	if bounds.width != len("fallback-value")+4 {
@@ -3933,15 +3894,14 @@ func TestRender_SelectOverlayAutoSizesFromPromptAndItems(t *testing.T) {
 
 func TestRender_SelectOverlayAutoWidthFitsLongestUnselectedItem(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:          40,
-		Height:         10,
-		Mode:           ModeWorktrees,
-		Overlay:        OverlaySelect,
-		SelectPrompt:   "Pick",
-		SelectItems:    []SelectItem{{Label: "tiny", Value: "tiny"}, {Label: "", Value: "fallback-value"}},
-		SelectSelected: 0,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  40,
+		Height: 10,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:        OverlaySelect,
+			SelectPrompt:   "Pick",
+			SelectItems:    []SelectItem{{Label: "tiny", Value: "tiny"}, {Label: "", Value: "fallback-value"}},
+			SelectSelected: 0}})
 
 	bounds := requireSelectPanelBounds(t, view, "Pick")
 	if bounds.width != len("fallback-value")+4 {
@@ -3965,17 +3925,16 @@ func TestRender_SelectOverlayPlacementsUseTerminalBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:           []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-				Width:           40,
-				Height:          13,
-				Mode:            ModeWorktrees,
-				Overlay:         OverlaySelect,
-				SelectPrompt:    "Pick",
-				SelectItems:     []SelectItem{{Label: "one", Value: "1"}},
-				SelectWidth:     20,
-				SelectHeight:    5,
-				SelectPlacement: tt.placement,
-			})
+				Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+				Width:  40,
+				Height: 13,
+				Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+					Overlay:         OverlaySelect,
+					SelectPrompt:    "Pick",
+					SelectItems:     []SelectItem{{Label: "one", Value: "1"}},
+					SelectWidth:     20,
+					SelectHeight:    5,
+					SelectPlacement: tt.placement}})
 			bounds := requireSelectPanelBounds(t, view, "Pick")
 			if bounds.x != 10 || bounds.y != tt.wantY {
 				t.Fatalf("select panel position = (%d,%d), want (10,%d):\n%s", bounds.x, bounds.y, tt.wantY, ansi.Strip(view))
@@ -3995,21 +3954,20 @@ func TestRender_SelectOverlayPreservesStyledBaseRowsAroundPanel(t *testing.T) {
 	})
 
 	view := Render(RenderParams{
-		Repos:           []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Selected:        0,
-		Width:           72,
-		Height:          12,
-		Mode:            ModeBranches,
-		ActivePane:      PaneTop,
-		Branches:        []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/dev/alpha"}},
-		BranchSelected:  0,
-		Overlay:         OverlaySelect,
-		SelectPrompt:    "Pick",
-		SelectItems:     []SelectItem{{Label: "codex", Value: "codex"}},
-		SelectWidth:     24,
-		SelectHeight:    4,
-		SelectPlacement: SelectPlacementBottomCenter,
-	})
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Selected:       0,
+		Width:          72,
+		Height:         12,
+		Mode:           ModeBranches,
+		ActivePane:     PaneTop,
+		Branches:       []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/dev/alpha"}},
+		BranchSelected: 0, OverlayParams: OverlayParams{
+			Overlay:         OverlaySelect,
+			SelectPrompt:    "Pick",
+			SelectItems:     []SelectItem{{Label: "codex", Value: "codex"}},
+			SelectWidth:     24,
+			SelectHeight:    4,
+			SelectPlacement: SelectPlacementBottomCenter}})
 
 	if !strings.Contains(view, "\x1b[") {
 		t.Fatalf("expected styled base rows to remain styled:\n%s", view)
@@ -4027,17 +3985,16 @@ func TestRender_SelectOverlayPreservesStyledBaseRowsAroundPanel(t *testing.T) {
 
 func TestRender_SelectOverlayShortHeightKeepsSelectedItemVisible(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:          64,
-		Height:         10,
-		Mode:           ModeWorktrees,
-		Overlay:        OverlaySelect,
-		SelectPrompt:   "Pick",
-		SelectItems:    []SelectItem{{Label: "first", Value: "1"}, {Label: "second", Value: "2"}, {Label: "third", Value: "3"}, {Label: "fourth", Value: "4"}, {Label: "fifth", Value: "5"}},
-		SelectSelected: 4,
-		SelectWidth:    20,
-		SelectHeight:   5,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  64,
+		Height: 10,
+		Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+			Overlay:        OverlaySelect,
+			SelectPrompt:   "Pick",
+			SelectItems:    []SelectItem{{Label: "first", Value: "1"}, {Label: "second", Value: "2"}, {Label: "third", Value: "3"}, {Label: "fourth", Value: "4"}, {Label: "fifth", Value: "5"}},
+			SelectSelected: 4,
+			SelectWidth:    20,
+			SelectHeight:   5}})
 
 	stripped := ansi.Strip(view)
 	if !strings.Contains(stripped, "> fifth") {
@@ -4061,17 +4018,16 @@ func TestRender_SelectOverlayTinyTerminalsClampWithoutOverflow(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-				Width:          size.width,
-				Height:         size.height,
-				Mode:           ModeWorktrees,
-				Overlay:        OverlaySelect,
-				SelectPrompt:   "Pick a helper",
-				SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}},
-				SelectSelected: 0,
-				SelectWidth:    32,
-				SelectHeight:   6,
-			})
+				Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+				Width:  size.width,
+				Height: size.height,
+				Mode:   ModeWorktrees, OverlayParams: OverlayParams{
+					Overlay:        OverlaySelect,
+					SelectPrompt:   "Pick a helper",
+					SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}},
+					SelectSelected: 0,
+					SelectWidth:    32,
+					SelectHeight:   6}})
 			lines := strings.Split(ansi.Strip(view), "\n")
 			if len(lines) != size.height {
 				t.Fatalf("line count = %d, want %d:\n%s", len(lines), size.height, ansi.Strip(view))
@@ -4162,17 +4118,16 @@ func selectPanelCandidateContainsPrompt(lines []string, bounds selectPanelBounds
 func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
 	longInput := `Implement the saved approach plan "Persist custom launch instructions" at /state/approach/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            120,
-		Height:           24,
-		Mode:             ModePlans,
-		Overlay:          OverlayInput,
-		InputPrompt:      LaunchInstructionsPrompt,
-		InputPlaceholder: "launch instructions",
-		InputValue:       longInput,
-		InputCursor:      len([]rune(longInput)),
-		InputMode:        InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  120,
+		Height: 24,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      LaunchInstructionsPrompt,
+			InputPlaceholder: "launch instructions",
+			InputValue:       longInput,
+			InputCursor:      len([]rune(longInput)),
+			InputMode:        InputMultiLine}})
 
 	if !strings.Contains(view, LaunchInstructionsPrompt) {
 		t.Fatalf("launch instructions dialog should show prompt:\n%s", view)
@@ -4208,17 +4163,16 @@ func TestRender_LaunchInstructionsInputDialogMarksOverflow(t *testing.T) {
 		"Finish by launching the selected agent with the edited instructions.",
 	}, " ")
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            52,
-		Height:           20,
-		Mode:             ModePlans,
-		Overlay:          OverlayInput,
-		InputPrompt:      LaunchInstructionsPrompt,
-		InputPlaceholder: "launch instructions",
-		InputValue:       longInput,
-		InputCursor:      len([]rune(longInput)),
-		InputMode:        InputMultiLine,
-	})
+		Repos:  []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:  52,
+		Height: 20,
+		Mode:   ModePlans, OverlayParams: OverlayParams{
+			Overlay:          OverlayInput,
+			InputPrompt:      LaunchInstructionsPrompt,
+			InputPlaceholder: "launch instructions",
+			InputValue:       longInput,
+			InputCursor:      len([]rune(longInput)),
+			InputMode:        InputMultiLine}})
 
 	for _, want := range []string{shortcutOverflowMarker, "Finish by launching"} {
 		if !strings.Contains(view, want) {
@@ -5238,12 +5192,11 @@ func TestRender_ActiveFlowsTakeoverPreservesFilterEmptyMessage(t *testing.T) {
 		Mode:              ModeActiveFlows,
 		TopMode:           ModeWorktrees,
 		BottomMode:        ModeFlows,
-		ActiveFlows:       true,
 		ActivePane:        PaneBottom,
 		ContentPane:       PaneBottom,
 		ItemSearch:        "zzz",
-		RightEmptyMessage: "No flow results for zzz",
-	}))
+		RightEmptyMessage: "No flow results for zzz", FlowParams: FlowParams{
+			ActiveFlows: true}}))
 	if !strings.Contains(view, "No flow results for zzz") {
 		t.Fatalf("Active Flows filter-empty view lost query-specific message:\n%s", view)
 	}
@@ -5257,20 +5210,18 @@ func TestRender_CollapsedRepoPaneHidesRestoreHintWhileTerminalOwnsInput(t *testi
 		{
 			name: "session terminal",
 			params: RenderParams{
-				Mode:                    ModeSessions,
-				EmbeddedTerminals:       []EmbeddedTerminalTab{{Active: true}},
-				EmbeddedTerminalVisible: true,
-				EmbeddedTerminalFocused: true,
-			},
+				Mode: ModeSessions, EmbeddedTerminalParams: EmbeddedTerminalParams{
+					EmbeddedTerminals:       []EmbeddedTerminalTab{{Active: true}},
+					EmbeddedTerminalVisible: true,
+					EmbeddedTerminalFocused: true}},
 		},
 		{
 			name: "flow terminal",
 			params: RenderParams{
-				Mode:                    ModeFlows,
-				EmbeddedTerminals:       []EmbeddedTerminalTab{{Active: true}},
-				EmbeddedTerminalVisible: true,
-				EmbeddedTerminalFocused: true,
-			},
+				Mode: ModeFlows, EmbeddedTerminalParams: EmbeddedTerminalParams{
+					EmbeddedTerminals:       []EmbeddedTerminalTab{{Active: true}},
+					EmbeddedTerminalVisible: true,
+					EmbeddedTerminalFocused: true}},
 		},
 	}
 
@@ -5373,11 +5324,12 @@ func TestReflogPane_SelectedHighlighted(t *testing.T) {
 
 func TestReflogDiffOverlay_EmptyDiffShowsMessage(t *testing.T) {
 	view := Render(RenderParams{
-		Width:   80,
-		Height:  24,
-		Mode:    5,
-		Overlay: OverlayReflogDiff,
-		// OverlayDiff is empty
+		Width:  80,
+		Height: 24,
+		Mode:   5,
+		OverlayParams: OverlayParams{
+			Overlay: OverlayReflogDiff,
+		},
 	})
 	if !strings.Contains(view, "No changes at this reflog entry") {
 		t.Error("expected 'No changes at this reflog entry' in empty reflog diff overlay")
@@ -5386,12 +5338,11 @@ func TestReflogDiffOverlay_EmptyDiffShowsMessage(t *testing.T) {
 
 func TestReflogDiffOverlay_NonEmptyDiffShowsContent(t *testing.T) {
 	view := Render(RenderParams{
-		Width:       80,
-		Height:      24,
-		Mode:        5,
-		Overlay:     OverlayReflogDiff,
-		OverlayDiff: "diff --git a/f.txt\n+added line",
-	})
+		Width:  80,
+		Height: 24,
+		Mode:   5, OverlayParams: OverlayParams{
+			Overlay:     OverlayReflogDiff,
+			OverlayDiff: "diff --git a/f.txt\n+added line"}})
 	if !strings.Contains(view, "diff --git") {
 		t.Error("expected diff content in reflog diff overlay")
 	}

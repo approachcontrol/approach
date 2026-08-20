@@ -16,29 +16,28 @@ import (
 
 func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    230,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Add Flow mode",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/add-flow-mode",
-			WorktreePath: "/dev/approach-worktrees/flow-add-flow-mode",
-			PlanID:       "plan-1",
-			Issue:        flowstore.Issue{Number: 456, URL: "https://github.com/approachcontrol/approach/issues/456"},
-			PR:           flowstore.PullRequest{Number: 123, URL: "https://github.com/approachcontrol/approach/pull/123"},
-			UpdatedAt:    time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
-				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
-			},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      230,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Add Flow mode",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/add-flow-mode",
+				WorktreePath: "/dev/approach-worktrees/flow-add-flow-mode",
+				PlanID:       "plan-1",
+				Issue:        flowstore.Issue{Number: 456, URL: "https://github.com/approachcontrol/approach/issues/456"},
+				PR:           flowstore.PullRequest{Number: 123, URL: "https://github.com/approachcontrol/approach/pull/123"},
+				UpdatedAt:    time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
+					{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
+				},
+			}},
+			FlowSelected: 0}})
 
 	for _, want := range []string{"[4] flows", "Status", "Branch", "Phase", "Issue", "Plan", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "#456", "plan-1", "#123", "2026-06-07", "Add Flow mode"} {
 		if !strings.Contains(view, want) {
@@ -98,23 +97,22 @@ func TestRender_FlowTitleIsTerminalSafeSingleLine(t *testing.T) {
 
 func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    230,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:    "flow-1",
-			Title:     "Flow without issue",
-			Status:    flowstore.StatusInProgress,
-			Branch:    "flow/no-issue",
-			PlanID:    "plan-1",
-			UpdatedAt: time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
-			Phases:    []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted}},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      230,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:    "flow-1",
+				Title:     "Flow without issue",
+				Status:    flowstore.StatusInProgress,
+				Branch:    "flow/no-issue",
+				PlanID:    "plan-1",
+				UpdatedAt: time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
+				Phases:    []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted}},
+			}},
+			FlowSelected: 0}})
 
 	row := ansi.Strip(lineContaining(view, "Flow without issue"))
 	for _, want := range []string{"flow/no-issue", "1/1", "-", "plan-1"} {
@@ -129,20 +127,19 @@ func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 
 func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:    0,
-		Width:       180,
-		Height:      24,
-		Mode:        ModeSessions,
-		ActiveFlows: true,
-		ActivePane:  PaneBottom,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Active flow",
-			Status: flowstore.StatusPending,
-		}},
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     24,
+		Mode:       ModeSessions,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Active flow",
+				Status: flowstore.StatusPending,
+			}},
+			FlowSelected: 0}})
 	pane := shortcutPaneText(ansi.Strip(view))
 	if strings.Contains(pane, "f3") {
 		t.Fatalf("active-flow shortcut pane should not advertise f3 active flows:\n%s", pane)
@@ -167,27 +164,26 @@ func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 			{Path: "/dev/approach", DisplayName: "approach"},
 			{Path: "/dev/client/api", DisplayName: "client/api"},
 		},
-		Selected:    0,
-		Width:       220,
-		Height:      12,
-		Mode:        ModeSessions,
-		ActiveFlows: true,
-		ActivePane:  PaneBottom,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:   "flow-1",
-			Title:    "Active repo flow",
-			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/approach",
-			Branch:   "flow/active-repo",
-		}, {
-			FlowID:   "flow-2",
-			Title:    "Nested active repo flow",
-			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/client/api",
-			Branch:   "flow/nested-repo",
-		}},
-		FlowSelected: 0,
-	})
+		Selected:   0,
+		Width:      220,
+		Height:     12,
+		Mode:       ModeSessions,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:   "flow-1",
+				Title:    "Active repo flow",
+				Status:   flowstore.StatusInProgress,
+				RepoPath: "/dev/approach",
+				Branch:   "flow/active-repo",
+			}, {
+				FlowID:   "flow-2",
+				Title:    "Nested active repo flow",
+				Status:   flowstore.StatusInProgress,
+				RepoPath: "/dev/client/api",
+				Branch:   "flow/nested-repo",
+			}},
+			FlowSelected: 0}})
 
 	header := lineContaining(view, "Status")
 	row := lineContaining(view, "flow/active-repo")
@@ -202,41 +198,40 @@ func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 
 func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    260,
-		Height:   29,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Add embedded Flow terminal",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/embedded-terminal",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      260,
+		Height:     29,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Add embedded Flow terminal",
+				Status: flowstore.StatusInProgress,
+				Branch: "flow/embedded-terminal",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+				},
+			}},
+			FlowSelected: 0}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number:   1,
+				Provider: "codex",
+				Identity: "implementation",
+				State:    "running",
+				Active:   true,
+			}},
+			EmbeddedTerminalLines: []string{
+				"terminal line 1",
+				"terminal line 2",
+				"terminal line 3",
+				"terminal line 4",
+				"terminal line 5",
+				"terminal line 6",
+				"terminal line 7",
+				"terminal line 8",
 			},
-		}},
-		FlowSelected: 0,
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number:   1,
-			Provider: "codex",
-			Identity: "implementation",
-			State:    "running",
-			Active:   true,
-		}},
-		EmbeddedTerminalLines: []string{
-			"terminal line 1",
-			"terminal line 2",
-			"terminal line 3",
-			"terminal line 4",
-			"terminal line 5",
-			"terminal line 6",
-			"terminal line 7",
-			"terminal line 8",
-		},
-		EmbeddedTerminalVisible: true,
-		ActivePane:              PaneBottom,
-	})
+			EmbeddedTerminalVisible: true}})
 
 	for _, want := range []string{
 		"Add embedded Flow terminal",
@@ -255,31 +250,30 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 
 func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:    0,
-		Width:       240,
-		Height:      24,
-		Mode:        ModeSessions,
-		ActiveFlows: true,
-		ActivePane:  PaneBottom,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:   "flow-1",
-			Title:    "Split active repo flow",
-			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/approach",
-			Branch:   "flow/split-repo",
-		}},
-		FlowSelected: 0,
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number:   1,
-			Provider: "codex",
-			Identity: "implementation",
-			State:    "running",
-			Active:   true,
-		}},
-		EmbeddedTerminalLines:   []string{"terminal line"},
-		EmbeddedTerminalVisible: true,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     24,
+		Mode:       ModeSessions,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:   "flow-1",
+				Title:    "Split active repo flow",
+				Status:   flowstore.StatusInProgress,
+				RepoPath: "/dev/approach",
+				Branch:   "flow/split-repo",
+			}},
+			FlowSelected: 0}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number:   1,
+				Provider: "codex",
+				Identity: "implementation",
+				State:    "running",
+				Active:   true,
+			}},
+			EmbeddedTerminalLines:   []string{"terminal line"},
+			EmbeddedTerminalVisible: true}})
 
 	header := lineContaining(view, "Status")
 	row := lineContaining(view, "flow/split-repo")
@@ -298,61 +292,59 @@ func TestRender_FlowsModeSplitTerminalTinyViewportDoesNotPanic(t *testing.T) {
 	}()
 
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    120,
-		Height:   BranchContentOverhead - 1,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Tiny split terminal",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/tiny",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
-			},
-		}},
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number:   1,
-			Provider: "codex",
-			Identity: "implementation",
-			State:    "running",
-			Active:   true,
-		}},
-		EmbeddedTerminalLines:   []string{"terminal output"},
-		EmbeddedTerminalVisible: true,
-		ActivePane:              PaneBottom,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      120,
+		Height:     BranchContentOverhead - 1,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Tiny split terminal",
+				Status: flowstore.StatusInProgress,
+				Branch: "flow/tiny",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+				},
+			}}}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number:   1,
+				Provider: "codex",
+				Identity: "implementation",
+				State:    "running",
+				Active:   true,
+			}},
+			EmbeddedTerminalLines:   []string{"terminal output"},
+			EmbeddedTerminalVisible: true}})
 
 	requireLinesWithinWidth(t, strippedLines(view), 120)
 }
 
 func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:    0,
-		Width:       240,
-		Height:      12,
-		Mode:        ModeSessions,
-		ActiveFlows: true,
-		ActivePane:  PaneBottom,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:   "flow-1",
-			Title:    "Expanded active repo flow",
-			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/approach",
-			Branch:   "flow/expanded",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
-				Order:   1,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeSessions,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:   "flow-1",
+				Title:    "Expanded active repo flow",
+				Status:   flowstore.StatusInProgress,
+				RepoPath: "/dev/approach",
+				Branch:   "flow/expanded",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+					Order:   1,
+				}},
 			}},
-		}},
-		FlowSelected:        0,
-		ExpandedFlowID:      "flow-1",
-		SelectedFlowPhaseID: "implementation",
-	})
+			FlowSelected:        0,
+			ExpandedFlowID:      "flow-1",
+			SelectedFlowPhaseID: "implementation"}})
 
 	flowRow := lineContaining(view, "flow/expanded")
 	phaseRow := lineContaining(view, "implementation:ready")
@@ -367,23 +359,22 @@ func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T
 
 func TestRender_ActiveFlowsExpandedNoPhasesKeepsRepoColumnAlignment(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:    0,
-		Width:       240,
-		Height:      12,
-		Mode:        ModeSessions,
-		ActiveFlows: true,
-		ActivePane:  PaneBottom,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:   "flow-1",
-			Title:    "Expanded active repo flow",
-			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/approach",
-			Branch:   "flow/empty-phases",
-		}},
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeSessions,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:   "flow-1",
+				Title:    "Expanded active repo flow",
+				Status:   flowstore.StatusInProgress,
+				RepoPath: "/dev/approach",
+				Branch:   "flow/empty-phases",
+			}},
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	flowRow := lineContaining(view, "flow/empty-phases")
 	noPhasesRow := lineContaining(view, "No phases")
@@ -706,16 +697,15 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 
 func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:            0,
-		Width:               180,
-		Height:              12,
-		Mode:                ModeFlows,
-		ActivePane:          PaneBottom,
-		FlowAgentLabel:      "codex",
-		FlowModel:           "gpt-5.5",
-		FlowReasoningEffort: "effort: high",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			FlowAgentLabel:      "codex",
+			FlowModel:           "gpt-5.5",
+			FlowReasoningEffort: "effort: high"}})
 
 	pane := shortcutPaneText(view)
 	if !strings.Contains(pane, "A      codex\nM      gpt-5.5\nE      effort: high") {
@@ -731,17 +721,16 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 
 func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:       0,
-		Width:          180,
-		Height:         28,
-		Mode:           ModeFlows,
-		ActivePane:     PaneBottom,
-		Flows:          []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress}},
-		FlowSelected:   0,
-		FlowAgentLabel: "codex",
-		FlowModel:      "gpt-5.5",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     28,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:          []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress}},
+			FlowSelected:   0,
+			FlowAgentLabel: "codex",
+			FlowModel:      "gpt-5.5"}})
 
 	pane := shortcutPaneText(view)
 	if !strings.Contains(pane, "M      gpt-5.5") {
@@ -754,19 +743,18 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 
 func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:            0,
-		Width:               180,
-		Height:              28,
-		Mode:                ModeFlows,
-		ActivePane:          PaneBottom,
-		Flows:               []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress, Phases: []flowstore.FlowPhase{{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseReady}}}},
-		FlowSelected:        0,
-		ExpandedFlowID:      "flow-1",
-		SelectedFlowPhaseID: "merge",
-		FlowAgentLabel:      "codex",
-		FlowModel:           "gpt-5.5",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     28,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:               []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress, Phases: []flowstore.FlowPhase{{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseReady}}}},
+			FlowSelected:        0,
+			ExpandedFlowID:      "flow-1",
+			SelectedFlowPhaseID: "merge",
+			FlowAgentLabel:      "codex",
+			FlowModel:           "gpt-5.5"}})
 
 	pane := shortcutPaneText(view)
 	if !strings.Contains(pane, "M      gpt-5.5") {
@@ -776,35 +764,34 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) 
 
 func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   29,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Grouped shortcuts",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/grouped-shortcuts",
-			WorktreePath: "/dev/approach-worktrees/flow-grouped-shortcuts",
-			PlanID:       "plan-1",
-			AutoMode:     true,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:    0,
+		Width:       180,
+		Height:      29,
+		Mode:        ModeFlows,
+		ActivePane:  PaneBottom,
+		Destructive: true, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Grouped shortcuts",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/grouped-shortcuts",
+				WorktreePath: "/dev/approach-worktrees/flow-grouped-shortcuts",
+				PlanID:       "plan-1",
+				AutoMode:     true,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:                 PaneBottom,
-		Destructive:                true,
-		FlowSelected:               0,
-		FlowHeadless:               true,
-		FlowAutoModeSelected:       true,
-		FlowNextLaunchReady:        true,
-		FlowAgentLabel:             "codex",
-		FlowReasoningEffort:        "effort: high",
-		FlowPhaseResumableSelected: true,
-	})
+			FlowSelected:               0,
+			FlowHeadless:               true,
+			FlowAutoModeSelected:       true,
+			FlowNextLaunchReady:        true,
+			FlowAgentLabel:             "codex",
+			FlowReasoningEffort:        "effort: high",
+			FlowPhaseResumableSelected: true}})
 
 	pane := shortcutPaneText(view)
 	if got, want := shortcutSectionTitles(pane), []string{"Actions", "Mode", "Agent", "Global"}; !slices.Equal(got, want) {
@@ -842,31 +829,30 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		Width:       180,
 		Height:      28,
 		Mode:        ModeFlows,
-		ActiveFlows: true,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Grouped shortcuts",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/grouped-shortcuts",
-			WorktreePath: "/dev/approach-worktrees/flow-grouped-shortcuts",
-			PlanID:       "plan-1",
-			AutoMode:     true,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		ActivePane:  PaneBottom,
+		Destructive: true, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Grouped shortcuts",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/grouped-shortcuts",
+				WorktreePath: "/dev/approach-worktrees/flow-grouped-shortcuts",
+				PlanID:       "plan-1",
+				AutoMode:     true,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:                 PaneBottom,
-		Destructive:                true,
-		FlowSelected:               0,
-		FlowHeadless:               true,
-		FlowAutoModeSelected:       true,
-		FlowNextLaunchReady:        true,
-		FlowAgentLabel:             "codex",
-		FlowReasoningEffort:        "effort: high",
-		FlowPhaseResumableSelected: true,
-	})
+			FlowSelected:               0,
+			FlowHeadless:               true,
+			FlowAutoModeSelected:       true,
+			FlowNextLaunchReady:        true,
+			FlowAgentLabel:             "codex",
+			FlowReasoningEffort:        "effort: high",
+			FlowPhaseResumableSelected: true}})
 
 	pane := shortcutPaneText(view)
 	if strings.Contains(pane, "n      new flow") {
@@ -894,28 +880,27 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 
 func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:     0,
-		Width:        180,
-		Height:       28,
-		Mode:         ModeFlows,
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Flow with PR",
-			Status: flowstore.StatusInProgress,
-			PR: flowstore.PullRequest{
-				Provider:   "github",
-				Number:     123,
-				URL:        "https://github.com/approachcontrol/approach/pull/123",
-				HeadBranch: "flow/add-pr-shortcut",
-				BaseBranch: "main",
-			},
-			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
-		}},
-		FlowPRTargetSelected: true,
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     28,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			FlowSelected: 0,
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Flow with PR",
+				Status: flowstore.StatusInProgress,
+				PR: flowstore.PullRequest{
+					Provider:   "github",
+					Number:     123,
+					URL:        "https://github.com/approachcontrol/approach/pull/123",
+					HeadBranch: "flow/add-pr-shortcut",
+					BaseBranch: "main",
+				},
+				Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
+			}},
+			FlowPRTargetSelected: true}}
 
 	for _, tt := range []struct {
 		name string
@@ -939,26 +924,25 @@ func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 
 func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:     0,
-		Width:        180,
-		Height:       28,
-		Mode:         ModeFlows,
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Flow with issue",
-			Status: flowstore.StatusInProgress,
-			Issue: flowstore.Issue{
-				Provider: "github",
-				Number:   123,
-				URL:      "https://github.com/approachcontrol/approach/issues/123",
-			},
-			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
-		}},
-		FlowIssueTargetSelected: true,
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     28,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			FlowSelected: 0,
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Flow with issue",
+				Status: flowstore.StatusInProgress,
+				Issue: flowstore.Issue{
+					Provider: "github",
+					Number:   123,
+					URL:      "https://github.com/approachcontrol/approach/issues/123",
+				},
+				Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
+			}},
+			FlowIssueTargetSelected: true}}
 
 	for _, tt := range []struct {
 		name string
@@ -982,20 +966,19 @@ func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
 
 func TestRender_FlowShortcutPaneHidesOpenPRWithoutTopLevelPRTarget(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:     0,
-		Width:        180,
-		Height:       28,
-		Mode:         ModeFlows,
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Flow without PR",
-			Status: flowstore.StatusInProgress,
-			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
-		}},
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     28,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			FlowSelected: 0,
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Flow without PR",
+				Status: flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
+			}}}}
 
 	for _, tt := range []struct {
 		name string
@@ -1056,15 +1039,14 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-				Selected:            0,
-				Width:               180,
-				Height:              12,
-				Mode:                ModeFlows,
-				ActivePane:          PaneBottom,
-				FlowAgentLabel:      tt.agent,
-				FlowReasoningEffort: tt.effort,
-			})
+				Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+				Selected:   0,
+				Width:      180,
+				Height:     12,
+				Mode:       ModeFlows,
+				ActivePane: PaneBottom, FlowParams: FlowParams{
+					FlowAgentLabel:      tt.agent,
+					FlowReasoningEffort: tt.effort}})
 			pane := shortcutPaneText(view)
 			if !strings.Contains(pane, tt.want) {
 				t.Fatalf("flows shortcut pane should expose special labels %q:\n%s", tt.want, pane)
@@ -1149,18 +1131,17 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 func TestRender_FlowDegradationWarningReservesRowWithNoHealthyFlows(t *testing.T) {
 	warning := "Skipped 4 unreadable Flows (id1, id2, id3, …); run approach flow list --json"
 	view := Render(RenderParams{
-		Width:                  180,
-		Height:                 26,
-		Repos:                  []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
-		Selected:               0,
-		Mode:                   ModeFlows,
-		TopMode:                ModeWorktrees,
-		BottomMode:             ModeFlows,
-		ContentPane:            PaneBottom,
-		ActivePane:             PaneBottom,
-		FlowDegradationWarning: warning,
-		RightEmptyMessage:      "No flows",
-	})
+		Width:             180,
+		Height:            26,
+		Repos:             []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:          0,
+		Mode:              ModeFlows,
+		TopMode:           ModeWorktrees,
+		BottomMode:        ModeFlows,
+		ContentPane:       PaneBottom,
+		ActivePane:        PaneBottom,
+		RightEmptyMessage: "No flows", FlowParams: FlowParams{
+			FlowDegradationWarning: warning}})
 	plain := ansi.Strip(view)
 	for _, want := range []string{warning, "No flows"} {
 		if !strings.Contains(plain, want) {
@@ -1175,20 +1156,19 @@ func TestRender_FlowDegradationWarningReservesRowWithNoHealthyFlows(t *testing.T
 func TestRender_FlowDegradationAndCachedRefreshWarningsAreDistinct(t *testing.T) {
 	degraded := "Skipped 1 unreadable Flows (bad); run approach flow list --json"
 	view := Render(RenderParams{
-		Width:                  180,
-		Height:                 26,
-		Repos:                  []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
-		Selected:               0,
-		Mode:                   ModeFlows,
-		TopMode:                ModeWorktrees,
-		BottomMode:             ModeFlows,
-		ContentPane:            PaneBottom,
-		ActivePane:             PaneBottom,
-		Flows:                  []flowstore.FlowRecord{{FlowID: "healthy", Title: "Healthy"}},
-		FlowSelected:           0,
-		BottomListError:        "database unavailable",
-		FlowDegradationWarning: degraded,
-	})
+		Width:           180,
+		Height:          26,
+		Repos:           []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:        0,
+		Mode:            ModeFlows,
+		TopMode:         ModeWorktrees,
+		BottomMode:      ModeFlows,
+		ContentPane:     PaneBottom,
+		ActivePane:      PaneBottom,
+		BottomListError: "database unavailable", FlowParams: FlowParams{
+			Flows:                  []flowstore.FlowRecord{{FlowID: "healthy", Title: "Healthy"}},
+			FlowSelected:           0,
+			FlowDegradationWarning: degraded}})
 	if !strings.Contains(view, aheadBehindStyle.Render(" "+degraded)) {
 		t.Fatalf("view missing styled degradation warning:\n%q", view)
 	}
@@ -1205,16 +1185,15 @@ func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T)
 		Width:      180,
 		Height:     12,
 		Mode:       ModeFlows,
-		ActivePane: PaneBottom,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Compact selected flow",
-			Status: flowstore.StatusInProgress,
-		}},
-		FlowSelected:         0,
-		FlowHeadless:         true,
-		FlowAutoModeSelected: true,
-	})
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Compact selected flow",
+				Status: flowstore.StatusInProgress,
+			}},
+			FlowSelected:         0,
+			FlowHeadless:         true,
+			FlowAutoModeSelected: true}})
 
 	pane := shortcutPaneText(view)
 	for _, want := range []string{"enter  phases", "c      copy id", "h      headless on"} {
@@ -1391,21 +1370,20 @@ func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *tes
 
 func TestFlowsSurfacesShowRepairShortcutOnlyWhenModelMarksItReady(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:     0,
-		Width:        180,
-		Height:       12,
-		Mode:         ModeFlows,
-		ActivePane:   1,
-		FlowSelected: 0,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Stalled Flow",
-			RepoPath:     "/dev/approach",
-			WorktreePath: "/dev/approach-worktrees/flow-1",
-			Phases:       []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseBlocked}},
-		}},
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: 1, FlowParams: FlowParams{
+			FlowSelected: 0,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Stalled Flow",
+				RepoPath:     "/dev/approach",
+				WorktreePath: "/dev/approach-worktrees/flow-1",
+				Phases:       []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseBlocked}},
+			}}}}
 	if pane := shortcutPaneText(Render(base)); strings.Contains(pane, "R      repair") {
 		t.Fatalf("repair shortcut rendered without model availability:\n%s", pane)
 	}
@@ -1434,30 +1412,29 @@ func TestFlowsSurfacesShowRepairShortcutOnlyWhenModelMarksItReady(t *testing.T) 
 
 func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   14,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Resumable flow",
-			Status: flowstore.StatusInProgress,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseCompleted,
-				Sessions: []flowstore.Session{
-					{Provider: "codex", SessionID: "codex-1", Status: "ended"},
-				},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     14,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Resumable flow",
+				Status: flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseCompleted,
+					Sessions: []flowstore.Session{
+						{Provider: "codex", SessionID: "codex-1", Status: "ended"},
+					},
+				}},
 			}},
-		}},
-		ActivePane:                 PaneBottom,
-		FlowSelected:               0,
-		ExpandedFlowID:             "flow-1",
-		SelectedFlowPhaseID:        "implementation",
-		FlowPhaseResumableSelected: true,
-	})
+			FlowSelected:               0,
+			ExpandedFlowID:             "flow-1",
+			SelectedFlowPhaseID:        "implementation",
+			FlowPhaseResumableSelected: true}})
 
 	if !strings.Contains(shortcutPaneText(view), "r      resume") {
 		t.Fatalf("resumable Flow phase should expose resume shortcut:\n%s", view)
@@ -1466,27 +1443,26 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 
 func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   16,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Phase copy flow",
-			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/approach-worktrees/phase-copy-flow",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     16,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Phase copy flow",
+				Status:       flowstore.StatusInProgress,
+				WorktreePath: "/dev/approach-worktrees/phase-copy-flow",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:          PaneBottom,
-		FlowSelected:        0,
-		ExpandedFlowID:      "flow-1",
-		SelectedFlowPhaseID: "implementation",
-	})
+			FlowSelected:        0,
+			ExpandedFlowID:      "flow-1",
+			SelectedFlowPhaseID: "implementation"}})
 
 	pane := shortcutPaneText(view)
 	if !strings.Contains(pane, "y      copy path") {
@@ -1499,29 +1475,28 @@ func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 
 func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   16,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Resettable flow",
-			Status: flowstore.StatusInProgress,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "implementation",
-				Title:     "Implementation",
-				Status:    flowstore.PhaseRunning,
-				LaunchIDs: []string{"launch-orphan"},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     16,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Resettable flow",
+				Status: flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "implementation",
+					Title:     "Implementation",
+					Status:    flowstore.PhaseRunning,
+					LaunchIDs: []string{"launch-orphan"},
+				}},
 			}},
-		}},
-		ActivePane:                  PaneBottom,
-		FlowSelected:                0,
-		ExpandedFlowID:              "flow-1",
-		SelectedFlowPhaseID:         "implementation",
-		FlowPhaseResetReadySelected: true,
-		FlowPhaseResumableSelected:  false,
-	})
+			FlowSelected:                0,
+			ExpandedFlowID:              "flow-1",
+			SelectedFlowPhaseID:         "implementation",
+			FlowPhaseResetReadySelected: true,
+			FlowPhaseResumableSelected:  false}})
 
 	pane := shortcutPaneText(view)
 	if !strings.Contains(pane, "x      reset ready") {
@@ -1534,29 +1509,28 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 
 func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   16,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Launch phase flow",
-			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/approach-worktrees/launch-phase-flow",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     16,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Launch phase flow",
+				Status:       flowstore.StatusInProgress,
+				WorktreePath: "/dev/approach-worktrees/launch-phase-flow",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:          PaneBottom,
-		FlowSelected:        0,
-		ExpandedFlowID:      "flow-1",
-		SelectedFlowPhaseID: "implementation",
-		FlowNextLaunchReady: true,
-		FlowHeadless:        false,
-	})
+			FlowSelected:        0,
+			ExpandedFlowID:      "flow-1",
+			SelectedFlowPhaseID: "implementation",
+			FlowNextLaunchReady: true,
+			FlowHeadless:        false}})
 
 	pane := shortcutPaneText(view)
 	for _, want := range []string{"enter  phases", "g      launch next", "h      headless off", "c      copy id", "y      copy path"} {
@@ -1573,24 +1547,23 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 
 func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	base := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Delete flow",
-			Status: flowstore.StatusPending,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Delete flow",
+				Status: flowstore.StatusPending,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	}
+			FlowSelected: 0}}
 
 	readOnlyPane := shortcutPaneText(Render(base))
 	if !strings.Contains(readOnlyPane, "D      destructive mode") {
@@ -1877,37 +1850,36 @@ func TestRender_ActiveFlowsOverSessionsUsesFlowTerminalPrefixShortcuts(t *testin
 
 func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:    0,
-		Width:       180,
-		Height:      19,
-		Mode:        ModeSessions,
-		ActiveFlows: true,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Active Flow",
-			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/approach-worktrees/active-flow",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
-				Order:   1,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     19,
+		Mode:       ModeSessions,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			ActiveFlows: true,
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Active Flow",
+				Status:       flowstore.StatusInProgress,
+				WorktreePath: "/dev/approach-worktrees/active-flow",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+					Order:   1,
+				}},
 			}},
-		}},
-		EmbeddedTerminals: []EmbeddedTerminalTab{{
-			Number:   1,
-			Provider: "codex",
-			Identity: "hidden-session-terminal",
-			State:    "running",
-			Active:   true,
-		}},
-		EmbeddedTerminalVisible: false,
-		ActivePane:              PaneBottom,
-		FlowSelected:            0,
-		FlowNextLaunchReady:     true,
-		FlowHeadless:            true,
-	})
+			FlowSelected:        0,
+			FlowNextLaunchReady: true,
+			FlowHeadless:        true}, EmbeddedTerminalParams: EmbeddedTerminalParams{
+			EmbeddedTerminals: []EmbeddedTerminalTab{{
+				Number:   1,
+				Provider: "codex",
+				Identity: "hidden-session-terminal",
+				State:    "running",
+				Active:   true,
+			}},
+			EmbeddedTerminalVisible: false}})
 
 	pane := shortcutPaneText(view)
 	for _, want := range []string{"Actions", "g      launch next", "Mode", "h      headless on"} {
@@ -1925,27 +1897,26 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 
 func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Stale phase copy flow",
-			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/approach-worktrees/stale-phase-copy-flow",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Stale phase copy flow",
+				Status:       flowstore.StatusInProgress,
+				WorktreePath: "/dev/approach-worktrees/stale-phase-copy-flow",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:          PaneBottom,
-		FlowSelected:        0,
-		ExpandedFlowID:      "flow-1",
-		SelectedFlowPhaseID: "missing",
-	})
+			FlowSelected:        0,
+			ExpandedFlowID:      "flow-1",
+			SelectedFlowPhaseID: "missing"}})
 
 	pane := shortcutPaneText(view)
 	if !strings.Contains(pane, "y      copy path") {
@@ -1958,24 +1929,23 @@ func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) 
 
 func TestRender_FlowsModeHidesCopyPathShortcutWithoutWorktreePath(t *testing.T) {
 	base := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   16,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "No worktree path",
-			Status: flowstore.StatusInProgress,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     16,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "No worktree path",
+				Status: flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID: "implementation",
+					Title:   "Implementation",
+					Status:  flowstore.PhaseReady,
+				}},
 			}},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	}
+			FlowSelected: 0}}
 
 	if pane := shortcutPaneText(Render(base)); strings.Contains(pane, "y      copy") {
 		t.Fatalf("selected Flow without worktree path should hide copy shortcut:\n%s", pane)
@@ -1991,27 +1961,26 @@ func TestRender_FlowsModeHidesCopyPathShortcutWithoutWorktreePath(t *testing.T) 
 
 func TestRender_FlowsModeHidesResumeShortcutWithoutResumableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    180,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Awaiting flow",
-			Status: flowstore.StatusInProgress,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "implementation",
-				Title:     "Implementation",
-				Status:    flowstore.PhaseRunning,
-				LaunchIDs: []string{"launch-new"},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Awaiting flow",
+				Status: flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "implementation",
+					Title:     "Implementation",
+					Status:    flowstore.PhaseRunning,
+					LaunchIDs: []string{"launch-new"},
+				}},
 			}},
-		}},
-		ActivePane:          PaneBottom,
-		FlowSelected:        0,
-		ExpandedFlowID:      "flow-1",
-		SelectedFlowPhaseID: "implementation",
-	})
+			FlowSelected:        0,
+			ExpandedFlowID:      "flow-1",
+			SelectedFlowPhaseID: "implementation"}})
 
 	if strings.Contains(shortcutPaneText(view), "r      resume") {
 		t.Fatalf("non-resumable Flow phase should not expose resume shortcut:\n%s", view)
@@ -2020,25 +1989,24 @@ func TestRender_FlowsModeHidesResumeShortcutWithoutResumableSelectedPhase(t *tes
 
 func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Add Flow mode",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/add-flow-mode",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Order: 1},
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 2},
-			},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Add Flow mode",
+				Status: flowstore.StatusInProgress,
+				Branch: "flow/add-flow-mode",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Order: 1},
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 2},
+				},
+			}},
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	for _, want := range []string{"plan-review:completed", "Plan Review", "implementation:ready", "Implementation"} {
 		if !strings.Contains(view, want) {
@@ -2054,32 +2022,31 @@ func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 
 func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Flow sessions",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/sessions",
-			WorktreePath: "/dev/approach-worktrees/flow-sessions",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "implementation",
-				Title:     "Implementation",
-				Status:    flowstore.PhaseCompleted,
-				LaunchIDs: []string{"launch-1", "launch-2"},
-				Sessions: []flowstore.Session{
-					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-1", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
-					{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-2", Status: "ended", StartedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
-				},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Flow sessions",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/sessions",
+				WorktreePath: "/dev/approach-worktrees/flow-sessions",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "implementation",
+					Title:     "Implementation",
+					Status:    flowstore.PhaseCompleted,
+					LaunchIDs: []string{"launch-1", "launch-2"},
+					Sessions: []flowstore.Session{
+						{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-1", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
+						{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-2", Status: "ended", StartedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
+					},
+				}},
 			}},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	for _, want := range []string{"implementation:completed", "2 sessions", "codex", "ended"} {
 		if !strings.Contains(view, want) {
@@ -2090,32 +2057,31 @@ func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
 
 func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Legacy sessions",
-			Status:       flowstore.StatusNeedsAttention,
-			Branch:       "flow/legacy-sessions",
-			WorktreePath: "/dev/approach-worktrees/flow-legacy-sessions",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "review-loop",
-				Title:     "Review loop",
-				Status:    flowstore.PhaseNeedsAttention,
-				LaunchIDs: []string{"launch-old", "launch-1"},
-				Sessions: []flowstore.Session{
-					{Provider: "codex", LaunchID: "launch-1", Status: "ended"},
-					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
-				},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Legacy sessions",
+				Status:       flowstore.StatusNeedsAttention,
+				Branch:       "flow/legacy-sessions",
+				WorktreePath: "/dev/approach-worktrees/flow-legacy-sessions",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "review-loop",
+					Title:     "Review loop",
+					Status:    flowstore.PhaseNeedsAttention,
+					LaunchIDs: []string{"launch-old", "launch-1"},
+					Sessions: []flowstore.Session{
+						{Provider: "codex", LaunchID: "launch-1", Status: "ended"},
+						{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
+					},
+				}},
 			}},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	if !strings.Contains(view, "review-loop:missing-session-id") {
 		t.Fatalf("malformed attached session should render missing-session-id:\n%s", view)
@@ -2130,31 +2096,30 @@ func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 
 func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Ended latest session",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/ended-session",
-			WorktreePath: "/dev/approach-worktrees/flow-ended-session",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "implementation",
-				Title:     "Implementation",
-				Status:    flowstore.PhaseRunning,
-				LaunchIDs: []string{"launch-1"},
-				Sessions: []flowstore.Session{
-					{Provider: "codex", SessionID: "codex-1", LaunchID: "launch-1", Status: "ended"},
-				},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Ended latest session",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/ended-session",
+				WorktreePath: "/dev/approach-worktrees/flow-ended-session",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "implementation",
+					Title:     "Implementation",
+					Status:    flowstore.PhaseRunning,
+					LaunchIDs: []string{"launch-1"},
+					Sessions: []flowstore.Session{
+						{Provider: "codex", SessionID: "codex-1", LaunchID: "launch-1", Status: "ended"},
+					},
+				}},
 			}},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	if !strings.Contains(view, "implementation:ended-session") {
 		t.Fatalf("running phase with ended latest session should render ended-session:\n%s", view)
@@ -2163,32 +2128,31 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T)
 
 func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSession(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Ended latest session with live older session",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/ended-session",
-			WorktreePath: "/dev/approach-worktrees/flow-ended-session",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "implementation",
-				Title:     "Implementation",
-				Status:    flowstore.PhaseRunning,
-				LaunchIDs: []string{"launch-old", "launch-new"},
-				Sessions: []flowstore.Session{
-					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
-					{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-new", Status: "ended"},
-				},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Ended latest session with live older session",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/ended-session",
+				WorktreePath: "/dev/approach-worktrees/flow-ended-session",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "implementation",
+					Title:     "Implementation",
+					Status:    flowstore.PhaseRunning,
+					LaunchIDs: []string{"launch-old", "launch-new"},
+					Sessions: []flowstore.Session{
+						{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+						{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-new", Status: "ended"},
+					},
+				}},
 			}},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	if !strings.Contains(view, "implementation:ended-session") {
 		t.Fatalf("running phase with ended latest session should render ended-session:\n%s", view)
@@ -2197,31 +2161,30 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSes
 
 func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLiveSession(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   10,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID:       "flow-1",
-			Title:        "Await latest session with live older session",
-			Status:       flowstore.StatusInProgress,
-			Branch:       "flow/await-session",
-			WorktreePath: "/dev/approach-worktrees/flow-await-session",
-			Phases: []flowstore.FlowPhase{{
-				PhaseID:   "implementation",
-				Title:     "Implementation",
-				Status:    flowstore.PhaseRunning,
-				LaunchIDs: []string{"launch-old", "launch-new"},
-				Sessions: []flowstore.Session{
-					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
-				},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				Title:        "Await latest session with live older session",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/await-session",
+				WorktreePath: "/dev/approach-worktrees/flow-await-session",
+				Phases: []flowstore.FlowPhase{{
+					PhaseID:   "implementation",
+					Title:     "Implementation",
+					Status:    flowstore.PhaseRunning,
+					LaunchIDs: []string{"launch-old", "launch-new"},
+					Sessions: []flowstore.Session{
+						{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+					},
+				}},
 			}},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	if !strings.Contains(view, "implementation:await-session") {
 		t.Fatalf("running phase awaiting latest session should render await-session:\n%s", view)
@@ -2230,27 +2193,26 @@ func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLive
 
 func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Child phases",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/children",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Order: 2},
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3},
-				{PhaseID: "review-loop", Title: "Review Loop", Status: flowstore.PhasePending, Order: 4},
-				{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseReady, Order: 10},
-			},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "flow-1",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Title:  "Child phases",
+				Status: flowstore.StatusInProgress,
+				Branch: "flow/children",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Order: 2},
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3},
+					{PhaseID: "review-loop", Title: "Review Loop", Status: flowstore.PhasePending, Order: 4},
+					{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseReady, Order: 10},
+				},
+			}},
+			FlowSelected:   0,
+			ExpandedFlowID: "flow-1"}})
 
 	implementation := strings.Index(view, "implementation:completed")
 	child := strings.LastIndex(view, "implementation-api:ready")
@@ -2268,46 +2230,45 @@ func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T
 
 func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    230,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{
-			{
-				FlowID: "blocked-flow",
-				Title:  "Blocked implementation",
-				Status: flowstore.StatusBlocked,
-				Branch: "flow/blocked",
-				Phases: []flowstore.FlowPhase{
-					{PhaseID: "plan", Status: flowstore.PhaseCompleted},
-					{PhaseID: "implementation", Status: flowstore.PhaseBlocked},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      230,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{
+				{
+					FlowID: "blocked-flow",
+					Title:  "Blocked implementation",
+					Status: flowstore.StatusBlocked,
+					Branch: "flow/blocked",
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+						{PhaseID: "implementation", Status: flowstore.PhaseBlocked},
+					},
+				},
+				{
+					FlowID: "attention-flow",
+					Title:  "Needs review input",
+					Status: flowstore.StatusNeedsAttention,
+					Branch: "flow/needs-attention",
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+						{PhaseID: "review-loop", Status: flowstore.PhaseNeedsAttention},
+					},
+				},
+				{
+					FlowID: "completed-flow",
+					Title:  "Completed flow",
+					Status: flowstore.StatusCompleted,
+					Branch: "flow/completed",
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+						{PhaseID: "review-loop", Status: flowstore.PhaseSkipped},
+					},
 				},
 			},
-			{
-				FlowID: "attention-flow",
-				Title:  "Needs review input",
-				Status: flowstore.StatusNeedsAttention,
-				Branch: "flow/needs-attention",
-				Phases: []flowstore.FlowPhase{
-					{PhaseID: "plan", Status: flowstore.PhaseCompleted},
-					{PhaseID: "review-loop", Status: flowstore.PhaseNeedsAttention},
-				},
-			},
-			{
-				FlowID: "completed-flow",
-				Title:  "Completed flow",
-				Status: flowstore.StatusCompleted,
-				Branch: "flow/completed",
-				Phases: []flowstore.FlowPhase{
-					{PhaseID: "plan", Status: flowstore.PhaseCompleted},
-					{PhaseID: "review-loop", Status: flowstore.PhaseSkipped},
-				},
-			},
-		},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+			FlowSelected: 0}})
 
 	for _, want := range []string{
 		"blocked", "flow/blocked", "Blocked implementation",
@@ -2324,33 +2285,32 @@ func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "merged-flow",
-			Title:  "Merged flow",
-			Status: flowstore.StatusMerged,
-			Branch: "flow/merged",
-			PlanID: "plan-merged",
-			PR:     flowstore.PullRequest{Number: 116, URL: "https://github.com/approachcontrol/approach/pull/116"},
-			Merge: flowstore.Merge{
-				Status:   flowstore.MergeMerged,
-				Commit:   "0123456789abcdef",
-				MergedAt: &mergedAt,
-			},
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
-				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseCompleted, Outcome: "passed"},
-				{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseCompleted, Outcome: "merged"},
-			},
-		}},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: "merged-flow",
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "merged-flow",
+				Title:  "Merged flow",
+				Status: flowstore.StatusMerged,
+				Branch: "flow/merged",
+				PlanID: "plan-merged",
+				PR:     flowstore.PullRequest{Number: 116, URL: "https://github.com/approachcontrol/approach/pull/116"},
+				Merge: flowstore.Merge{
+					Status:   flowstore.MergeMerged,
+					Commit:   "0123456789abcdef",
+					MergedAt: &mergedAt,
+				},
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+					{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseCompleted, Outcome: "passed"},
+					{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseCompleted, Outcome: "merged"},
+				},
+			}},
+			FlowSelected:   0,
+			ExpandedFlowID: "merged-flow"}})
 
 	for _, want := range []string{"merged", "flow/merged", "3/3", "plan-merged", "#116", "Merged flow", "merge:merged", "Merge"} {
 		if !strings.Contains(view, want) {
@@ -2361,27 +2321,26 @@ func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
 
 func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   13,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "review-flow",
-			Title:  "Plan needs revision",
-			Status: flowstore.StatusNeedsAttention,
-			Branch: "flow/review",
-			PlanID: "plan-1",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
-				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseNeedsAttention, Outcome: "changes_requested"},
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
-			},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-		FlowHeadless: true,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     13,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "review-flow",
+				Title:  "Plan needs revision",
+				Status: flowstore.StatusNeedsAttention,
+				Branch: "flow/review",
+				PlanID: "plan-1",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+					{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseNeedsAttention, Outcome: "changes_requested"},
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
+				},
+			}},
+			FlowSelected: 0,
+			FlowHeadless: true}})
 
 	for _, want := range []string{"plan-review", "changes_requested", "1/3", "enter", "phases", "headless on"} {
 		if !strings.Contains(view, want) {
@@ -2397,28 +2356,27 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 
 func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "missing-pr-flow",
-			Title:  "Needs PR metadata",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/missing-pr",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
-				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
-				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
-				{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
-				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
-			},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "missing-pr-flow",
+				Title:  "Needs PR metadata",
+				Status: flowstore.StatusInProgress,
+				Branch: "flow/missing-pr",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+					{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+					{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+					{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+					{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
+				},
+			}},
+			FlowSelected: 0}})
 
 	for _, want := range []string{"autoreview:missing-pr", "missing", "Needs PR metadata"} {
 		if !strings.Contains(view, want) {
@@ -2429,24 +2387,23 @@ func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 
 func TestRender_FlowsModeShowsAutoreviewKindMissingPRMetadata(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   12,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "missing-pr-flow",
-			Title:  "Needs PR metadata",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/missing-pr",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "open-pr", Kind: flowstore.KindPRCreation, Title: "Open PR", Status: flowstore.PhaseCompleted},
-				{PhaseID: "second-review", Kind: flowstore.KindAutoreview, Title: "Second Review", Status: flowstore.PhasePending},
-			},
-		}},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{{
+				FlowID: "missing-pr-flow",
+				Title:  "Needs PR metadata",
+				Status: flowstore.StatusInProgress,
+				Branch: "flow/missing-pr",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "open-pr", Kind: flowstore.KindPRCreation, Title: "Open PR", Status: flowstore.PhaseCompleted},
+					{PhaseID: "second-review", Kind: flowstore.KindAutoreview, Title: "Second Review", Status: flowstore.PhasePending},
+				},
+			}},
+			FlowSelected: 0}})
 
 	if !strings.Contains(view, "second-review:missing-pr") {
 		t.Fatalf("missing PR metadata view should key off autoreview kind:\n%s", view)
@@ -2455,69 +2412,68 @@ func TestRender_FlowsModeShowsAutoreviewKindMissingPRMetadata(t *testing.T) {
 
 func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected: 0,
-		Width:    240,
-		Height:   14,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{
-			{
-				FlowID: "missing-worktree",
-				Title:  "Saved flow needs worktree metadata",
-				Status: flowstore.StatusBlocked,
-				Phases: []flowstore.FlowPhase{
-					{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseBlocked, LaunchIDs: []string{"launch-1"}},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     14,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows: []flowstore.FlowRecord{
+				{
+					FlowID: "missing-worktree",
+					Title:  "Saved flow needs worktree metadata",
+					Status: flowstore.StatusBlocked,
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseBlocked, LaunchIDs: []string{"launch-1"}},
+					},
 				},
-			},
-			{
-				FlowID:       "awaiting-session",
-				Title:        "Launch has not attached a session",
-				Status:       flowstore.StatusInProgress,
-				Branch:       "flow/awaiting-session",
-				WorktreePath: "/dev/approach-worktrees/flow-awaiting-session",
-				Phases: []flowstore.FlowPhase{
-					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, LaunchIDs: []string{"launch-2"}},
+				{
+					FlowID:       "awaiting-session",
+					Title:        "Launch has not attached a session",
+					Status:       flowstore.StatusInProgress,
+					Branch:       "flow/awaiting-session",
+					WorktreePath: "/dev/approach-worktrees/flow-awaiting-session",
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, LaunchIDs: []string{"launch-2"}},
+					},
 				},
-			},
-			{
-				FlowID:       "mismatched-session",
-				Title:        "Session launch mismatch",
-				Status:       flowstore.StatusNeedsAttention,
-				Branch:       "flow/session-mismatch",
-				WorktreePath: "/dev/approach-worktrees/flow-session-mismatch",
-				Phases: []flowstore.FlowPhase{
-					{
-						PhaseID:   "review-loop",
-						Title:     "Review Loop",
-						Status:    flowstore.PhaseNeedsAttention,
-						LaunchIDs: []string{"launch-3"},
-						Sessions: []flowstore.Session{
-							{Provider: "codex", SessionID: "codex-1", LaunchID: "other-launch", Status: "ended"},
+				{
+					FlowID:       "mismatched-session",
+					Title:        "Session launch mismatch",
+					Status:       flowstore.StatusNeedsAttention,
+					Branch:       "flow/session-mismatch",
+					WorktreePath: "/dev/approach-worktrees/flow-session-mismatch",
+					Phases: []flowstore.FlowPhase{
+						{
+							PhaseID:   "review-loop",
+							Title:     "Review Loop",
+							Status:    flowstore.PhaseNeedsAttention,
+							LaunchIDs: []string{"launch-3"},
+							Sessions: []flowstore.Session{
+								{Provider: "codex", SessionID: "codex-1", LaunchID: "other-launch", Status: "ended"},
+							},
 						},
 					},
 				},
-			},
-			{
-				FlowID:       "ended-session",
-				Title:        "Latest session ended",
-				Status:       flowstore.StatusInProgress,
-				Branch:       "flow/ended-session",
-				WorktreePath: "/dev/approach-worktrees/flow-ended-session",
-				Phases: []flowstore.FlowPhase{
-					{
-						PhaseID:   "implementation",
-						Title:     "Implementation",
-						Status:    flowstore.PhaseRunning,
-						LaunchIDs: []string{"launch-4"},
-						Sessions: []flowstore.Session{
-							{Provider: "codex", SessionID: "codex-4", LaunchID: "launch-4", Status: "ended"},
+				{
+					FlowID:       "ended-session",
+					Title:        "Latest session ended",
+					Status:       flowstore.StatusInProgress,
+					Branch:       "flow/ended-session",
+					WorktreePath: "/dev/approach-worktrees/flow-ended-session",
+					Phases: []flowstore.FlowPhase{
+						{
+							PhaseID:   "implementation",
+							Title:     "Implementation",
+							Status:    flowstore.PhaseRunning,
+							LaunchIDs: []string{"launch-4"},
+							Sessions: []flowstore.Session{
+								{Provider: "codex", SessionID: "codex-4", LaunchID: "launch-4", Status: "ended"},
+							},
 						},
 					},
 				},
-			},
-		},
-		ActivePane: PaneBottom,
-	})
+			}}})
 
 	for _, want := range []string{"plan:recover-worktree", "implementation:await-session", "review-loop:session-mismatch", "implementation:ended-session"} {
 		if !strings.Contains(view, want) {
@@ -2574,15 +2530,14 @@ func TestRender_FlowRecoveryWarningsFlagLatestRelaunchWithoutSession(t *testing.
 		t.Fatalf("phase progress = %q, want latest relaunch without session to await session", got)
 	}
 	view := Render(RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:     0,
-		Width:        240,
-		Height:       10,
-		Mode:         ModeFlows,
-		Flows:        []flowstore.FlowRecord{record},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:        []flowstore.FlowRecord{record},
+			FlowSelected: 0}})
 	if !strings.Contains(view, "implementation:await-session") {
 		t.Fatalf("rendered relaunch without session should await session:\n%s", view)
 	}
@@ -2603,16 +2558,15 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		},
 	}
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:       0,
-		Width:          240,
-		Height:         12,
-		Mode:           ModeFlows,
-		Flows:          []flowstore.FlowRecord{flow},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: flow.FlowID,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:          []flowstore.FlowRecord{flow},
+			FlowSelected:   0,
+			ExpandedFlowID: flow.FlowID}})
 
 	for _, want := range []string{"autoreview:missing-pr", "plan:completed"} {
 		if !strings.Contains(view, want) {
@@ -2625,16 +2579,15 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 
 	flow.Phases[2].Status = flowstore.PhaseCompleted
 	view = Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:       0,
-		Width:          240,
-		Height:         12,
-		Mode:           ModeFlows,
-		Flows:          []flowstore.FlowRecord{flow},
-		ActivePane:     PaneBottom,
-		FlowSelected:   0,
-		ExpandedFlowID: flow.FlowID,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:          []flowstore.FlowRecord{flow},
+			FlowSelected:   0,
+			ExpandedFlowID: flow.FlowID}})
 	if !strings.Contains(view, "autoreview:completed") || strings.Contains(view, "autoreview:missing-pr") {
 		t.Fatalf("completed autoreview history should not be overwritten by missing PR recovery:\n%s", view)
 	}
@@ -2662,15 +2615,14 @@ func TestFlowRecoveryLabelsDoNotFlagHealthySessionOrBranchOnlyRecord(t *testing.
 		t.Fatalf("phase progress = %q, want healthy session and branch-only state preserved", got)
 	}
 	view := Render(RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Selected:     0,
-		Width:        240,
-		Height:       10,
-		Mode:         ModeFlows,
-		Flows:        []flowstore.FlowRecord{record},
-		ActivePane:   PaneBottom,
-		FlowSelected: 0,
-	})
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      240,
+		Height:     10,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:        []flowstore.FlowRecord{record},
+			FlowSelected: 0}})
 	if !strings.Contains(view, "review-loop:needs_attention") {
 		t.Fatalf("rendered branch-only healthy session should preserve phase state:\n%s", view)
 	}
@@ -2750,16 +2702,15 @@ func TestStatusBar_FlowsModeShowsAutofixAlongsideManualMergeOnlyWhenReady(t *tes
 
 func TestRender_FlowsModeAutofixHintNeedsAFlowRowSelection(t *testing.T) {
 	params := RenderParams{
-		Repos:                        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
-		Width:                        200,
-		Height:                       20,
-		Mode:                         ModeFlows,
-		ActivePane:                   PaneBottom,
-		Flows:                        []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Autofix flow", Status: flowstore.StatusInProgress}},
-		FlowSelected:                 0,
-		FlowManualMergeReadySelected: true,
-		FlowAutofixReadySelected:     true,
-	}
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Width:      200,
+		Height:     20,
+		Mode:       ModeFlows,
+		ActivePane: PaneBottom, FlowParams: FlowParams{
+			Flows:                        []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Autofix flow", Status: flowstore.StatusInProgress}},
+			FlowSelected:                 0,
+			FlowManualMergeReadySelected: true,
+			FlowAutofixReadySelected:     true}}
 	if view := Render(params); !strings.Contains(view, "autofix PR") {
 		t.Fatalf("selected Flow row should expose the autofix shortcut, got %q", view)
 	}

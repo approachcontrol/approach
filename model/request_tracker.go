@@ -1,5 +1,34 @@
 package model
 
+import "github.com/approachcontrol/approach/ui"
+
+// listFetchState is the in-flight list/diff/create request cluster on Model.
+type listFetchState struct {
+	diffRequestSeq            uint64
+	activeViewRequest         uint64
+	activeViewKind            FetchKind
+	activeViewMode            ui.Mode
+	listRequestSeq            uint64
+	worktreeSessionRequestSeq uint64
+	activeWorktreeSessionReq  uint64
+	inlineWorktreeSessionRepo string
+	inlineWorktreeSessionPath string
+	pendingInlineSessionRepo  string
+	pendingInlineSessionPath  string
+	pendingInlineSessionList  uint64
+	worktreeCreateReq         requestTracker
+	repoCreateReq             requestTracker
+	flowCreateReq             requestTracker
+	readyBeadFlowCreateReq    requestTracker
+	repoRefreshSeq            uint64
+	activeRepoRefresh         uint64
+	pendingRepoSelection      string
+	listRequests              [listRequestSlots]uint64
+	listErrors                [listRequestSlots]string
+	visibleRepoFetchSeq       uint64
+	visibleRepoFetch          visibleRepoFetchState
+}
+
 // requestTracker is a single in-flight request ID. next issues the next ID and
 // makes it current; clear drops the current ID after it lands; invalidate
 // makes any in-flight ID stale without issuing a replacement.

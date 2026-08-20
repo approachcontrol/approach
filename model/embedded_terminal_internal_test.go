@@ -307,11 +307,10 @@ func TestFlowEmbeddedTerminalIdentityAutofix(t *testing.T) {
 }
 
 func TestEmbeddedTerminalNumbersAreGlobalAcrossScopes(t *testing.T) {
-	m := Model{
+	m := Model{embeddedTerminalState: embeddedTerminalState{
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			return internalFakeEmbeddedTerminal{}, nil
-		},
-	}
+		}}}
 
 	var opened bool
 	var err error
@@ -333,14 +332,13 @@ func TestEmbeddedTerminalNumbersAreGlobalAcrossScopes(t *testing.T) {
 }
 
 func TestDismissEmbeddedTerminalRenumbersGloballyAndPreservesActiveSlot(t *testing.T) {
-	m := Model{
+	m := Model{embeddedTerminalState: embeddedTerminalState{
 		activeTerminalNum: 3,
 		embeddedTerminals: []embeddedTerminalSlot{
 			{Number: 1, Scope: embeddedTerminalScopeSession, Identity: "session-one", ID: 1, Terminal: internalFakeEmbeddedTerminal{}},
 			{Number: 2, Scope: embeddedTerminalScopeFlow, Identity: "implementation", ID: 2, Terminal: internalFakeEmbeddedTerminal{}},
 			{Number: 3, Scope: embeddedTerminalScopeSession, Identity: "session-two", ID: 3, Terminal: internalFakeEmbeddedTerminal{}},
-		},
-	}
+		}}}
 
 	m = m.dismissEmbeddedTerminal(2)
 
@@ -355,14 +353,13 @@ func TestDismissEmbeddedTerminalRenumbersGloballyAndPreservesActiveSlot(t *testi
 
 func TestEmbeddedTerminalPresentationUsesOneActiveTerminalAcrossScopes(t *testing.T) {
 	m := Model{
-		height:              24,
-		terminalDockVisible: true,
-		activeTerminalNum:   2,
-		embeddedTerminals: []embeddedTerminalSlot{
-			{Number: 1, Scope: embeddedTerminalScopeSession, Identity: "session", ID: 1, Terminal: internalFakeEmbeddedTerminal{lines: []string{"session output"}}},
-			{Number: 2, Scope: embeddedTerminalScopeFlow, Identity: "implementation", ID: 2, Terminal: internalFakeEmbeddedTerminal{lines: []string{"flow output"}}},
-		},
-	}
+		height: 24, embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible: true,
+			activeTerminalNum:   2,
+			embeddedTerminals: []embeddedTerminalSlot{
+				{Number: 1, Scope: embeddedTerminalScopeSession, Identity: "session", ID: 1, Terminal: internalFakeEmbeddedTerminal{lines: []string{"session output"}}},
+				{Number: 2, Scope: embeddedTerminalScopeFlow, Identity: "implementation", ID: 2, Terminal: internalFakeEmbeddedTerminal{lines: []string{"flow output"}}},
+			}}}
 
 	tabs := m.embeddedTerminalTabs()
 	if len(tabs) != 2 || tabs[0].Active || !tabs[1].Active {
@@ -379,17 +376,16 @@ func TestFirstAndLastEmbeddedTerminalReflowSessionSelection(t *testing.T) {
 		records[i] = sessions.SessionRecord{SessionID: fmt.Sprintf("session-%02d", i)}
 	}
 	m := Model{
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeSessions,
-		contentPane:         ui.PaneBottom,
-		width:               160,
-		height:              20 + ui.TerminalChipRows,
-		terminalDockVisible: true,
-		sessions:            newSessionPane().SetItems(records).Move(13, 14, 80),
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			return internalFakeEmbeddedTerminal{}, nil
-		},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
+		width:       160,
+		height:      20 + ui.TerminalChipRows,
+		sessions:    newSessionPane().SetItems(records).Move(13, 14, 80), embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible: true,
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				return internalFakeEmbeddedTerminal{}, nil
+			}}}
 	if got := m.sessions.Scroll(); got != 0 {
 		t.Fatalf("session scroll before opening terminal = %d, want 0", got)
 	}
@@ -409,7 +405,7 @@ func TestFirstAndLastEmbeddedTerminalReflowSessionSelection(t *testing.T) {
 }
 
 func TestRepoContentHeightAccountsForTerminalDockState(t *testing.T) {
-	m := Model{height: 24, terminalDockVisible: true}
+	m := Model{height: 24, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true}}
 	if got := m.repoContentHeight(); got != 20 {
 		t.Fatalf("no-terminals repo height = %d, want 20 (chip row reserved)", got)
 	}
@@ -431,8 +427,8 @@ func TestEmbeddedTerminalSpansFullAppWidth(t *testing.T) {
 }
 
 func TestEmbeddedTerminalAllocationIsModeIndependent(t *testing.T) {
-	base := Model{height: 24, topMode: ui.ModeWorktrees, bottomMode: ui.ModeSessions, contentPane: ui.PaneBottom, terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Terminal: internalFakeEmbeddedTerminal{}}}}
-	activeFlows := Model{height: 24, topMode: ui.ModeWorktrees, bottomMode: ui.ModeFlows, contentPane: ui.PaneTop, activeFlowSurface: true, terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Terminal: internalFakeEmbeddedTerminal{}}}}
+	base := Model{height: 24, topMode: ui.ModeWorktrees, bottomMode: ui.ModeSessions, contentPane: ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Terminal: internalFakeEmbeddedTerminal{}}}}}
+	activeFlows := Model{height: 24, topMode: ui.ModeWorktrees, bottomMode: ui.ModeFlows, contentPane: ui.PaneTop, activeFlowSurface: true, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Terminal: internalFakeEmbeddedTerminal{}}}}}
 	if base.embeddedTerminalDockAllocation() != activeFlows.embeddedTerminalDockAllocation() {
 		t.Fatalf("terminal allocation differs by mode: %#v vs %#v", base.embeddedTerminalDockAllocation(), activeFlows.embeddedTerminalDockAllocation())
 	}
@@ -440,17 +436,16 @@ func TestEmbeddedTerminalAllocationIsModeIndependent(t *testing.T) {
 
 func TestResponsiveTerminalAllocationControlsModelVisibility(t *testing.T) {
 	m := Model{
-		height:              23,
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeSessions,
-		contentPane:         ui.PaneBottom,
-		activePane:          ui.PaneBottom,
-		terminalDockVisible: true,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
-		}},
-	}
+		height:      23,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible: true,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+			}}}}
 	allocation := m.embeddedTerminalDockAllocation()
 	if allocation.State != ui.EmbeddedTerminalDockCollapsed || allocation.SharedOuterRows != 21 {
 		t.Fatalf("height 23 allocation = %#v", allocation)
@@ -468,20 +463,19 @@ func TestResponsiveTerminalAllocationControlsModelVisibility(t *testing.T) {
 
 func TestWindowResizeEvacuatesAutoCollapsedTerminalFocus(t *testing.T) {
 	m := Model{
-		width:                120,
-		height:               24,
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeSessions,
-		contentPane:          ui.PaneBottom,
-		activePane:           ui.PaneBottom,
-		terminalDockVisible:  true,
-		terminalFocus:        terminalFocusTerminal,
-		terminalPrefixActive: true,
-		activeTerminalNum:    1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
-		}},
-	}
+		width:       120,
+		height:      24,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible:  true,
+			terminalFocus:        terminalFocusTerminal,
+			terminalPrefixActive: true,
+			activeTerminalNum:    1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+			}}}}
 	nextModel, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 23})
 	next := nextModel.(Model)
 	if !next.terminalDockVisible || next.activePane != ui.PaneBottom || next.contentPane != ui.PaneBottom || next.terminalFocus != terminalFocusList || next.terminalPrefixActive {
@@ -492,18 +486,17 @@ func TestWindowResizeEvacuatesAutoCollapsedTerminalFocus(t *testing.T) {
 func TestFirstTerminalStartupUsesProspectiveRequestedState(t *testing.T) {
 	newModel := func(started *[2]int) Model {
 		return Model{
-			width:               180,
-			height:              65,
-			topMode:             ui.ModeWorktrees,
-			bottomMode:          ui.ModeFlows,
-			contentPane:         ui.PaneBottom,
-			activePane:          ui.PaneBottom,
-			terminalDockVisible: false,
-			startEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
-				*started = [2]int{width, height}
-				return internalFakeEmbeddedTerminal{}, nil
-			},
-		}
+			width:       180,
+			height:      65,
+			topMode:     ui.ModeWorktrees,
+			bottomMode:  ui.ModeFlows,
+			contentPane: ui.PaneBottom,
+			activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+				terminalDockVisible: false,
+				startEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
+					*started = [2]int{width, height}
+					return internalFakeEmbeddedTerminal{}, nil
+				}}}
 	}
 
 	t.Run("interactive session requests expansion", func(t *testing.T) {
@@ -542,22 +535,21 @@ func TestFirstTerminalStartupUsesProspectiveRequestedState(t *testing.T) {
 func TestInteractiveFlowPrefillImmediatelyResizesExistingHiddenTerminals(t *testing.T) {
 	newModel := func(existing *internalFakeDetachableEmbeddedTerminal, started EmbeddedTerminal) Model {
 		return Model{
-			width:                  180,
-			height:                 65,
-			topMode:                ui.ModeWorktrees,
-			bottomMode:             ui.ModeFlows,
-			contentPane:            ui.PaneBottom,
-			activePane:             ui.PaneBottom,
-			terminalDockVisible:    false,
-			activeTerminalNum:      1,
-			nextEmbeddedTerminalID: 1,
-			embeddedTerminals: []embeddedTerminalSlot{{
-				Number: 1, ID: 1, Terminal: existing,
-			}},
-			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-				return started, nil
-			},
-		}
+			width:       180,
+			height:      65,
+			topMode:     ui.ModeWorktrees,
+			bottomMode:  ui.ModeFlows,
+			contentPane: ui.PaneBottom,
+			activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+				terminalDockVisible:    false,
+				activeTerminalNum:      1,
+				nextEmbeddedTerminalID: 1,
+				embeddedTerminals: []embeddedTerminalSlot{{
+					Number: 1, ID: 1, Terminal: existing,
+				}},
+				startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+					return started, nil
+				}}}
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:           "codex",
@@ -602,18 +594,17 @@ func TestInteractiveFlowPrefillImmediatelyResizesExistingHiddenTerminals(t *test
 
 func TestAutoCollapsedRequestedPreferenceRestoresOnlyWhileStillOpen(t *testing.T) {
 	base := Model{
-		width:               120,
-		height:              23,
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeSessions,
-		contentPane:         ui.PaneBottom,
-		activePane:          ui.PaneBottom,
-		terminalDockVisible: true,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
-		}},
-	}
+		width:       120,
+		height:      23,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible: true,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+			}}}}
 
 	grownModel, _ := base.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	grown := grownModel.(Model)
@@ -654,7 +645,7 @@ func TestContentHeightForModeAccountsForTerminalDockState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := modelWithModeForTest(Model{height: 24, terminalDockVisible: true}, tt.mode)
+			m := modelWithModeForTest(Model{height: 24, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true}}, tt.mode)
 			if got := m.contentHeightForMode(); got != tt.wantNoDock {
 				t.Fatalf("no-dock content height = %d, want %d", got, tt.wantNoDock)
 			}
@@ -674,15 +665,14 @@ func TestCyclePaneFocusIncludesExpandedTerminalDockInEveryMode(t *testing.T) {
 	for _, mode := range []ui.Mode{ui.ModeWorktrees, ui.ModeSessions, ui.ModePlans, ui.ModeFlows} {
 		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
 			m := modelWithModeForTest(Model{
-				height:              24,
-				activePane:          ui.PaneRepos,
-				terminalFocus:       terminalFocusList,
-				terminalDockVisible: true,
-				activeTerminalNum:   1,
-				embeddedTerminals: []embeddedTerminalSlot{{
-					Number: 1, Scope: embeddedTerminalScopeSession, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
-				}},
-			}, mode)
+				height:     24,
+				activePane: ui.PaneRepos, embeddedTerminalState: embeddedTerminalState{
+					terminalFocus:       terminalFocusList,
+					terminalDockVisible: true,
+					activeTerminalNum:   1,
+					embeddedTerminals: []embeddedTerminalSlot{{
+						Number: 1, Scope: embeddedTerminalScopeSession, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+					}}}}, mode)
 
 			m = m.cyclePaneFocusForward()
 			if m.activePane == ui.PaneRepos || m.terminalFocus != terminalFocusList {
@@ -714,7 +704,7 @@ func TestCyclePaneFocusSkipsCollapsedOrEmptyTerminalDock(t *testing.T) {
 		{name: "empty", visible: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{topMode: ui.ModeWorktrees, bottomMode: ui.ModePlans, contentPane: ui.PaneBottom, activePane: ui.PaneRepos, terminalDockVisible: tt.visible, embeddedTerminals: tt.terminals}
+			m := Model{topMode: ui.ModeWorktrees, bottomMode: ui.ModePlans, contentPane: ui.PaneBottom, activePane: ui.PaneRepos, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: tt.visible, embeddedTerminals: tt.terminals}}
 			m = m.cyclePaneFocusForward()
 			m = m.cyclePaneFocusForward()
 			m = m.cyclePaneFocusForward()
@@ -739,20 +729,19 @@ func TestCtrlTTogglesTerminalDockOutsideInputMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			term := &internalFakeDetachableEmbeddedTerminal{}
 			m := Model{
-				topMode:              ui.ModeWorktrees,
-				bottomMode:           ui.ModePlans,
-				contentPane:          ui.PaneBottom,
-				width:                160,
-				height:               24,
-				activePane:           tt.activePane,
-				terminalFocus:        tt.focus,
-				terminalPrefixActive: tt.prefixActive,
-				terminalDockVisible:  true,
-				activeTerminalNum:    1,
-				embeddedTerminals: []embeddedTerminalSlot{{
-					Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
-				}},
-			}
+				topMode:     ui.ModeWorktrees,
+				bottomMode:  ui.ModePlans,
+				contentPane: ui.PaneBottom,
+				width:       160,
+				height:      24,
+				activePane:  tt.activePane, embeddedTerminalState: embeddedTerminalState{
+					terminalFocus:        tt.focus,
+					terminalPrefixActive: tt.prefixActive,
+					terminalDockVisible:  true,
+					activeTerminalNum:    1,
+					embeddedTerminals: []embeddedTerminalSlot{{
+						Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+					}}}}
 
 			nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 			next := nextModel.(Model)
@@ -775,18 +764,17 @@ func TestCtrlTTogglesTerminalDockOutsideInputMode(t *testing.T) {
 func TestCtrlTInTerminalInputModePassesThroughToPTY(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
-		height:              24,
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModePlans,
-		contentPane:         ui.PaneBottom,
-		activePane:          ui.PaneBottom,
-		terminalFocus:       terminalFocusTerminal,
-		terminalDockVisible: true,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
-		}},
-	}
+		height:      24,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModePlans,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:       terminalFocusTerminal,
+			terminalDockVisible: true,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+			}}}}
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	next := nextModel.(Model)
@@ -801,18 +789,17 @@ func TestCtrlTInTerminalInputModePassesThroughToPTY(t *testing.T) {
 func TestTerminalCommandTogglesDockFromInputMode(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
-		height:              24,
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeFlows,
-		contentPane:         ui.PaneBottom,
-		activePane:          ui.PaneBottom,
-		terminalFocus:       terminalFocusTerminal,
-		terminalDockVisible: true,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
-		}},
-	}
+		height:      24,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:       terminalFocusTerminal,
+			terminalDockVisible: true,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
+			}}}}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	next := nextModel.(Model)
@@ -832,19 +819,18 @@ func TestTerminalCommandTogglesDockFromInputMode(t *testing.T) {
 func TestShowingTerminalDockResizesLiveTerminals(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeFlows,
-		contentPane:         ui.PaneTop,
-		width:               160,
-		height:              24,
-		activePane:          ui.PaneTop,
-		terminalFocus:       terminalFocusList,
-		terminalDockVisible: false,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
-		}},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneTop,
+		width:       160,
+		height:      24,
+		activePane:  ui.PaneTop, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:       terminalFocusList,
+			terminalDockVisible: false,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+			}}}}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	next := nextModel.(Model)
@@ -858,7 +844,7 @@ func TestShowingTerminalDockResizesLiveTerminals(t *testing.T) {
 }
 
 func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
-	m := Model{terminalDockVisible: true}
+	m := Model{embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true}}
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	next := nextModel.(Model)
 	if !next.terminalDockVisible || !strings.Contains(next.status.Text, "No embedded terminals") {
@@ -866,17 +852,16 @@ func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
 	}
 
 	next = Model{
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeSessions,
-		contentPane:         ui.PaneBottom,
-		activePane:          ui.PaneBottom,
-		searchActive:        true,
-		terminalDockVisible: true,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
-		}},
-	}
+		topMode:      ui.ModeWorktrees,
+		bottomMode:   ui.ModeSessions,
+		contentPane:  ui.PaneBottom,
+		activePane:   ui.PaneBottom,
+		searchActive: true, embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible: true,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+			}}}}
 	nextModel, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	next = nextModel.(Model)
 	if !next.terminalDockVisible {
@@ -886,21 +871,20 @@ func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
 
 func terminalPickerTestModel(listSessions func(sessions.SessionFilter) ([]sessions.SessionRecord, error)) Model {
 	return Model{
-		height:               24,
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeFlows,
-		contentPane:          ui.PaneBottom,
-		activePane:           ui.PaneBottom,
-		terminalFocus:        terminalFocusTerminal,
-		terminalPrefixActive: true,
-		terminalDockVisible:  true,
-		activeTerminalNum:    1,
-		repos:                newRepoPane().SetItems([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}),
-		listSessions:         listSessions,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: internalFakeEmbeddedTerminal{},
-		}},
-	}
+		height:       24,
+		topMode:      ui.ModeWorktrees,
+		bottomMode:   ui.ModeFlows,
+		contentPane:  ui.PaneBottom,
+		activePane:   ui.PaneBottom,
+		repos:        newRepoPane().SetItems([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}),
+		listSessions: listSessions, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:        terminalFocusTerminal,
+			terminalPrefixActive: true,
+			terminalDockVisible:  true,
+			activeTerminalNum:    1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: internalFakeEmbeddedTerminal{},
+			}}}}
 }
 
 func TestTerminalCommandSessionPickerLoadsStoredSessionsOnDemand(t *testing.T) {
@@ -958,18 +942,17 @@ func TestTerminalCommandSessionPickerLoadHandlesEmptyErrorAndStaleResults(t *tes
 func TestSessionResumeExpandsCollapsedDockAndFocusesTerminalInInputMode(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeSessions,
-		contentPane:         ui.PaneBottom,
-		width:               160,
-		height:              24,
-		activePane:          ui.PaneBottom,
-		terminalFocus:       terminalFocusList,
-		terminalDockVisible: false,
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			return term, nil
-		},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
+		width:       160,
+		height:      24,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:       terminalFocusList,
+			terminalDockVisible: false,
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				return term, nil
+			}}}
 	next, _ := m.resumeSessionInEmbeddedTerminal(actions.AgentLaunchContext{}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"}, nil)
 	if !next.terminalDockVisible || next.activePane == ui.PaneRepos || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
 		t.Fatalf("session resume state = visible %v pane %d focus %d prefix %v, want expanded terminal input", next.terminalDockVisible, next.activePane, next.terminalFocus, next.terminalPrefixActive)
@@ -982,19 +965,18 @@ func TestSessionResumeExpandsCollapsedDockAndFocusesTerminalInInputMode(t *testi
 func TestInteractiveFlowLaunchFocusExpandsCollapsedDock(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeFlows,
-		contentPane:         ui.PaneBottom,
-		width:               160,
-		height:              24,
-		activePane:          ui.PaneBottom,
-		terminalFocus:       terminalFocusList,
-		terminalDockVisible: false,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
-		}},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		width:       160,
+		height:      24,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:       terminalFocusList,
+			terminalDockVisible: false,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
+			}}}}
 
 	next := m.updateFlowTerminalFocusAfterLaunch(actions.AgentLaunchContext{})
 	if !next.terminalDockVisible || next.activePane == ui.PaneRepos || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
@@ -1008,19 +990,18 @@ func TestInteractiveFlowLaunchFocusExpandsCollapsedDock(t *testing.T) {
 func TestGitAndNonGitModeSwitchesKeepTerminalDockSize(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
-		topMode:             ui.ModeWorktrees,
-		bottomMode:          ui.ModeSessions,
-		contentPane:         ui.PaneBottom,
-		lastGitMode:         ui.ModeWorktrees,
-		width:               160,
-		height:              24,
-		activePane:          ui.PaneBottom,
-		terminalDockVisible: true,
-		activeTerminalNum:   1,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
-		}},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
+		lastGitMode: ui.ModeWorktrees,
+		width:       160,
+		height:      24,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalDockVisible: true,
+			activeTerminalNum:   1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+			}}}}
 
 	m.activePane = ui.PaneTop
 	m.contentPane = ui.PaneTop
@@ -1048,15 +1029,14 @@ func TestGitAndNonGitModeSwitchesKeepTerminalDockSize(t *testing.T) {
 
 func TestDismissActiveTerminalWithOnlyPendingSurvivorsReturnsToListFocus(t *testing.T) {
 	m := Model{
-		activePane:           ui.PaneBottom,
-		terminalFocus:        terminalFocusTerminal,
-		terminalPrefixActive: true,
-		activeTerminalNum:    1,
-		embeddedTerminals: []embeddedTerminalSlot{
-			{Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{}},
-			{Number: 2, ID: 2, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{}},
-		},
-	}
+		activePane: ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:        terminalFocusTerminal,
+			terminalPrefixActive: true,
+			activeTerminalNum:    1,
+			embeddedTerminals: []embeddedTerminalSlot{
+				{Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{}},
+				{Number: 2, ID: 2, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{}},
+			}}}
 
 	next := m.dismissEmbeddedTerminal(1)
 	if next.activeTerminalNum != 0 || next.terminalFocus != terminalFocusList || next.terminalPrefixActive {
@@ -1076,18 +1056,17 @@ func TestNumberedModeKeysRemainAvailableWithSessionTerminalListFocused(t *testin
 	} {
 		t.Run(string(tt.key), func(t *testing.T) {
 			m := Model{
-				topMode:             ui.ModeWorktrees,
-				bottomMode:          ui.ModeSessions,
-				contentPane:         ui.PaneBottom,
-				lastGitMode:         ui.ModeWorktrees,
-				activePane:          ui.PaneBottom,
-				terminalFocus:       terminalFocusList,
-				terminalDockVisible: true,
-				activeTerminalNum:   1,
-				embeddedTerminals: []embeddedTerminalSlot{{
-					Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: internalFakeEmbeddedTerminal{},
-				}},
-			}
+				topMode:     ui.ModeWorktrees,
+				bottomMode:  ui.ModeSessions,
+				contentPane: ui.PaneBottom,
+				lastGitMode: ui.ModeWorktrees,
+				activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+					terminalFocus:       terminalFocusList,
+					terminalDockVisible: true,
+					activeTerminalNum:   1,
+					embeddedTerminals: []embeddedTerminalSlot{{
+						Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: internalFakeEmbeddedTerminal{},
+					}}}}
 			nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			next := nextModel.(Model)
 			if next.focusedMode() != tt.wantMode {
@@ -1096,7 +1075,7 @@ func TestNumberedModeKeysRemainAvailableWithSessionTerminalListFocused(t *testin
 		})
 	}
 
-	m := Model{topMode: ui.ModeWorktrees, bottomMode: ui.ModeSessions, contentPane: ui.PaneBottom, activePane: ui.PaneRepos, terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Number: 1, Terminal: internalFakeEmbeddedTerminal{}}}}
+	m := Model{topMode: ui.ModeWorktrees, bottomMode: ui.ModeSessions, contentPane: ui.PaneBottom, activePane: ui.PaneRepos, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Number: 1, Terminal: internalFakeEmbeddedTerminal{}}}}}
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	if next := nextModel.(Model); next.focusedMode() != ui.ModeSessions {
 		t.Fatalf("repo-pane numbered key changed mode to %d, want sessions", next.focusedMode())
@@ -1249,22 +1228,22 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	t.Cleanup(term.release)
 	startCalls := 0
 	m := Model{
-		height:        24,
-		topMode:       ui.ModeWorktrees,
-		bottomMode:    ui.ModeFlows,
-		contentPane:   ui.PaneBottom,
-		activePane:    ui.PaneBottom,
-		terminalFocus: terminalFocusList,
+		height:      24,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom,
 		// Seeded so the stable IDs handed out below (41, 42) cannot coincide
 		// with the Flow terminal numbers the same slots receive (1, 2). In a
 		// zero-valued model both counters start at 1, and activation keyed on
 		// slot.Number would satisfy every assertion in this test.
-		nextEmbeddedTerminalID: 40,
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			startCalls++
-			return term, nil
-		},
-	}
+		embeddedTerminalState: embeddedTerminalState{
+			nextEmbeddedTerminalID: 40,
+			terminalFocus:          terminalFocusList,
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				startCalls++
+				return term, nil
+			}}}
 	ctx := actions.AgentLaunchContext{
 		Command:           "codex",
 		FlowID:            "flow-1",
@@ -1453,17 +1432,16 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 	term := &prefillReadyFakeEmbeddedTerminal{lines: [][]string{{"", "   "}}}
 	startCalls := 0
 	m := Model{
-		height:        24,
-		topMode:       ui.ModeWorktrees,
-		bottomMode:    ui.ModeFlows,
-		contentPane:   ui.PaneBottom,
-		activePane:    ui.PaneBottom,
-		terminalFocus: terminalFocusList,
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			startCalls++
-			return term, nil
-		},
-	}
+		height:      24,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus: terminalFocusList,
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				startCalls++
+				return term, nil
+			}}}
 	ctx := actions.AgentLaunchContext{
 		Command:           "codex",
 		FlowID:            "flow-1",
@@ -1500,16 +1478,15 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 func TestStaleEmbeddedPromptPrefillResultIsIgnoredAfterSlotRemoval(t *testing.T) {
 	phaseMutationRan := false
 	m := Model{
-		topMode:       ui.ModeWorktrees,
-		bottomMode:    ui.ModeFlows,
-		contentPane:   ui.PaneBottom,
-		activePane:    ui.PaneBottom,
-		terminalFocus: terminalFocusList,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom,
 		setFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseMutationRan = true
 			return flowstore.FlowRecord{}, nil
-		},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus: terminalFocusList}}
 
 	nextModel, cmd := m.Update(embeddedPromptPrefillResultMsg{
 		ID:            42,
@@ -1733,15 +1710,14 @@ func waitInternalFileContains(t *testing.T, path, want string) {
 }
 
 func TestActiveTerminalRepoPathsIncludesOnlyRunningOwnedTerminals(t *testing.T) {
-	m := Model{
+	m := Model{embeddedTerminalState: embeddedTerminalState{
 		embeddedTerminals: []embeddedTerminalSlot{
 			{RepoPath: "/dev/alpha", Terminal: internalFakeEmbeddedTerminal{}},
 			{RepoPath: "/dev/beta", Terminal: internalFakeEmbeddedTerminal{state: "exited"}},
 			{RepoPath: "/dev/gamma", Terminal: internalFakeEmbeddedTerminal{state: "starting"}},
 			{RepoPath: "", Terminal: internalFakeEmbeddedTerminal{}},
 			{RepoPath: "/dev/delta", Terminal: nil},
-		},
-	}
+		}}}
 
 	active := m.activeTerminalRepoPaths()
 
@@ -1758,12 +1734,11 @@ func TestActiveTerminalRepoPathsIncludesOnlyRunningOwnedTerminals(t *testing.T) 
 }
 
 func TestActiveTerminalRepoPathsClearsWhenLastRunningSlotIsDismissed(t *testing.T) {
-	m := Model{
+	m := Model{embeddedTerminalState: embeddedTerminalState{
 		embeddedTerminals: []embeddedTerminalSlot{
 			{ID: 1, Number: 1, Scope: embeddedTerminalScopeSession, RepoPath: "/dev/alpha", Terminal: internalFakeEmbeddedTerminal{state: "exited"}},
 			{ID: 2, Number: 2, Scope: embeddedTerminalScopeSession, RepoPath: "/dev/alpha", Terminal: internalFakeEmbeddedTerminal{}},
-		},
-	}
+		}}}
 
 	if !m.activeTerminalRepoPaths()["/dev/alpha"] {
 		t.Fatalf("repo should remain active while one matching slot is running")
@@ -1777,11 +1752,10 @@ func TestActiveTerminalRepoPathsClearsWhenLastRunningSlotIsDismissed(t *testing.
 }
 
 func TestOpenEmbeddedTerminalStoresSessionRepoPath(t *testing.T) {
-	m := Model{
+	m := Model{embeddedTerminalState: embeddedTerminalState{
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			return internalFakeEmbeddedTerminal{}, nil
-		},
-	}
+		}}}
 
 	next, opened, err := m.openEmbeddedTerminal(actions.AgentLaunchContext{
 		RepoPath:     "/dev/alpha/",
@@ -1809,11 +1783,10 @@ func TestOpenEmbeddedTerminalStoresSessionRepoPath(t *testing.T) {
 }
 
 func TestOpenFlowEmbeddedTerminalStoresFlowRepoPath(t *testing.T) {
-	m := Model{
+	m := Model{embeddedTerminalState: embeddedTerminalState{
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			return internalFakeEmbeddedTerminal{}, nil
-		},
-	}
+		}}}
 
 	next, opened, err, _ := m.openFlowEmbeddedTerminal(actions.AgentLaunchContext{
 		Command:       "codex",
@@ -1848,14 +1821,13 @@ func TestViewMarksRepoWithRunningTerminalByCleanRepoPath(t *testing.T) {
 		repos: newRepoPane().SetItems([]scanner.Repo{
 			{Path: "/dev/alpha", DisplayName: "alpha"},
 			{Path: "/dev/alpha-worktrees/feature", DisplayName: "feature"},
-		}),
-		embeddedTerminals: []embeddedTerminalSlot{
-			{
-				RepoPath: "/dev/alpha/",
-				Terminal: internalFakeEmbeddedTerminal{},
-			},
-		},
-	}
+		}), embeddedTerminalState: embeddedTerminalState{
+			embeddedTerminals: []embeddedTerminalSlot{
+				{
+					RepoPath: "/dev/alpha/",
+					Terminal: internalFakeEmbeddedTerminal{},
+				},
+			}}}
 
 	view := ansi.Strip(m.View())
 
@@ -2234,34 +2206,33 @@ func TestHandleFlowResultPreservesActiveTerminalWhenClampedSelectionHasNoMatch(t
 
 func TestDismissActiveFlowTerminalKeepsUnifiedDockFocusedOnSurvivor(t *testing.T) {
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeFlows,
-		contentPane:          ui.PaneBottom,
-		activePane:           ui.PaneBottom,
-		activeTerminalNum:    2,
-		terminalFocus:        terminalFocusTerminal,
-		terminalPrefixActive: true,
-		embeddedTerminals: []embeddedTerminalSlot{
-			{
-				Number:   1,
-				Scope:    embeddedTerminalScopeSession,
-				Provider: "codex",
-				Identity: "session",
-				Terminal: internalFakeEmbeddedTerminal{},
-				ID:       1,
-			},
-			{
-				Number:      2,
-				Scope:       embeddedTerminalScopeFlow,
-				Provider:    "codex",
-				Identity:    "implementation",
-				FlowID:      "flow-1",
-				FlowPhaseID: "implementation",
-				Terminal:    internalFakeEmbeddedTerminal{state: "exited"},
-				ID:          2,
-			},
-		},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			activeTerminalNum:    2,
+			terminalFocus:        terminalFocusTerminal,
+			terminalPrefixActive: true,
+			embeddedTerminals: []embeddedTerminalSlot{
+				{
+					Number:   1,
+					Scope:    embeddedTerminalScopeSession,
+					Provider: "codex",
+					Identity: "session",
+					Terminal: internalFakeEmbeddedTerminal{},
+					ID:       1,
+				},
+				{
+					Number:      2,
+					Scope:       embeddedTerminalScopeFlow,
+					Provider:    "codex",
+					Identity:    "implementation",
+					FlowID:      "flow-1",
+					FlowPhaseID: "implementation",
+					Terminal:    internalFakeEmbeddedTerminal{state: "exited"},
+					ID:          2,
+				},
+			}}}
 
 	m = m.dismissEmbeddedTerminal(2)
 
@@ -2281,33 +2252,32 @@ func TestDismissActiveFlowTerminalKeepsUnifiedDockFocusedOnSurvivor(t *testing.T
 
 func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeSessions,
-		contentPane:          ui.PaneBottom,
-		activeTerminalNum:    1,
-		terminalFocus:        terminalFocusTerminal,
-		terminalPrefixActive: true,
-		embeddedTerminals: []embeddedTerminalSlot{
-			{
-				Number:   1,
-				Scope:    embeddedTerminalScopeSession,
-				Provider: "codex",
-				Identity: "session",
-				Terminal: internalFakeEmbeddedTerminal{},
-				ID:       1,
-			},
-			{
-				Number:      2,
-				Scope:       embeddedTerminalScopeFlow,
-				Provider:    "codex",
-				Identity:    "implementation",
-				FlowID:      "flow-1",
-				FlowPhaseID: "implementation",
-				Terminal:    internalFakeEmbeddedTerminal{state: "exited"},
-				ID:          2,
-			},
-		},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			activeTerminalNum:    1,
+			terminalFocus:        terminalFocusTerminal,
+			terminalPrefixActive: true,
+			embeddedTerminals: []embeddedTerminalSlot{
+				{
+					Number:   1,
+					Scope:    embeddedTerminalScopeSession,
+					Provider: "codex",
+					Identity: "session",
+					Terminal: internalFakeEmbeddedTerminal{},
+					ID:       1,
+				},
+				{
+					Number:      2,
+					Scope:       embeddedTerminalScopeFlow,
+					Provider:    "codex",
+					Identity:    "implementation",
+					FlowID:      "flow-1",
+					FlowPhaseID: "implementation",
+					Terminal:    internalFakeEmbeddedTerminal{state: "exited"},
+					ID:          2,
+				},
+			}}}
 
 	m = m.dismissEmbeddedTerminal(2)
 
@@ -2326,11 +2296,9 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	var gotTarget, gotCWD string
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeSessions,
-		contentPane:          ui.PaneBottom,
-		activeTerminalNum:    1,
-		terminalPrefixActive: true,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
 		launchDetachedTerminal: func(target, cwd string) (actions.TerminalLaunchSpec, error) {
 			gotTarget = target
 			gotCWD = cwd
@@ -2339,19 +2307,20 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 		finalizeAgentSession: func(actions.AgentLaunchContext) error {
 			t.Fatal("detach should not finalize the agent session")
 			return nil
-		},
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number:       1,
-			Scope:        embeddedTerminalScopeSession,
-			Provider:     "codex",
-			Identity:     "session",
-			RepoPath:     "/dev/repo",
-			WorktreePath: "/dev/worktree",
-			WorkingDir:   "/dev/worktree/subdir",
-			Terminal:     term,
-			ID:           1,
-		}},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			activeTerminalNum:    1,
+			terminalPrefixActive: true,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number:       1,
+				Scope:        embeddedTerminalScopeSession,
+				Provider:     "codex",
+				Identity:     "session",
+				RepoPath:     "/dev/repo",
+				WorktreePath: "/dev/worktree",
+				WorkingDir:   "/dev/worktree/subdir",
+				Terminal:     term,
+				ID:           1,
+			}}}}
 
 	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
 
@@ -2394,15 +2363,11 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-flow-agent"}
 	var gotTarget, gotCWD string
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeFlows,
-		contentPane:          ui.PaneBottom,
-		activePane:           ui.PaneBottom,
-		terminalFocus:        terminalFocusTerminal,
-		activeTerminalNum:    1,
-		terminalPrefixActive: true,
-		terminalConfirmID:    1,
-		modal:                modal.OpenConfirm(embeddedTerminalTerminatePrompt, nil),
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom,
+		modal:       modal.OpenConfirm(embeddedTerminalTerminatePrompt, nil),
 		launchDetachedTerminal: func(target, cwd string) (actions.TerminalLaunchSpec, error) {
 			gotTarget = target
 			gotCWD = cwd
@@ -2411,40 +2376,43 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 		finalizeAgentSession: func(actions.AgentLaunchContext) error {
 			t.Fatal("detach should not finalize the agent session")
 			return nil
-		},
-		embeddedTerminals: []embeddedTerminalSlot{
-			{
-				Number:       1,
-				Scope:        embeddedTerminalScopeFlow,
-				Provider:     "codex",
-				Identity:     "implementation",
-				RepoPath:     "/dev/repo",
-				WorktreePath: "/dev/worktree",
-				FlowID:       "flow-1",
-				FlowPhaseID:  "implementation",
-				Terminal:     term,
-				ID:           1,
-			},
-			{
-				Number:      2,
-				Scope:       embeddedTerminalScopeFlow,
-				Provider:    "claude",
-				Identity:    "review",
-				FlowID:      "flow-1",
-				FlowPhaseID: "review",
-				Terminal:    internalFakeEmbeddedTerminal{},
-				ID:          2,
-			},
-			{
-				Number:   3,
-				Scope:    embeddedTerminalScopeSession,
-				Provider: "codex",
-				Identity: "session",
-				Terminal: internalFakeEmbeddedTerminal{},
-				ID:       3,
-			},
-		},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:        terminalFocusTerminal,
+			activeTerminalNum:    1,
+			terminalPrefixActive: true,
+			terminalConfirmID:    1,
+			embeddedTerminals: []embeddedTerminalSlot{
+				{
+					Number:       1,
+					Scope:        embeddedTerminalScopeFlow,
+					Provider:     "codex",
+					Identity:     "implementation",
+					RepoPath:     "/dev/repo",
+					WorktreePath: "/dev/worktree",
+					FlowID:       "flow-1",
+					FlowPhaseID:  "implementation",
+					Terminal:     term,
+					ID:           1,
+				},
+				{
+					Number:      2,
+					Scope:       embeddedTerminalScopeFlow,
+					Provider:    "claude",
+					Identity:    "review",
+					FlowID:      "flow-1",
+					FlowPhaseID: "review",
+					Terminal:    internalFakeEmbeddedTerminal{},
+					ID:          2,
+				},
+				{
+					Number:   3,
+					Scope:    embeddedTerminalScopeSession,
+					Provider: "codex",
+					Identity: "session",
+					Terminal: internalFakeEmbeddedTerminal{},
+					ID:       3,
+				},
+			}}}
 
 	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
 
@@ -2483,23 +2451,22 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 func TestTerminalPrefixDReportsHandoffConstructionFailureAfterDetach(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeSessions,
-		contentPane:          ui.PaneBottom,
-		activeTerminalNum:    1,
-		terminalPrefixActive: true,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
 		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{}, errors.New("no external terminal")
-		},
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number:   1,
-			Scope:    embeddedTerminalScopeSession,
-			Provider: "codex",
-			Identity: "session",
-			Terminal: term,
-			ID:       1,
-		}},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			activeTerminalNum:    1,
+			terminalPrefixActive: true,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number:   1,
+				Scope:    embeddedTerminalScopeSession,
+				Provider: "codex",
+				Identity: "session",
+				Terminal: term,
+				ID:       1,
+			}}}}
 
 	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
 
@@ -2524,26 +2491,25 @@ func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	cleaned := false
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeSessions,
-		contentPane:          ui.PaneBottom,
-		activeTerminalNum:    1,
-		terminalPrefixActive: true,
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom,
 		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{
 				Cmd:     exec.Command("sh", "-c", "exit 7"),
 				Cleanup: func() { cleaned = true },
 			}, nil
-		},
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number:   1,
-			Scope:    embeddedTerminalScopeSession,
-			Provider: "codex",
-			Identity: "session",
-			Terminal: term,
-			ID:       1,
-		}},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			activeTerminalNum:    1,
+			terminalPrefixActive: true,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number:   1,
+				Scope:    embeddedTerminalScopeSession,
+				Provider: "codex",
+				Identity: "session",
+				Terminal: term,
+				ID:       1,
+			}}}}
 
 	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
 
@@ -2575,20 +2541,19 @@ func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
 
 func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeSessions,
-		contentPane:          ui.PaneBottom,
-		activeTerminalNum:    1,
-		terminalPrefixActive: true,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number:   1,
-			Scope:    embeddedTerminalScopeSession,
-			Provider: "codex",
-			Identity: "session",
-			Terminal: internalFakeEmbeddedTerminal{},
-			ID:       1,
-		}},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeSessions,
+		contentPane: ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			activeTerminalNum:    1,
+			terminalPrefixActive: true,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number:   1,
+				Scope:    embeddedTerminalScopeSession,
+				Provider: "codex",
+				Identity: "session",
+				Terminal: internalFakeEmbeddedTerminal{},
+				ID:       1,
+			}}}}
 
 	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
 
@@ -2606,22 +2571,21 @@ func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
 func TestFlowTerminalInputModeDPassesThrough(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-flow-agent"}
 	m := Model{
-		topMode:              ui.ModeWorktrees,
-		bottomMode:           ui.ModeFlows,
-		contentPane:          ui.PaneBottom,
-		activePane:           ui.PaneBottom,
-		terminalFocus:        terminalFocusTerminal,
-		activeTerminalNum:    1,
-		terminalPrefixActive: false,
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Number:   1,
-			Scope:    embeddedTerminalScopeFlow,
-			Provider: "codex",
-			Identity: "implementation",
-			Terminal: term,
-			ID:       1,
-		}},
-	}
+		topMode:     ui.ModeWorktrees,
+		bottomMode:  ui.ModeFlows,
+		contentPane: ui.PaneBottom,
+		activePane:  ui.PaneBottom, embeddedTerminalState: embeddedTerminalState{
+			terminalFocus:        terminalFocusTerminal,
+			activeTerminalNum:    1,
+			terminalPrefixActive: false,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number:   1,
+				Scope:    embeddedTerminalScopeFlow,
+				Provider: "codex",
+				Identity: "implementation",
+				Terminal: term,
+				ID:       1,
+			}}}}
 
 	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
 

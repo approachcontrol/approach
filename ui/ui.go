@@ -390,78 +390,41 @@ const (
 const StashPrefixWidth = 15
 
 // RenderParams holds everything the renderer needs.
-type RenderParams struct {
-	Repos                          []scanner.Repo
-	ActiveTerminalRepoPaths        map[string]bool
-	Selected                       int
-	Width                          int
-	Height                         int
-	Mode                           Mode
-	TopMode                        Mode
-	BottomMode                     Mode
-	ContentPane                    Pane
+// OverlayParams groups modal/overlay fields on RenderParams.
+type OverlayParams struct {
+	Overlay                  OverlayState
+	OverlayDiff              string
+	OverlayScroll            int
+	ConfirmPrompt            string
+	ConfirmForce             bool
+	InputPrompt              string
+	InputPlaceholder         string
+	InputValue               string
+	InputError               string
+	InputMode                InputMode
+	InputHeight              int
+	InputCursor              int
+	Editor                   EditorParams
+	WorktreeInputPrompt      string
+	WorktreeInputPlaceholder string
+	WorktreeInput            string
+	WorktreeInputErr         string
+	SelectPrompt             string
+	SelectItems              []SelectItem
+	SelectSelected           int
+	SelectWidth              int
+	SelectHeight             int
+	SelectNote               string
+	SelectNoteKind           NoteKind
+	SelectPlacement          SelectPlacement
+	Form                     FormView
+	OverlayText              string
+}
+
+// FlowParams groups Flow-surface fields on RenderParams.
+type FlowParams struct {
 	ActiveFlows                    bool
 	PRBabysitter                   bool
-	Branches                       []gitquery.BranchRow
-	Stashes                        []gitquery.Stash
-	BranchSelected                 int
-	StashSelected                  int
-	Overlay                        OverlayState
-	OverlayDiff                    string
-	OverlayScroll                  int
-	ConfirmPrompt                  string
-	ConfirmForce                   bool
-	InputPrompt                    string
-	InputPlaceholder               string
-	InputValue                     string
-	InputError                     string
-	InputMode                      InputMode
-	InputHeight                    int
-	InputCursor                    int
-	Editor                         EditorParams
-	WorktreeInputPrompt            string
-	WorktreeInputPlaceholder       string
-	WorktreeInput                  string
-	WorktreeInputErr               string
-	SelectPrompt                   string
-	SelectItems                    []SelectItem
-	SelectSelected                 int
-	SelectWidth                    int
-	SelectHeight                   int
-	SelectNote                     string
-	SelectNoteKind                 NoteKind
-	SelectPlacement                SelectPlacement
-	Form                           FormView
-	BranchScroll                   int
-	RepoScroll                     int
-	StashScroll                    int
-	ActivePane                     Pane
-	RepoPaneCollapsed              bool
-	Destructive                    bool
-	Worktrees                      []gitquery.Worktree
-	WorktreeSelected               int
-	WorktreeScroll                 int
-	WorktreeSessions               []sessions.SessionRecord
-	WorktreeSessionSelected        int
-	WorktreeSessionScroll          int
-	InlineWorktreeSessions         bool
-	Commits                        []gitquery.Commit
-	CommitSelected                 int
-	CommitScroll                   int
-	Reflogs                        []gitquery.ReflogEntry
-	ReflogSelected                 int
-	ReflogScroll                   int
-	Sessions                       []sessions.SessionRecord
-	SessionSelected                int
-	SessionScroll                  int
-	EmbeddedTerminals              []EmbeddedTerminalTab
-	EmbeddedTerminalLines          []string
-	EmbeddedTerminalPrefix         bool
-	EmbeddedTerminalVisible        bool
-	EmbeddedTerminalFocused        bool
-	Plans                          []planstore.PlanRecord
-	PlanSelected                   int
-	PlanScroll                     int
 	Flows                          []flowstore.FlowRecord
 	PRBabysitterRows               []PRBabysitterRow
 	FlowSelected                   int
@@ -469,29 +432,7 @@ type RenderParams struct {
 	FlowDegradationWarning         string
 	ActiveFlowDegradationWarning   string
 	PRBabysitterDegradationWarning string
-	TopDegradationWarning          string
-	BottomDegradationWarning       string
-	BeadsOpen                      []beadsquery.Bead
-	BeadsOpenSelected              int
-	BeadsOpenScroll                int
-	BeadsOpenAvailable             bool
-	BeadsOpenPending               bool
-	ReadyBeadFlowCreateAvailable   bool
-	ReadyBeadFlowStartAvailable    bool
-	ReadyBeadFlowKeysOwned         bool
-	BeadSliceEpicAvailable         bool
-	EpicAutoOnAvailable            bool
-	EpicAutoOffAvailable           bool
-	EpicAutoKeyOwned               bool
-	BeadsError                     string
-	BeadsQuery                     string
-	BeadsSourceCount               int
-	BeadsClosedTotal               int
-	BeadExpansion                  BeadExpansion
-	FlowTerminalActivity           []FlowTerminalActivity
-	ExpandedPlanID                 string
 	ExpandedFlowID                 string
-	SelectedPlanPhaseID            string
 	SelectedFlowPhaseID            string
 	FlowHeadless                   bool
 	FlowAutoModeSelected           bool
@@ -509,31 +450,105 @@ type RenderParams struct {
 	FlowPhaseResetReadySelected    bool
 	FlowPhaseReleaseSelected       bool
 	FlowPhaseResumableSelected     bool
-	OverlayText                    string
-	TransientError                 string
-	TransientErrorFadeStep         int
-	SearchActive                   bool
-	RepoSearch                     string
-	ItemSearch                     string
-	ItemSourceCount                int
-	TopItemSearch                  string
-	BottomItemSearch               string
-	TopItemSourceCount             int
-	BottomItemSourceCount          int
-	RepoEmptyMessage               string
-	RightEmptyMessage              string
-	TopListError                   string
-	BottomListError                string
 	ActiveFlowsListError           string
 	PRBabysitterListError          string
-	FetchAvailable                 bool
-	FetchVisibleAvailable          bool
-	RepoCreateAvailable            bool
-	PullAvailable                  bool
-	WorktreeMoveAvailable          bool
-	WorktreeSessionsOpen           bool
-	AgentAvailable                 bool
-	NewAgentAvailable              bool
+}
+
+// EmbeddedTerminalParams groups docked-terminal fields on RenderParams.
+type EmbeddedTerminalParams struct {
+	EmbeddedTerminals       []EmbeddedTerminalTab
+	EmbeddedTerminalLines   []string
+	EmbeddedTerminalPrefix  bool
+	EmbeddedTerminalVisible bool
+	EmbeddedTerminalFocused bool
+	FlowTerminalActivity    []FlowTerminalActivity
+}
+
+type RenderParams struct {
+	Repos                   []scanner.Repo
+	ActiveTerminalRepoPaths map[string]bool
+	Selected                int
+	Width                   int
+	Height                  int
+	Mode                    Mode
+	TopMode                 Mode
+	BottomMode              Mode
+	ContentPane             Pane
+	Branches                []gitquery.BranchRow
+	Stashes                 []gitquery.Stash
+	BranchSelected          int
+	StashSelected           int
+	OverlayParams
+	FlowParams
+	EmbeddedTerminalParams
+	BranchScroll                 int
+	RepoScroll                   int
+	StashScroll                  int
+	ActivePane                   Pane
+	RepoPaneCollapsed            bool
+	Destructive                  bool
+	Worktrees                    []gitquery.Worktree
+	WorktreeSelected             int
+	WorktreeScroll               int
+	WorktreeSessions             []sessions.SessionRecord
+	WorktreeSessionSelected      int
+	WorktreeSessionScroll        int
+	InlineWorktreeSessions       bool
+	Commits                      []gitquery.Commit
+	CommitSelected               int
+	CommitScroll                 int
+	Reflogs                      []gitquery.ReflogEntry
+	ReflogSelected               int
+	ReflogScroll                 int
+	Sessions                     []sessions.SessionRecord
+	SessionSelected              int
+	SessionScroll                int
+	Plans                        []planstore.PlanRecord
+	PlanSelected                 int
+	PlanScroll                   int
+	TopDegradationWarning        string
+	BottomDegradationWarning     string
+	BeadsOpen                    []beadsquery.Bead
+	BeadsOpenSelected            int
+	BeadsOpenScroll              int
+	BeadsOpenAvailable           bool
+	BeadsOpenPending             bool
+	ReadyBeadFlowCreateAvailable bool
+	ReadyBeadFlowStartAvailable  bool
+	ReadyBeadFlowKeysOwned       bool
+	BeadSliceEpicAvailable       bool
+	EpicAutoOnAvailable          bool
+	EpicAutoOffAvailable         bool
+	EpicAutoKeyOwned             bool
+	BeadsError                   string
+	BeadsQuery                   string
+	BeadsSourceCount             int
+	BeadsClosedTotal             int
+	BeadExpansion                BeadExpansion
+	ExpandedPlanID               string
+	SelectedPlanPhaseID          string
+	TransientError               string
+	TransientErrorFadeStep       int
+	SearchActive                 bool
+	RepoSearch                   string
+	ItemSearch                   string
+	ItemSourceCount              int
+	TopItemSearch                string
+	BottomItemSearch             string
+	TopItemSourceCount           int
+	BottomItemSourceCount        int
+	RepoEmptyMessage             string
+	RightEmptyMessage            string
+	TopListError                 string
+	BottomListError              string
+	FetchAvailable               bool
+	FetchVisibleAvailable        bool
+	RepoCreateAvailable          bool
+	PullAvailable                bool
+	WorktreeMoveAvailable        bool
+	WorktreeSessionsOpen         bool
+	AgentAvailable               bool
+	NewAgentAvailable            bool
 	// TmuxAttachAvailable reports that [launch].backend is "tmux" and tmux is
 	// installed, so the T attach affordance has something to offer.
 	TmuxAttachAvailable bool

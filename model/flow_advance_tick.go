@@ -19,6 +19,15 @@ import (
 // never wait on wall time.
 const defaultAutoAdvanceTickInterval = time.Second
 
+// autoAdvanceState is the AutoMode poll/launch cluster on Model.
+type autoAdvanceState struct {
+	autoAdvanceDrainFlows   map[string]struct{}
+	autoAdvanceTickInterval time.Duration
+	autoAdvanceRequestSeq   uint64
+	autoAdvanceInFlight     uint64
+	autoAdvanceSnapshot     []flowstore.FlowRecord
+}
+
 // autoAdvanceTickDelay is the cadence this Model polls at. A zero field means
 // "unset" — a directly constructed Model still ticks at the production rate.
 func (m Model) autoAdvanceTickDelay() time.Duration {

@@ -99,8 +99,6 @@ func TestEpicProgressionFailureTerminalHaltsAndDropsTracking(t *testing.T) {
 			var updates []flowstore.EpicProgressionHaltUpdate
 			sideEffects := 0
 			m := Model{
-				autoAdvanceInFlight:                    1,
-				autoAdvanceRequestSeq:                  1,
 				epicProgressionBaselines:               map[string]flowstore.FlowRecord{key: source},
 				epicProgressionBaselineMinimumRequests: map[string]uint64{key: 1},
 				epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
@@ -117,8 +115,9 @@ func TestEpicProgressionFailureTerminalHaltsAndDropsTracking(t *testing.T) {
 				},
 				listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) { sideEffects++; return nil, nil },
 				listReadyBeads:    func(string) ([]beadsquery.Bead, error) { sideEffects++; return nil, nil },
-				createFlow:        func(FlowStartRequest) (FlowStartResult, error) { sideEffects++; return FlowStartResult{}, nil },
-			}
+				createFlow:        func(FlowStartRequest) (FlowStartResult, error) { sideEffects++; return FlowStartResult{}, nil }, autoAdvanceState: autoAdvanceState{
+					autoAdvanceInFlight:   1,
+					autoAdvanceRequestSeq: 1}}
 
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{observed}, Request: 1})
 			if !next.flowPreparationAdmission || next.flowPreparationOwner.Kind != flowPreparationEpicHalt {
@@ -219,7 +218,6 @@ func TestEpicProgressionSuccessAndNonTerminalObservationsDoNotHalt(t *testing.T)
 			source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 			observed := tt.observed(cloneFlowRecord(source))
 			m := Model{
-				autoAdvanceInFlight:      1,
 				epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 				haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 					t.Fatal("non-failure observation halted progression")
@@ -227,8 +225,8 @@ func TestEpicProgressionSuccessAndNonTerminalObservationsDoNotHalt(t *testing.T)
 				},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					return flowstore.EpicProgression{}, false, nil
-				},
-			}
+				}, autoAdvanceState: autoAdvanceState{
+					autoAdvanceInFlight: 1}}
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{observed}, Request: 1})
 			advanced := false
 			for _, msg := range immediateFlowRefreshMessages(cmd) {
@@ -305,7 +303,6 @@ func TestEpicProgressionHaltPersistenceFailureUsesAuthoritativeState(t *testing.
 			observed.Status = flowstore.StatusBlocked
 			halts := 0
 			m := Model{
-				autoAdvanceInFlight:      1,
 				epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 				haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 					halts++
@@ -313,8 +310,8 @@ func TestEpicProgressionHaltPersistenceFailureUsesAuthoritativeState(t *testing.
 				},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					return tt.progression, tt.found, tt.readErr
-				},
-			}
+				}, autoAdvanceState: autoAdvanceState{
+					autoAdvanceInFlight: 1}}
 			next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{observed}, Request: 1})
 			result := epicProgressionHaltMessage(t, cmd)
 			if result.disposition != tt.wantDisposition {
@@ -360,15 +357,14 @@ func TestEpicProgressionHaltSharesPreparationAdmissionAndRotates(t *testing.T) {
 
 	t.Run("held admission defers without losing the edge", func(t *testing.T) {
 		m := Model{
-			autoAdvanceInFlight:      1,
 			epicProgressionBaselines: map[string]flowstore.FlowRecord{firstKey: firstSource},
 			flowPreparationAdmission: true,
 			flowPreparationSeq:       7,
 			flowPreparationOwner:     flowPreparationOwner{Kind: flowPreparationEpicAdvance, Token: 7},
 			haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 				return flowstore.EpicProgression{RepoPath: repo, EpicID: firstEpic}, nil
-			},
-		}
+			}, autoAdvanceState: autoAdvanceState{
+				autoAdvanceInFlight: 1}}
 		next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{firstBlocked}, Request: 1})
 		for _, msg := range immediateFlowRefreshMessages(cmd) {
 			if _, ok := msg.(epicProgressionHaltResultMsg); ok {
@@ -388,7 +384,6 @@ func TestEpicProgressionHaltSharesPreparationAdmissionAndRotates(t *testing.T) {
 
 	t.Run("failing halt rotates to the next tracked epic", func(t *testing.T) {
 		m := Model{
-			autoAdvanceInFlight: 1,
 			epicProgressionBaselines: map[string]flowstore.FlowRecord{
 				firstKey: firstSource, secondKey: secondSource,
 			},
@@ -397,8 +392,8 @@ func TestEpicProgressionHaltSharesPreparationAdmissionAndRotates(t *testing.T) {
 			},
 			readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 				return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
-			},
-		}
+			}, autoAdvanceState: autoAdvanceState{
+				autoAdvanceInFlight: 1}}
 		next, firstCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: blocked, Request: 1})
 		first := epicProgressionHaltMessage(t, firstCmd)
 		if first.epicKey != firstKey {
@@ -423,13 +418,12 @@ func TestEpicProgressionStaleHaltResultIsFencedAndReleasesAdmission(t *testing.T
 	blocked := cloneFlowRecord(source)
 	blocked.Status = flowstore.StatusBlocked
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		haltEpicProgression: func(update flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 			halt := update.Halt
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &halt}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{blocked}, Request: 1})
 	result := epicProgressionHaltMessage(t, cmd)
 	if result.ownerToken == 0 {
@@ -633,13 +627,12 @@ func TestEpicProgressionHaltAnnouncesTheRetainedCause(t *testing.T) {
 		Message:     "child Flow flow-z halted auto-progression",
 	}
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 			first := retained
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &first}, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{blocked}, Request: 1})
 	result := epicProgressionHaltMessage(t, cmd)
 	if result.disposition != epicProgressionHaltPersisted {
@@ -668,7 +661,6 @@ func TestEpicProgressionHaltWriteErrorReportsADurableHalt(t *testing.T) {
 		Message:     "child Flow flow-z halted auto-progression",
 	}
 	m := Model{
-		autoAdvanceInFlight:      1,
 		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
 		haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 			return flowstore.EpicProgression{}, errors.New("commit failed")
@@ -676,8 +668,8 @@ func TestEpicProgressionHaltWriteErrorReportsADurableHalt(t *testing.T) {
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			halt := durable
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &halt}, true, nil
-		},
-	}
+		}, autoAdvanceState: autoAdvanceState{
+			autoAdvanceInFlight: 1}}
 	next, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{observed}, Request: 1})
 	result := epicProgressionHaltMessage(t, cmd)
 	if result.disposition != epicProgressionHaltPersisted {

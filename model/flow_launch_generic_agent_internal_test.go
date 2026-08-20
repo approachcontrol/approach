@@ -405,7 +405,7 @@ func TestGenericWorktreeAgentRetainedSlotRejectsDetachBeforeCallingTerminal(t *t
 
 func TestGenericWorktreeAgentExitedSlotRetainsOccupancyUntilDismissed(t *testing.T) {
 	record := genericFlowAgentRecord(t)
-	m := Model{embeddedTerminals: []embeddedTerminalSlot{
+	m := Model{embeddedTerminalState: embeddedTerminalState{embeddedTerminals: []embeddedTerminalSlot{
 		{
 			Number:    1,
 			ID:        1,
@@ -414,7 +414,7 @@ func TestGenericWorktreeAgentExitedSlotRetainsOccupancyUntilDismissed(t *testing
 			FlowAgent: true,
 			Terminal:  internalFakeEmbeddedTerminal{state: "exited"},
 		},
-	}}
+	}}}
 
 	if m.hasExitedFlowEmbeddedTerminalAutoClose() {
 		t.Fatal("exited generic Flow-agent slot should not schedule automatic dismissal")

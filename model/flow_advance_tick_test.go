@@ -596,16 +596,15 @@ func TestRepairTerminalRemovalRecordsCleanAndSuppressingOutcomes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				autoAdvanceRequestSeq: 11,
+			m := Model{embeddedTerminalState: embeddedTerminalState{
 				embeddedTerminals: []embeddedTerminalSlot{{
 					FlowID:     "flow-repair",
 					FlowRepair: tt.repair,
 					Scope:      embeddedTerminalScopeFlow,
 					ID:         1,
 					Terminal:   internalFakeEmbeddedTerminal{state: tt.state},
-				}},
-			}
+				}}}, autoAdvanceState: autoAdvanceState{
+				autoAdvanceRequestSeq: 11}}
 			m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
 			marker, got := m.pendingRepairAutoDrainFlowIDs["flow-repair"]
 			if tt.wantClean == nil {

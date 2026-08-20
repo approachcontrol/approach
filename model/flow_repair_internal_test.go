@@ -278,21 +278,20 @@ func TestFlowPhaseResumeDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 	starts := 0
 	var failureUpdate flowstore.PhaseUpdate
 	m := Model{
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Scope:      embeddedTerminalScopeFlow,
-			FlowID:     flowID,
-			FlowRepair: true,
-			Terminal:   internalFakeEmbeddedTerminal{state: "running"},
-		}},
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			starts++
-			return internalFakeEmbeddedTerminal{state: "running"}, nil
-		},
 		setFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			failureUpdate = update
 			return flowstore.FlowRecord{}, nil
-		},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Scope:      embeddedTerminalScopeFlow,
+				FlowID:     flowID,
+				FlowRepair: true,
+				Terminal:   internalFakeEmbeddedTerminal{state: "running"},
+			}},
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				starts++
+				return internalFakeEmbeddedTerminal{state: "running"}, nil
+			}}}
 	m.launchSeams.SetPhase = m.setFlowPhase
 	attempt := flowLaunchAttempt{
 		Token:        launchID,
@@ -357,21 +356,20 @@ func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 	starts := 0
 	var failureUpdate flowstore.PhaseUpdate
 	m := Model{
-		embeddedTerminals: []embeddedTerminalSlot{{
-			Scope:      embeddedTerminalScopeFlow,
-			FlowID:     flowID,
-			FlowRepair: true,
-			Terminal:   internalFakeEmbeddedTerminal{state: "running"},
-		}},
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			starts++
-			return internalFakeEmbeddedTerminal{state: "running"}, nil
-		},
 		setFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			failureUpdate = update
 			return flowstore.FlowRecord{}, nil
-		},
-	}
+		}, embeddedTerminalState: embeddedTerminalState{
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Scope:      embeddedTerminalScopeFlow,
+				FlowID:     flowID,
+				FlowRepair: true,
+				Terminal:   internalFakeEmbeddedTerminal{state: "running"},
+			}},
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				starts++
+				return internalFakeEmbeddedTerminal{state: "running"}, nil
+			}}}
 	m.launchSeams.SetPhase = m.setFlowPhase
 	attempt := flowLaunchAttempt{
 		Token:        launchID,
