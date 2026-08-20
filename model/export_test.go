@@ -27,7 +27,7 @@ func modelWithModeForTest(m Model, mode ui.Mode) Model {
 }
 
 func ActiveFlowCreateForTest(m Model) uint64 {
-	return m.activeFlowCreate
+	return m.flowCreateReq.current
 }
 
 func ActiveFlowSelectedForTest(m Model) int {

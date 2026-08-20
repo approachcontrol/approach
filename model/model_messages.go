@@ -2469,11 +2469,24 @@ func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-	return m, func() tea.Msg {
-		if err := m.copyToClipboard(hash); err != nil {
+	return m, m.copyToClipboardCmd(hash)
+}
+
+func (m Model) copyToClipboardCmd(value string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.copyToClipboard(value); err != nil {
 			return ClipboardResultMsg{Err: err.Error()}
 		}
 		return ClipboardResultMsg{}
+	}
+}
+
+func (m Model) openURLCmd(url, label string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.openURL(url); err != nil {
+			return OpenURLResultMsg{Err: err.Error()}
+		}
+		return OpenURLResultMsg{Label: label}
 	}
 }
 
@@ -2486,12 +2499,7 @@ func (m Model) handleCopySessionID() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	sessionID := record.SessionID
-	return m, func() tea.Msg {
-		if err := m.copyToClipboard(sessionID); err != nil {
-			return ClipboardResultMsg{Err: err.Error()}
-		}
-		return ClipboardResultMsg{}
-	}
+	return m, m.copyToClipboardCmd(sessionID)
 }
 
 func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
@@ -2504,12 +2512,7 @@ func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, err.Error())
 		return m, nil
 	}
-	return m, func() tea.Msg {
-		if err := m.copyToClipboard(planPath); err != nil {
-			return ClipboardResultMsg{Err: err.Error()}
-		}
-		return ClipboardResultMsg{}
-	}
+	return m, m.copyToClipboardCmd(planPath)
 }
 
 func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
@@ -2524,12 +2527,7 @@ func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(value) == "" {
 		return m, nil
 	}
-	return m, func() tea.Msg {
-		if err := m.copyToClipboard(value); err != nil {
-			return ClipboardResultMsg{Err: err.Error()}
-		}
-		return ClipboardResultMsg{}
-	}
+	return m, m.copyToClipboardCmd(value)
 }
 
 func (m Model) handleCopyFlowID() (tea.Model, tea.Cmd) {
@@ -2540,12 +2538,7 @@ func (m Model) handleCopyFlowID() (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(flowID) == "" {
 		return m, nil
 	}
-	return m, func() tea.Msg {
-		if err := m.copyToClipboard(flowID); err != nil {
-			return ClipboardResultMsg{Err: err.Error()}
-		}
-		return ClipboardResultMsg{}
-	}
+	return m, m.copyToClipboardCmd(flowID)
 }
 
 func (m Model) handleOpenSelectedFlowPR() (tea.Model, tea.Cmd) {
@@ -2553,12 +2546,7 @@ func (m Model) handleOpenSelectedFlowPR() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	return m, func() tea.Msg {
-		if err := m.openURL(pr.URL); err != nil {
-			return OpenURLResultMsg{Err: err.Error()}
-		}
-		return OpenURLResultMsg{Label: fmt.Sprintf("Opened PR #%d in browser", pr.Number)}
-	}
+	return m, m.openURLCmd(pr.URL, fmt.Sprintf("Opened PR #%d in browser", pr.Number))
 }
 
 func (m Model) handleOpenSelectedFlowIssue() (tea.Model, tea.Cmd) {
@@ -2566,12 +2554,7 @@ func (m Model) handleOpenSelectedFlowIssue() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	return m, func() tea.Msg {
-		if err := m.openURL(issue.URL); err != nil {
-			return OpenURLResultMsg{Err: err.Error()}
-		}
-		return OpenURLResultMsg{Label: fmt.Sprintf("Opened issue #%d in browser", issue.Number)}
-	}
+	return m, m.openURLCmd(issue.URL, fmt.Sprintf("Opened issue #%d in browser", issue.Number))
 }
 
 func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {

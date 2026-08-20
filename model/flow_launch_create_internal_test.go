@@ -212,7 +212,7 @@ func TestCreateFlowLaunchEmbeddedSuccessRefreshesVisibleUnfocusedFlowPane(t *tes
 		Token: "launch-create-1", Kind: flowLaunchKindCreatePhase, FlowID: h.record.FlowID,
 		Create: flowLaunchCreateRequest{Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: 1}, RepoPath: h.record.RepoPath},
 	}
-	m.activeFlowCreate = attempt.Create.Presentation.Request
+	m.flowCreateReq.current = attempt.Create.Presentation.Request
 	m = m.withFlowLaunchAttempt(attempt)
 	beforeRequest := m.ListRequest(ui.ModeFlows)
 	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
@@ -449,8 +449,8 @@ func TestCreateFlowLaunchReadyOriginPersistsBeadAndUsesEmbeddedOnlyHandoff(t *te
 	if len(h.contexts) != 1 || !h.contexts[0].Embedded || !h.contexts[0].Headless {
 		t.Fatalf("Ready launch contexts = %#v", h.contexts)
 	}
-	if m.activeReadyBeadFlowCreate != 0 || m.activeFlowCreate != 0 || h.releases != 1 {
-		t.Fatalf("Ready ownership: ready=%d new=%d releases=%d", m.activeReadyBeadFlowCreate, m.activeFlowCreate, h.releases)
+	if m.readyBeadFlowCreateReq.current != 0 || m.flowCreateReq.current != 0 || h.releases != 1 {
+		t.Fatalf("Ready ownership: ready=%d new=%d releases=%d", m.readyBeadFlowCreateReq.current, m.flowCreateReq.current, h.releases)
 	}
 }
 
@@ -486,15 +486,14 @@ func TestCreateFlowLaunchReadyFreshnessIsSourceAwareAtEveryBoundary(t *testing.T
 			h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 			m, cmd := h.admitSource(t, h.model(t), flowLaunchOriginReadyBead)
 			m, event := advanceCreateLaunchToStage(t, m, cmd, stage)
-			m.readyBeadFlowCreateSeq++
-			m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+			m.readyBeadFlowCreateReq.next()
 			m, newFlowRequest := m.nextFlowCreateRequest()
 			m = m.setStatusNow(statusOther, "newer presentation")
 			m, cmd = m.handleFlowLaunchEvent(event)
 			m = drainCreateLaunch(t, m, cmd)
 
-			if m.activeReadyBeadFlowCreate == 0 || m.activeFlowCreate != newFlowRequest || m.status.Text != "newer presentation" {
-				t.Fatalf("source fence at %v: ready=%d new=%d status=%q", stage, m.activeReadyBeadFlowCreate, m.activeFlowCreate, m.status.Text)
+			if m.readyBeadFlowCreateReq.current == 0 || m.flowCreateReq.current != newFlowRequest || m.status.Text != "newer presentation" {
+				t.Fatalf("source fence at %v: ready=%d new=%d status=%q", stage, m.readyBeadFlowCreateReq.current, m.flowCreateReq.current, m.status.Text)
 			}
 		})
 	}
@@ -591,8 +590,8 @@ func TestCreateFlowLaunchOwnsExactIdentityAndStartupOrdering(t *testing.T) {
 		ctx.WorktreePath != "/dev/alpha-worktrees/flow-new" || ctx.Commit != "abc123" || !ctx.Embedded || !ctx.FlowLaunchTracked {
 		t.Fatalf("launch context = %#v", ctx)
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || len(m.embeddedTerminals) != 1 {
-		t.Fatalf("handoff ownership: releases=%d active=%d terminals=%d", h.releases, m.activeFlowCreate, len(m.embeddedTerminals))
+	if h.releases != 1 || m.flowCreateReq.current != 0 || len(m.embeddedTerminals) != 1 {
+		t.Fatalf("handoff ownership: releases=%d active=%d terminals=%d", h.releases, m.flowCreateReq.current, len(m.embeddedTerminals))
 	}
 }
 
@@ -602,8 +601,8 @@ func TestCreateFlowLaunchParksWithoutLaunchID(t *testing.T) {
 	if strings.Contains(strings.Join(h.order, ","), "launch-id:") || len(h.contexts) != 0 {
 		t.Fatalf("parked Flow launched: order=%#v contexts=%#v", h.order, h.contexts)
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "Created flow") {
-		t.Fatalf("parked result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	if h.releases != 1 || m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "Created flow") {
+		t.Fatalf("parked result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -769,8 +768,8 @@ func TestCreateFlowLaunchRefusesEveryPreexistingSessionAssociationBeforeCreate(t
 			if created {
 				t.Fatalf("preexisting %s crossed exact-ID creation: order=%#v", tc.name, h.order)
 			}
-			if m.activeFlowCreate != 0 || h.releases != 0 || !strings.Contains(m.status.Text, tc.status) {
-				t.Fatalf("%s refusal: status=%q active=%d releases=%d", tc.name, m.status.Text, m.activeFlowCreate, h.releases)
+			if m.flowCreateReq.current != 0 || h.releases != 0 || !strings.Contains(m.status.Text, tc.status) {
+				t.Fatalf("%s refusal: status=%q active=%d releases=%d", tc.name, m.status.Text, m.flowCreateReq.current, h.releases)
 			}
 		})
 	}
@@ -783,8 +782,8 @@ func TestCreateFlowLaunchRejectsInvalidAllocatedIdentityBeforeSessionLookup(t *t
 	if !reflect.DeepEqual(h.order, []string{"allocate"}) {
 		t.Fatalf("invalid allocation crossed admission: %#v", h.order)
 	}
-	if m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "invalid ID") {
-		t.Fatalf("invalid allocation result: active=%d status=%q", m.activeFlowCreate, m.status.Text)
+	if m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "invalid ID") {
+		t.Fatalf("invalid allocation result: active=%d status=%q", m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -826,8 +825,8 @@ func TestCreateFlowLaunchCreateAndReservationErrorsDoNotAdoptOrRecoverUnprovenRo
 			if strings.Contains(joined, "worktree") || strings.Contains(joined, "reread:") || strings.Contains(joined, "metadata") || len(h.phaseUpdates) != 0 {
 				t.Fatalf("unproven row crossed into recovery: order=%#v updates=%#v", h.order, h.phaseUpdates)
 			}
-			if !strings.Contains(m.status.Text, tc.want) || m.activeFlowCreate != 0 || h.releases != 0 {
-				t.Fatalf("failure result: status=%q active=%d releases=%d", m.status.Text, m.activeFlowCreate, h.releases)
+			if !strings.Contains(m.status.Text, tc.want) || m.flowCreateReq.current != 0 || h.releases != 0 {
+				t.Fatalf("failure result: status=%q active=%d releases=%d", m.status.Text, m.flowCreateReq.current, h.releases)
 			}
 		})
 	}
@@ -859,8 +858,8 @@ func TestCreateFlowLaunchRejectsRecordClaimedBeforeTrackedReservation(t *testing
 			t.Fatalf("losing create attempt performed %q after contention: %#v", forbidden, h.order)
 		}
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "claimed by another launch") {
-		t.Fatalf("contention result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	if h.releases != 1 || m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "claimed by another launch") {
+		t.Fatalf("contention result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -881,8 +880,8 @@ func TestCreateFlowLaunchRejectsSameIDReplacementBeforeTrackedReservation(t *tes
 	m, cmd = m.handleFlowLaunchEvent(reserved)
 	m = drainCreateLaunch(t, m, cmd)
 
-	if strings.Contains(strings.Join(h.order, ","), "worktree") || h.releases != 1 || m.activeFlowCreate != 0 {
-		t.Fatalf("replacement result: order=%#v releases=%d active=%d", h.order, h.releases, m.activeFlowCreate)
+	if strings.Contains(strings.Join(h.order, ","), "worktree") || h.releases != 1 || m.flowCreateReq.current != 0 {
+		t.Fatalf("replacement result: order=%#v releases=%d active=%d", h.order, h.releases, m.flowCreateReq.current)
 	}
 }
 
@@ -924,8 +923,8 @@ func TestCreateFlowLaunchRevalidatesStartupRootAfterMetadata(t *testing.T) {
 	if len(h.contexts) != 0 || strings.Contains(strings.Join(h.order, ","), "terminal") {
 		t.Fatalf("metadata proof drift spawned an agent: contexts=%#v order=%#v", h.contexts, h.order)
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "validate startup root: no longer launchable") {
-		t.Fatalf("metadata proof result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	if h.releases != 1 || m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "validate startup root: no longer launchable") {
+		t.Fatalf("metadata proof result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -943,8 +942,8 @@ func TestCreateFlowLaunchRejectsSameIDReplacementAtPostBootstrapReread(t *testin
 			t.Fatalf("replacement reread performed %q: %#v", forbidden, h.order)
 		}
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
-		t.Fatalf("replacement reread result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	if h.releases != 1 || m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
+		t.Fatalf("replacement reread result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -965,8 +964,8 @@ func TestCreateFlowLaunchRejectsGenerationLossDuringLaunchIDProofReread(t *testi
 			t.Fatalf("proof reread generation loss performed %q: %#v", forbidden, h.order)
 		}
 	}
-	if h.releases != 1 || m.activeFlowCreate != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
-		t.Fatalf("proof reread generation result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	if h.releases != 1 || m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "flow generation changed") {
+		t.Fatalf("proof reread generation result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -993,8 +992,7 @@ func TestCreateFlowLaunchCancellationDoesNotRecoverAfterGenerationLoss(t *testin
 			if !event.GenerationLost {
 				t.Fatal("test event did not lose its Flow generation")
 			}
-			m.flowCreateSeq++
-			m.activeFlowCreate = m.flowCreateSeq
+			m.flowCreateReq.next()
 			m = m.setStatusNow(statusOther, "newer creation status")
 			m, cmd = m.handleFlowLaunchEvent(event)
 			m = drainCreateLaunch(t, m, cmd)
@@ -1002,8 +1000,8 @@ func TestCreateFlowLaunchCancellationDoesNotRecoverAfterGenerationLoss(t *testin
 			if len(h.phaseUpdates) != 0 {
 				t.Fatalf("stale generation loss recovered replacement: order=%#v updates=%#v", h.order, h.phaseUpdates)
 			}
-			if h.releases != 1 || m.status.Text != "newer creation status" || m.activeFlowCreate == 0 {
-				t.Fatalf("stale generation cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.activeFlowCreate)
+			if h.releases != 1 || m.status.Text != "newer creation status" || m.flowCreateReq.current == 0 {
+				t.Fatalf("stale generation cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.flowCreateReq.current)
 			}
 		})
 	}
@@ -1021,8 +1019,7 @@ func TestCreateFlowLaunchStaleMetadataFailureFencesSurvivingWorktree(t *testing.
 		t.Fatal("test metadata event unexpectedly succeeded")
 	}
 
-	m.flowCreateSeq++
-	m.activeFlowCreate = m.flowCreateSeq
+	m.flowCreateReq.next()
 	m = m.setStatusNow(statusOther, "newer creation status")
 	m, cmd = m.handleFlowLaunchEvent(event)
 	m = drainCreateLaunch(t, m, cmd)
@@ -1035,8 +1032,8 @@ func TestCreateFlowLaunchStaleMetadataFailureFencesSurvivingWorktree(t *testing.
 			t.Fatalf("stale metadata recovery omitted surviving worktree: %#v", update)
 		}
 	}
-	if h.releases != 1 || m.status.Text != "newer creation status" || m.activeFlowCreate == 0 {
-		t.Fatalf("stale metadata cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.activeFlowCreate)
+	if h.releases != 1 || m.status.Text != "newer creation status" || m.flowCreateReq.current == 0 {
+		t.Fatalf("stale metadata cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.flowCreateReq.current)
 	}
 }
 
@@ -1049,8 +1046,7 @@ func TestCreateFlowLaunchStaleUnknownPreparationDoesNotCompensate(t *testing.T) 
 		t.Fatalf("test preparation event = %#v, want unknown outcome", event)
 	}
 
-	m.readyBeadFlowCreateSeq++
-	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+	m.readyBeadFlowCreateReq.next()
 	m = m.setStatusNow(statusOther, "newer Ready status")
 	m, cmd = m.handleFlowLaunchEvent(event)
 	m = drainCreateLaunch(t, m, cmd)
@@ -1058,8 +1054,8 @@ func TestCreateFlowLaunchStaleUnknownPreparationDoesNotCompensate(t *testing.T) 
 	if len(h.phaseUpdates) != 0 {
 		t.Fatalf("stale unknown preparation compensated possibly durable receipt: %#v", h.phaseUpdates)
 	}
-	if h.releases != 1 || m.status.Text != "newer Ready status" || m.activeReadyBeadFlowCreate == 0 {
-		t.Fatalf("stale unknown cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.activeReadyBeadFlowCreate)
+	if h.releases != 1 || m.status.Text != "newer Ready status" || m.readyBeadFlowCreateReq.current == 0 {
+		t.Fatalf("stale unknown cleanup: releases=%d status=%q active=%d", h.releases, m.status.Text, m.readyBeadFlowCreateReq.current)
 	}
 }
 
@@ -1102,8 +1098,7 @@ func TestCreateFlowLaunchReadyReservationFailureCompensatesLaunchableRoots(t *te
 			if stale {
 				var event flowLaunchEventMsg
 				m, event = advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateReserved)
-				m.readyBeadFlowCreateSeq++
-				m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+				m.readyBeadFlowCreateReq.next()
 				m = m.setStatusNow(statusOther, "newer Ready status")
 				m, cmd = m.handleFlowLaunchEvent(event)
 			}
@@ -1145,8 +1140,7 @@ func TestCreateFlowLaunchReadyWrongReservationIdentityCompensatesCreatedFlow(t *
 			if stale {
 				var event flowLaunchEventMsg
 				m, event = advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateReserved)
-				m.readyBeadFlowCreateSeq++
-				m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+				m.readyBeadFlowCreateReq.next()
 				m = m.setStatusNow(statusOther, "newer Ready status")
 				m, cmd = m.handleFlowLaunchEvent(event)
 			}
@@ -1439,8 +1433,8 @@ func TestCreateFlowLaunchParkedMetadataRejectsGenerationLoss(t *testing.T) {
 	}
 	m := h.start(t, h.model(t))
 
-	if h.releases != 1 || m.activeFlowCreate != 0 || strings.Contains(m.status.Text, "Created flow") || !strings.Contains(m.status.Text, "flow generation changed") {
-		t.Fatalf("parked generation result: releases=%d active=%d status=%q", h.releases, m.activeFlowCreate, m.status.Text)
+	if h.releases != 1 || m.flowCreateReq.current != 0 || strings.Contains(m.status.Text, "Created flow") || !strings.Contains(m.status.Text, "flow generation changed") {
+		t.Fatalf("parked generation result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }
 
@@ -1466,8 +1460,7 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 			})
 			m, cmd := h.admit(t, h.model(t))
 			m, event := advanceCreateLaunchToStage(t, m, cmd, tc.stage)
-			m.flowCreateSeq++
-			m.activeFlowCreate = m.flowCreateSeq
+			m.flowCreateReq.next()
 			m = m.setStatusNow(statusOther, "newer creation status")
 			m, cmd = m.handleFlowLaunchEvent(event)
 			m = drainCreateLaunch(t, m, cmd)
@@ -1482,8 +1475,8 @@ func TestCreateFlowLaunchCancellationMatrixPreservesNewerPresentation(t *testing
 			if tc.stage == flowLaunchStageCreateWorktree && h.record.Commit != "abc123" {
 				t.Fatalf("stale post-worktree recovery commit = %q, want abc123", h.record.Commit)
 			}
-			if m.status.Text != "newer creation status" || m.activeFlowCreate == 0 || len(h.contexts) != 0 {
-				t.Fatalf("newer presentation changed: status=%q active=%d contexts=%#v", m.status.Text, m.activeFlowCreate, h.contexts)
+			if m.status.Text != "newer creation status" || m.flowCreateReq.current == 0 || len(h.contexts) != 0 {
+				t.Fatalf("newer presentation changed: status=%q active=%d contexts=%#v", m.status.Text, m.flowCreateReq.current, h.contexts)
 			}
 		})
 	}
@@ -1498,8 +1491,8 @@ func TestCreateFlowLaunchAllocatedIDRefusesRetainedFlowSlots(t *testing.T) {
 			m, cmd := h.admit(t, m)
 			allocated := cmd().(flowLaunchEventMsg)
 			m, cmd = m.handleFlowLaunchEvent(allocated)
-			if cmd != nil || m.activeFlowCreate != 0 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
-				t.Fatalf("retained slot admission: cmd=%T active=%d attempt=%v", cmd, m.activeFlowCreate, m.flowLaunchAttemptOccupied(h.record.FlowID))
+			if cmd != nil || m.flowCreateReq.current != 0 || m.flowLaunchAttemptOccupied(h.record.FlowID) {
+				t.Fatalf("retained slot admission: cmd=%T active=%d attempt=%v", cmd, m.flowCreateReq.current, m.flowLaunchAttemptOccupied(h.record.FlowID))
 			}
 			if !reflect.DeepEqual(h.order, []string{"allocate"}) {
 				t.Fatalf("retained slot crossed admission: %#v", h.order)
@@ -1515,16 +1508,16 @@ func TestCreateFlowLaunchParkedMetadataFailureDoesNotMutatePhases(t *testing.T) 
 	if len(h.phaseUpdates) != 0 || len(h.contexts) != 0 || h.releases != 1 {
 		t.Fatalf("parked metadata recovery: updates=%#v contexts=%#v releases=%d", h.phaseUpdates, h.contexts, h.releases)
 	}
-	if !strings.Contains(m.status.Text, "record start metadata: disk full") || m.activeFlowCreate != 0 {
-		t.Fatalf("parked metadata status=%q active=%d", m.status.Text, m.activeFlowCreate)
+	if !strings.Contains(m.status.Text, "record start metadata: disk full") || m.flowCreateReq.current != 0 {
+		t.Fatalf("parked metadata status=%q active=%d", m.status.Text, m.flowCreateReq.current)
 	}
 }
 
 func TestCreateFlowLaunchInteractivePrefillKeepsOriginFenceUntilResult(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	m, prefill := startInteractiveCreateUntilPrefill(t, h)
-	if m.activeFlowCreate != prefill.Create.Presentation.Request {
-		t.Fatalf("active create request = %d, want pending prefill request %d", m.activeFlowCreate, prefill.Create.Presentation.Request)
+	if m.flowCreateReq.current != prefill.Create.Presentation.Request {
+		t.Fatalf("active create request = %d, want pending prefill request %d", m.flowCreateReq.current, prefill.Create.Presentation.Request)
 	}
 	if len(m.embeddedTerminals) != 1 || !m.embeddedTerminals[0].PrefillPending {
 		t.Fatalf("pending terminals = %#v", m.embeddedTerminals)
@@ -1533,8 +1526,7 @@ func TestCreateFlowLaunchInteractivePrefillKeepsOriginFenceUntilResult(t *testin
 	// A repo change invalidates the original create request. Its delayed prefill
 	// result must recover the phase without activating the old terminal or
 	// replacing presentation for the newly selected repo.
-	m.flowCreateSeq++
-	m.activeFlowCreate = m.flowCreateSeq
+	m.flowCreateReq.next()
 	m = m.setStatusNow(statusOther, "new repo status")
 	next, persistCmd := m.Update(prefill)
 	m = next.(Model)
@@ -1563,8 +1555,8 @@ func TestCreateFlowLaunchInteractivePrefillSuccessCompletesRequestAndFocuses(t *
 	m, prefill := startInteractiveCreateUntilPrefill(t, h)
 	next, _ := m.Update(prefill)
 	m = next.(Model)
-	if m.activeFlowCreate != 0 || len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].PrefillPending {
-		t.Fatalf("successful prefill result: active=%d terminals=%#v", m.activeFlowCreate, m.embeddedTerminals)
+	if m.flowCreateReq.current != 0 || len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("successful prefill result: active=%d terminals=%#v", m.flowCreateReq.current, m.embeddedTerminals)
 	}
 	if m.activeTerminalNum != 1 {
 		t.Fatalf("successful prefill active terminal = %d, want 1", m.activeTerminalNum)
@@ -1583,8 +1575,8 @@ func TestCreateFlowLaunchMissingPrefillSlotRecoversPhaseAndCompletesRequest(t *t
 	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, cmd)
 	settled, _ := m.Update(persisted)
 	m = settled.(Model)
-	if m.activeFlowCreate != 0 || len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
-		t.Fatalf("missing-slot recovery: active=%d updates=%#v", m.activeFlowCreate, h.phaseUpdates)
+	if m.flowCreateReq.current != 0 || len(h.phaseUpdates) != 1 || h.phaseUpdates[0].Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("missing-slot recovery: active=%d updates=%#v", m.flowCreateReq.current, h.phaseUpdates)
 	}
 	if !strings.Contains(m.status.Text, "embedded terminal closed before prompt prefill completed") {
 		t.Fatalf("missing-slot status = %q", m.status.Text)
@@ -1608,8 +1600,8 @@ func TestCreateFlowLaunchPrefillFailureDoesNotMutatePhaseWhenAnotherAttemptWinsR
 	if cmd != nil {
 		t.Fatalf("old prefill failure returned command %T, want fenced cleanup only", cmd)
 	}
-	if m.activeFlowCreate != 0 {
-		t.Fatalf("active create request = %d, want cleared", m.activeFlowCreate)
+	if m.flowCreateReq.current != 0 {
+		t.Fatalf("active create request = %d, want cleared", m.flowCreateReq.current)
 	}
 	if len(h.phaseUpdates) != 0 {
 		t.Fatalf("old prefill failure mutated phase owned by winner: %#v", h.phaseUpdates)
@@ -1634,8 +1626,7 @@ func TestCreateFlowLaunchPrefillTerminationFailureRetainsNondetachableOccupancy(
 				t.Fatalf("prefill termination result = %#v terminates=%d", prefill, term.terminates)
 			}
 			if stale {
-				m.flowCreateSeq++
-				m.activeFlowCreate = m.flowCreateSeq
+				m.flowCreateReq.next()
 				m = m.setStatusNow(statusOther, "newer status")
 			}
 			next, cmd := m.Update(prefill)

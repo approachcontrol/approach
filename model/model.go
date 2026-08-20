@@ -129,14 +129,10 @@ type Model struct {
 	pendingInlineSessionRepo    string
 	pendingInlineSessionPath    string
 	pendingInlineSessionList    uint64
-	worktreeCreateSeq           uint64
-	activeWorktreeCreate        uint64
-	repoCreateSeq               uint64
-	activeRepoCreate            uint64
-	flowCreateSeq               uint64
-	activeFlowCreate            uint64
-	readyBeadFlowCreateSeq      uint64
-	activeReadyBeadFlowCreate   uint64
+	worktreeCreateReq           requestTracker
+	repoCreateReq               requestTracker
+	flowCreateReq               requestTracker
+	readyBeadFlowCreateReq      requestTracker
 	flowPreparationAdmission    bool
 	flowPreparationSeq          uint64
 	flowPreparationOwner        flowPreparationOwner

@@ -340,53 +340,41 @@ func (m Model) pendingInlineSessionRefresh(repoPath string, listRequest uint64) 
 }
 
 func (m Model) nextWorktreeCreateRequest() (Model, uint64) {
-	m.worktreeCreateSeq++
-	m.activeWorktreeCreate = m.worktreeCreateSeq
-	return m, m.activeWorktreeCreate
+	return m, m.worktreeCreateReq.next()
 }
 
 func (m Model) isCurrentWorktreeCreateRequest(request uint64) bool {
-	return request == m.activeWorktreeCreate
+	return m.worktreeCreateReq.isCurrent(request)
 }
 
 func (m Model) clearWorktreeCreateRequest(request uint64) Model {
-	if request != 0 && request == m.activeWorktreeCreate {
-		m.activeWorktreeCreate = 0
-	}
+	m.worktreeCreateReq.clear(request)
 	return m
 }
 
 func (m Model) nextRepoCreateRequest() (Model, uint64) {
-	m.repoCreateSeq++
-	m.activeRepoCreate = m.repoCreateSeq
-	return m, m.activeRepoCreate
+	return m, m.repoCreateReq.next()
 }
 
 func (m Model) isCurrentRepoCreateRequest(request uint64) bool {
-	return request != 0 && request == m.activeRepoCreate
+	return request != 0 && m.repoCreateReq.isCurrent(request)
 }
 
 func (m Model) clearRepoCreateRequest(request uint64) Model {
-	if request != 0 && request == m.activeRepoCreate {
-		m.activeRepoCreate = 0
-	}
+	m.repoCreateReq.clear(request)
 	return m
 }
 
 func (m Model) nextFlowCreateRequest() (Model, uint64) {
-	m.flowCreateSeq++
-	m.activeFlowCreate = m.flowCreateSeq
-	return m, m.activeFlowCreate
+	return m, m.flowCreateReq.next()
 }
 
 func (m Model) isCurrentFlowCreateRequest(request uint64) bool {
-	return request == m.activeFlowCreate
+	return m.flowCreateReq.isCurrent(request)
 }
 
 func (m Model) clearFlowCreateRequest(request uint64) Model {
-	if request != 0 && request == m.activeFlowCreate {
-		m.activeFlowCreate = 0
-	}
+	m.flowCreateReq.clear(request)
 	return m
 }
 
@@ -396,25 +384,20 @@ func (m Model) nextReadyBeadFlowCreateRequest() (Model, uint64) {
 	if !admitted {
 		return m, 0
 	}
-	m.readyBeadFlowCreateSeq++
-	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
-	return m, m.activeReadyBeadFlowCreate
+	return m, m.readyBeadFlowCreateReq.next()
 }
 
 func (m Model) isCurrentReadyBeadFlowCreateRequest(request uint64) bool {
-	return request != 0 && request == m.activeReadyBeadFlowCreate
+	return request != 0 && m.readyBeadFlowCreateReq.isCurrent(request)
 }
 
 func (m Model) clearReadyBeadFlowCreateRequest(request uint64) Model {
-	if m.isCurrentReadyBeadFlowCreateRequest(request) {
-		m.activeReadyBeadFlowCreate = 0
-	}
+	m.readyBeadFlowCreateReq.clear(request)
 	return m
 }
 
 func (m Model) invalidateReadyBeadFlowCreateRequest() Model {
-	m.readyBeadFlowCreateSeq++
-	m.activeReadyBeadFlowCreate = 0
+	m.readyBeadFlowCreateReq.invalidate()
 	return m
 }
 
@@ -823,6 +806,42 @@ func createdWorktreeBranch(worktreePath, ref string, kind actions.WorktreeCreate
 	return ""
 }
 
+type textFetch struct {
+	repoPath string
+	pane     string
+	errNoun  string
+	kind     FetchKind
+	mode     ui.Mode
+	load     func() (string, error)
+	fail     func(FetchErrorMsg) tea.Msg
+	ok       func(text string, request uint64) tea.Msg
+}
+
+func (m Model) textFetchCmd(f textFetch) tea.Cmd {
+	if f.repoPath == "" {
+		return nil
+	}
+	request := m.activeViewRequest
+	return func() tea.Msg {
+		text, err := f.load()
+		if err != nil {
+			msg := FetchErrorMsg{
+				RepoPath:    f.repoPath,
+				Pane:        f.pane,
+				Err:         fmt.Sprintf("failed to load %s: %v", f.errNoun, err),
+				Kind:        f.kind,
+				Mode:        f.mode,
+				DiffRequest: request,
+			}
+			if f.fail != nil {
+				return f.fail(msg)
+			}
+			return msg
+		}
+		return f.ok(text, request)
+	}
+}
+
 func (m Model) fetchBranchDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
@@ -837,30 +856,22 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 		worktreePath = repoPath
 	}
 	branchName := row.Branch.Name
-	diffRequest := m.activeViewRequest
-
-	return func() tea.Msg {
-		diff, err := gitquery.BranchDiff(worktreePath)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:     repoPath,
-				Pane:         "branch diff",
-				Err:          fmt.Sprintf("failed to load diff: %v", err),
-				Kind:         FetchBranchDiff,
-				Mode:         ui.ModeBranches,
-				DiffRequest:  diffRequest,
-				BranchName:   branchName,
-				WorktreePath: worktreePath,
-			}
-		}
-		return BranchDiffResultMsg{
-			RepoPath:     repoPath,
-			BranchName:   branchName,
-			WorktreePath: worktreePath,
-			DiffRequest:  diffRequest,
-			Diff:         diff,
-		}
-	}
+	return m.textFetchCmd(textFetch{
+		repoPath: repoPath,
+		pane:     "branch diff",
+		errNoun:  "diff",
+		kind:     FetchBranchDiff,
+		mode:     ui.ModeBranches,
+		load:     func() (string, error) { return gitquery.BranchDiff(worktreePath) },
+		fail: func(msg FetchErrorMsg) tea.Msg {
+			msg.BranchName = branchName
+			msg.WorktreePath = worktreePath
+			return msg
+		},
+		ok: func(text string, request uint64) tea.Msg {
+			return BranchDiffResultMsg{RepoPath: repoPath, BranchName: branchName, WorktreePath: worktreePath, DiffRequest: request, Diff: text}
+		},
+	})
 }
 
 func (m Model) fetchBeadDetail() tea.Cmd {
@@ -909,27 +920,21 @@ func (m Model) fetchWorktreeDiff() tea.Cmd {
 		return nil
 	}
 	worktreePath := wt.Path
-	diffRequest := m.activeViewRequest
-	return func() tea.Msg {
-		diff, err := gitquery.BranchDiff(worktreePath)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:     repoPath,
-				Pane:         "worktree diff",
-				Err:          fmt.Sprintf("failed to load diff: %v", err),
-				Kind:         FetchWorktreeDiff,
-				Mode:         ui.ModeWorktrees,
-				DiffRequest:  diffRequest,
-				WorktreePath: worktreePath,
-			}
-		}
-		return WorktreeDiffResultMsg{
-			RepoPath:     repoPath,
-			WorktreePath: worktreePath,
-			DiffRequest:  diffRequest,
-			Diff:         diff,
-		}
-	}
+	return m.textFetchCmd(textFetch{
+		repoPath: repoPath,
+		pane:     "worktree diff",
+		errNoun:  "diff",
+		kind:     FetchWorktreeDiff,
+		mode:     ui.ModeWorktrees,
+		load:     func() (string, error) { return gitquery.BranchDiff(worktreePath) },
+		fail: func(msg FetchErrorMsg) tea.Msg {
+			msg.WorktreePath = worktreePath
+			return msg
+		},
+		ok: func(text string, request uint64) tea.Msg {
+			return WorktreeDiffResultMsg{RepoPath: repoPath, WorktreePath: worktreePath, DiffRequest: request, Diff: text}
+		},
+	})
 }
 
 func (m Model) fetchStashDiff() tea.Cmd {
@@ -944,31 +949,23 @@ func (m Model) fetchStashDiff() tea.Cmd {
 	index := stash.Index
 	stashDate := stash.Date
 	stashMessage := stash.Message
-	diffRequest := m.activeViewRequest
-	return func() tea.Msg {
-		diff, err := gitquery.StashDiff(repoPath, index)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:     repoPath,
-				Pane:         "stash diff",
-				Err:          fmt.Sprintf("failed to load diff: %v", err),
-				Kind:         FetchStashDiff,
-				Mode:         ui.ModeStashes,
-				DiffRequest:  diffRequest,
-				StashIndex:   index,
-				StashDate:    stashDate,
-				StashMessage: stashMessage,
-			}
-		}
-		return StashDiffResultMsg{
-			RepoPath:    repoPath,
-			Index:       index,
-			Date:        stashDate,
-			Message:     stashMessage,
-			DiffRequest: diffRequest,
-			Diff:        diff,
-		}
-	}
+	return m.textFetchCmd(textFetch{
+		repoPath: repoPath,
+		pane:     "stash diff",
+		errNoun:  "diff",
+		kind:     FetchStashDiff,
+		mode:     ui.ModeStashes,
+		load:     func() (string, error) { return gitquery.StashDiff(repoPath, index) },
+		fail: func(msg FetchErrorMsg) tea.Msg {
+			msg.StashIndex = index
+			msg.StashDate = stashDate
+			msg.StashMessage = stashMessage
+			return msg
+		},
+		ok: func(text string, request uint64) tea.Msg {
+			return StashDiffResultMsg{RepoPath: repoPath, Index: index, Date: stashDate, Message: stashMessage, DiffRequest: request, Diff: text}
+		},
+	})
 }
 
 func (m Model) fetchReflogDiff() tea.Cmd {
@@ -981,22 +978,21 @@ func (m Model) fetchReflogDiff() tea.Cmd {
 		return nil
 	}
 	hash := entry.Hash
-	diffRequest := m.activeViewRequest
-	return func() tea.Msg {
-		diff, err := gitquery.ReflogDiff(repoPath, hash)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:    repoPath,
-				Pane:        "reflog diff",
-				Err:         fmt.Sprintf("failed to load diff: %v", err),
-				Kind:        FetchReflogDiff,
-				Mode:        ui.ModeReflog,
-				DiffRequest: diffRequest,
-				Hash:        hash,
-			}
-		}
-		return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
-	}
+	return m.textFetchCmd(textFetch{
+		repoPath: repoPath,
+		pane:     "reflog diff",
+		errNoun:  "diff",
+		kind:     FetchReflogDiff,
+		mode:     ui.ModeReflog,
+		load:     func() (string, error) { return gitquery.ReflogDiff(repoPath, hash) },
+		fail: func(msg FetchErrorMsg) tea.Msg {
+			msg.Hash = hash
+			return msg
+		},
+		ok: func(text string, request uint64) tea.Msg {
+			return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: request, Diff: text}
+		},
+	})
 }
 
 func (m Model) fetchSessionTranscript() tea.Cmd {
@@ -1046,28 +1042,21 @@ func (m Model) fetchPlanTextByID(planID string, mode ui.Mode) tea.Cmd {
 	if !ok || planID == "" {
 		return nil
 	}
-	diffRequest := m.activeViewRequest
-	return func() tea.Msg {
-		body, err := m.readPlan(planID)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:    repoPath,
-				Pane:        "plan",
-				Err:         fmt.Sprintf("failed to load plan: %v", err),
-				Kind:        FetchPlanText,
-				Mode:        mode,
-				DiffRequest: diffRequest,
-				PlanID:      planID,
-			}
-		}
-		return PlanReadResultMsg{
-			RepoPath:    repoPath,
-			PlanID:      planID,
-			Mode:        mode,
-			DiffRequest: diffRequest,
-			Text:        body,
-		}
-	}
+	return m.textFetchCmd(textFetch{
+		repoPath: repoPath,
+		pane:     "plan",
+		errNoun:  "plan",
+		kind:     FetchPlanText,
+		mode:     mode,
+		load:     func() (string, error) { return m.readPlan(planID) },
+		fail: func(msg FetchErrorMsg) tea.Msg {
+			msg.PlanID = planID
+			return msg
+		},
+		ok: func(text string, request uint64) tea.Msg {
+			return PlanReadResultMsg{RepoPath: repoPath, PlanID: planID, Mode: mode, DiffRequest: request, Text: text}
+		},
+	})
 }
 
 func formatTranscript(events []sessions.TranscriptEvent) string {
@@ -1092,20 +1081,19 @@ func (m Model) fetchCommitDiff() tea.Cmd {
 		return nil
 	}
 	hash := commit.Hash
-	diffRequest := m.activeViewRequest
-	return func() tea.Msg {
-		diff, err := gitquery.CommitDiff(repoPath, hash)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:    repoPath,
-				Pane:        "commit diff",
-				Err:         fmt.Sprintf("failed to load diff: %v", err),
-				Kind:        FetchCommitDiff,
-				Mode:        ui.ModeHistory,
-				DiffRequest: diffRequest,
-				Hash:        hash,
-			}
-		}
-		return CommitDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
-	}
+	return m.textFetchCmd(textFetch{
+		repoPath: repoPath,
+		pane:     "commit diff",
+		errNoun:  "diff",
+		kind:     FetchCommitDiff,
+		mode:     ui.ModeHistory,
+		load:     func() (string, error) { return gitquery.CommitDiff(repoPath, hash) },
+		fail: func(msg FetchErrorMsg) tea.Msg {
+			msg.Hash = hash
+			return msg
+		},
+		ok: func(text string, request uint64) tea.Msg {
+			return CommitDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: request, Diff: text}
+		},
+	})
 }
