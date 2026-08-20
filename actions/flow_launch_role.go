@@ -2,8 +2,8 @@ package actions
 
 // FlowLaunchRole names the kind of Flow-scoped launch a context represents. It
 // is a closed enum: every Flow launch the TUI can start is exactly one of these
-// six, and the launch context's marker flags are the role's encoding rather
-// than six independent booleans a caller may combine freely.
+// seven, and the launch context's marker flags are the role's encoding rather
+// than seven independent booleans a caller may combine freely.
 //
 // It lives in actions rather than model because actions is the package model
 // imports, not the other way round, and because the role's consumers — resume
@@ -25,6 +25,11 @@ const (
 	// RoleSavedSessionResume is a phase-untracked resume of a Flow's saved
 	// provider session.
 	RoleSavedSessionResume
+	// RoleCreatePhase is the first launch of a freshly created Flow's startup
+	// root, started by Plan Now and by Ready-Bead F. It appends rather than
+	// slotting in beside RoleTrackedPhase so the existing values keep their
+	// numbers.
+	RoleCreatePhase
 )
 
 // String names the role for diagnostics. An unknown value names itself rather
@@ -43,6 +48,8 @@ func (role FlowLaunchRole) String() string {
 		return "worktree agent"
 	case RoleSavedSessionResume:
 		return "saved session resume"
+	case RoleCreatePhase:
+		return "create phase"
 	default:
 		return "unknown flow launch role"
 	}
