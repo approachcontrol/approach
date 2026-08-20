@@ -385,6 +385,33 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 	}
 }
 
+func TestResolveArtifactRootExplicitTierBeatsEnv(t *testing.T) {
+	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
+	getenv := func(key string) string {
+		switch key {
+		case "APPROACH_FLOW_STATE_ROOT":
+			return "/from/flow"
+		case "APPROACH_PLAN_STATE_ROOT":
+			return "/from/plan"
+		case "APPROACH_SESSION_STATE_ROOT":
+			return "/from/session"
+		}
+		return ""
+	}
+	loadConfig := func() (config.Config, error) {
+		t.Fatal("loadConfig should not run when an explicit root is set")
+		return cfg, nil
+	}
+
+	got, err := resolveArtifactRoot("/explicit", getenv, loadConfig)
+	if err != nil {
+		t.Fatalf("resolveArtifactRoot() error = %v", err)
+	}
+	if got != "/explicit" {
+		t.Fatalf("resolveArtifactRoot() = %q, want explicit root", got)
+	}
+}
+
 func TestRuntimeArtifactRootPrecedenceIncludesFlowRoot(t *testing.T) {
 	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
 	t.Setenv("APPROACH_SESSION_STATE_ROOT", "/from/session")

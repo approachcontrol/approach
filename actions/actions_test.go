@@ -744,6 +744,8 @@ func TestWorktreeSessionName(t *testing.T) {
 		{"/tmp/repo-worktrees/feature/api:oauth", "api-oauth-"},
 		{"/tmp/repo-worktrees/../repo", "repo-"},
 		{"/", "worktree-"},
+		{"/tmp/repo-worktrees/café", "café-"},
+		{"/tmp/repo-worktrees/!!!", "worktree-"},
 	}
 
 	for _, tt := range tests {

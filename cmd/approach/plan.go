@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/approachcontrol/approach/internal/gitmeta"
 	"github.com/approachcontrol/approach/planstore"
 )
 
@@ -71,23 +71,7 @@ Most commands accept:
 // APPROACH_SESSION_STATE_ROOT >
 // [sessions].root from config > planstore.DefaultRoot() (resolved by NewStore).
 func resolvePlanRoot(stateRoot string, deps runDeps) (string, error) {
-	if stateRoot != "" {
-		return stateRoot, nil
-	}
-	if root := deps.getenv("APPROACH_FLOW_STATE_ROOT"); root != "" {
-		return root, nil
-	}
-	if root := deps.getenv("APPROACH_PLAN_STATE_ROOT"); root != "" {
-		return root, nil
-	}
-	if root := deps.getenv("APPROACH_SESSION_STATE_ROOT"); root != "" {
-		return root, nil
-	}
-	cfg, err := deps.loadConfig()
-	if err != nil {
-		return "", fmt.Errorf("error loading config: %w", err)
-	}
-	return cfg.Sessions.Root, nil
+	return resolveArtifactRoot(stateRoot, deps.getenv, deps.loadConfig)
 }
 
 func newPlanStore(stateRoot string, deps runDeps) (*planstore.Store, error) {
@@ -496,14 +480,6 @@ func fallbackEnv(value, key string, deps runDeps) string {
 	return deps.getenv(key)
 }
 
-type planGitMetadata struct {
-	RepoPath     string
-	WorktreePath string
-	Branch       string
-	Commit       string
-	Linked       bool
-}
-
 func shouldResolvePlanGitMetadata(store *planstore.Store, record planstore.PlanRecord) bool {
 	if record.PlanID == "" {
 		return true
@@ -524,12 +500,14 @@ func resolvePlanGitMetadata(record *planstore.PlanRecord, deps runDeps) {
 	if candidate == "" {
 		candidate = cwd
 	}
-	if meta, ok := resolvePlanGitMetadataAt(candidate); ok {
-		applyPlanGitMetadata(record, meta)
+	info, err := gitmeta.Resolve(candidate)
+	if err != nil || info == (gitmeta.Info{}) {
+		return
 	}
+	applyPlanGitMetadata(record, info)
 }
 
-func applyPlanGitMetadata(record *planstore.PlanRecord, meta planGitMetadata) {
+func applyPlanGitMetadata(record *planstore.PlanRecord, meta gitmeta.Info) {
 	if record.RepoPath == "" {
 		record.RepoPath = meta.RepoPath
 	} else if meta.Linked && meta.RepoPath != "" && samePlanPath(record.RepoPath, meta.WorktreePath) {
@@ -551,115 +529,4 @@ func samePlanPath(a, b string) bool {
 		return false
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
-}
-
-func resolvePlanGitMetadataAt(cwd string) (planGitMetadata, bool) {
-	if cwd == "" {
-		return planGitMetadata{}, false
-	}
-	worktreePath, _ := planGitOutput(cwd, "rev-parse", "--show-toplevel")
-	commonDir, _ := planGitOutput(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	gitDir, _ := planGitOutput(cwd, "rev-parse", "--path-format=absolute", "--git-dir")
-	if worktreePath == "" && commonDir == "" && gitDir == "" {
-		return planGitMetadata{}, false
-	}
-	isBare := false
-	if out, err := planGitOutput(cwd, "rev-parse", "--is-bare-repository"); err == nil {
-		isBare = out == "true"
-	}
-	commonDirIsBare := false
-	if commonDir != "" {
-		if out, err := planGitOutput(commonDir, "rev-parse", "--is-bare-repository"); err == nil {
-			commonDirIsBare = out == "true"
-		}
-	}
-	linked := planIsLinkedWorktreeGitDir(gitDir, commonDir)
-	repoPath := planRepoPathFromGitMetadata(worktreePath, gitDir, commonDir, isBare, commonDirIsBare)
-	branch, _ := planGitOutput(cwd, "branch", "--show-current")
-	commit, _ := planGitOutput(cwd, "rev-parse", "HEAD")
-	return planGitMetadata{
-		RepoPath:     repoPath,
-		WorktreePath: worktreePath,
-		Branch:       branch,
-		Commit:       commit,
-		Linked:       linked,
-	}, true
-}
-
-func planRepoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {
-	if isBare {
-		if commonDir != "" {
-			return filepath.Clean(commonDir)
-		}
-		if gitDir == "" {
-			return ""
-		}
-		return filepath.Clean(gitDir)
-	}
-	if commonDir != "" && gitDir != "" && planIsLinkedWorktreeGitDir(gitDir, commonDir) {
-		if commonDirIsBare {
-			return filepath.Clean(commonDir)
-		}
-		if filepath.Base(filepath.Clean(commonDir)) != ".git" {
-			return worktreePath
-		}
-		return planRepoPathFromGitCommonDir(commonDir)
-	}
-	if worktreePath != "" {
-		return worktreePath
-	}
-	if commonDir != "" {
-		return planRepoPathFromGitCommonDir(commonDir)
-	}
-	if gitDir == "" {
-		return ""
-	}
-	return planRepoPathFromGitCommonDir(gitDir)
-}
-
-func planIsLinkedWorktreeGitDir(gitDir, commonDir string) bool {
-	if gitDir == "" || commonDir == "" {
-		return false
-	}
-	rel, err := filepath.Rel(filepath.Join(filepath.Clean(commonDir), "worktrees"), filepath.Clean(gitDir))
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func planRepoPathFromGitCommonDir(commonDir string) string {
-	commonDir = filepath.Clean(commonDir)
-	if filepath.Base(commonDir) == ".git" {
-		return filepath.Dir(commonDir)
-	}
-	return commonDir
-}
-
-func planGitOutput(cwd string, args ...string) (string, error) {
-	cleaned, err := plausiblePlanGitCWD(cwd)
-	if err != nil {
-		return "", err
-	}
-	cmd := exec.Command("git", append([]string{"-C", cleaned}, args...)...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func plausiblePlanGitCWD(cwd string) (string, error) {
-	cwd = filepath.Clean(strings.TrimSpace(cwd))
-	if cwd == "." || !filepath.IsAbs(cwd) {
-		return "", fmt.Errorf("git cwd must be an absolute path")
-	}
-	info, err := os.Stat(cwd)
-	if err != nil {
-		return "", fmt.Errorf("inspect git cwd %q: %w", cwd, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("git cwd %q is not a directory", cwd)
-	}
-	return cwd, nil
 }
