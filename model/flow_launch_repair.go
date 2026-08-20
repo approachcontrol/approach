@@ -417,7 +417,7 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// markers. FlowPhaseID stays empty and FlowLaunchTracked stays false
 		// there — the empty phase ID is what makes flowLaunchFailureUpdate
 		// refuse, which is what keeps a failed repair from ever mutating a phase.
-		ctx, route, err := newFlowLaunchContext(repairTarget{
+		ctx, decision, err := newFlowLaunchContext(repairTarget{
 			LaunchID:             msg.Token,
 			Record:               current,
 			Agent:                resolved,
@@ -425,13 +425,14 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 			FallbackWorktreePath: msg.WorktreePath,
 			PlanID:               msg.Record.PlanID,
 			PlanPath:             msg.PlanPath,
-		}, settings)
+		}, settings, flowLaunchRouting{})
 		if err != nil {
 			event.Err = "Prepare Flow repair launch: " + err.Error()
 			return event
 		}
 		event.Context = ctx
-		event.Route = route
+		event.Route = decision.Route
+		event.FallbackNote = decision.FallbackNote
 		return event
 	}
 }
