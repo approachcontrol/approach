@@ -53,6 +53,13 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 	resumeRecord, resumeSession := launchContextSavedSessionResumeTarget()
 	headlessAutofixRecord := launchContextAutofixRecord()
 	headlessAutofixRecord.Headless = true
+	phaseResume := launchContextPhaseResumeTarget()
+	// The read phase stays running while the persisted one is completed, so the
+	// row cannot pass by reading the wrong record.
+	terminalPhaseResume := launchContextPhaseResumeTarget()
+	terminalPhase := terminalPhaseResume.ReadPhase
+	terminalPhase.Status = flowstore.PhaseCompleted
+	terminalPhaseResume.PersistedRecord.Phases = []flowstore.FlowPhase{terminalPhase}
 	for _, variant := range []struct {
 		name     string
 		target   flowLaunchTarget
@@ -251,6 +258,47 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 				FlowSavedSessionResume: true,
 				Embedded:               true,
 			},
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// The tracked resume: FlowLaunchTracked and the phase's ID, kind and
+			// terminal flag all set, every untracked role's marker
+			// (FlowAgent/FlowRepair/FlowAutofix/FlowSavedSessionResume) zero. That
+			// exact shape is what validateTrackedRepoTmuxRole accepts.
+			name:     "phase resume embedded",
+			target:   phaseResume,
+			want:     launchContextPhaseResumeContext(phaseResume.Record),
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
+		},
+		{
+			// Phase resume is genuinely tmux-eligible where repair and
+			// saved-session resume are not: it sets neither Headless nor
+			// FlowRepair, the only markers tmuxRouteEligible refuses on. Embedded
+			// clears because a tmux window has no dock to prefill.
+			name:   "phase resume tmux",
+			target: phaseResume,
+			routing: flowLaunchRouting{
+				Backend:       config.LaunchBackendTmux,
+				TmuxAvailable: func() bool { return true },
+			},
+			want: func() actions.AgentLaunchContext {
+				ctx := launchContextPhaseResumeContext(phaseResume.Record)
+				ctx.Embedded = false
+				return ctx
+			}(),
+			decision: flowLaunchRouteDecision{Route: flowLaunchRouteTmux},
+		},
+		{
+			// The persisted phase decides the terminal flag, not the read one:
+			// resuming a completed phase must keep FlowPhaseTerminal set, which is
+			// what stops a failed resume from regressing it back to running.
+			name:   "phase resume terminal phase",
+			target: terminalPhaseResume,
+			want: func() actions.AgentLaunchContext {
+				ctx := launchContextPhaseResumeContext(terminalPhaseResume.Record)
+				ctx.FlowPhaseTerminal = true
+				return ctx
+			}(),
 			decision: flowLaunchRouteDecision{Route: flowLaunchRouteEmbedded},
 		},
 	} {
@@ -795,6 +843,133 @@ func TestNewFlowLaunchContextKeepsTheSavedSessionIDVerbatim(t *testing.T) {
 	ctx, _, err := newFlowLaunchContext(savedSessionResumeTarget{
 		LaunchID: "launch-1", Record: record, Session: session,
 	}, launchContextVariantSettings(), flowLaunchRouting{})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if ctx.ResumeSessionID != "  session-1  " {
+		t.Fatalf("resume session id = %q, want the untrimmed session ID", ctx.ResumeSessionID)
+	}
+}
+
+// launchContextPhaseResumeTarget is the phase-resume fixture: the variant
+// record plus a running phase whose kind is set explicitly, so the row pins
+// what SemanticKind read off the phase rather than what it inferred from the
+// phase ID. PersistedRecord carries the same phase the read stage saw, which is
+// the ordinary case; the terminal row is what moves them apart.
+func launchContextPhaseResumeTarget() phaseResumeTarget {
+	record := launchContextVariantRecord()
+	phase := flowstore.FlowPhase{
+		PhaseID: "implementation",
+		Title:   "Implementation",
+		Kind:    flowstore.KindImplementation,
+		Status:  flowstore.PhaseRunning,
+		Order:   1,
+	}
+	record.Phases = []flowstore.FlowPhase{phase}
+	return phaseResumeTarget{
+		LaunchID:         "launch-1",
+		Record:           record,
+		PersistedRecord:  record,
+		ReadPhase:        phase,
+		PhaseID:          phase.PhaseID,
+		Command:          "codex",
+		ResumeSessionID:  "session-1",
+		PlanPath:         record.PlanPath,
+		FallbackRepoPath: "/dev/read-stage",
+	}
+}
+
+// launchContextPhaseResumeContext is the embedded context every phase-resume
+// row starts from: the tmux row clears Embedded, and the terminal row flips
+// FlowPhaseTerminal. Model, ReasoningEffort and InitialPrompt stay empty —
+// agentCommandSpec refuses a resume that carries a model, so the snapshot's
+// gpt-5/high must not reach the context.
+func launchContextPhaseResumeContext(record flowstore.FlowRecord) actions.AgentLaunchContext {
+	return actions.AgentLaunchContext{
+		Command:           "codex",
+		LaunchID:          "launch-1",
+		RepoPath:          record.RepoPath,
+		WorktreePath:      record.WorktreePath,
+		WorkingDir:        record.WorktreePath,
+		Branch:            record.Branch,
+		Commit:            record.Commit,
+		SessionStateRoot:  "/state",
+		ResumeSessionID:   "session-1",
+		PlanID:            record.PlanID,
+		PlanPath:          record.PlanPath,
+		FlowID:            record.FlowID,
+		FlowPhaseID:       "implementation",
+		FlowPhaseKind:     flowstore.KindImplementation,
+		FlowPhaseTerminal: false,
+		Embedded:          true,
+		FlowLaunchTracked: true,
+	}
+}
+
+// TestNewFlowLaunchContextFallsBackToTheReadPhaseWhenTheWriteReturnsNone pins
+// the guard that moved into the builder with the rest of phase resume's
+// context. Seams routinely return phase-less records, and an unguarded lookup
+// would answer with the zero phase — kind empty, terminal false — for every one
+// of them, quietly clearing the flag that stops a failed resume from regressing
+// a completed phase.
+func TestNewFlowLaunchContextFallsBackToTheReadPhaseWhenTheWriteReturnsNone(t *testing.T) {
+	target := launchContextPhaseResumeTarget()
+	target.ReadPhase.Status = flowstore.PhaseCompleted
+	target.PersistedRecord.Phases = nil
+
+	ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings(), flowLaunchRouting{})
+	if err != nil {
+		t.Fatalf("newFlowLaunchContext: %v", err)
+	}
+	if !ctx.FlowPhaseTerminal {
+		t.Fatal("a phase-less persisted record must fall back to the read phase, not to the zero phase")
+	}
+	if ctx.FlowPhaseKind != flowstore.KindImplementation {
+		t.Fatalf("phase kind = %q, want the read phase's", ctx.FlowPhaseKind)
+	}
+}
+
+// TestNewFlowLaunchContextRejectsIncompletePhaseResumePayloads pins the six
+// fields this role cannot do without. The worktree is required even though the
+// read stage already refuses a worktree-less resume: this role chdirs into it,
+// so it is the builder-side invariant rather than a refusal the user can reach.
+func TestNewFlowLaunchContextRejectsIncompletePhaseResumePayloads(t *testing.T) {
+	for _, missing := range []struct {
+		name   string
+		mutate func(*phaseResumeTarget)
+	}{
+		{name: "launch id", mutate: func(target *phaseResumeTarget) { target.LaunchID = "  " }},
+		{name: "flow id", mutate: func(target *phaseResumeTarget) { target.Record.FlowID = "  " }},
+		{name: "worktree path", mutate: func(target *phaseResumeTarget) { target.Record.WorktreePath = " " }},
+		{name: "phase id", mutate: func(target *phaseResumeTarget) { target.PhaseID = "  " }},
+		{name: "command", mutate: func(target *phaseResumeTarget) { target.Command = "  " }},
+		{name: "resume session id", mutate: func(target *phaseResumeTarget) { target.ResumeSessionID = "  " }},
+	} {
+		t.Run("missing "+missing.name, func(t *testing.T) {
+			target := launchContextPhaseResumeTarget()
+			missing.mutate(&target)
+
+			ctx, decision, err := newFlowLaunchContext(
+				target, launchContextVariantSettings(), flowLaunchRouting{})
+			if !errors.Is(err, errIncompleteFlowLaunchTarget) {
+				t.Fatalf("err = %v, want errIncompleteFlowLaunchTarget (context %#v)", err, ctx)
+			}
+			if decision != (flowLaunchRouteDecision{}) {
+				t.Fatalf("failed build returned decision %#v", decision)
+			}
+		})
+	}
+}
+
+// TestNewFlowLaunchContextKeepsThePhaseResumeSessionIDVerbatim is the
+// counterpart to the trim in the emptiness check, for the reason the
+// saved-session row gives: a builder that assigned the trimmed value would
+// rewrite the ID the provider stored and resume the wrong session, or none.
+func TestNewFlowLaunchContextKeepsThePhaseResumeSessionIDVerbatim(t *testing.T) {
+	target := launchContextPhaseResumeTarget()
+	target.ResumeSessionID = "  session-1  "
+
+	ctx, _, err := newFlowLaunchContext(target, launchContextVariantSettings(), flowLaunchRouting{})
 	if err != nil {
 		t.Fatalf("newFlowLaunchContext: %v", err)
 	}
