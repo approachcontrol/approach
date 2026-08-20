@@ -8580,9 +8580,7 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 		"Use the approach-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
 		"",
 		"Plan: /state/approach/sessions/v1/plans/plan-1/plan.md",
-		"Worktree: /dev/alpha-worktrees/flow-review",
-		"Branch: flow/review",
-		"Start commit: abc123",
+		fencedFlowRecord("Worktree: /dev/alpha-worktrees/flow-review\nBranch: flow/review\nStart commit: abc123"),
 	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("plan-review prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -8724,9 +8722,7 @@ func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 		"Use the commit skill before completing this phase.",
 		"",
 		"Plan: /state/approach/sessions/v1/plans/plan-1/plan.md",
-		"Worktree: /dev/alpha-worktrees/flow-implementation",
-		"Branch: flow/implementation",
-		"Start commit: fed321",
+		fencedFlowRecord("Worktree: /dev/alpha-worktrees/flow-implementation\nBranch: flow/implementation\nStart commit: fed321"),
 	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("implementation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -8857,9 +8853,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		"Use the commit skill before completing this phase.",
 		"",
 		"Plan: /state/approach/sessions/v1/plans/plan-1/plan.md",
-		"Worktree: /dev/alpha-worktrees/flow-implementation",
-		"Branch: flow/implementation",
-		"Start commit: fed321",
+		fencedFlowRecord("Worktree: /dev/alpha-worktrees/flow-implementation\nBranch: flow/implementation\nStart commit: fed321"),
 	}, "\n"))
 	if started.InitialPrompt != wantPrompt {
 		t.Fatalf("embedded prompt = %q, want %q", started.InitialPrompt, wantPrompt)
@@ -11122,9 +11116,7 @@ func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		"Use the commit skill when revisions are made.",
 		"Use the approach-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.",
 		"",
-		"Worktree: /dev/alpha-worktrees/flow-review-loop",
-		"Branch: flow/review-loop",
-		"Start commit: def456",
+		fencedFlowRecord("Worktree: /dev/alpha-worktrees/flow-review-loop\nBranch: flow/review-loop\nStart commit: def456"),
 	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("review-loop prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -11270,9 +11262,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 		"Use the ship skill to create a PR for the changes.",
 		"After the PR exists, run `\"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}\" flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
-		"Worktree: /dev/alpha-worktrees/flow-pr",
-		"Branch: flow/pr",
-		"Start commit: abc789",
+		fencedFlowRecord("Worktree: /dev/alpha-worktrees/flow-pr\nBranch: flow/pr\nStart commit: abc789"),
 	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -11339,9 +11329,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testi
 		"Use the ship skill to create a PR for the changes.",
 		"After the PR exists, run `\"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}\" flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
-		"Worktree: /dev/alpha-worktrees/flow-pr",
-		"Branch: flow/pr",
-		"Start commit: abc789",
+		fencedFlowRecord("Worktree: /dev/alpha-worktrees/flow-pr\nBranch: flow/pr\nStart commit: abc789"),
 	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -11976,13 +11964,14 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 	if startWidth <= 0 || startHeight <= 0 {
 		t.Fatalf("embedded terminal size = %dx%d", startWidth, startHeight)
 	}
+	fencedInstruction := fencedFlowRecord("Write\nthe plan")
 	prompt := strings.ToLower(started.InitialPrompt)
-	for _, want := range []string{"approach-flow", "write\nthe plan", "\"${approach_executable:-${approach_bin:-approach}}\" plan save", "\"${approach_executable:-${approach_bin:-approach}}\" flow plan set"} {
+	for _, want := range []string{"approach-flow", strings.ToLower(fencedInstruction), "\"${approach_executable:-${approach_bin:-approach}}\" plan save", "\"${approach_executable:-${approach_bin:-approach}}\" flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("Plan Now prompt missing %q: %q", want, started.InitialPrompt)
 		}
 	}
-	if model.ActiveFlowCreateForTest(m) != 0 || len(term.writes) != 1 || !strings.Contains(term.writes[0], "Write\nthe plan") {
+	if model.ActiveFlowCreateForTest(m) != 0 || len(term.writes) != 1 || !strings.Contains(term.writes[0], fencedInstruction) {
 		t.Fatalf("prefill completion: active=%d writes=%#v", model.ActiveFlowCreateForTest(m), term.writes)
 	}
 	beforeWrites := len(term.writes)

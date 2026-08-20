@@ -245,18 +245,11 @@ type WorktreeMoveFailedMsg struct {
 	Err      string
 }
 
-type WorktreeCreateKind int
-
-const (
-	WorktreeCreateGeneric WorktreeCreateKind = iota
-	WorktreeCreatePullRequest
-)
-
 type WorktreeCreateFailedMsg struct {
 	RepoPath    string
 	Input       string
 	Err         string
-	Kind        WorktreeCreateKind
+	Kind        actions.WorktreeCreateKind
 	LaunchAgent bool
 	Request     uint64
 }
@@ -1123,7 +1116,7 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 		placeholder := ui.WorktreeInputPlaceholder
 		validate := validateWorktreeInput
 		submit := func(input string) tea.Cmd { return m.createWorktree(input, msg.LaunchAgent, 0) }
-		if msg.Kind == WorktreeCreatePullRequest {
+		if msg.Kind == actions.WorktreeCreatePullRequest {
 			prompt = ui.PRWorktreePrompt
 			placeholder = ui.PRWorktreeInputPlaceholder
 			validate = func(input string) error { return validatePullRequestWorktreeInput(msg.RepoPath, input) }

@@ -2585,10 +2585,6 @@ func macOSTerminalScriptCommand(app, shellCommand string) *exec.Cmd {
 	)
 }
 
-func externalTerminalCommand(shellCommand string) *exec.Cmd {
-	return macOSTerminalScriptCommand("Terminal", shellCommand)
-}
-
 func tmuxAttachCommand(sessionName, path string, command *terminalCommand) string {
 	cmd := "tmux new-session -A -s " + shellQuote(sessionName) + " -c " + shellQuote(path)
 	if command != nil {
