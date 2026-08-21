@@ -345,6 +345,12 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 			if decision != variant.decision {
 				t.Fatalf("decision = %#v, want %#v", decision, variant.decision)
 			}
+			// The classifier is the builder's inverse, not a parallel guess at
+			// the same rule: every arm's built context has to read back as the
+			// role its payload declared.
+			if role := actions.FlowLaunchRoleOf(ctx); role != variant.target.role() {
+				t.Fatalf("FlowLaunchRoleOf(built) = %v, want %v", role, variant.target.role())
+			}
 		})
 	}
 }
@@ -1153,6 +1159,9 @@ func TestNewFlowLaunchContextPinsTheTrackedPhaseVariants(t *testing.T) {
 			}
 			if decision != variant.decision {
 				t.Fatalf("decision = %#v, want %#v", decision, variant.decision)
+			}
+			if role := actions.FlowLaunchRoleOf(ctx); role != target.role() {
+				t.Fatalf("FlowLaunchRoleOf(built) = %v, want %v", role, target.role())
 			}
 		})
 	}

@@ -2842,7 +2842,8 @@ func (m Model) launchAgentWithContextStatus(ctx actions.AgentLaunchContext, rele
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
-	if ctx.FlowAgent || ctx.FlowSavedSessionResume {
+	switch actions.FlowLaunchRoleOf(ctx) {
+	case actions.RoleWorktreeAgent, actions.RoleSavedSessionResume:
 		return m.focusEmbeddedTerminalInput()
 	}
 	if !m.flowSurfaceVisible() {
@@ -2984,8 +2985,11 @@ func releaseFlowLaunchReservation(release func()) {
 }
 
 func (m Model) reserveFlowSpawn(ctx actions.AgentLaunchContext) (func(), error) {
-	tracked := ctx.FlowLaunchTracked
-	if strings.TrimSpace(ctx.FlowID) == "" || !tracked || ctx.FlowRepair || m.reserveFlowLaunch == nil {
+	// Which roles hold the Flow lease is the enum's answer, not this call
+	// site's: an untracked role — repair, autofix, the worktree agent, a saved
+	// session resume — takes no reservation, and neither does a context that is
+	// no Flow launch at all.
+	if !actions.FlowLaunchRoleOf(ctx).Tracked() || m.reserveFlowLaunch == nil {
 		return func() {}, nil
 	}
 	_, release, err := m.reserveFlowLaunch(ctx.FlowID)
@@ -2993,7 +2997,11 @@ func (m Model) reserveFlowSpawn(ctx actions.AgentLaunchContext) (func(), error) 
 }
 
 func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText string) (flowstore.PhaseUpdate, bool) {
-	if ctx.FlowID == "" || ctx.FlowPhaseID == "" || (ctx.ResumeSessionID != "" && !ctx.FlowLaunchTracked) {
+	// Only the tracked roles own a phase to mark, and only they carry the Flow
+	// and phase IDs the update needs. Every untracked role — repair, autofix,
+	// the worktree agent, the phase-untracked saved session resume — fails
+	// without touching phase state.
+	if !actions.FlowLaunchRoleOf(ctx).Tracked() {
 		return flowstore.PhaseUpdate{}, false
 	}
 	if ctx.FlowPhaseTerminal {

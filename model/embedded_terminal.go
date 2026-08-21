@@ -485,6 +485,11 @@ func (m Model) openFlowEmbeddedTerminalReserved(ctx actions.AgentLaunchContext) 
 }
 
 func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, scope embeddedTerminalScope, provider, identity, flowID, flowPhaseID string, width, height int) (Model, bool, error, tea.Cmd) {
+	// The slot's three Flow markers are one role read three ways, so classify
+	// once here rather than copying the context's raw fields across and letting
+	// them drift apart. A session-scope slot carries a non-Flow context, which
+	// classifies as RoleNone and leaves all three false, as before.
+	role := actions.FlowLaunchRoleOf(ctx)
 	number, ok := m.nextEmbeddedTerminalNumber()
 	if !ok {
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
@@ -509,9 +514,9 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		WorkingDir:             cleanEmbeddedTerminalPath(ctx.WorkingDir),
 		FlowID:                 flowID,
 		FlowPhaseID:            flowPhaseID,
-		FlowRepair:             ctx.FlowRepair,
-		FlowAgent:              ctx.FlowAgent,
-		FlowSavedSessionResume: ctx.FlowSavedSessionResume,
+		FlowRepair:             role == actions.RoleRepair,
+		FlowAgent:              role == actions.RoleWorktreeAgent,
+		FlowSavedSessionResume: role == actions.RoleSavedSessionResume,
 		DetachPolicy:           flowEmbeddedTerminalDetachPolicy(ctx),
 		LaunchID:               strings.TrimSpace(ctx.LaunchID),
 		Terminal:               term,
@@ -748,26 +753,21 @@ func embeddedTerminalIdentity(record sessions.SessionRecord) string {
 }
 
 func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
-	if ctx.FlowRepair {
+	switch actions.FlowLaunchRoleOf(ctx) {
+	case actions.RoleRepair:
 		return "repair"
-	}
-	if ctx.FlowAgent {
+	case actions.RoleWorktreeAgent:
 		return "agent"
-	}
-	if ctx.FlowSavedSessionResume {
+	case actions.RoleSavedSessionResume:
 		return "session " + shortSessionID(ctx.ResumeSessionID)
-	}
-	if ctx.FlowAutofix &&
-		ctx.FlowAutofixPRNumber > 0 &&
-		ctx.Embedded &&
-		!ctx.Headless &&
-		strings.TrimSpace(ctx.FlowID) != "" &&
-		ctx.FlowPhaseID == "" &&
-		!ctx.FlowLaunchTracked &&
-		!ctx.FlowRepair &&
-		!ctx.FlowAgent &&
-		!ctx.FlowSavedSessionResume {
-		return fmt.Sprintf("autofix pr %d", ctx.FlowAutofixPRNumber)
+	case actions.RoleAutofix:
+		// The PR number and the transport are payload rather than role, so they
+		// stay here: an autofix launch that carries no PR number, or that is not
+		// running in the dock, has no label of its own to offer and takes the
+		// generic ladder below.
+		if ctx.FlowAutofixPRNumber > 0 && ctx.Embedded && !ctx.Headless {
+			return fmt.Sprintf("autofix pr %d", ctx.FlowAutofixPRNumber)
+		}
 	}
 	for _, value := range []string{
 		ctx.FlowPhaseID,
@@ -1000,10 +1000,12 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 }
 
 func flowEmbeddedTerminalDetachPolicy(ctx actions.AgentLaunchContext) embeddedTerminalDetachPolicy {
-	if ctx.FlowAgent || ctx.FlowSavedSessionResume {
+	switch actions.FlowLaunchRoleOf(ctx) {
+	case actions.RoleWorktreeAgent, actions.RoleSavedSessionResume:
 		return embeddedTerminalDetachNever
+	default:
+		return embeddedTerminalDetachAllowed
 	}
-	return embeddedTerminalDetachAllowed
 }
 
 func (slot embeddedTerminalSlot) detachHandoffCWD() string {
