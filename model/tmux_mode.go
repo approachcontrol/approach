@@ -61,7 +61,7 @@ func (m Model) tmuxAvailable() bool {
 // in the predicate that names itself the eligibility rule rather than resting on
 // call-site topology.
 func tmuxRouteEligible(ctx actions.AgentLaunchContext) bool {
-	if ctx.Headless || ctx.FlowRepair {
+	if ctx.Headless || actions.FlowLaunchRoleOf(ctx) == actions.RoleRepair {
 		return false
 	}
 	switch agent.Normalize(ctx.Command) {
@@ -330,10 +330,12 @@ func (m Model) launchAgentForBackend(ctx actions.AgentLaunchContext, release fun
 	return m.launchAgentWithContextStatus(ctx, release, launchedStatus)
 }
 
+// flowLaunchContextRequiresLifecycle is a refusal guard, so it asks the wider
+// question rather than the role one: a context carrying any Flow identity at
+// all — including a Flow ID or auto-launch marker that names no role — must not
+// slip onto the non-Flow route.
 func flowLaunchContextRequiresLifecycle(ctx actions.AgentLaunchContext) bool {
-	return strings.TrimSpace(ctx.FlowID) != "" || strings.TrimSpace(ctx.FlowPhaseID) != "" || strings.TrimSpace(ctx.FlowPhaseKind) != "" ||
-		ctx.FlowLaunchTracked || ctx.FlowAutoLaunch || ctx.FlowRepair || ctx.FlowAgent ||
-		ctx.FlowSavedSessionResume || ctx.FlowAutofix || ctx.FlowPhaseTerminal
+	return actions.IsFlowLaunchContext(ctx)
 }
 
 // tmuxLaunchWindowLive reports whether any of these launches still has an open

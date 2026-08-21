@@ -198,15 +198,15 @@ deliberately treated alike.
 
 | Consumer | Fields read | Separates | Treats alike |
 | --- | --- | --- | --- |
-| `flowEmbeddedTerminalIdentity` (`model/embedded_terminal.go:736`) | `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `ResumeSessionID`, `FlowAutofix`, `FlowAutofixPRNumber`, `Embedded`, `Headless`, `FlowID`, `FlowPhaseID`, `FlowLaunchTracked`, `WorktreePath` | V11–12 (repair) ‖ V16 (agent) ‖ V17 (session id) ‖ V13–15 (autofix + PR) ‖ rest | V1–V10 all render as the phase ID |
-| `flowEmbeddedTerminalDetachPolicy` (`model/embedded_terminal.go:988`) | `FlowAgent`, `FlowSavedSessionResume` | V16, V17 (never detachable) ‖ rest | every tracked and untracked-repair/autofix variant |
-| slot stamping (`model/embedded_terminal.go:502`) | `RepoPath`, `WorktreePath`, `WorkingDir`, `FlowID`, `FlowPhaseID`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `LaunchID`, `Command`; forces `Embedded` true at `:493` | repair/agent/saved-resume slots | autofix is *not* stamped — it has no slot marker of its own |
+| `flowEmbeddedTerminalIdentity` (`model/embedded_terminal.go:736`) | `actions.FlowLaunchRoleOf`, plus `ResumeSessionID`, `FlowAutofixPRNumber`, `Embedded`, `Headless`, `FlowPhaseID`, `FlowID`, `WorktreePath` as payload | V11–12 (repair) ‖ V16 (agent) ‖ V17 (session id) ‖ V13–15 (autofix + PR) ‖ rest | V1–V10 all render as the phase ID |
+| `flowEmbeddedTerminalDetachPolicy` (`model/embedded_terminal.go:988`) | `actions.FlowLaunchRoleOf` | V16, V17 (never detachable) ‖ rest | every tracked and untracked-repair/autofix variant |
+| slot stamping (`model/embedded_terminal.go:502`) | `RepoPath`, `WorktreePath`, `WorkingDir`, `FlowID`, `FlowPhaseID`, `LaunchID`, `Command`, and `actions.FlowLaunchRoleOf` for the slot's three Flow markers; forces `Embedded` true at `:493` | repair/agent/saved-resume slots | autofix is *not* stamped — it has no slot marker of its own |
 | dock visibility (`model/embedded_terminal.go:458`, `:467`) | `FlowAutoLaunch`, `Headless` | V4 (no dock, keeps the active slot) ‖ V2/V6/V12/V14 (headless) ‖ rest | manual vs create vs resume |
-| `updateFlowTerminalFocusAfterLaunch` (`model/model_keys.go:3003`) | `FlowAgent`, `FlowSavedSessionResume`, `FlowAutoLaunch`, `Headless` | V16/V17 (always focus input) ‖ V4 (no focus change) ‖ headless (focus list) ‖ rest | manual/create/resume/repair/autofix at equal headlessness |
-| `reserveFlowSpawn` (`model/model_keys.go:3145`) | `FlowID`, `FlowLaunchTracked`, `FlowRepair` | tracked non-repair (V1–V10) ‖ rest | all untracked kinds are no-ops |
-| `flowLaunchFailureUpdate` (`model/model_keys.go:3154`) | `FlowID`, `FlowPhaseID`, `ResumeSessionID`, `FlowLaunchTracked`, `FlowPhaseTerminal`, `FlowPhaseKind` | V8/V10 (terminal resume: refuse) ‖ V11–V17 (no phase: refuse) ‖ plan-review kind (blocked) ‖ rest | manual/auto/create/non-terminal resume |
-| `tmuxRouteEligible` (`model/tmux_mode.go:63`) | `Headless`, `FlowRepair`, `Command` | V3/V9/V10/V15 eligible ‖ rest | every embedded variant, for whichever of the two reasons |
-| `flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) | all ten marker fields (`FlowID`, `FlowPhaseID`, `FlowPhaseKind`, plus the seven booleans; not `FlowAutofixPRNumber`) | Flow launches ‖ the four non-Flow literals and the two probes | all 17 variants alike; the two non-launch Flow-ID literals would also classify as Flow, but never reach it |
+| `updateFlowTerminalFocusAfterLaunch` (`model/model_keys.go:3003`) | `actions.FlowLaunchRoleOf`, then `FlowAutoLaunch`, `Headless` | V16/V17 (always focus input) ‖ V4 (no focus change) ‖ headless (focus list) ‖ rest | manual/create/resume/repair/autofix at equal headlessness |
+| `reserveFlowSpawn` (`model/model_keys.go:3145`) | `actions.FlowLaunchRole.Tracked` | tracked non-repair (V1–V10) ‖ rest | all untracked kinds are no-ops |
+| `flowLaunchFailureUpdate` (`model/model_keys.go:3154`) | `actions.FlowLaunchRole.Tracked`, then `FlowPhaseTerminal`, `FlowPhaseKind` | V8/V10 (terminal resume: refuse) ‖ V11–V17 (no phase: refuse) ‖ plan-review kind (blocked) ‖ rest | manual/auto/create/non-terminal resume |
+| `tmuxRouteEligible` (`model/tmux_mode.go:63`) | `Headless`, `actions.FlowLaunchRoleOf`, `Command` | V3/V9/V10/V15 eligible ‖ rest | every embedded variant, for whichever of the two reasons |
+| `flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) | `actions.IsFlowLaunchContext`, which reads all ten marker fields (`FlowID`, `FlowPhaseID`, `FlowPhaseKind`, plus the seven booleans; not `FlowAutofixPRNumber`) | Flow launches ‖ the four non-Flow literals and the two probes | all 17 variants alike; the two non-launch Flow-ID literals would also classify as Flow, but never reach it |
 | `actions.ShouldPrefillEmbeddedPrompt` (`actions/actions.go:1338`) | `Command`, `Embedded`, `Headless`, `ResumeSessionID`, `InitialPrompt`, `FlowID`, `FlowPhaseID`, `FlowLaunchTracked`, `FlowRepair`, `FlowAgent`, `FlowAutofix` | V1/V5 (prefill) ‖ V11/V13/V16 (untracked prefill arms) ‖ resume and headless and tmux (no prefill) | the three untracked arms are separate clauses with identical effect |
 | `actions.resumeSessionIDForContext` (`actions/actions.go:1450`) | `FlowSavedSessionResume` + 12 negated fields + `ResumeSessionID` | V17 ‖ everything else | asserts *one* variant; all others take the plain path |
 | `actions.validateTrackedRepoTmuxRole` (`actions/tmux_mode.go:454`) | `FlowLaunchTracked`, `FlowID`, `FlowPhaseID`, `FlowAutoLaunch`, `Headless`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `FlowAutofix`, `FlowAutofixPRNumber` | V3/V9/V10 accepted | manual and resume tmux launches are identical to it |
@@ -217,6 +217,19 @@ deliberately treated alike.
 | `reconcileInteractiveLaunchExitCmd` (`model/flow_launch_control.go:149`) | `FlowLaunchTracked`, `FlowID`, `FlowPhaseID`, `LaunchID` | V1–V10 ‖ rest | — |
 | `actions.UsesStreamJSONOutput` (`actions/actions.go:1333`) | `Command`, `Embedded`, `Headless` | V2/V4/V6/V12/V14 on claude/cursor | — |
 | provider env export (`actions/actions.go:1424`) | `PlanPhaseID`, `PlanPhaseTitle`, `PlanPhaseStatus` | V5/V6 only | every other variant exports empty strings |
+
+All eight model-side consumers above now derive the role from
+`actions.FlowLaunchRoleOf` (`actions/flow_launch_role.go`) — the inverse of the
+builder's `role()` — rather than re-deriving it from raw marker fields, and the
+lifecycle guard delegates to the deliberately wider `actions.IsFlowLaunchContext`.
+The fields still listed beside the role are payload and transport, not role:
+the PR number and the dock/headless pair that decide whether autofix has a label
+to render, the resumed session ID, the phase kind the failure ladder reads, and
+the fallback ladder's own strings. Their behavior across V1–V17, the four
+non-Flow literals and the two probes is pinned by
+`model/flow_launch_role_matrix_internal_test.go`, and every builder arm asserts
+`FlowLaunchRoleOf(built) == target.role()` so the classifier stays the builder's
+inverse rather than a parallel guess.
 
 ### Field coverage check
 
@@ -249,13 +262,20 @@ headless (`model/tmux_mode.go:64`). Nothing states "auto ⇒ headless" as an
 invariant. Making auto launches interactive — a plausible future change — would
 turn every tmux-mode auto-advance into `invalid tracked Flow tmux launch role`.
 
-**F2 — the three hand-written role predicates disagree about which fields
+**F2 — closed on the model side by `approach-hyl.10`; the actions side is
+`approach-hyl.11`.** The eight model-side consumers no longer hand-write the
+role at all: they read `actions.FlowLaunchRoleOf`, whose precedence is stated
+once and tested against the builder. The three predicates below still live in
+`actions` and still disagree. The original finding, with its third predicate
+now historical:
+
+**The three hand-written role predicates disagree about which fields
 constitute a role.** `resumeSessionIDForContext` checks `FlowPhaseTerminal` and
 `InitialPrompt == ""`; `validateTrackedRepoTmuxRole` checks neither, but does
 check `FlowAutofixPRNumber != 0`; the autofix arm of
-`flowEmbeddedTerminalIdentity` (`model/embedded_terminal.go:746`) checks neither
-`FlowPhaseTerminal` nor `FlowAutoLaunch`. Three predicates, three different
-field sets, one concept.
+`flowEmbeddedTerminalIdentity` used to check neither `FlowPhaseTerminal` nor
+`FlowAutoLaunch` — that arm is now the classifier's `RoleAutofix` case, so two
+of the three remain.
 
 **F3 — `launchKind` classifies V17 and V7–V10 identically as `"resume"`**
 (`model/flow_launch_pin.go:132`), because it falls through on `ResumeSessionID`.
