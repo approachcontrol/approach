@@ -282,7 +282,8 @@ type flowSeamContextShapes struct {
 	// `LaunchContext` field from either failing the guard or hiding a real
 	// violation.
 	fields map[string]map[string]flowSeamKind
-	// results maps a function name to what each of its results holds, so
+	// results maps a function name to what each of its results holds, named
+	// types included so a helper handing back a wrapper resolves like one, so
 	// `ctx := makeContext(); ctx.FlowRepair = true` is caught the same way a
 	// literal binding is, and a helper handing back a slice or map of contexts
 	// is followed into its elements. Receivers and packages are ignored here:
@@ -537,7 +538,7 @@ func flowSeamContextShapesOf(dir string, file *ast.File, aliases map[string]bool
 					count = 1
 				}
 				kind := flowSeamTypeKind(result.Type, scope)
-				if kind.context || kind.collection {
+				if kind.known() {
 					for offset := 0; offset < count; offset++ {
 						kinds[position+offset] = kind
 					}
@@ -1134,6 +1135,23 @@ func viaHelperCollection() {
 	contexts[0].FlowRepair = true
 }`,
 			want: []string{"viaHelperCollection.FlowRepair"},
+		},
+		"marker assigned on a helper-returned embedding wrapper": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type holder struct {
+	actions.AgentLaunchContext
+}
+
+func makeHolder() holder {
+	return holder{}
+}
+
+func viaHelperWrapper() {
+	h := makeHolder()
+	h.FlowID = "f"
+}`,
+			want: []string{"viaHelperWrapper.FlowID"},
 		},
 		"marker assigned on a multi-result helper context": {
 			dir: "model", name: "keys.go",
