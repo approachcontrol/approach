@@ -819,14 +819,7 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 		}
 		event.Context = result.Context
 		event.FallbackNote = result.FallbackNote
-		switch result.Route {
-		case flowPhaseLaunchEmbedded:
-			event.Route = flowLaunchRouteEmbedded
-		case flowPhaseLaunchTmux:
-			event.Route = flowLaunchRouteTmux
-		default:
-			event.Err = fmt.Sprintf("unsupported flow phase launch route %d", result.Route)
-		}
+		event.Route = result.Route
 		return event
 	}
 }

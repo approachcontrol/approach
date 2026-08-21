@@ -111,9 +111,8 @@ V1–V4 were the last route-deciding arm to move. The tracked-phase builder
 resolves the reservation-vs-requested headless rule and *then* decides the
 route against the finished context, which is what keeps the
 `any kind × tmux × headless` pruning rule true by construction rather than by
-call-site ordering. `prepare` now maps the builder's route onto
-`flowPhaseLaunchRoute`, and an unmapped route is an error rather than a silent
-embedded default.
+call-site ordering. `prepare` carries the builder's `flowLaunchRoute` directly
+to lifecycle dispatch, whose final route switch rejects unsupported values.
 
 V5–V6 moved last. Their arm returns a constant embedded route like the repair,
 worktree-agent and saved-session-resume arms, so the `createPhase × tmux`
@@ -121,8 +120,7 @@ pruning rule now holds by construction rather than by a missing call site, and
 the create call site takes the builder's route instead of assigning
 `flowLaunchRouteEmbedded` itself. Its tracked-ness moved too: `FlowLaunchTracked`
 and `Embedded` are now set in the arm rather than stamped at install, so no Flow
-context is rewritten between prepare and the terminal open (see F4). Unifying
-`flowLaunchRoute` with `flowPhaseLaunchRoute` remains the standing follow-up.
+context is rewritten between prepare and the terminal open (see F4).
 
 ## 3. Field values, with the pipeline point that sets them
 
