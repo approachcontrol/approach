@@ -168,20 +168,24 @@ Every kind additionally passes through `applyLaunchStamp`
    autofix, worktreeAgent and savedSessionResume. That stamp is gone: every kind
    that is tracked now says so at construction, `createPhase` included, and
    install no longer writes the field.
-2. `Embedded` was forced true at install as well; that write is gone too. It is
-   still forced true at `model/embedded_terminal.go:493`, inside the terminal
-   starter (`model/embedded_terminal.go:214`) and in the embedded tmux command
-   (`actions/actions.go:1351`) — the first two serve *non-Flow* embedded
-   terminals, which have no builder to set the field, and the third is an
-   actions-local normalisation on a value copy.
+2. `Embedded` was forced true at install as well; that write is gone too, and so
+   are the two that outlived it in `model/embedded_terminal.go` (the shared open
+   at `:493` and the terminal starter at `:214`). The one non-Flow construction
+   site, `sessionResumeLaunchContext`, now sets the field in its own literal
+   like every Flow builder does, so nothing below the embedded open repairs a
+   context after the fact. The remaining true is in the embedded tmux command
+   (`actions/actions.go:1351`), an actions-local normalisation on a value copy.
 3. `Embedded` is forced false on the tmux route in three places:
    `model/flow_phase_launch.go:406`, `model/flow_launch_resume.go:388` and
    `model/flow_launch_autofix.go:399`, and once more inside actions at
    `actions/tmux_mode.go:313`. Two of those three have since moved inside the
    builder with their roles: the autofix and phase-resume clears now happen in
    the arm that decides the route. The fourth model-side clear, in
-   `model/tmux_mode.go`, is gone — that spawn is the non-Flow route only, and a
-   non-Flow context arrives with `Embedded` false already.
+   `model/tmux_mode.go`, is gone — the argv-vs-dock rule for that spawn is held
+   one layer down by `actions.RepoTmuxAgentLaunch`. The external terminal window
+   is the second transport that clears the bit, in
+   `actions.agentLaunchWithOptions`, for the same reason: a window has no dock
+   to prefill and an alt screen of its own to leave alone.
 4. `Headless` is resolved twice for manual launches — from the record at
    `model/flow_launch_lifecycle.go:620` and again from the persisted reservation
    at `model/flow_phase_launch.go:398` — and for repair only at refresh time
@@ -200,7 +204,7 @@ deliberately treated alike.
 | --- | --- | --- | --- |
 | `flowEmbeddedTerminalIdentity` (`model/embedded_terminal.go:736`) | `actions.FlowLaunchRoleOf`, plus `ResumeSessionID`, `FlowAutofixPRNumber`, `Embedded`, `Headless`, `FlowPhaseID`, `FlowID`, `WorktreePath` as payload | V11–12 (repair) ‖ V16 (agent) ‖ V17 (session id) ‖ V13–15 (autofix + PR) ‖ rest | V1–V10 all render as the phase ID |
 | `flowEmbeddedTerminalDetachPolicy` (`model/embedded_terminal.go:988`) | `actions.FlowLaunchRoleOf` | V16, V17 (never detachable) ‖ rest | every tracked and untracked-repair/autofix variant |
-| slot stamping (`model/embedded_terminal.go:502`) | `RepoPath`, `WorktreePath`, `WorkingDir`, `FlowID`, `FlowPhaseID`, `LaunchID`, `Command`, and `actions.FlowLaunchRoleOf` for the slot's three Flow markers; forces `Embedded` true at `:493` | repair/agent/saved-resume slots | autofix is *not* stamped — it has no slot marker of its own |
+| slot stamping (`model/embedded_terminal.go:502`) | `RepoPath`, `WorktreePath`, `WorkingDir`, `FlowID`, `FlowPhaseID`, `LaunchID`, `Command`, and `actions.FlowLaunchRoleOf` for the slot's three Flow markers | repair/agent/saved-resume slots | autofix is *not* stamped — it has no slot marker of its own |
 | dock visibility (`model/embedded_terminal.go:458`, `:467`) | `FlowAutoLaunch`, `Headless` | V4 (no dock, keeps the active slot) ‖ V2/V6/V12/V14 (headless) ‖ rest | manual vs create vs resume |
 | `updateFlowTerminalFocusAfterLaunch` (`model/model_keys.go:3003`) | `actions.FlowLaunchRoleOf`, then `FlowAutoLaunch`, `Headless` | V16/V17 (always focus input) ‖ V4 (no focus change) ‖ headless (focus list) ‖ rest | manual/create/resume/repair/autofix at equal headlessness |
 | `reserveFlowSpawn` (`model/model_keys.go:3145`) | `actions.FlowLaunchRole.Tracked` | tracked non-repair (V1–V10) ‖ rest | all untracked kinds are no-ops |

@@ -2623,6 +2623,12 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		ResumeSessionID:  sessionID,
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
+		// The dock is this route's default transport, so the context describes
+		// it here rather than being repaired at the embedded open. The two
+		// routes that leave the dock clear the bit themselves, one layer down:
+		// actions.RepoTmuxAgentLaunch for the tmux window and
+		// actions.AgentLaunch for the external one.
+		Embedded: true,
 	}
 	return applyLaunchStamp(ctx, m.launchStamp()), func() {}, true, m
 }

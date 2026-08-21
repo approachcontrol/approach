@@ -2,7 +2,9 @@ package model
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -842,4 +844,99 @@ func TestNonFlowSessionResumeReachesTmuxBuilderUnembedded(t *testing.T) {
 	if built.InitialPrompt != "resume the session" {
 		t.Fatalf("tmux builder prompt = %q, want it carried to argv", built.InitialPrompt)
 	}
+}
+
+// TestSessionResumeContextIsBuiltEmbedded pins the construction half of the
+// rule: the non-Flow resume route is built for the dock, its default
+// transport, so its context describes that transport from the moment it
+// exists. The tmux and external transports each clear the bit themselves.
+func TestSessionResumeContextIsBuiltEmbedded(t *testing.T) {
+	spy := &tmuxResumeSpy{t: t}
+	m := spy.modelWithRepos("embedded", false)
+	m.repoTmuxLaunchWindowLive = func(string, ...string) bool { return false }
+
+	ctx, _, ok, next := m.sessionResumeLaunchContext(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "session-1",
+		RepoPath:  "/dev/alpha",
+		CWD:       "/dev/alpha",
+	})
+	if !ok {
+		t.Fatalf("resume was refused, status = %q", next.status.Text)
+	}
+	if !ctx.Embedded {
+		t.Fatal("the non-Flow resume context must be built embedded; the dock is this route's default transport")
+	}
+}
+
+// TestNonFlowTmuxResumeClearsEmbeddedInArgv is the other half: the tmux
+// transport takes the embedded resume context and still builds a window's argv
+// — the resume on the command line, no alt-screen suppression. The clear lives
+// in actions.RepoTmuxAgentLaunch, so this exercises the real builder rather
+// than the spy.
+func TestNonFlowTmuxResumeClearsEmbeddedInArgv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	writeInternalFakeExecutable(t, dir, "codex", "#!/bin/sh\nexit 0\n")
+	writeInternalFakeExecutable(t, dir, "tmux", "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	record := sessions.SessionRecord{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "session-1",
+		RepoPath:     dir,
+		WorktreePath: dir,
+		CWD:          dir,
+	}
+	m := newModelForTest(nil, Options{
+		AgentCommand:        "codex",
+		LaunchBackend:       "tmux",
+		TmuxLaunchAvailable: func() bool { return true },
+		InspectFlowLease: func(string, string) (flowlease.LeaseState, error) {
+			return flowlease.Free, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			t.Fatal("tmux mode must not open an embedded terminal for a session resume")
+			return nil, nil
+		},
+	})
+	m.repoTmuxLaunchWindowLive = func(string, ...string) bool { return false }
+
+	ctx, release, ok, next := m.sessionResumeLaunchContext(record)
+	if !ok {
+		t.Fatalf("resume was refused, status = %q", next.status.Text)
+	}
+	if !ctx.Embedded {
+		t.Fatal("the non-Flow resume context must reach the tmux transport embedded; the clear belongs to the transport")
+	}
+	if _, cmd := next.resumeSessionForBackend(ctx, record, release); cmd == nil {
+		t.Fatal("expected a tmux launch command")
+	}
+
+	script := internalAgentLaunchScript(t)
+	if !strings.Contains(script, "resume") || !strings.Contains(script, "session-1") {
+		t.Fatalf("tmux resume argv missing the resume:\n%s", script)
+	}
+	if strings.Contains(script, "--no-alt-screen") {
+		t.Fatalf("a tmux window has an alt screen; the launch must not suppress it:\n%s", script)
+	}
+}
+
+// internalAgentLaunchScript reads the single agent launch script a transport
+// wrote into the test's TMPDIR. It is the model-side twin of the actions
+// package's agentLaunchScript.
+func internalAgentLaunchScript(t *testing.T) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "approach-agent-*.sh"))
+	if err != nil {
+		t.Fatalf("glob agent launch script: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one agent launch script in %s, got %d: %#v", os.TempDir(), len(matches), matches)
+	}
+	body, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read agent launch script: %v", err)
+	}
+	return string(body)
 }

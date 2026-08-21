@@ -211,7 +211,6 @@ type realEmbeddedTerminalRuntime interface {
 }
 
 func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
-	ctx.Embedded = true
 	// Headless claude streams stream-json, which is only readable once
 	// translated. Run it directly (not via the tmux transport) so its output
 	// can be piped through the renderer before it reaches the emulator.
@@ -495,7 +494,6 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
 		return m, false, nil, nil
 	}
-	ctx.Embedded = true
 	term, err := m.startEmbeddedTerminal(ctx, width, height)
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
