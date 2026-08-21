@@ -282,6 +282,11 @@ type flowSeamContextShapes struct {
 	// aliases are the qualified names declared as an alias of the launch
 	// context anywhere in the scan set.
 	aliases map[string]bool
+	// underlying is qualified named type -> what defining it actually made,
+	// for `type launchContexts []actions.AgentLaunchContext` and friends. A
+	// defined type has the launch context's fields, so a marker write through
+	// one is a marker write.
+	underlying map[string]flowSeamKind
 	// embeds is qualified owner type -> what it embeds anonymously, either
 	// the launch context itself (under flowSeamEmbeddedContext) or another
 	// qualified type. Go promotes an embedded context's fields, so
@@ -303,6 +308,8 @@ func newFlowSeamContextShapes() flowSeamContextShapes {
 		results: make(map[string]map[int]flowSeamKind),
 		aliases: make(map[string]bool),
 		embeds:  make(map[string]map[string]bool),
+
+		underlying: make(map[string]flowSeamKind),
 	}
 }
 
@@ -327,6 +334,11 @@ func (s flowSeamContextShapes) merge(other flowSeamContextShapes) {
 	}
 	for alias := range other.aliases {
 		s.aliases[alias] = true
+	}
+	for named, kind := range other.underlying {
+		if flowSeamKindRank(kind) > flowSeamKindRank(s.underlying[named]) {
+			s.underlying[named] = kind
+		}
 	}
 	for owner, embedded := range other.embeds {
 		if s.embeds[owner] == nil {
@@ -357,10 +369,33 @@ func (s flowSeamContextShapes) promotesContext(owner string, seen map[string]boo
 	return false
 }
 
+// resolveKind follows a named type to what defining it actually made, so
+// `type launchContexts []actions.AgentLaunchContext` reads as a collection
+// wherever one of its values appears.
+func (scope flowSeamScope) resolveKind(kind flowSeamKind) flowSeamKind {
+	seen := make(map[string]bool)
+	for kind.named != "" && !kind.context && !kind.collection {
+		if seen[kind.named] {
+			break
+		}
+		seen[kind.named] = true
+		resolved, ok := scope.shapes.underlying[kind.named]
+		if !ok {
+			break
+		}
+		kind = resolved
+	}
+	return kind
+}
+
 // holdsContext reports whether a marker write on a value of this kind writes a
-// launch context: the value is one, or embeds one and has its fields promoted.
+// launch context: the value is one, was defined as one, or embeds one and has
+// its fields promoted.
 func (scope flowSeamScope) holdsContext(kind flowSeamKind) bool {
-	return kind.context || scope.shapes.promotesContext(kind.named, make(map[string]bool))
+	if scope.resolveKind(kind).context {
+		return true
+	}
+	return scope.shapes.promotesContext(kind.named, make(map[string]bool))
 }
 
 func (s flowSeamContextShapes) contextFieldCount() int {
@@ -412,6 +447,11 @@ func flowSeamContextShapesOf(dir string, file *ast.File, aliases map[string]bool
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.TypeSpec:
+			if !n.Assign.IsValid() {
+				if kind := flowSeamTypeKind(n.Type, scope); kind.context || kind.collection {
+					shapes.underlying[flowSeamQualify(dir, n.Name.Name)] = kind
+				}
+			}
 			structType, ok := n.Type.(*ast.StructType)
 			if !ok || structType.Fields == nil {
 				return true
@@ -534,6 +574,10 @@ func flowSeamKindRank(kind flowSeamKind) int {
 // parentheses, address-of, and dereference. It reads syntax, not types, so an
 // expression it cannot place comes back unknown rather than guessed at.
 func flowSeamExprKind(expr ast.Expr, locals *flowSeamLocals, scope flowSeamScope) flowSeamKind {
+	return scope.resolveKind(flowSeamExprKindRaw(expr, locals, scope))
+}
+
+func flowSeamExprKindRaw(expr ast.Expr, locals *flowSeamLocals, scope flowSeamScope) flowSeamKind {
 	if flowSeamLaunchContextLit(expr, scope.file) != nil {
 		return flowSeamKind{context: true}
 	}
@@ -692,11 +736,12 @@ func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers m
 	ast.Inspect(node, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CompositeLit:
-			if flowSeamIsLaunchContextType(n.Type, scope.file) {
+			kind := scope.resolveKind(flowSeamTypeKind(n.Type, scope.file))
+			if kind.context {
 				flowSeamLiteralMarkers(n, markers, record)
 				return true
 			}
-			if !flowSeamTypeKind(n.Type, scope.file).collection {
+			if !kind.collection {
 				return true
 			}
 			// `[]actions.AgentLaunchContext{{FlowRepair: true}}`: the element
@@ -1175,6 +1220,36 @@ type envelope struct {
 	Context actions.AgentLaunchContext
 }`}},
 			want: []string{},
+		},
+		"marker assigned through a named collection type": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type launchContexts []actions.AgentLaunchContext
+
+func viaNamedCollection(xs launchContexts) {
+	xs[0].FlowRepair = true
+}`,
+			want: []string{"viaNamedCollection.FlowRepair"},
+		},
+		"marker keyed in a named collection literal": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type launchContexts []actions.AgentLaunchContext
+
+func inNamedCollectionLiteral() {
+	_ = launchContexts{{FlowAgent: true}}
+}`,
+			want: []string{"inNamedCollectionLiteral.FlowAgent"},
+		},
+		"marker assigned on a defined launch context type": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type definedContext actions.AgentLaunchContext
+
+func viaDefinedType(ctx definedContext) {
+	ctx.FlowPhaseTerminal = true
+}`,
+			want: []string{"viaDefinedType.FlowPhaseTerminal"},
 		},
 		"marker assigned on a promoted embedded launch context": {
 			dir: "model", name: "keys.go",
