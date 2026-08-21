@@ -641,7 +641,14 @@ func flowSeamExprKindRaw(expr ast.Expr, locals *flowSeamLocals, scope flowSeamSc
 			return flowSeamKind{context: true}
 		}
 	case *ast.CallExpr:
-		return scope.shapes.resultKinds(expr)[0]
+		if kind, ok := scope.shapes.resultKinds(expr)[0]; ok {
+			return kind
+		}
+		// A conversion is spelled like a call: `localContext(base)` yields
+		// whatever localContext was defined as.
+		if len(expr.Args) == 1 {
+			return flowSeamTypeKind(expr.Fun, scope.file)
+		}
 	}
 	return flowSeamKind{}
 }
@@ -1135,6 +1142,18 @@ func viaHelperCollection() {
 	contexts[0].FlowRepair = true
 }`,
 			want: []string{"viaHelperCollection.FlowRepair"},
+		},
+		"marker assigned on a converted launch context": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type localContext actions.AgentLaunchContext
+
+func viaConversion(base actions.AgentLaunchContext) actions.AgentLaunchContext {
+	ctx := localContext(base)
+	ctx.FlowRepair = true
+	return actions.AgentLaunchContext(ctx)
+}`,
+			want: []string{"viaConversion.FlowRepair"},
 		},
 		"marker assigned on a helper-returned embedding wrapper": {
 			dir: "model", name: "keys.go",
