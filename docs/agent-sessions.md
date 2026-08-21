@@ -25,10 +25,21 @@ intent whose prompt comes from `[flow_prompts].autofix`; its headless/tmux
 routing remains unchanged.
 
 All Flow-associated launches enter the Model's one Flow launch lifecycle before
-any reservation, Flow write, or process start. That boundary changes no storage
-ownership: provider hooks and the session store still own capture and transcript
-metadata, the Flow store still owns phase launch/session mirrors, and the
-embedded terminal still owns the live process. The lifecycle only coordinates
+any reservation, Flow write, or process start. Launch sources submit typed
+intent instead of assembling transport metadata. After the lifecycle resolves
+the intent into a role-specific payload, `model/flow_launch_context.go` selects
+the role builder. `newFlowLaunchContext` maps the variant to one canonical
+`actions.AgentLaunchContext` and route decision, then hands the finished context
+to the actions adapters.
+
+At that adapter boundary, the tracked tmux and embedded-prompt consumers recover
+the role with `actions.FlowLaunchRoleOf` and validate the role-shaped metadata
+they accept. Saved-session resume already knows its required role and validates
+the context against that role directly. This division keeps lifecycle policy out
+of actions and keeps Flow marker combinations out of launch callers. It changes
+no storage ownership: provider hooks and the session store still own capture and
+transcript metadata, the Flow store still owns phase launch/session mirrors, and
+the embedded terminal still owns the live process. The lifecycle coordinates
 their ordering and exact-Flow occupancy.
 
 ## Manual Hook Setup
