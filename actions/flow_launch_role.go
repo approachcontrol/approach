@@ -1,6 +1,10 @@
 package actions
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // FlowLaunchRole names the kind of Flow-scoped launch a context represents. It
 // is a closed enum: every Flow launch the TUI can start is exactly one of these
@@ -165,4 +169,116 @@ func (role FlowLaunchRole) String() string {
 	default:
 		return "unknown flow launch role"
 	}
+}
+
+// Prefills reports whether a launch in this role fills the embedded dock with
+// its prompt rather than passing it as argv. The two resume roles carry no
+// prompt to place, and RoleNone is not a Flow launch at all.
+func (role FlowLaunchRole) Prefills() bool {
+	switch role {
+	case RoleTrackedPhase, RoleCreatePhase, RoleRepair, RoleWorktreeAgent, RoleAutofix:
+		return true
+	default:
+		return false
+	}
+}
+
+// errInvalidFlowLaunchRole is the seam's one rejection. Call sites wrap it in
+// their own message so their existing diagnostics survive.
+var errInvalidFlowLaunchRole = errors.New("invalid Flow launch role")
+
+// flowLaunchRoleMarkers is one row of the "Marker fields" table in
+// docs/flow-launch-variant-matrix.md §3, transcribed so the table is executable
+// rather than prose. A role owns exactly the markers its row sets; every other
+// marker on the context is a marker the role does not own.
+type flowLaunchRoleMarkers struct {
+	// phaseAttached roles address a phase of their Flow, so they require a
+	// phase ID and may carry its kind. The rest own neither.
+	phaseAttached bool
+	tracked       bool
+	repair        bool
+	agent         bool
+	savedResume   bool
+	autofix       bool
+	// allowAutoLaunch is the auto-vs-manual distinction inside the tracked
+	// phase role rather than a role of its own (V4). allowPhaseTerminal is the
+	// resumed phase that had already finished (V8, V10).
+	allowAutoLaunch    bool
+	allowPhaseTerminal bool
+}
+
+func flowLaunchRoleMarkersOf(role FlowLaunchRole) (flowLaunchRoleMarkers, bool) {
+	switch role {
+	case RoleTrackedPhase:
+		return flowLaunchRoleMarkers{phaseAttached: true, tracked: true, allowAutoLaunch: true}, true
+	case RolePhaseResume:
+		return flowLaunchRoleMarkers{phaseAttached: true, tracked: true, allowPhaseTerminal: true}, true
+	case RoleCreatePhase:
+		return flowLaunchRoleMarkers{phaseAttached: true, tracked: true}, true
+	case RoleRepair:
+		return flowLaunchRoleMarkers{repair: true}, true
+	case RoleAutofix:
+		return flowLaunchRoleMarkers{autofix: true}, true
+	case RoleWorktreeAgent:
+		return flowLaunchRoleMarkers{agent: true}, true
+	case RoleSavedSessionResume:
+		return flowLaunchRoleMarkers{savedResume: true}, true
+	default:
+		return flowLaunchRoleMarkers{}, false
+	}
+}
+
+// validateFlowLaunchRole reports one canonical rejection when ctx is not a
+// well-formed instance of want: it sets a marker the role does not own, or
+// misses one the role requires. FlowLaunchRoleOf answers which role a context
+// names, by precedence; this answers whether the context is a clean instance of
+// that role, which is the half the hand-written ladders at the seam used to
+// carry on their own.
+//
+// Transport and payload are deliberately not inputs. Embedded, Headless,
+// FlowAutofixPRNumber, InitialPrompt and ResumeSessionID are read by exactly one
+// consumer each, next to that consumer's single role call.
+func validateFlowLaunchRole(ctx AgentLaunchContext, want FlowLaunchRole) error {
+	markers, ok := flowLaunchRoleMarkersOf(want)
+	if !ok {
+		return fmt.Errorf("%w: %v", errInvalidFlowLaunchRole, want)
+	}
+	// Every role is scoped to a Flow: without one there is no lease to take, no
+	// phase to mark and no session to resume.
+	if strings.TrimSpace(ctx.FlowID) == "" {
+		return fmt.Errorf("%w: %v requires a Flow ID", errInvalidFlowLaunchRole, want)
+	}
+	if markers.phaseAttached {
+		if strings.TrimSpace(ctx.FlowPhaseID) == "" {
+			return fmt.Errorf("%w: %v requires a phase ID", errInvalidFlowLaunchRole, want)
+		}
+	} else if strings.TrimSpace(ctx.FlowPhaseID) != "" || strings.TrimSpace(ctx.FlowPhaseKind) != "" {
+		return fmt.Errorf("%w: %v owns no phase", errInvalidFlowLaunchRole, want)
+	}
+	for _, marker := range []struct {
+		name string
+		got  bool
+		want bool
+		// optional markers are the two the role may carry but need not: the
+		// auto-launch flag on a tracked phase and the terminal flag on a
+		// phase resume.
+		optional bool
+	}{
+		{name: "tracked", got: ctx.FlowLaunchTracked, want: markers.tracked},
+		{name: "repair", got: ctx.FlowRepair, want: markers.repair},
+		{name: "worktree agent", got: ctx.FlowAgent, want: markers.agent},
+		{name: "saved session resume", got: ctx.FlowSavedSessionResume, want: markers.savedResume},
+		{name: "autofix", got: ctx.FlowAutofix, want: markers.autofix},
+		{name: "auto launch", got: ctx.FlowAutoLaunch, optional: markers.allowAutoLaunch},
+		{name: "phase terminal", got: ctx.FlowPhaseTerminal, optional: markers.allowPhaseTerminal},
+	} {
+		if marker.got == marker.want || (marker.got && marker.optional) {
+			continue
+		}
+		if marker.want {
+			return fmt.Errorf("%w: %v requires the %s marker", errInvalidFlowLaunchRole, want, marker.name)
+		}
+		return fmt.Errorf("%w: %v does not own the %s marker", errInvalidFlowLaunchRole, want, marker.name)
+	}
+	return nil
 }

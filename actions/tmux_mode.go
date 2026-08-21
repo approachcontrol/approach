@@ -302,8 +302,17 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	if command != agent.CommandCodex && command != agent.CommandClaude && command != agent.CommandCursor {
 		return RepoTmuxAgentSpec{}, errors.New("tmux launch mode supports only CLI agents")
 	}
+	// The role is classified once here and read once below, by the validation
+	// that decides whether this launch may take the tracked route at all.
+	//
+	// The gate itself stays the marker rather than role.Tracked(): the marker is
+	// the launch's claim on the Flow lease, and the classifier deliberately
+	// names a phase-attached context a phase role even when it declared itself
+	// untracked. Such a launch has always taken the plain window here, and
+	// promoting it would hand it a lease it never asked for.
+	role := FlowLaunchRoleOf(ctx)
 	if ctx.FlowLaunchTracked {
-		if err := validateTrackedRepoTmuxRole(ctx); err != nil {
+		if err := validateTrackedRepoTmuxRole(ctx, role); err != nil {
 			return RepoTmuxAgentSpec{}, err
 		}
 	}
@@ -329,6 +338,7 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	sessionName := RepoAgentSessionName(sessionSource)
 	windowName := repoTmuxWindowName(ctx)
 	agentEnv := envWithoutKeys(cmd.Env, "TMUX", "ZELLIJ")
+	// Validated above, so the marker and role.Tracked() agree by here.
 	if ctx.FlowLaunchTracked {
 		canonicalRoot, err := flowlease.ResolveRoot(ctx.SessionStateRoot)
 		if err != nil {
@@ -451,16 +461,16 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	}, nil
 }
 
-func validateTrackedRepoTmuxRole(ctx AgentLaunchContext) error {
-	if !ctx.FlowLaunchTracked ||
-		strings.TrimSpace(ctx.FlowID) == "" ||
-		strings.TrimSpace(ctx.FlowPhaseID) == "" ||
+// validateTrackedRepoTmuxRole refuses every launch the tracked tmux route does
+// not serve. The role and its marker rows answer which launches those are; what
+// stays here is the transport and payload the role deliberately does not carry.
+// Headless never routes to tmux, an auto launch has no terminal to attach to
+// (F1), and a PR number belongs to autofix, which is not a tracked role.
+func validateTrackedRepoTmuxRole(ctx AgentLaunchContext, role FlowLaunchRole) error {
+	if !role.Tracked() ||
+		validateFlowLaunchRole(ctx, role) != nil ||
 		ctx.FlowAutoLaunch ||
 		ctx.Headless ||
-		ctx.FlowRepair ||
-		ctx.FlowAgent ||
-		ctx.FlowSavedSessionResume ||
-		ctx.FlowAutofix ||
 		ctx.FlowAutofixPRNumber != 0 {
 		return errors.New("invalid tracked Flow tmux launch role")
 	}
