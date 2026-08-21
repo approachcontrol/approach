@@ -85,12 +85,13 @@ verbatim from ADR 0002. It already names exactly the seven launches the TUI can
 start, and every occupancy consumer in matrix §2.1–§2.2 belongs to exactly one
 of them.
 
-`Stage` is a new closed enum of six, one per consumer class in matrix §2:
+`Stage` is a new closed enum, one value per consumer class in matrix §2:
 
 | Stage | Consumers | Constraint |
 | --- | --- | --- |
 | `StagePreview` | matrix §2.3 | Runs per frame. Cached only. |
-| `StageAdmission` | matrix §2.1 | Runs on a keypress or a poll admission. In-process sources plus the lease; no session-store walk. |
+| `StageAdmission` | matrix §2.1, keypress rows | Runs on a keypress. In-process sources plus the lease; no session-store walk. |
+| `StageAutoAdvance` | matrix §2.1 "Auto phase", §2.2 "AutoMode read" | The AutoMode advance poll. Never reads S14, refuses in silence, and its read adds S10-minus-the-candidate. |
 | `StageAuthoritative` | matrix §2.2 read stages | Runs in a `tea.Cmd`. Full store access. |
 | `StageReserved` | matrix §2.2 prepare stages | Runs under the cross-process reservation. Re-checks the lease. |
 | `StageInstall` | `flowLaunchEmbeddedBackstop` | Last check before a slot is allocated. Slot sources only. |
@@ -117,12 +118,23 @@ Query{FlowID string, Role actions.FlowLaunchRole, Stage Stage, Freshness Freshne
 `FreshnessDefault` resolves from `Stage` per the table in D2 and is what almost
 every caller passes.
 
-It is not simply *implied* by `Stage`, because one real pair disagrees: the
-AutoMode drain (`model/flow_phase_launch.go:773`) and the AutoMode read
-(`model/flow_launch_lifecycle.go:705`) ask the same role the same question and
-must get answers of different freshness — the first from the poll's own record,
-the second from `ListFlowSessions`. Making it a field keeps that visible instead
-of encoding it as two stages that differ in nothing else.
+It is not simply *implied* by `Stage`, because one real pair disagrees:
+`StageAutoAdvance`'s admission gate (`model/flow_phase_launch.go:773`) and its
+read (`model/flow_launch_lifecycle.go:705`) ask the same role the same question
+and must get answers of different freshness — the first from the poll's own
+record, the second from `ListFlowSessions`. Making it a field keeps that visible
+instead of encoding it as two stages that differ in nothing else.
+
+`StageAutoAdvance` itself is a separate stage on the opposite grounds. The
+AutoMode poll is not `StageAdmission` at a different freshness: matrix §2.1
+records that manual admission reads S14 and refuses loudly where auto reads
+neither, and §2.2 records that the AutoMode read adds
+`flowRecordHasOtherRunningPhase` where the tracked-phase read does not. Since
+`RoleTrackedPhase` covers both consumers — ADR 0002 deliberately kept
+auto-launch out of the role axis — collapsing them into `StageAdmission` would
+leave `Purpose` unable to name two consumers whose source sets differ, and any
+implementation would have to change AutoMode's behavior or drop manual's
+headless-write refusal.
 
 The rule, stated once so it stops living in comments:
 

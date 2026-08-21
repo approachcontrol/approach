@@ -22,11 +22,13 @@
 //
 //	StagePreview         renders per frame; cached sources only
 //	StageAdmission       runs on a keypress; in-process sources plus the lease
+//	StageAutoAdvance     the AutoMode advance poll's admission and read
 //	StageAuthoritative   runs in a command; full store access
 //	StageReserved        runs under the cross-process reservation
 //	StageInstall         the last check before a terminal slot is allocated
 //	StageDrain           runs at 1 Hz; cached only, and never forks a subprocess
 //	StageSessionRelease  the non-launch release gesture
+//	StageQuit            the quit deferral's handoff check
 //
 // # The freshness rule
 //
@@ -50,6 +52,9 @@
 //
 // This is the interface skeleton landed by approach-x0r.1. Every method body
 // is a stub; the implementation is approach-x0r.3, behind the characterization
-// tests approach-x0r.2 writes first. No caller in model/ has been migrated, no
-// existing predicate has been deleted, and no behavior has changed.
+// tests approach-x0r.2 writes first. Query fails closed until then: it reports
+// occupancy with ErrUnimplemented, so a caller migrated early breaks loudly
+// rather than being told the Flow is free. No caller in model/ has been
+// migrated, no existing predicate has been deleted, and no behavior has
+// changed.
 package flowoccupancy

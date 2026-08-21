@@ -1,6 +1,8 @@
 package flowoccupancy
 
 import (
+	"errors"
+
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
@@ -18,9 +20,16 @@ const (
 	// StagePreview renders a footer affordance or a preview, every frame.
 	// Cached sources only: no store walk, no subprocess.
 	StagePreview
-	// StageAdmission decides a keypress or a poll admission. In-process sources
-	// plus a lease inspect; still no session-store walk.
+	// StageAdmission decides a keypress admission. In-process sources plus a
+	// lease inspect; still no session-store walk.
 	StageAdmission
+	// StageAutoAdvance is the AutoMode advance poll's own admission and read. It
+	// is a stage of its own rather than StageAdmission with a flag because the
+	// poll's source set genuinely differs: it never reads the pending headless
+	// write, it refuses in silence, and its read adds the other-running-phase
+	// check. Freshness splits its two halves — FreshnessCached is the admission
+	// gate, FreshnessAuthoritative the read.
+	StageAutoAdvance
 	// StageAuthoritative runs inside a tea.Cmd read stage and may read the Flow
 	// store and the session store.
 	StageAuthoritative
@@ -36,6 +45,9 @@ const (
 	// StageSessionRelease is the non-launch release gesture, which asks about
 	// the launch lifecycle rather than about a launch of its own.
 	StageSessionRelease
+	// StageQuit is the quit deferral, which asks only whether a handoff is in
+	// flight. It is the other non-launch stage.
+	StageQuit
 )
 
 // String reports the stage's name for diagnostics.
@@ -45,6 +57,8 @@ func (stage Stage) String() string {
 		return "preview"
 	case StageAdmission:
 		return "admission"
+	case StageAutoAdvance:
+		return "autoAdvance"
 	case StageAuthoritative:
 		return "authoritative"
 	case StageReserved:
@@ -55,6 +69,8 @@ func (stage Stage) String() string {
 		return "drain"
 	case StageSessionRelease:
 		return "sessionRelease"
+	case StageQuit:
+		return "quit"
 	default:
 		return "unknown"
 	}
@@ -62,9 +78,9 @@ func (stage Stage) String() string {
 
 // Freshness selects between the cached mirrors and the authoritative stores.
 // Almost every caller passes FreshnessDefault and lets the stage decide; the
-// field exists because one real pair of consumers disagrees at the same stage.
-// The AutoMode drain and the AutoMode read ask the same role the same question
-// and need answers of different freshness.
+// field exists because one real pair of consumers disagrees at the same stage:
+// StageAutoAdvance's admission gate and its read ask the same role the same
+// question and need answers of different freshness.
 type Freshness int
 
 const (
@@ -310,11 +326,17 @@ func New(sources Sources) Occupancy {
 	return Occupancy{sources: sources}
 }
 
+// ErrUnimplemented is the error every Query carries until approach-x0r.3 lands
+// the source reads. It exists so a caller migrated ahead of the implementation
+// fails loudly instead of being told the Flow is free.
+var ErrUnimplemented = errors.New("flowoccupancy: Query is not implemented yet")
+
 // Query answers one occupancy question. A query whose purpose is not Valid
 // yields an occupied fail-closed verdict rather than a free one.
 func (occupancy Occupancy) Query(query Query) Verdict {
-	// implemented in approach-x0r.3
-	return Verdict{}
+	// implemented in approach-x0r.3. Until then every purpose is invalid, so the
+	// fail-closed branch above is the whole behavior: occupied, with an error.
+	return Verdict{holder: HolderLeaseUnreadable, err: ErrUnimplemented}
 }
 
 // Free is the verdict for an unoccupied Flow. It exists so callers and tests
