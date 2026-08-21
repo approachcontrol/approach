@@ -15,15 +15,6 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-type flowPhaseLaunchRoute int
-
-const (
-	flowPhaseLaunchEmbedded flowPhaseLaunchRoute = iota + 1
-	// flowPhaseLaunchTmux runs the agent as a window in the repo's tmux
-	// session. It is external-style: nothing in the TUI owns the process.
-	flowPhaseLaunchTmux
-)
-
 type flowPhaseLaunchRequest struct {
 	Record     flowstore.FlowRecord
 	Phase      flowstore.FlowPhase
@@ -45,7 +36,7 @@ type flowPhaseLaunchPreparedRequest struct {
 
 type flowPhaseLaunchResult struct {
 	Context actions.AgentLaunchContext
-	Route   flowPhaseLaunchRoute
+	Route   flowLaunchRoute
 	Skipped bool
 	// FallbackNote is set only when the tmux route was eligible and the
 	// availability probe failed. Choosing the embedded backend, and the
@@ -385,26 +376,7 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 	if err != nil {
 		return flowPhaseLaunchResult{}, err
 	}
-	route, err := flowPhaseLaunchRouteFor(decision.Route)
-	if err != nil {
-		return flowPhaseLaunchResult{}, err
-	}
-	return flowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: decision.FallbackNote}, nil
-}
-
-// flowPhaseLaunchRouteFor maps the builder's route onto the phase launch's own
-// enum. An unmapped route is an error rather than a silent embedded default: a
-// routing bug that fell through to embedded would launch a wrong-but-plausible
-// agent instead of announcing itself.
-func flowPhaseLaunchRouteFor(route flowLaunchRoute) (flowPhaseLaunchRoute, error) {
-	switch route {
-	case flowLaunchRouteEmbedded:
-		return flowPhaseLaunchEmbedded, nil
-	case flowLaunchRouteTmux:
-		return flowPhaseLaunchTmux, nil
-	default:
-		return 0, fmt.Errorf("unroutable flow phase launch: route %d", route)
-	}
+	return flowPhaseLaunchResult{Context: ctx, Route: decision.Route, FallbackNote: decision.FallbackNote}, nil
 }
 
 func (l flowLaunchPreparation) readPlan(planID string) (string, error) {
