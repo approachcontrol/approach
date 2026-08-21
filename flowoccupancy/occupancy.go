@@ -45,9 +45,6 @@ const (
 	// StageSessionRelease is the non-launch release gesture, which asks about
 	// the launch lifecycle rather than about a launch of its own.
 	StageSessionRelease
-	// StageQuit is the quit deferral, which asks only whether a handoff is in
-	// flight. It is the other non-launch stage.
-	StageQuit
 )
 
 // String reports the stage's name for diagnostics.
@@ -69,8 +66,6 @@ func (stage Stage) String() string {
 		return "drain"
 	case StageSessionRelease:
 		return "sessionRelease"
-	case StageQuit:
-		return "quit"
 	default:
 		return "unknown"
 	}
@@ -102,9 +97,11 @@ type Purpose struct {
 	Stage Stage
 }
 
-// Valid reports whether this purpose names a consumer that exists. The two
-// non-launch stages carry actions.RoleNone; every other stage requires a real
-// role.
+// Valid reports whether this purpose names a consumer that exists.
+// StageSessionRelease, the one non-launch stage, carries actions.RoleNone;
+// every other stage requires a real role. There is deliberately no quit stage:
+// the handoff-pending check quit defers on is a process-wide policy rather than
+// a per-Flow question, so it stays in model. See ADR 0003 D5.
 func (purpose Purpose) Valid() bool {
 	// implemented in approach-x0r.3
 	return false

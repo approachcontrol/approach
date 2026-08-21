@@ -97,10 +97,16 @@ of them.
 | `StageInstall` | `flowLaunchEmbeddedBackstop` | Last check before a slot is allocated. Slot sources only. |
 | `StageDrain` | matrix §2.4 | Runs at 1 Hz. Cached only, and must never shell out. |
 
-Two non-launch purposes do not fit the role axis and get `RoleNone` with their
-own stages: `StageSessionRelease` (matrix §2.5,
-`model/flow_session_release.go:115`) and `StageQuit`
-(`model/embedded_terminal.go:920,942`).
+One non-launch purpose does not fit the role axis and gets `RoleNone` with its
+own stage: `StageSessionRelease` (matrix §2.5,
+`model/flow_session_release.go:115`).
+
+The quit deferral (`model/embedded_terminal.go:920,942`) is deliberately *not*
+a purpose, even though matrix §2.5 lists it. It reads S5 alone, and D5 keeps S5
+out of `Sources` because handoff-pending is a process-wide quit policy rather
+than a per-Flow question — nothing in `Sources` could answer it, and a
+`Query` that ignored it or deferred quit on any attempt would change today's
+behavior.
 
 Why a pair and not a flat sixteen-value enum: the flat form makes the source set
 per consumer unrelatable, so nothing catches "repair's preview and repair's

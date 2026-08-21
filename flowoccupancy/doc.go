@@ -28,7 +28,6 @@
 //	StageInstall         the last check before a terminal slot is allocated
 //	StageDrain           runs at 1 Hz; cached only, and never forks a subprocess
 //	StageSessionRelease  the non-launch release gesture
-//	StageQuit            the quit deferral's handoff check
 //
 // # The freshness rule
 //
