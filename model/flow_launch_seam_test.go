@@ -758,13 +758,22 @@ func flowSeamCollectLaunchContextNames(node ast.Node, locals *flowSeamLocals, sc
 	})
 }
 
+// flowSeamPositionalLiteral is what an unkeyed launch context literal is
+// reported as, since it sets marker fields without naming any.
+const flowSeamPositionalLiteral = "(positional literal)"
+
 // flowSeamLiteralMarkers records every marker field keyed in one launch
-// context literal.
+// context literal, and reports an unkeyed literal outright.
 func flowSeamLiteralMarkers(lit *ast.CompositeLit, markers map[string]bool, record func(string)) {
 	for _, element := range lit.Elts {
 		pair, ok := element.(*ast.KeyValueExpr)
 		if !ok {
-			continue
+			// An unkeyed literal fills the fields by position, markers
+			// included, and names none of them. There is no legitimate reason
+			// to spell a launch context that way, so the literal itself is the
+			// violation.
+			record(flowSeamPositionalLiteral)
+			return
 		}
 		if key, ok := pair.Key.(*ast.Ident); ok && markers[key.Name] {
 			record(key.Name)
@@ -776,6 +785,15 @@ func flowSeamLiteralMarkers(lit *ast.CompositeLit, markers map[string]bool, reco
 // keys on a launch context literal, including the elided element literals of a
 // slice or map of contexts, and assignments to a marker field of any
 // expression that provably yields a launch context.
+// flowSeamRoleDiscriminators are the two non-marker fields FlowLaunchRoleOf
+// reads. Writing one into a fresh context is how the legitimate non-Flow
+// launches are built, so only a mutation counts: re-pointing a context that
+// already exists is how a tracked phase silently becomes a phase resume, and
+// every runtime check downstream accepts the result as well-formed.
+func flowSeamRoleDiscriminators() map[string]bool {
+	return map[string]bool{"ResumeSessionID": true, "PlanPhaseID": true}
+}
+
 func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers map[string]bool, scope flowSeamScope) []flowSeamViolation {
 	locals := flowSeamLaunchContextNames(node, scope)
 	var violations []flowSeamViolation
@@ -805,9 +823,10 @@ func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers m
 				}
 			}
 		case *ast.AssignStmt:
+			mutated := flowSeamRoleDiscriminators()
 			for _, target := range n.Lhs {
 				selector, ok := target.(*ast.SelectorExpr)
-				if !ok || !markers[selector.Sel.Name] {
+				if !ok || !(markers[selector.Sel.Name] || mutated[selector.Sel.Name]) {
 					continue
 				}
 				if scope.holdsContext(flowSeamExprKind(selector.X, locals, scope)) {
@@ -849,17 +868,12 @@ func flowSeamViolations(dir, name string, file *ast.File, markers map[string]boo
 	return violations
 }
 
-// The rule guards the Flow* markers and not ResumeSessionID or PlanPhaseID,
-// the two fields FlowLaunchRoleOf also reads. Those two discriminate only
-// among the phase roles, which the ladder reaches only once FlowID and
-// FlowPhaseID are both set — and both of those are guarded markers. So no code
-// outside the launch module can name a phase role with them; it could only
-// re-point a context the builder already built, which is the mutation class
-// flowLaunchContextRequiresLifecycle and the Flow reservation refuse at
-// runtime. Guarding them here instead would fail the two legitimate non-Flow
-// launches that set them — saved-session resume and plans-mode implement,
-// neither of which touches a Flow — and buying that with standing allow-list
-// exemptions would cost more of the rule than it adds.
+// flowSeamMarkerFields derives the guarded marker set from the struct itself.
+// The other two fields FlowLaunchRoleOf reads, ResumeSessionID and
+// PlanPhaseID, are guarded separately by flowSeamRoleDiscriminators: they name
+// a role only alongside a marker, so writing one into a fresh context builds
+// the legitimate non-Flow launches, and only mutating one on a context that
+// already exists re-points a role.
 func flowSeamMarkerFields() map[string]bool {
 	markers := make(map[string]bool)
 	structType := reflect.TypeOf(actions.AgentLaunchContext{})
@@ -1177,6 +1191,30 @@ func viaMake() {
 	contexts[0].FlowID = "f"
 }`,
 			want: []string{"viaMake.FlowID"},
+		},
+		"unkeyed launch context literal": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func positional() {
+	_ = actions.AgentLaunchContext{"cmd", "launch"}
+}`,
+			want: []string{"positional.(positional literal)"},
+		},
+		"role discriminator mutated on an existing context": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func repoint(ctx actions.AgentLaunchContext) {
+	ctx.ResumeSessionID = "session"
+}`,
+			want: []string{"repoint.ResumeSessionID"},
+		},
+		"role discriminator keyed in a literal": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func fresh() {
+	_ = actions.AgentLaunchContext{ResumeSessionID: "session"}
+}`,
+			want: []string{},
 		},
 		"marker assigned on a converted launch context": {
 			dir: "model", name: "keys.go",
@@ -1516,25 +1554,32 @@ func slice() {
 // flowSeamAllowance names a function outside the launch module that may set
 // Flow markers on a launch context.
 type flowSeamAllowance struct {
-	Dir  string
-	File string
-	Func string
+	Dir   string
+	File  string
+	Func  string
+	Field string
 }
 
-// flowSeamAllowList is keyed by function rather than by file:line so that an
-// unrelated edit above the literal does not re-pin the guard. Each of these
-// addresses a launch record that already exists; neither starts a process, so
-// neither is a launch the role builder could have built.
+// flowSeamAllowList is keyed by function and field rather than by file:line, so
+// that an unrelated edit above the literal does not re-pin the guard and an
+// allowance for one field does not quietly cover the rest. The two Flow-marked
+// entries address a launch record that already exists; neither starts a
+// process, so neither is a launch the role builder could have built. The
+// plans-mode entry sets a role discriminator on a context with no Flow marker
+// on it, so there is no Flow role for it to change.
 //
-// The four remaining out-of-module AgentLaunchContext constructors — the
-// Ready-Bead `S` slice, plans-mode implement, worktree `a`, and non-Flow
-// session resume — need no entry: they set no Flow marker at all, which is
-// exactly what keeps flowLaunchContextRequiresLifecycle false for them. An
-// allow-list entry there would be dead configuration granting a standing
-// exemption, so the stale-entry check below would rightly fail on it.
+// The other out-of-module AgentLaunchContext constructors — the Ready-Bead `S`
+// slice, worktree `a`, and non-Flow session resume — need no entry: they set no
+// guarded field at all, which is exactly what keeps
+// flowLaunchContextRequiresLifecycle false for them. An allow-list entry there
+// would be dead configuration granting a standing exemption, so the
+// stale-entry check below would rightly fail on it.
 var flowSeamAllowList = map[flowSeamAllowance]string{
-	{Dir: "model", File: "flow_launch_lifecycle.go", Func: "Model.blockAutoFlowLaunchPhase"}:   "Synthesizes a failure context addressing the launch attempt that already failed; there is no process to start.",
-	{Dir: "model", File: "flow_session_release.go", Func: "Model.releaseFlowPhaseSessionsCmd"}: "Finalizes the hook records of launches that already ran and are being released.",
+	{Dir: "model", File: "flow_launch_lifecycle.go", Func: "Model.blockAutoFlowLaunchPhase", Field: "FlowID"}:        "Synthesizes a failure context addressing the launch attempt that already failed; there is no process to start.",
+	{Dir: "model", File: "flow_launch_lifecycle.go", Func: "Model.blockAutoFlowLaunchPhase", Field: "FlowPhaseID"}:   "Synthesizes a failure context addressing the launch attempt that already failed; there is no process to start.",
+	{Dir: "model", File: "flow_session_release.go", Func: "Model.releaseFlowPhaseSessionsCmd", Field: "FlowID"}:      "Finalizes the hook records of launches that already ran and are being released.",
+	{Dir: "model", File: "flow_session_release.go", Func: "Model.releaseFlowPhaseSessionsCmd", Field: "FlowPhaseID"}: "Finalizes the hook records of launches that already ran and are being released.",
+	{Dir: "model", File: "model_keys.go", Func: "Model.planLaunchContext", Field: "PlanPhaseID"}:                     "Fills in the selected phase of a plans-mode launch that carries no Flow marker, so it names no Flow role to change.",
 }
 
 // flowSeamScanRoot is the repository root, reached from the model package.
@@ -1641,7 +1686,7 @@ func TestFlowLaunchContextLiteralsStayInsideTheLaunchModule(t *testing.T) {
 	}
 	for _, source := range sources {
 		for _, violation := range flowSeamViolations(source.dir, source.name, source.file, markers, shapes) {
-			allowance := flowSeamAllowance{Dir: violation.Dir, File: violation.File, Func: violation.Func}
+			allowance := flowSeamAllowance{Dir: violation.Dir, File: violation.File, Func: violation.Func, Field: violation.Field}
 			if _, allowed := flowSeamAllowList[allowance]; allowed {
 				matched[allowance] = true
 				continue
@@ -1658,8 +1703,8 @@ func TestFlowLaunchContextLiteralsStayInsideTheLaunchModule(t *testing.T) {
 	}
 	for allowance := range flowSeamAllowList {
 		if !matched[allowance] {
-			t.Errorf("stale Flow seam allow-list entry: %s/%s %s sets no Flow marker; delete the entry",
-				allowance.Dir, allowance.File, allowance.Func)
+			t.Errorf("stale Flow seam allow-list entry: %s/%s %s never sets %s; delete the entry",
+				allowance.Dir, allowance.File, allowance.Func, allowance.Field)
 		}
 	}
 }
