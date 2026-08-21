@@ -1246,6 +1246,11 @@ func agentLaunchWithOptions(ctx AgentLaunchContext, goos string, getenv getenvFu
 		return TerminalLaunchSpec{}, err
 	}
 
+	// An external terminal window is not an embedded slot: there is no dock to
+	// prefill, so the initial prompt has to reach the agent as argv, and the
+	// window has an alt screen of its own to leave alone. Both follow from
+	// Embedded being false, exactly as they do in RepoTmuxAgentLaunch.
+	ctx.Embedded = false
 	cmd, _, err := agentCommandSpec(ctx)
 	if err != nil {
 		return TerminalLaunchSpec{}, err

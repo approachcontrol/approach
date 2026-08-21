@@ -909,3 +909,33 @@ func TestInsideMultiplexerReadsTmuxAndZellij(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentLaunchClearsEmbeddedForTheExternalWindow is the external-terminal
+// twin of TestRepoTmuxAgentLaunchDeliversPromptInArgv. An external window is
+// not an embedded slot either: there is no dock to prefill and no alt screen to
+// suppress, so the seam clears Embedded and both rules fall out of that.
+func TestAgentLaunchClearsEmbeddedForTheExternalWindow(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := tmuxModeContext(t)
+	ctx.WorktreePath = t.TempDir()
+	ctx.InitialPrompt = "Implement the plan."
+	ctx.Embedded = true
+
+	// Without the clear this context prefills instead of putting the prompt on
+	// argv, so the assertions below would be vacuous.
+	if !ShouldPrefillEmbeddedPrompt(ctx) {
+		t.Fatal("expected this context to prefill while Embedded; the assertions below are otherwise vacuous")
+	}
+
+	launch, err := agentLaunchWithOptions(ctx, "linux", fakeGetenv(map[string]string{"TERMINAL": "alacritty"}), fakeLookPath("alacritty"), LaunchOptions{})
+	if err != nil {
+		t.Fatalf("agentLaunchWithOptions returned error: %v", err)
+	}
+	defer launch.Cleanup()
+
+	script := agentLaunchScript(t)
+	requireScriptContains(t, script, shellQuote("Implement the plan."))
+	if strings.Contains(script, "--no-alt-screen") {
+		t.Fatalf("an external window has an alt screen; the launch must not suppress it:\n%s", script)
+	}
+}

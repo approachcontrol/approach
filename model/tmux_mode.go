@@ -127,12 +127,11 @@ func (m Model) buildRepoTmuxAgentLaunch(ctx actions.AgentLaunchContext) (actions
 // is not an embedded slot: the result is detached, provider hooks own
 // completion, and the caller's reservation covers only the spawn.
 func (m Model) launchAgentInRepoTmuxSession(ctx actions.AgentLaunchContext, release func()) (Model, tea.Cmd) {
-	// No Embedded clear here: this spawn is the non-Flow route only. Its two
-	// callers are launchAgentForBackend, which refuses any Flow context via
-	// flowLaunchContextRequiresLifecycle, and resumeSessionForBackend, reached
-	// only from routeNonFlowSavedSessionResume — and a non-Flow context has no
-	// builder that sets Embedded, so it arrives false. The argv-vs-dock rule
-	// itself is held one layer down by actions.RepoTmuxAgentLaunch regardless.
+	// No Embedded clear here even though the context arrives embedded:
+	// sessionResumeLaunchContext builds the non-Flow resume for the dock, its
+	// default transport. The argv-vs-dock rule is held one layer down by
+	// actions.RepoTmuxAgentLaunch, which clears the bit for the window it is
+	// about to open. Repeating it here would be a second author for one rule.
 	//
 	// Sessions captured outside Approach can carry no repo path, and the session
 	// name would then be keyed on the worktree — a session T never finds, since T

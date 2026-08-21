@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +97,7 @@ func TestFlowRepairTerminalSlotPreservesRepairIdentityBeforePrefill(t *testing.T
 		LaunchID:      "repair-launch",
 		FlowID:        "flow-1",
 		FlowRepair:    true,
+		Embedded:      true,
 		InitialPrompt: "Repair it",
 	}
 	m, attempt := repairEmbeddedLaunchTestModel(ctx)
@@ -143,6 +147,7 @@ func TestFlowRepairLaunchFailuresNeverMutatePhaseOrAllowAutoDrain(t *testing.T) 
 		LaunchID:      "repair-launch",
 		FlowID:        "flow-1",
 		FlowRepair:    true,
+		Embedded:      true,
 		InitialPrompt: "Repair it",
 	}
 
@@ -556,6 +561,7 @@ func TestInteractiveFlowPrefillImmediatelyResizesExistingHiddenTerminals(t *test
 		FlowID:            "flow-1",
 		FlowPhaseID:       "implementation",
 		FlowLaunchTracked: true,
+		Embedded:          true,
 		InitialPrompt:     "Implement it",
 	}
 	wantResize := [2]int{ui.EmbeddedTerminalPTYWidth(180), ui.ResolveEmbeddedTerminalDock(65, true).BackendPTYRows}
@@ -1578,6 +1584,7 @@ exit 0
 		Command:       "codex",
 		LaunchID:      "launch-1",
 		WorktreePath:  dir,
+		Embedded:      true,
 		InitialPrompt: "run",
 	}, 20, 3)
 	if err != nil {
@@ -1620,6 +1627,7 @@ func TestDefaultEmbeddedTerminalStarterFallsBackWhenTmuxUnavailable(t *testing.T
 		Command:       "codex",
 		LaunchID:      "launch-1",
 		WorktreePath:  dir,
+		Embedded:      true,
 		InitialPrompt: "run",
 	}, 20, 3)
 	if err != nil {
@@ -1654,6 +1662,7 @@ func TestDefaultEmbeddedTerminalStarterRendersHeadlessClaudeStreamJSON(t *testin
 		Headless:      true,
 		LaunchID:      "launch-1",
 		WorktreePath:  dir,
+		Embedded:      true,
 		InitialPrompt: "run",
 	}, 40, 6)
 	if err != nil {
@@ -2601,4 +2610,87 @@ func TestFlowTerminalInputModeDPassesThrough(t *testing.T) {
 	if len(next.embeddedTerminals) != 1 {
 		t.Fatalf("terminal should remain, got %#v", next.embeddedTerminals)
 	}
+}
+
+// TestDockLaunchesReachTheStarterEmbedded is the regression pin for deleting
+// the two ctx.Embedded = true forces this file used to carry. Every context
+// that reaches the dock has to describe the dock itself, because nothing below
+// startEmbeddedTerminal can tell that it did not: a context that arrives false
+// renders a full-screen agent badly and fails nothing.
+func TestDockLaunchesReachTheStarterEmbedded(t *testing.T) {
+	t.Run("Flow phase launch", func(t *testing.T) {
+		h := newManualLaunchHarness(t, manualLaunchFlowRecord())
+
+		m := h.launch(h.model())
+
+		if len(h.launchContexts) != 1 {
+			t.Fatalf("embedded launches = %d, want 1; status=%q", len(h.launchContexts), m.status.Text)
+		}
+		if !h.launchContexts[0].Embedded {
+			t.Fatal("a Flow dock launch must reach the starter embedded")
+		}
+	})
+
+	t.Run("non-Flow session resume", func(t *testing.T) {
+		var started []actions.AgentLaunchContext
+		m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+				started = append(started, ctx)
+				return internalFakeEmbeddedTerminal{state: "running"}, nil
+			},
+		})
+		record := sessions.SessionRecord{
+			Provider:     sessions.ProviderCodex,
+			SessionID:    "session-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha",
+			CWD:          "/dev/alpha",
+		}
+
+		ctx, release, ok, next := m.sessionResumeLaunchContext(record)
+		if !ok {
+			t.Fatalf("resume was refused, status = %q", next.status.Text)
+		}
+		next, _ = next.resumeSessionForBackend(ctx, record, release)
+
+		if len(started) != 1 {
+			t.Fatalf("embedded starts = %d, want the resume", len(started))
+		}
+		if !started[0].Embedded {
+			t.Fatal("a non-Flow dock resume must reach the starter embedded")
+		}
+		if !next.hasRunningEmbeddedTerminal() {
+			t.Fatal("the resume must install a dock slot")
+		}
+	})
+}
+
+// TestEmbeddedTerminalNeverForcesEmbedded encodes approach-hyl.15's first
+// acceptance criterion as a build-time rule: the embedded open is a consumer of
+// the transport bit, not its author. Every launch context arrives here already
+// describing its own transport, so a write in this file would be a context
+// being repaired after the fact — exactly the drift the seam work removed.
+func TestEmbeddedTerminalNeverForcesEmbedded(t *testing.T) {
+	const name = "embedded_terminal.go"
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(".", name), nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, target := range assign.Lhs {
+			selector, ok := target.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Embedded" {
+				continue
+			}
+			t.Errorf("%s: %s assigns Embedded; the transport bit belongs to the context's builder or to the transport that clears it",
+				fset.Position(assign.Pos()), name)
+		}
+		return true
+	})
 }
