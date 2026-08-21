@@ -119,10 +119,10 @@ V5–V6 moved last. Their arm returns a constant embedded route like the repair,
 worktree-agent and saved-session-resume arms, so the `createPhase × tmux`
 pruning rule now holds by construction rather than by a missing call site, and
 the create call site takes the builder's route instead of assigning
-`flowLaunchRouteEmbedded` itself. What did *not* move is createPhase's
-tracked-ness: `FlowLaunchTracked` and `Embedded` are still stamped at install
-(see F4). Unifying `flowLaunchRoute` with `flowPhaseLaunchRoute` remains the
-standing follow-up.
+`flowLaunchRouteEmbedded` itself. Its tracked-ness moved too: `FlowLaunchTracked`
+and `Embedded` are now set in the arm rather than stamped at install, so no Flow
+context is rewritten between prepare and the terminal open (see F4). Unifying
+`flowLaunchRoute` with `flowPhaseLaunchRoute` remains the standing follow-up.
 
 ## 3. Field values, with the pipeline point that sets them
 
@@ -136,7 +136,7 @@ standing follow-up.
 | `FlowID` | record `C:383` | same | `msg.FlowID` `C:813` | record `C:377` | `msg.FlowID` `C:430` | record `C:383` | record `C:297` | record `C:312` |
 | `FlowPhaseID` | phase `C:384` | same | phase `C:813` | `msg.PhaseID` `C:378` | **empty** (deliberate, `model/flow_launch_repair.go:436`) | empty | empty | empty |
 | `FlowPhaseKind` | `SemanticKind` `C:385` | same | `SemanticKind` `C:813` | `SemanticKind` `C:379` | empty | empty | empty | empty |
-| `FlowLaunchTracked` | true `C:392` | true `C:392` | **false at C; true at `L:1105`** | true `C:382` | false (never) | false | false | false |
+| `FlowLaunchTracked` | true `C:392` | true `C:392` | true `C:656` | true `C:382` | false (never) | false | false | false |
 | `FlowAutoLaunch` | false `C:386` | true `C:386` | false | false | false | false | false | false |
 | `FlowRepair` | false | false | false | false | true `C:431` | false | false | false |
 | `FlowAgent` | false | false | false | false | false | false | true `C:297` | false |
@@ -149,7 +149,7 @@ standing follow-up.
 
 | Field | V1–V3 manual | V4 auto | V5–V6 create | V7–V10 resume | V11–V12 repair | V13–V15 autofix | V16 agent | V17 saved |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `Embedded` | true `C:393`; false on tmux `R:406` | true `C:393` | **unset at C; true at `L:1097`, again `T:479`** | true `C:381`; false on tmux `R:388` | true `C:432` | true `C:389`; false on tmux `R:399` | true `C:297` | true `C:314` |
+| `Embedded` | true `C:393`; false on tmux `R:406` | true `C:393` | true `C:656` | true `C:381`; false on tmux `R:388` | true `C:432` | true `C:389`; false on tmux `R:399` | true `C:297` | true `C:314` |
 | `Headless` | `req.Headless` `C:394`, replaced by the persisted reservation `C:398` | `req.Headless` (always true) `C:394` | `msg.Record.Headless` `C:814` | unset (false) | unset at C, then `record.Headless` at refresh (`model/flow_repair.go:199`) | `record`/`reserved.Headless` `C:390` | false `C:297` | unset (false) |
 | `Command` | `settings.Command` `C:372` | same | `settings.Command` `C:809` | `msg.ResumeCommand` `C:361` | `resolved.Command`, restricted to codex/claude/cursor (`model/flow_launch_repair.go:414`) | `settings.Command` `C:367` | `settings.Command` `C:293` | `string(refreshed.Provider)` `C:301` |
 | `ResumeSessionID` | "" | "" | "" | `msg.ProviderSessionID` `C:374` | "" | "" | "" | `refreshed.SessionID` `C:309` |
@@ -164,21 +164,24 @@ Every kind additionally passes through `applyLaunchStamp`
 
 ### The four fields that change value mid-flight
 
-1. `FlowLaunchTracked` is stamped at `model/flow_launch_lifecycle.go:1105` for
-   every kind except repair, autofix, worktreeAgent and savedSessionResume. For
-   manual, auto and resume that stamp is redundant — they already set it at
-   construction. **`createPhase` is the only kind for which it is load-bearing**,
-   and only on the embedded route, which is the only route it has.
-2. `Embedded` is forced true at `model/flow_launch_lifecycle.go:1097` and again
-   at `model/embedded_terminal.go:479`, and a third time inside the terminal
-   starter (`model/embedded_terminal.go:200`) and the embedded tmux command
-   (`actions/actions.go:1248`).
-3. `Embedded` is forced false on the tmux route in four places:
-   `model/flow_phase_launch.go:406`, `model/flow_launch_resume.go:388`,
-   `model/flow_launch_autofix.go:399`, `model/tmux_mode.go:132`, and once more
-   inside actions at `actions/tmux_mode.go:313`. Two of those five have since
-   moved inside the builder with their roles: the autofix and phase-resume
-   clears now happen in the arm that decides the route.
+1. `FlowLaunchTracked` was stamped at install for every kind except repair,
+   autofix, worktreeAgent and savedSessionResume. That stamp is gone: every kind
+   that is tracked now says so at construction, `createPhase` included, and
+   install no longer writes the field.
+2. `Embedded` was forced true at install as well; that write is gone too. It is
+   still forced true at `model/embedded_terminal.go:493`, inside the terminal
+   starter (`model/embedded_terminal.go:214`) and in the embedded tmux command
+   (`actions/actions.go:1351`) — the first two serve *non-Flow* embedded
+   terminals, which have no builder to set the field, and the third is an
+   actions-local normalisation on a value copy.
+3. `Embedded` is forced false on the tmux route in three places:
+   `model/flow_phase_launch.go:406`, `model/flow_launch_resume.go:388` and
+   `model/flow_launch_autofix.go:399`, and once more inside actions at
+   `actions/tmux_mode.go:313`. Two of those three have since moved inside the
+   builder with their roles: the autofix and phase-resume clears now happen in
+   the arm that decides the route. The fourth model-side clear, in
+   `model/tmux_mode.go`, is gone — that spawn is the non-Flow route only, and a
+   non-Flow context arrives with `Embedded` false already.
 4. `Headless` is resolved twice for manual launches — from the record at
    `model/flow_launch_lifecycle.go:620` and again from the persisted reservation
    at `model/flow_phase_launch.go:398` — and for repair only at refresh time
@@ -197,7 +200,7 @@ deliberately treated alike.
 | --- | --- | --- | --- |
 | `flowEmbeddedTerminalIdentity` (`model/embedded_terminal.go:736`) | `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `ResumeSessionID`, `FlowAutofix`, `FlowAutofixPRNumber`, `Embedded`, `Headless`, `FlowID`, `FlowPhaseID`, `FlowLaunchTracked`, `WorktreePath` | V11–12 (repair) ‖ V16 (agent) ‖ V17 (session id) ‖ V13–15 (autofix + PR) ‖ rest | V1–V10 all render as the phase ID |
 | `flowEmbeddedTerminalDetachPolicy` (`model/embedded_terminal.go:988`) | `FlowAgent`, `FlowSavedSessionResume` | V16, V17 (never detachable) ‖ rest | every tracked and untracked-repair/autofix variant |
-| slot stamping (`model/embedded_terminal.go:488`) | `RepoPath`, `WorktreePath`, `WorkingDir`, `FlowID`, `FlowPhaseID`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `LaunchID`, `Command`; forces `Embedded` true at `:479` | repair/agent/saved-resume slots | autofix is *not* stamped — it has no slot marker of its own |
+| slot stamping (`model/embedded_terminal.go:502`) | `RepoPath`, `WorktreePath`, `WorkingDir`, `FlowID`, `FlowPhaseID`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `LaunchID`, `Command`; forces `Embedded` true at `:493` | repair/agent/saved-resume slots | autofix is *not* stamped — it has no slot marker of its own |
 | dock visibility (`model/embedded_terminal.go:458`, `:467`) | `FlowAutoLaunch`, `Headless` | V4 (no dock, keeps the active slot) ‖ V2/V6/V12/V14 (headless) ‖ rest | manual vs create vs resume |
 | `updateFlowTerminalFocusAfterLaunch` (`model/model_keys.go:3003`) | `FlowAgent`, `FlowSavedSessionResume`, `FlowAutoLaunch`, `Headless` | V16/V17 (always focus input) ‖ V4 (no focus change) ‖ headless (focus list) ‖ rest | manual/create/resume/repair/autofix at equal headlessness |
 | `reserveFlowSpawn` (`model/model_keys.go:3145`) | `FlowID`, `FlowLaunchTracked`, `FlowRepair` | tracked non-repair (V1–V10) ‖ rest | all untracked kinds are no-ops |
@@ -260,25 +263,26 @@ A tracked phase resume and an untracked saved-session resume are different
 policy classes everywhere else in the matrix; `launch.json` cannot tell them
 apart.
 
-**F4 — `createPhase` is the only kind whose tracked-ness is established outside
-its builder.** The `PlanPhase*` trio now lives in the builder with the rest of
-the role (`model/flow_launch_context.go:619`), and createPhase is still the only
-kind that sets it. Its `FlowLaunchTracked` and `Embedded` remain deliberately
-false at construction and are stamped at install
-(`model/flow_launch_lifecycle.go:1105`, `:1097`): between the two, the create
-call site can take `failCreateFlowLaunchEmbedded`, whose
-`flowLaunchFailureUpdate` reads `FlowLaunchTracked` to decide whether the
-failure persists a phase update. Setting either early would change that path, so
-closing this gap is `approach-hyl.9`'s "context is final at prepare", not this
-migration's.
+**F4 — closed by `approach-hyl.9`.** `createPhase` was the last kind whose
+tracked-ness was established outside its builder: `FlowLaunchTracked` and
+`Embedded` were left false at construction and stamped at install, because
+between the two the create call site can take `failCreateFlowLaunchEmbedded`,
+whose `flowLaunchFailureUpdate` reads `FlowLaunchTracked`. That window turned
+out to be safe — the flag is consulted only for a resume
+(`ctx.ResumeSessionID != "" && !ctx.FlowLaunchTracked`) and a createPhase
+context carries no `ResumeSessionID`, so the same phase update is persisted
+either way. Both fields now ship from the builder
+(`model/flow_launch_context.go:656`) and install stamps nothing; the `PlanPhase*`
+trio it also owns (`model/flow_launch_context.go:651`) is still createPhase's
+alone.
 
 **F5 — `WorkingDir` is unset for manual, auto, create and repair launches**, so
 those four rely on the actions-side fallback chain while resume, autofix,
 worktree agent and saved-session resume set it explicitly. The role payload has
 to keep this distinction or change behaviour.
 
-**F6 — the lifecycle branches on `attempt.Kind`, not on the context.** Both the
-tracked stamp (`model/flow_launch_lifecycle.go:1104`) and the mutated-phase mark
-(`model/flow_launch_lifecycle.go:958`) enumerate the same four kinds by hand.
-The context cannot answer the question those branches ask, which is the clearest
+**F6 — the lifecycle branches on `attempt.Kind`, not on the context.** The
+tracked stamp that used to enumerate four kinds by hand is gone with F4, but the
+mutated-phase mark (`model/flow_launch_lifecycle.go:958`) still asks the same
+question of `attempt.Kind`. The context cannot answer it, which is the clearest
 evidence that a role belongs *on* the context.

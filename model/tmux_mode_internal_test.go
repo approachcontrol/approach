@@ -812,3 +812,34 @@ func TestAttachReportsMissingTmuxWithoutProbing(t *testing.T) {
 		t.Fatal("the T affordance must not be advertised without tmux")
 	}
 }
+
+// TestNonFlowSessionResumeReachesTmuxBuilderUnembedded pins what the removed
+// ctx.Embedded = false in launchAgentInRepoTmuxSession used to guarantee: a
+// non-Flow context arrives at the tmux builder with Embedded already false and
+// its prompt intact, so actions renders that prompt onto argv rather than
+// waiting for a dock prefill this route never performs.
+func TestNonFlowSessionResumeReachesTmuxBuilderUnembedded(t *testing.T) {
+	spy := &tmuxResumeSpy{t: t}
+	m := spy.model("tmux", true)
+	ctx := resumeContext()
+	ctx.InitialPrompt = "resume the session"
+
+	if flowLaunchContextRequiresLifecycle(ctx) {
+		t.Fatal("resume context is not a Flow launch, so this route must accept it")
+	}
+	m.resumeSessionForBackend(ctx, sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "session-1",
+	}, nil)
+
+	if len(spy.tmuxContexts) != 1 {
+		t.Fatalf("tmux launches = %d, want one", len(spy.tmuxContexts))
+	}
+	built := spy.tmuxContexts[0]
+	if built.Embedded {
+		t.Fatalf("tmux builder saw an embedded context: %#v", built)
+	}
+	if built.InitialPrompt != "resume the session" {
+		t.Fatalf("tmux builder prompt = %q, want it carried to argv", built.InitialPrompt)
+	}
+}

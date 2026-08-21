@@ -608,14 +608,12 @@ func newPhaseResumeLaunchContext(
 // not an unrouted gap. Creation has no tmux call site, so the embedded slot is
 // the rule rather than the leftover branch.
 //
-// Two zero fields are load-bearing and deliberately not set here. It leaves
-// FlowLaunchTracked false because the create call site can still take
-// failCreateFlowLaunchEmbedded between this build and install, and
-// flowLaunchFailureUpdate reads that flag to decide whether a failure persists a
-// phase update. It leaves Embedded unset because install forces it true, and
-// setting it early would change what the pre-install failure path and the
-// registered launch record carry. Both stamps stay where they are today; moving
-// them is approach-hyl.9's "context is final at prepare".
+// Like every other arm, it emits its final transport flags: the context this
+// returns is what installs, with nothing left for install to stamp. The one
+// window between here and install — failCreateFlowLaunchEmbedded — is safe to
+// enter already tracked because flowLaunchFailureUpdate consults
+// FlowLaunchTracked only for a resume, and this role carries no
+// ResumeSessionID, so the phase update it persists is the same either way.
 func newCreatePhaseLaunchContext(
 	target createPhaseTarget,
 	settings flowLaunchAgentSettingsSnapshot,
@@ -654,7 +652,8 @@ func newCreatePhaseLaunchContext(
 		PlanPhaseStatus: string(flowstore.PhaseRunning),
 		// No PlanID or PlanPath: the plan this Flow will have does not exist yet.
 		FlowID: target.Record.FlowID, FlowPhaseID: target.Phase.PhaseID,
-		FlowPhaseKind: string(flowstore.SemanticKind(target.Phase)),
+		FlowPhaseKind:     string(flowstore.SemanticKind(target.Phase)),
+		FlowLaunchTracked: true, Embedded: true,
 		// Headless is the persisted record's, not the synthesized one's: the
 		// preference is what creation was admitted with.
 		Headless: target.Record.Headless,

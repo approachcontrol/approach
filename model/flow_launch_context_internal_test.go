@@ -293,13 +293,13 @@ func TestNewFlowLaunchContextPinsEachVariantsCanonicalContext(t *testing.T) {
 		},
 		{
 			// V5: the first launch of a freshly created Flow. It is the only role
-			// that sets the PlanPhase trio, and the only tracked-in-the-end role
-			// whose FlowLaunchTracked and Embedded are deliberately zero here:
-			// both are stamped at install, and the window between construction
-			// and install is a real failure path (failCreateFlowLaunchEmbedded)
-			// whose behavior turns on FlowLaunchTracked being false. PlanID,
-			// PlanPath and WorkingDir stay zero too — no plan exists yet, and
-			// actions falls back to WorktreePath.
+			// that sets the PlanPhase trio, and like every other role it emits
+			// its final FlowLaunchTracked and Embedded here rather than leaving
+			// them for install: the one window before install
+			// (failCreateFlowLaunchEmbedded) persists the same phase update
+			// either way, since flowLaunchFailureUpdate reads FlowLaunchTracked
+			// only for a resume. PlanID, PlanPath and WorkingDir stay zero too —
+			// no plan exists yet, and actions falls back to WorktreePath.
 			name:     "create phase interactive",
 			target:   createPhase,
 			want:     launchContextCreatePhaseContext(createPhase),
@@ -1261,22 +1261,24 @@ func launchContextCreatePhaseTarget() createPhaseTarget {
 func launchContextCreatePhaseContext(target createPhaseTarget) actions.AgentLaunchContext {
 	promptRecord := flowStartPromptRecord(target.Record, target.Request, target.Worktree, target.Commit)
 	return actions.AgentLaunchContext{
-		Command:          "codex",
-		Model:            "gpt-5",
-		ReasoningEffort:  "high",
-		LaunchID:         "launch-1",
-		RepoPath:         target.Request.RepoPath,
-		WorktreePath:     target.Worktree.WorktreePath,
-		Branch:           target.Worktree.Branch,
-		Commit:           target.Commit,
-		SessionStateRoot: "/state",
-		PlanPhaseID:      target.Phase.PhaseID,
-		PlanPhaseTitle:   target.Phase.Title,
-		PlanPhaseStatus:  string(flowstore.PhaseRunning),
-		FlowID:           target.Record.FlowID,
-		FlowPhaseID:      target.Phase.PhaseID,
-		FlowPhaseKind:    string(flowstore.SemanticKind(target.Phase)),
-		Headless:         target.Record.Headless,
+		Command:           "codex",
+		Model:             "gpt-5",
+		ReasoningEffort:   "high",
+		LaunchID:          "launch-1",
+		RepoPath:          target.Request.RepoPath,
+		WorktreePath:      target.Worktree.WorktreePath,
+		Branch:            target.Worktree.Branch,
+		Commit:            target.Commit,
+		SessionStateRoot:  "/state",
+		PlanPhaseID:       target.Phase.PhaseID,
+		PlanPhaseTitle:    target.Phase.Title,
+		PlanPhaseStatus:   string(flowstore.PhaseRunning),
+		FlowID:            target.Record.FlowID,
+		FlowPhaseID:       target.Phase.PhaseID,
+		FlowPhaseKind:     string(flowstore.SemanticKind(target.Phase)),
+		Headless:          target.Record.Headless,
+		Embedded:          true,
+		FlowLaunchTracked: true,
 		InitialPrompt: initialFlowLaunchPrompt(
 			promptRecord, target.Phase, FlowPromptTemplates{}, ""),
 	}
