@@ -85,6 +85,16 @@ func FlowLaunchRoleOf(ctx AgentLaunchContext) FlowLaunchRole {
 		// ResumeSessionID is set by exactly one phase-attached arm, and
 		// PlanPhaseID by exactly one other, so each discriminates its role.
 		case ctx.ResumeSessionID != "":
+			// A resume that carries a phase but not the tracked marker is the
+			// one mixed-marker shape the old failure-update refusal named
+			// outright, and the reservation refused it too. Classifying it as a
+			// phase resume would promote an explicitly untracked launch into a
+			// tracked one — taking the Flow lease and marking the phase — so it
+			// names no role instead, which is what both consumers answered for
+			// it before.
+			if !ctx.FlowLaunchTracked {
+				return RoleNone
+			}
 			return RolePhaseResume
 		case ctx.PlanPhaseID != "":
 			return RoleCreatePhase

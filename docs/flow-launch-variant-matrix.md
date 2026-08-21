@@ -229,7 +229,12 @@ the fallback ladder's own strings. Their behavior across V1–V17, the four
 non-Flow literals and the two probes is pinned by
 `model/flow_launch_role_matrix_internal_test.go`, and every builder arm asserts
 `FlowLaunchRoleOf(built) == target.role()` so the classifier stays the builder's
-inverse rather than a parallel guess.
+inverse rather than a parallel guess. `FlowLaunchTracked` is decisive in exactly
+one place there: a resume carrying a phase but not the marker names no role, so
+an explicitly untracked launch cannot be promoted into one that takes the Flow
+lease and marks a phase. The other phase-attached shapes keep answering as
+their consumers always did, including the untracked failure contexts that still
+mark their phase.
 
 ### Field coverage check
 

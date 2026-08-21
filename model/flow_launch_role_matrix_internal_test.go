@@ -407,3 +407,29 @@ func TestFlowLaunchRoleMatrixNonFlowContexts(t *testing.T) {
 		})
 	}
 }
+
+// TestFlowLaunchRoleMatrixUntrackedPhaseResume pins the one mixed-marker shape
+// the builder never emits but the old hand-written predicates named outright: a
+// resume carrying a phase without the tracked marker. It must stay untracked —
+// no Flow lease, no phase mark — while still being held on the Flow lifecycle
+// route by the wider guard.
+func TestFlowLaunchRoleMatrixUntrackedPhaseResume(t *testing.T) {
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", LaunchID: "launch-1", RepoPath: "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktree", FlowID: "flow-1", FlowPhaseID: "phase-1",
+		ResumeSessionID: "session-1", Embedded: true,
+	}
+	if role := actions.FlowLaunchRoleOf(ctx); role != actions.RoleNone {
+		t.Fatalf("FlowLaunchRoleOf() = %v, want no role", role)
+	}
+	got := flowLaunchRoleMatrixConsumers(t, ctx)
+	if got.Reserves {
+		t.Fatal("an untracked phase resume must not take the Flow lease")
+	}
+	if got.FailureMarksPhase {
+		t.Fatal("an untracked phase resume must not mark its phase on failure")
+	}
+	if !got.RequiresLifecycle {
+		t.Fatal("a Flow-marked context must stay on the Flow lifecycle route")
+	}
+}

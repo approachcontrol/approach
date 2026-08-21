@@ -138,10 +138,20 @@ func TestFlowLaunchRoleOf(t *testing.T) {
 		{
 			name: "resume session id outranks the plan phase id",
 			ctx: AgentLaunchContext{
-				FlowID: "flow-1", FlowPhaseID: "phase-1",
+				FlowID: "flow-1", FlowPhaseID: "phase-1", FlowLaunchTracked: true,
 				ResumeSessionID: "sess-1", PlanPhaseID: "phase-1",
 			},
 			want: RolePhaseResume,
+		},
+		{
+			// The untracked marker is decisive only for a resume: promoting
+			// this shape would take the Flow lease and mark the phase for a
+			// launch that declared itself untracked.
+			name: "an untracked phase resume names no role",
+			ctx: AgentLaunchContext{
+				FlowID: "flow-1", FlowPhaseID: "phase-1", ResumeSessionID: "sess-1",
+			},
+			want: RoleNone,
 		},
 		{
 			name: "a phase id with no flow behind it makes no phase role",
