@@ -1,12 +1,15 @@
 # ADR 0003: Flow occupancy as a deep module
 
-Status: **proposed — pending user approval** (2026-08-21)
+Status: **accepted** (2026-08-20)
 
-`approach-x0r.1` is a HITL bead. This Flow ran headless in auto mode, so the
-bead's "grilled with the user before slice 2 starts" criterion cannot be
-satisfied from inside it. Every decision below is a *proposal* with its
-evidence; the "Decision requests" section lists the open questions. Approval
-happens out of band, and `approach-x0r.2` must not start before it does.
+`approach-x0r.1` is a HITL bead. The Flow that wrote this ADR ran headless in
+auto mode, so the bead's "grilled with the user before slice 2 starts" criterion
+was carried by `approach-x0r.13` and satisfied out of band on 2026-08-20. All
+seven decision requests are answered in "Decisions from the grill" below, and
+five of them changed the design. Where a decision below contradicts the D-section
+above it, the decision wins and the D-section records the original proposal.
+
+`approach-x0r.2` is unblocked.
 
 ## Context
 
@@ -265,59 +268,238 @@ exists to hide. See decision request Q4.
   nothing else in this repo. Any future need to import `model` means the
   boundary was drawn wrong.
 
-Proposed migration order for the rest of the epic, cheapest and most-isolated
-first, each slice ending green:
+Migration order lives in the beads (`approach-x0r.3` through `approach-x0r.12`),
+not here. An earlier draft of this ADR proposed a competing order sliced by
+consumer; the grill cut it in favour of the filed beads, which slice by source
+family. See decision G8.
 
-1. `x0r.2` — characterization tests against the current predicates.
-2. `x0r.3` — implement `flowoccupancy` against those tests, still with no callers.
-3. `x0r.4` — the AutoMode drain (`StageDrain`): the smallest source set, and the
-   one consumer whose refusals are all silent, so no strings move yet.
-4. `x0r.5` — the previews and footer predicates (`StagePreview`).
-5. `x0r.6` — repair (admission + the ladder), which is where the priority table
-   earns its overrides.
-6. `x0r.7` — autofix, the second override.
-7. `x0r.8` — the worktree agent and saved-session resume, the two roles that
-   read the session mirror and the whole-Flow session listing.
-8. `x0r.9` — manual, auto, create, and phase-resume admission; delete both
-   composites at the end of it.
-9. `x0r.10` — the install backstop (`StageInstall`) and session release.
-10. `x0r.11` — the architecture test. `x0r.12` — ownership docs.
+## Decisions from the grill
 
-## Decision requests
+Answered with the user on 2026-08-20 under `approach-x0r.13`. Numbered Q1-Q7 to
+match the original requests, plus G8, which the grill raised and the ADR had not.
 
-These are the grill questions. They are recorded, not resolved.
+### Q7 - package name and location: **confirmed, with a scheduled rename**
 
-1. **Q1 — `Purpose` as a `(Role, Stage)` pair vs. a flat enum.** The pair reuses
-   ADR 0002's role and makes the source set a function of `Stage` alone. The
-   flat form is simpler to read at a call site and makes illegal combinations
-   unrepresentable — there is no `(RoleAutofix, StageDrain)` consumer, and the
-   pair admits one. Confirm the pair, or accept a flat enum plus a
-   `Role()`/`Stage()` accessor pair.
-2. **Q2 — per-purpose priority overrides vs. one global order.** Preserving
-   repair's and autofix's differing ranks preserves behavior exactly, at the
-   cost of the module having three exceptions on day one. Unifying them is a
-   deliberate, small, user-visible behavior change (which of two true refusals
-   is shown when an attempt and a terminal both hold). Confirm preservation, or
-   authorize the unification as part of `approach-x0r.6`.
-3. **Q3 — the strings move into `flowoccupancy`.** Roughly a dozen
-   user-facing status constants leave `model/`. The alternative is that the
-   module returns a `Holder` and each caller keeps its own switch, which
-   preserves four vocabularies and gives up most of D4's benefit. Confirm the
-   move.
-4. **Q4 — S8/S9 stay hidden.** A slot that is prefill-pending, or whose process
-   has exited but has not been swept, still reads as occupied (matrix F6). That
-   is today's behavior and this ADR preserves it. Confirm, or file the
-   exited-slot window as a separate bug for the epic to fix rather than freeze.
-5. **Q5 — `AgentProbe` inside the module.** Putting the tmux probe behind an
-   adapter lets the module enforce "never at `StageDrain`", but it also means a
-   query can fork a subprocess, which is a surprising property for a package
-   named `flowoccupancy`. Confirm, or keep the probe entirely in `model` at the
-   keystrokes and accept that the stage rule stays a comment.
-6. **Q6 — F5 is a pre-existing gap, not this epic's to close.** An AutoMode
-   launch can be admitted into a worktree a tmux autofix agent still owns,
-   because the registry is in-process and the drain must not shell out. Confirm
-   that `approach-x0r` freezes this rather than fixing it, or file it.
-7. **Q7 — package name and location.** `flowoccupancy` at top level, per D1.
-   Confirm, or place it under `flowstore/` as a subpackage, which would put the
-   policy next to the records it reads at the cost of implying the Flow store
-   owns runtime state it has no access to.
+`flowoccupancy/` at top level, per D1. The repo splits top level (domain:
+`actions`, `flowstore`, `sessions`, `planstore`, `scanner`, `model`, `ui`) from
+`internal/` (infrastructure: `flowlease`, `launchcontrol`, `dblease`,
+`artifacts`). Occupancy is domain policy, so it goes at top level. A
+`flowstore/` subpackage was rejected because half the module's inputs are
+in-process TUI runtime state that `flowstore` has no access to.
+
+The name is provisional. See G1.
+
+### G1 - scope: this ADR is phase one of a wider module
+
+The epic's stated outcome is a module that owns occupancy **and manages
+reservation, adoption, rejection, handoff, failure retention, and release**.
+This ADR designs a read-only oracle and D5 pushes handoff out to `model`.
+`approach-x0r.9` as filed contradicts that, making handoff and failure retention
+module-owned and fencing release behind the owning token.
+
+Ruled: staged. The read-only query is the right first build, because reservation
+cannot move safely until the query is characterized and green, and `x0r.9`
+already sits behind `x0r.8` in the dependency chain. `x0r.9` is the explicit
+widening. The package is renamed at `x0r.9` to match its enlarged scope rather
+than guessing a destination name now.
+
+### Q1 - `Purpose` as a `(Role, Stage)` pair: **confirmed, with a `Valid()` registry**
+
+The pair stands. The axes are sparse and irregular rather than orthogonal:
+`StageSessionRelease` admits only `RoleNone`, and `StageAutoAdvance` and
+`StageDrain` admit only `RoleTrackedPhase`. That is a real argument for a flat
+enum and the ADR did not make it against itself.
+
+The pair wins anyway, on a stronger ground than D2 gives. The rule most worth
+making machine-checkable is C3, "no `StagePreview` query ever reaches
+`ListFlowSessions`". That is expressible only if `Stage` is a value the module
+can quantify over. Flatten it and C3 goes back to being a review comment, which
+is what `approach-x0r.11` exists to end.
+
+Phantom combinations are closed by the `Purpose.Valid()` table rather than by the
+type system. That table becomes the single registry of real consumers, roughly
+25 rows, each `(Role, Stage)` annotated with its matrix section 2 citation, and
+each carrying the source set that purpose may read. An invalid purpose yields a
+fail-closed occupied verdict with `Err`, never a panic: a TUI must not crash on a
+programming error. `approach-x0r.11` asserts the registry both ways, so a
+consumer without a purpose and a purpose without a caller are both build
+failures.
+
+### Q3 - the strings do **not** move into `flowoccupancy`
+
+Rejected, but not for the reason the ADR anticipated. The ADR framed the
+alternative as "each caller keeps its own switch, which preserves four
+vocabularies". That is a false choice. The four vocabularies collapse because
+there is one table keyed by `(Role, Holder)`, and which package holds that table
+is a separate question.
+
+Split by concern:
+
+- The module owns policy. Which holder wins, and in what order, per role. That is
+  `Holder()` and `PhaseID()` on the `Verdict`, and it carries all of the
+  behavior risk.
+- `model` owns the copy. One table, `(Role, Holder) -> string`, replacing four
+  ladders in four files.
+
+`Verdict.Reason()` comes off the interface.
+
+`Stage` drops out of the text function entirely, which D4's `(Purpose, Holder)`
+keying missed: previews gray the footer rather than rendering a reason, and the
+drain refuses in silence, so only admission-class stages ever render text.
+
+Two facts drove this. The move is larger than the ADR's "roughly a dozen": about
+18 occupancy constants would move and about 20 launchability constants
+(`NoWorktree`, `NoPlanPath`, `NotRepairable`, `Drift`, `Canceled`, `Stale`,
+`Changed`, `NoProvider`, `EndedSession`, `Resettable`) would stay, splitting
+sibling constants that today sit in one block per file. And no domain package in
+this repo carries user-facing copy: `actions`, `flowstore` and `sessions` contain
+zero status strings. Making `flowoccupancy` the first would be a precedent break,
+and it matters more once G1 grows the module into a reservation fence. A fence
+that owns PTY reservation and button copy is a worse module than one that owns
+only the fence.
+
+Cost accepted: the module cannot guarantee every `Holder` has copy. An
+exhaustiveness test over `Holder x Role` against the `Valid()` registry covers
+it, and that test is the same either way.
+
+### Q2 - priority is preserved, as a flat per-`Role` table with no default
+
+Behavior is preserved. Unification is rejected.
+
+Q3 shrank this question to "which `Holder` does the module report when several
+hold", and repair and autofix genuinely disagree on that. With a manual or auto
+phase attempt and a Flow terminal both holding, repair's rank 3 reports the
+attempt while autofix falls through to the terminal. Both can hold at once via
+the prefill-failure re-reservation (`model/flow_launch_attempt.go:64-68`), so the
+divergence is observable.
+
+Two corrections to D4's framing:
+
+Section 4.2 is not a priority override. The install backstop's kinds read
+different **sources**: `savedSessionResume` reads S6 only, `phaseResume` and
+`autofix` read S7 only, and `repair`, `createPhase` and `worktreeAgent` read
+S6 or S7. That belongs in the `(Role, Stage) -> source set` half of the `Valid()`
+registry, not the priority table. Counting it as an override inflated the
+exception count and filed the data in the wrong place.
+
+"Three overrides on day one" is the wrong model. An override implies a default
+that is usually right, which invites "when do we delete them", which is how four
+ladders drifted apart in the first place. There is no default and no exception:
+one flat table, one ordered `[]Holder` row per `Role`, seven rows, repair's and
+autofix's sitting side by side where a diff makes the disagreement obvious. That
+is the whole fix for F2. Not "they now agree", but "they now disagree visibly, in
+one place, and `x0r.2` pins it".
+
+If repair and autofix should later agree, deleting a row against a green
+characterization suite is a two-line diff. Spending this epic's one
+behavior-change budget on the least interesting difference on the board is not
+worth it.
+
+### Q5 - `AgentProbe` stays inside the module, with a corrected shape
+
+Confirmed, but the drafted interface was wrong in two ways and both were behavior
+changes.
+
+There are two probes, deliberately different. `tmuxFlowAgentStillRunning`
+(`model/tmux_mode.go:428`) unions phase launch IDs with the autofix registry and
+serves repair. `tmuxAutofixAgentStillRunning` (`:446`) is the registry half alone
+and serves the `g` keypress, the resume keypress, and autofix. The narrowing is
+load-bearing: widening the keystroke probes to every phase of the record "would
+newly refuse `g` for a finished agent whose window the user merely left open"
+(`:435-438`). A single `TmuxAgentRunning(flowID) bool` collapses both and
+silently makes `g` stricter.
+
+Both probes also need `record` and `fallbackRepoPath` to locate the worktree via
+`tmuxProbeRepoPath`. A `flowID`-only signature cannot answer either without
+re-reading the store, which at `StageAdmission` is the walk that stage forbids.
+
+Corrected:
+
+```go
+type AgentProbe interface {
+    FlowAgentRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool
+    AutofixAgentRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool
+}
+```
+
+`fallbackRepoPath` moves onto the `Query`. The `(Role, Stage)` registry decides
+which method a purpose may call: repair gets the union, `g`, resume and autofix
+get the registry half, every other purpose gets neither.
+
+The "surprising for a query to fork a subprocess" objection is mostly answered by
+the existing short-circuit. `tmuxAutofixAgentStillRunning` returns false without
+forking unless this process actually launched an autofix agent into that Flow, so
+the subprocess is a property of the Flow's registry entry, not of the query. And
+F4 is the epic's thesis: "a poll on a timer must not shell out" is a comment in
+`tmux_mode.go` that nothing enforces. Leaving the probe in `model` leaves it a
+comment forever.
+
+### Q4 - S8 and S9 stay hidden; F6 is frozen and its wording corrected
+
+Confirmed. No bug filed. F6 as written conflates two phenomena with very
+different lifetimes:
+
+- Auto-closing slots (phase, repair, createPhase, resume). The sweep runs on
+  `embeddedTerminalTickMsg` (`model/model.go:2104-2105`) and
+  `embeddedTerminalRepaintInterval = time.Second / 30`
+  (`model/embedded_terminal.go:293`). The window is 33ms, one frame. A fix would
+  mean sweeping synchronously on exit, which carries more risk than the window it
+  closes.
+- `FlowAgent` and `FlowSavedSessionResume` slots. The sweep skips them
+  (`:1051`, `:1067`), so an exited terminal is retained until the user dismisses
+  it. That is not a race window. It is the `embeddedTerminalDetachNever` policy
+  matrix section 2.5 records, which exists precisely to preserve occupancy.
+
+S9 stays hidden because exposing it would let a caller treat an exited
+worktree-agent slot as free, which is the regression detach-never prevents. S8
+stays hidden because the prefill-failure re-reservation depends on the slot
+reading occupied while it is being dismissed. A `Holder` that can say
+`HolderFlowTerminal` but not "whose process exited" is the right amount of
+information.
+
+The matrix stays pinned to `3d147d4`, but F6 carries a correction note, so
+`x0r.9` does not inherit "occupancy outlives the agent" as an open concern when
+only the deliberate half is real.
+
+### Q6 - F5 is frozen in this epic **and** filed
+
+The ADR offered "confirm the freeze" and "file it" as alternatives. They are not.
+
+Frozen here because the fix is new machinery rather than a migration, and this
+epic preserves behavior.
+
+A cheap fix was investigated and rejected. `StageDrain` cannot run the window
+probe, but `flowAutofixTmuxLaunchIDs` is a map lookup with no I/O, so a
+registry-only check looked free and fail-closed. It is not viable: registry
+entries are never removed. `model/model.go:236-244` states "It needs no expiry:
+the probe asks whether those windows are still live, so closed ones re-enable the
+shortcut on their own." A registry-only check would permanently block AutoMode on
+any Flow that ran a single autofix anywhere in the session, which is worse than
+the gap.
+
+Filed anyway, outside the epic and not blocking it, because after this epic the
+module is the right home for the fix: it owns the probe (Q5) and it owns
+`StageDrain`'s source set. The bead carries F5 plus the registry-expiry finding
+so the next person does not re-derive it.
+
+### G8 - the filed beads own the migration order; the ADR's list is cut
+
+The filed beads slice by source family: each adds one source to the module, then
+migrates the consumers that source unblocks. The ADR's draft order sliced by
+consumer: build the module whole in `x0r.3`, then move call sites cheapest first.
+Same IDs, different contents, which would have handed whoever picked up `x0r.4`
+two contradictory briefs.
+
+The beads win. A slice that adds one source and migrates only its readers has a
+small checkable blast radius that `x0r.2`'s characterization tests bracket
+exactly. Building all sixteen sources at once against no callers puts the first
+real proof that any of it is right in `x0r.4`, which is a large unverified step
+in the middle of the epic.
+
+The filed order also already agrees with the decisions above. `x0r.5`
+("named-holder occupancy verdicts") is where Q2's priority table lands, and
+`x0r.6` is where Q3's `(Role, Holder)` copy table gets its first row. The ADR put
+the drain first because "no strings move yet"; after Q3 no strings move in any
+slice, so that argument is gone.
+
+`approach-x0r.3` additionally carries the `Valid()` registry from Q1.

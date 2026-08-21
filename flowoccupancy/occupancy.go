@@ -88,16 +88,27 @@ const (
 	FreshnessAuthoritative
 )
 
-// Purpose is why the caller is asking. Role selects the refusal vocabulary and
-// the ordering; Stage selects the source set. Keeping them as one pair rather
-// than a flat enum is what lets a rule be stated about a stage across every
-// role — see decision request Q1 in ADR 0003.
+// Purpose is why the caller is asking. Role selects the ordering, Stage selects
+// the source set. They stay a pair rather than one flat enum because that is
+// what lets a rule be stated about a stage across every role: "no StagePreview
+// query reaches ListFlowSessions" is expressible only if Stage is a value this
+// package can quantify over. ADR 0003, decision Q1.
 type Purpose struct {
 	Role  actions.FlowLaunchRole
 	Stage Stage
 }
 
-// Valid reports whether this purpose names a consumer that exists.
+// Valid reports whether this purpose names a consumer that exists. It is backed
+// by the purpose registry: roughly 25 rows, one per real consumer in
+// docs/flow-occupancy-matrix.md section 2, each carrying the source set that
+// purpose may read and the probe method, if any, it may call.
+//
+// The registry rather than the type system is what closes phantom pairs like
+// (RoleAutofix, StageDrain). An invalid purpose yields a fail-closed occupied
+// verdict carrying Err, never a panic: a TUI must not crash on a programming
+// error. approach-x0r.11 asserts the registry both ways, so a consumer with no
+// purpose and a purpose with no caller are both build failures.
+//
 // StageSessionRelease, the one non-launch stage, carries actions.RoleNone;
 // every other stage requires a real role. There is deliberately no quit stage:
 // the handoff-pending check quit defers on is a process-wide policy rather than
@@ -130,6 +141,11 @@ type Query struct {
 	PhaseID string
 	// SkipSession is phase resume's exemption. Zero for every other caller.
 	SkipSession SessionIdentity
+	// FallbackRepoPath locates the worktree when the record does not. Only the
+	// purposes that may reach AgentProbe need it; it rides on the query rather
+	// than on the adapter because it varies per call site, and re-deriving it
+	// inside this package would mean a store read at a stage that forbids one.
+	FallbackRepoPath string
 }
 
 // Holder names what is occupying the Flow. It is the only vocabulary callers
@@ -179,8 +195,10 @@ const (
 	HolderHeadlessWrite
 )
 
-// String reports the holder's name for diagnostics. It is not the user-facing
-// text; that is Verdict.Reason, which varies by purpose for the same holder.
+// String reports the holder's name for diagnostics. It is never user-facing
+// text. This package owns which holder wins and in what order, as one flat
+// table with an ordered row per Role and no default; model owns the copy, as
+// one table keyed by (Role, Holder). ADR 0003, decisions Q2 and Q3.
 func (holder Holder) String() string {
 	switch holder {
 	case HolderNone:
@@ -222,7 +240,6 @@ func (holder Holder) String() string {
 // match on a representation this package chose not to expose.
 type Verdict struct {
 	holder  Holder
-	reason  string
 	phaseID string
 	err     error
 }
@@ -232,11 +249,6 @@ func (verdict Verdict) Occupied() bool { return verdict.holder != HolderNone }
 
 // Holder names what holds it, or HolderNone.
 func (verdict Verdict) Holder() Holder { return verdict.holder }
-
-// Reason is the user-facing refusal for this purpose, or "" when the Flow is
-// free or the purpose refuses in silence. The same holder yields different text
-// for different roles by design.
-func (verdict Verdict) Reason() string { return verdict.reason }
 
 // PhaseID names the phase the holder occupies, when the holder is phase-scoped
 // and the refusal names it. Blank otherwise.
@@ -296,10 +308,22 @@ type Runtime interface {
 }
 
 // AgentProbe reports a live tmux window for a phase-untracked agent. It forks a
-// subprocess, so it is nil-able and this package consults it only at
-// StageAdmission and StageAuthoritative.
+// subprocess, so it is nil-able and the purpose registry decides which method,
+// if any, a purpose may reach.
+//
+// The two methods are not one method with a flag. FlowAgentRunning unions the
+// record's phase launch IDs with the autofix registry and serves repair;
+// AutofixAgentRunning is the registry half alone and serves the g keypress, the
+// resume keypress, and autofix. Widening the keystroke probes to every phase of
+// the record would newly refuse g for a finished agent whose window the user
+// merely left open (model/tmux_mode.go:435-438), so collapsing them is a
+// behavior change, not a simplification.
+//
+// Both take the record and a fallback repo path because both must locate the
+// worktree, and a flow ID alone cannot without a store read.
 type AgentProbe interface {
-	TmuxAgentRunning(flowID string) bool
+	FlowAgentRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool
+	AutofixAgentRunning(record flowstore.FlowRecord, fallbackRepoPath string) bool
 }
 
 // Sources is the set of adapters an Occupancy answers from. Every field is
