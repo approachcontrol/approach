@@ -61,9 +61,21 @@ func (role FlowLaunchRole) Tracked() bool {
 //
 // The order is precedence, not arbitrary sequence. Contexts that set more than
 // one marker are malformed, but they do reach the consumers this classifier
-// serves, and the ordering here reproduces exactly what those consumers'
-// hand-written predicates already answered for them: the repair / agent /
-// saved-session chain first, then the phase-attached roles, then autofix.
+// serves, and the ordering reproduces what those consumers' hand-written
+// predicates answered: the repair / agent / saved-session chain first, then the
+// phase-attached roles, then autofix.
+//
+// One role is one answer, so on two malformed shapes the single answer cannot
+// equal every old predicate's, and these are the deliberate divergences. A
+// context setting FlowRepair alongside FlowAgent or FlowSavedSessionResume is
+// repair here, so the detach policy allows detaching where the old
+// marker-or-marker test refused. A phase-attached context without
+// FlowLaunchTracked is a phase role here, so the reservation takes the Flow
+// lease where the old test skipped it — the conservative direction, and the one
+// that keeps the reservation agreeing with the failure update, which has always
+// marked that shape's phase. Neither shape is emitted by any builder arm: the
+// arms set exactly one marker each, and every phase-attached arm sets
+// FlowLaunchTracked.
 //
 // Embedded, Headless and FlowAutofixPRNumber are deliberately not inputs. They
 // are transport and payload rather than role, and the one consumer that cares

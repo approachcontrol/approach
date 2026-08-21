@@ -234,7 +234,11 @@ one place there: a resume carrying a phase but not the marker names no role, so
 an explicitly untracked launch cannot be promoted into one that takes the Flow
 lease and marks a phase. The other phase-attached shapes keep answering as
 their consumers always did, including the untracked failure contexts that still
-mark their phase.
+mark their phase. Two malformed shapes no builder arm emits do answer
+differently than the old predicates — a repair context that also sets the agent
+or saved-resume marker is detachable, and a phase-attached context without
+`FlowLaunchTracked` takes the Flow lease — and `FlowLaunchRoleOf`'s doc comment
+names both.
 
 ### Field coverage check
 
