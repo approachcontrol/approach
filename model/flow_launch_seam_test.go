@@ -272,12 +272,13 @@ type flowSeamContextShapes struct {
 	// `LaunchContext` field from either failing the guard or hiding a real
 	// violation.
 	fields map[string]map[string]flowSeamKind
-	// results maps a function name to the indices of its results that are
-	// launch contexts, so `ctx := makeContext(); ctx.FlowRepair = true` is
-	// caught the same way a literal binding is. Receivers and packages are
-	// ignored here: a call is resolved by name only, and conflating two
-	// same-named functions only makes the seam rule stricter.
-	results map[string]map[int]bool
+	// results maps a function name to what each of its results holds, so
+	// `ctx := makeContext(); ctx.FlowRepair = true` is caught the same way a
+	// literal binding is, and a helper handing back a slice or map of contexts
+	// is followed into its elements. Receivers and packages are ignored here:
+	// a call is resolved by name only, and conflating two same-named functions
+	// only makes the seam rule stricter.
+	results map[string]map[int]flowSeamKind
 	// aliases are the qualified names declared as an alias of the launch
 	// context anywhere in the scan set.
 	aliases map[string]bool
@@ -293,7 +294,7 @@ type flowSeamScope struct {
 func newFlowSeamContextShapes() flowSeamContextShapes {
 	return flowSeamContextShapes{
 		fields:  make(map[string]map[string]flowSeamKind),
-		results: make(map[string]map[int]bool),
+		results: make(map[string]map[int]flowSeamKind),
 		aliases: make(map[string]bool),
 	}
 }
@@ -307,12 +308,14 @@ func (s flowSeamContextShapes) merge(other flowSeamContextShapes) {
 			s.fields[owner][name] = kind
 		}
 	}
-	for name, indices := range other.results {
+	for name, kinds := range other.results {
 		if s.results[name] == nil {
-			s.results[name] = make(map[int]bool)
+			s.results[name] = make(map[int]flowSeamKind)
 		}
-		for index := range indices {
-			s.results[name][index] = true
+		for index, kind := range kinds {
+			if flowSeamKindRank(kind) > flowSeamKindRank(s.results[name][index]) {
+				s.results[name][index] = kind
+			}
 		}
 	}
 	for alias := range other.aliases {
@@ -332,9 +335,9 @@ func (s flowSeamContextShapes) contextFieldCount() int {
 	return count
 }
 
-// resultIndices reports which results of the called function are launch
-// contexts, for a call whose callee is a plain name or a method selector.
-func (s flowSeamContextShapes) resultIndices(call *ast.CallExpr) map[int]bool {
+// resultKinds reports what each result of the called function holds, for a
+// call whose callee is a plain name or a method selector.
+func (s flowSeamContextShapes) resultKinds(call *ast.CallExpr) map[int]flowSeamKind {
 	switch fn := call.Fun.(type) {
 	case *ast.Ident:
 		return s.results[fn.Name]
@@ -374,22 +377,23 @@ func flowSeamContextShapesOf(dir string, file *ast.File, aliases map[string]bool
 			if n.Type == nil || n.Type.Results == nil {
 				return true
 			}
-			indices := make(map[int]bool)
+			kinds := make(map[int]flowSeamKind)
 			position := 0
 			for _, result := range n.Type.Results.List {
 				count := len(result.Names)
 				if count == 0 {
 					count = 1
 				}
-				if flowSeamIsLaunchContextType(result.Type, scope) {
+				kind := flowSeamTypeKind(result.Type, scope)
+				if kind.context || kind.collection {
 					for offset := 0; offset < count; offset++ {
-						indices[position+offset] = true
+						kinds[position+offset] = kind
 					}
 				}
 				position += count
 			}
-			if len(indices) > 0 {
-				shapes.results[n.Name.Name] = indices
+			if len(kinds) > 0 {
+				shapes.results[n.Name.Name] = kinds
 			}
 		}
 		return true
@@ -480,9 +484,7 @@ func flowSeamExprKind(expr ast.Expr, locals *flowSeamLocals, scope flowSeamScope
 			return flowSeamKind{context: true}
 		}
 	case *ast.CallExpr:
-		if scope.shapes.resultIndices(expr)[0] {
-			return flowSeamKind{context: true}
-		}
+		return scope.shapes.resultKinds(expr)[0]
 	}
 	return flowSeamKind{}
 }
@@ -503,9 +505,9 @@ func flowSeamLaunchContextNames(node ast.Node, scope flowSeamScope) *flowSeamLoc
 	}
 }
 
-// flowSeamBindCallResults records the names on the left of a single-call
-// assignment whose matching result is a launch context, covering the
-// multi-result `ctx, decision, err := build()` shape as well as the single one.
+// flowSeamBindCallResults records what the names on the left of a single-call
+// assignment hold, covering the multi-result `ctx, decision, err := build()`
+// shape as well as the single one.
 func flowSeamBindCallResults(lhs, rhs []ast.Expr, locals *flowSeamLocals, scope flowSeamScope) {
 	if len(rhs) != 1 {
 		return
@@ -514,13 +516,10 @@ func flowSeamBindCallResults(lhs, rhs []ast.Expr, locals *flowSeamLocals, scope 
 	if !ok {
 		return
 	}
-	indices := scope.shapes.resultIndices(call)
+	kinds := scope.shapes.resultKinds(call)
 	for index, target := range lhs {
-		if !indices[index] {
-			continue
-		}
 		if ident, ok := target.(*ast.Ident); ok {
-			locals.learn(ident.Name, flowSeamKind{context: true})
+			locals.learn(ident.Name, kinds[index])
 		}
 	}
 }
@@ -965,6 +964,19 @@ func viaHelper() {
 	ctx.FlowRepair = true
 }`,
 			want: []string{"viaHelper.FlowRepair"},
+		},
+		"marker assigned through a helper-returned collection": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func makeContexts() []actions.AgentLaunchContext {
+	return nil
+}
+
+func viaHelperCollection() {
+	contexts := makeContexts()
+	contexts[0].FlowRepair = true
+}`,
+			want: []string{"viaHelperCollection.FlowRepair"},
 		},
 		"marker assigned on a multi-result helper context": {
 			dir: "model", name: "keys.go",
