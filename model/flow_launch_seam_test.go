@@ -849,6 +849,17 @@ func flowSeamViolations(dir, name string, file *ast.File, markers map[string]boo
 	return violations
 }
 
+// The rule guards the Flow* markers and not ResumeSessionID or PlanPhaseID,
+// the two fields FlowLaunchRoleOf also reads. Those two discriminate only
+// among the phase roles, which the ladder reaches only once FlowID and
+// FlowPhaseID are both set — and both of those are guarded markers. So no code
+// outside the launch module can name a phase role with them; it could only
+// re-point a context the builder already built, which is the mutation class
+// flowLaunchContextRequiresLifecycle and the Flow reservation refuse at
+// runtime. Guarding them here instead would fail the two legitimate non-Flow
+// launches that set them — saved-session resume and plans-mode implement,
+// neither of which touches a Flow — and buying that with standing allow-list
+// exemptions would cost more of the rule than it adds.
 func flowSeamMarkerFields() map[string]bool {
 	markers := make(map[string]bool)
 	structType := reflect.TypeOf(actions.AgentLaunchContext{})
