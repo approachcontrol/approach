@@ -1438,24 +1438,27 @@ func UsesStreamJSONOutput(ctx AgentLaunchContext) bool {
 	return (command == agent.CommandClaude || command == agent.CommandCursor) && ctx.Embedded && ctx.Headless
 }
 
+// ShouldPrefillEmbeddedPrompt reports whether an embedded Flow launch fills the
+// dock with its prompt instead of passing it as argv. Which launches prefill is
+// the role's answer; the rest of the conjuncts are transport and payload — the
+// three providers with a dock, the interactive embedded slot, and a prompt that
+// is actually there to place.
+//
+// The role has to be well formed as well as prefilling: a context that mixes
+// markers — a repair carrying a phase, a phase-attached launch that declared
+// itself untracked — is not the launch its role names, and the four
+// hand-written predicates this replaced each refused those shapes by failing a
+// conjunct. That refusal is now stated once, on the role.
 func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
 	command := agent.Normalize(ctx.Command)
-	trackedPhase := ctx.FlowPhaseID != "" && ctx.FlowLaunchTracked && !ctx.FlowRepair
-	untrackedRepair := ctx.FlowRepair && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked
-	// An untracked Flow-worktree agent prefills like every other interactive
-	// embedded Flow launch: the dock is filled and the operator presses enter.
-	// FlowAgent is an explicit signal rather than "Flow ID, no phase, not
-	// repair", so the boundary stays a predicate on the context rather than an
-	// inference about it.
-	untrackedFlowAgent := ctx.FlowAgent && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked && !ctx.FlowRepair
-	untrackedFlowAutofix := ctx.FlowAutofix && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked && !ctx.FlowRepair
+	role := FlowLaunchRoleOf(ctx)
 	return (command == agent.CommandCodex || command == agent.CommandClaude || command == agent.CommandCursor) &&
 		ctx.Embedded &&
 		!ctx.Headless &&
 		ctx.ResumeSessionID == "" &&
 		ctx.InitialPrompt != "" &&
-		ctx.FlowID != "" &&
-		(trackedPhase || untrackedRepair || untrackedFlowAgent || untrackedFlowAutofix)
+		role.Prefills() &&
+		validateFlowLaunchRole(ctx, role) == nil
 }
 
 func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
@@ -1554,17 +1557,13 @@ func resumeSessionIDForContext(ctx AgentLaunchContext) (string, error) {
 	if !ctx.FlowSavedSessionResume {
 		return resumeSessionIDForLaunch(ctx.ResumeSessionID)
 	}
-	if strings.TrimSpace(ctx.FlowID) == "" ||
-		strings.TrimSpace(ctx.FlowPhaseID) != "" ||
-		strings.TrimSpace(ctx.FlowPhaseKind) != "" ||
-		ctx.FlowLaunchTracked ||
-		ctx.FlowAutoLaunch ||
-		ctx.FlowPhaseTerminal ||
+	// The marker claims the role; the classifier and the marker rows say whether
+	// the context is a well-formed instance of it. What is left here is
+	// transport and payload: this role exists only as an interactive embedded
+	// resume of a session that is actually named, and it carries no prompt.
+	if err := validateFlowLaunchRole(ctx, RoleSavedSessionResume); err != nil ||
 		!ctx.Embedded ||
 		ctx.Headless ||
-		ctx.FlowRepair ||
-		ctx.FlowAgent ||
-		ctx.FlowAutofix ||
 		ctx.InitialPrompt != "" ||
 		strings.TrimSpace(ctx.ResumeSessionID) == "" {
 		return "", fmt.Errorf("invalid Flow saved-session resume role")

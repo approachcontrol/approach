@@ -207,11 +207,11 @@ deliberately treated alike.
 | `flowLaunchFailureUpdate` (`model/model_keys.go:3154`) | `actions.FlowLaunchRole.Tracked`, then `FlowPhaseTerminal`, `FlowPhaseKind` | V8/V10 (terminal resume: refuse) ‖ V11–V17 (no phase: refuse) ‖ plan-review kind (blocked) ‖ rest | manual/auto/create/non-terminal resume |
 | `tmuxRouteEligible` (`model/tmux_mode.go:63`) | `Headless`, `actions.FlowLaunchRoleOf`, `Command` | V3/V9/V10/V15 eligible ‖ rest | every embedded variant, for whichever of the two reasons |
 | `flowLaunchContextRequiresLifecycle` (`model/tmux_mode.go:329`) | `actions.IsFlowLaunchContext`, which reads all ten marker fields (`FlowID`, `FlowPhaseID`, `FlowPhaseKind`, plus the seven booleans; not `FlowAutofixPRNumber`) | Flow launches ‖ the four non-Flow literals and the two probes | all 17 variants alike; the two non-launch Flow-ID literals would also classify as Flow, but never reach it |
-| `actions.ShouldPrefillEmbeddedPrompt` (`actions/actions.go:1338`) | `Command`, `Embedded`, `Headless`, `ResumeSessionID`, `InitialPrompt`, `FlowID`, `FlowPhaseID`, `FlowLaunchTracked`, `FlowRepair`, `FlowAgent`, `FlowAutofix` | V1/V5 (prefill) ‖ V11/V13/V16 (untracked prefill arms) ‖ resume and headless and tmux (no prefill) | the three untracked arms are separate clauses with identical effect |
-| `actions.resumeSessionIDForContext` (`actions/actions.go:1450`) | `FlowSavedSessionResume` + 12 negated fields + `ResumeSessionID` | V17 ‖ everything else | asserts *one* variant; all others take the plain path |
-| `actions.validateTrackedRepoTmuxRole` (`actions/tmux_mode.go:454`) | `FlowLaunchTracked`, `FlowID`, `FlowPhaseID`, `FlowAutoLaunch`, `Headless`, `FlowRepair`, `FlowAgent`, `FlowSavedSessionResume`, `FlowAutofix`, `FlowAutofixPRNumber` | V3/V9/V10 accepted | manual and resume tmux launches are identical to it |
-| tracked lease branch (`actions/tmux_mode.go:332`) | `FlowLaunchTracked`, `SessionStateRoot`, `Executable`, `FlowID`, `FlowPhaseID`, `LaunchID` | V3/V9/V10 (leased window) ‖ V15 (plain window) | — |
-| `repoTmuxWindowName` / `repoTmuxLeasedWindowName` (`actions/tmux_mode.go:535`, `:549`) | `FlowPhaseKind`, `Command`, `LaunchID` | phase variants (kind-named) ‖ V15 (command-named) | manual vs resume |
+| `actions.ShouldPrefillEmbeddedPrompt` (`actions/actions.go:1441`) | `FlowLaunchRole.Prefills` + `validateFlowLaunchRole`, plus `Command`, `Embedded`, `Headless`, `ResumeSessionID`, `InitialPrompt` as transport and payload | V1/V5 (prefill) ‖ V11/V13/V16 (untracked prefill roles) ‖ resume and headless and tmux (no prefill) | the three untracked roles answer through one `Prefills` case list |
+| `actions.resumeSessionIDForContext` (`actions/actions.go:1553`) | `FlowSavedSessionResume` as the claim, `validateFlowLaunchRole(ctx, RoleSavedSessionResume)` for the markers, plus `Embedded`, `Headless`, `InitialPrompt`, `ResumeSessionID` | V17 ‖ everything else | asserts *one* variant; all others take the plain path |
+| `actions.validateTrackedRepoTmuxRole` (`actions/tmux_mode.go:464`) | `FlowLaunchRole.Tracked` + `validateFlowLaunchRole`, plus `FlowAutoLaunch`, `Headless`, `FlowAutofixPRNumber` | V3/V9/V10 accepted | manual and resume tmux launches are identical to it |
+| tracked lease branch (`actions/tmux_mode.go:341`) | `FlowLaunchTracked`, `SessionStateRoot`, `Executable`, `FlowID`, `FlowPhaseID`, `LaunchID` | V3/V9/V10 (leased window) ‖ V15 (plain window) | — |
+| `repoTmuxWindowName` / `repoTmuxLeasedWindowName` (`actions/tmux_mode.go:543`, `:557`) | `FlowPhaseKind`, `Command`, `LaunchID` | phase variants (kind-named) ‖ V15 (command-named) | manual vs resume |
 | `launchKind` (`model/flow_launch_pin.go:123`) | `FlowRepair`, `FlowAutofix`, `FlowAgent`, `FlowSavedSessionResume`, `ResumeSessionID` | repair ‖ autofix ‖ generic ‖ resume (V7–V10 **and** V17) ‖ phase | V1–V6 all report "phase" |
 | `registerLaunchControl` (`model/flow_launch_pin.go:102`) | `FlowID`, `LaunchID`, `FlowPhaseID` | phase-owning ‖ unowned (V11–V17) | — |
 | `reconcileInteractiveLaunchExitCmd` (`model/flow_launch_control.go:149`) | `FlowLaunchTracked`, `FlowID`, `FlowPhaseID`, `LaunchID` | V1–V10 ‖ rest | — |
@@ -239,6 +239,37 @@ differently than the old predicates — a repair context that also sets the agen
 or saved-resume marker is detachable, and a phase-attached context without
 `FlowLaunchTracked` takes the Flow lease — and `FlowLaunchRoleOf`'s doc comment
 names both.
+
+The four `actions`-side consumers read the same role
+(`approach-hyl.11`). `FlowLaunchRoleOf` answers *which* role a context names;
+`validateFlowLaunchRole` answers whether the context is a well-formed instance
+of it, from per-role marker rows transcribed from the "Marker fields" table of
+section 3. Between them they replace the four prefill predicates, the resume
+ladder's 13 conjuncts and the tmux ladder's 10. What stays beside the role at
+each call site is transport and payload the role deliberately does not carry:
+the three docked providers, `Embedded`/`Headless`, the prompt and the resumed
+session ID for the prefill and the resume, and `FlowAutoLaunch`,
+`Headless` and `FlowAutofixPRNumber` for the tmux route (F1's dead clause is
+still dead, and still explicit). Both tmux gates keep reading
+`FlowLaunchTracked` rather than `role.Tracked()`: the marker is the launch's
+*claim* on the Flow lease, and the classifier names a phase-attached context a
+phase role even when it declared itself untracked, so gating on the role would
+hand such a launch a lease it never asked for. The role decides whether the
+claim is well formed. `validateFlowLaunchRole` accepts any `Tracked()` role
+there, `RoleCreatePhase` included, because V7–V10 reach the tmux route as
+`RolePhaseResume` and naming `RoleTrackedPhase` alone would break them.
+
+Requiring well-formedness rather than the role alone is what keeps the
+migration behavior-preserving on the malformed shapes: a repair carrying phase
+markers, a phase-attached context that never set `FlowLaunchTracked`, and a
+repair that also sets the agent marker each name a role whose marker row they
+violate, so none of them prefills — which is what all four hand-written
+predicates answered by failing a conjunct. One shape does move: a repair or
+worktree agent whose `FlowID` is whitespace no longer prefills, because the role
+requires a Flow it can name where the old conjunct was an untrimmed
+`FlowID != ""`. No builder arm emits any of these. Their behavior at the seam,
+alongside all 17 reachable variants, the four non-Flow literals and the two
+probes, is pinned by `actions/flow_launch_role_seam_internal_test.go`.
 
 ### Field coverage check
 
@@ -271,20 +302,20 @@ headless (`model/tmux_mode.go:64`). Nothing states "auto ⇒ headless" as an
 invariant. Making auto launches interactive — a plausible future change — would
 turn every tmux-mode auto-advance into `invalid tracked Flow tmux launch role`.
 
-**F2 — closed on the model side by `approach-hyl.10`; the actions side is
-`approach-hyl.11`.** The eight model-side consumers no longer hand-write the
-role at all: they read `actions.FlowLaunchRoleOf`, whose precedence is stated
-once and tested against the builder. The three predicates below still live in
-`actions` and still disagree. The original finding, with its third predicate
-now historical:
-
-**The three hand-written role predicates disagree about which fields
-constitute a role.** `resumeSessionIDForContext` checks `FlowPhaseTerminal` and
-`InitialPrompt == ""`; `validateTrackedRepoTmuxRole` checks neither, but does
-check `FlowAutofixPRNumber != 0`; the autofix arm of
-`flowEmbeddedTerminalIdentity` used to check neither `FlowPhaseTerminal` nor
-`FlowAutoLaunch` — that arm is now the classifier's `RoleAutofix` case, so two
-of the three remain.
+**F2 — closed.** The model side closed with `approach-hyl.10` and the actions
+side with `approach-hyl.11`. Neither the eight model-side consumers nor the four
+actions-side ones hand-write the role any more: they read
+`actions.FlowLaunchRoleOf`, whose precedence is stated once and tested against
+the builder, and `actions.validateFlowLaunchRole`, whose per-role marker rows
+are section 3's table made executable. The original finding was that **the three
+hand-written role predicates disagreed about which fields constitute a role** —
+`resumeSessionIDForContext` checked `FlowPhaseTerminal` and
+`InitialPrompt == ""`, `validateTrackedRepoTmuxRole` checked neither but did
+check `FlowAutofixPRNumber != 0`, and the autofix arm of
+`flowEmbeddedTerminalIdentity` checked neither `FlowPhaseTerminal` nor
+`FlowAutoLaunch`. The marker half of that disagreement is now one answer; what
+each consumer still asks alone is transport and payload, which is a difference
+in what they need rather than a difference about what a role is.
 
 **F3 — `launchKind` classifies V17 and V7–V10 identically as `"resume"`**
 (`model/flow_launch_pin.go:132`), because it falls through on `ResumeSessionID`.
