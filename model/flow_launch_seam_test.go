@@ -5,7 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -285,17 +285,54 @@ func flowSeamContextShapesOf(file *ast.File) flowSeamContextShapes {
 	return shapes
 }
 
-// flowSeamLocals is what one declaration's names were found to hold.
-type flowSeamLocals map[string]flowSeamKind
+// flowSeamLocals is what one declaration's names were found to hold. It is one
+// flat namespace rather than a stack of lexical scopes: a name that ever holds
+// a launch context anywhere in the declaration keeps that classification, so a
+// closure that shadows `ctx` with something else cannot hide the outer marker
+// write. The cost is that the reverse shadowing reports a write the compiler
+// would bind elsewhere — loud and rare, and the kind of thing a human reads
+// once, where the silent miss is the failure that matters.
+type flowSeamLocals struct {
+	kinds   map[string]flowSeamKind
+	changed bool
+}
 
-func (l flowSeamLocals) learn(name string, kind flowSeamKind) {
+func newFlowSeamLocals() *flowSeamLocals {
+	return &flowSeamLocals{kinds: make(map[string]flowSeamKind)}
+}
+
+func (l *flowSeamLocals) kind(name string) flowSeamKind {
+	return l.kinds[name]
+}
+
+func (l *flowSeamLocals) learn(name string, kind flowSeamKind) {
 	if name == "" || name == "_" || !kind.known() {
 		return
 	}
-	if existing, ok := l[name]; ok && existing == kind {
+	// Learning only ever moves a name up the rank, never sideways or down.
+	// That is what keeps a shadowing binding from trading a launch context
+	// away, and what makes the repeated walk terminate.
+	existing := l.kinds[name]
+	if flowSeamKindRank(kind) <= flowSeamKindRank(existing) {
 		return
 	}
-	l[name] = kind
+	l.kinds[name] = kind
+	l.changed = true
+}
+
+// flowSeamKindRank orders what a name can be found to hold, most specific
+// last: a launch context outranks a collection of them, which outranks a
+// value of some named type.
+func flowSeamKindRank(kind flowSeamKind) int {
+	switch {
+	case kind.context:
+		return 3
+	case kind.collection:
+		return 2
+	case kind.named != "":
+		return 1
+	}
+	return 0
 }
 
 // flowSeamExprKind resolves what an expression yields. It follows the shapes a
@@ -303,7 +340,7 @@ func (l flowSeamLocals) learn(name string, kind flowSeamKind) {
 // fields of a known owner, helper results, slice and map elements — through
 // parentheses, address-of, and dereference. It reads syntax, not types, so an
 // expression it cannot place comes back unknown rather than guessed at.
-func flowSeamExprKind(expr ast.Expr, locals flowSeamLocals, scope flowSeamScope) flowSeamKind {
+func flowSeamExprKind(expr ast.Expr, locals *flowSeamLocals, scope flowSeamScope) flowSeamKind {
 	if flowSeamLaunchContextLit(expr, scope.pkgs) != nil {
 		return flowSeamKind{context: true}
 	}
@@ -319,7 +356,7 @@ func flowSeamExprKind(expr ast.Expr, locals flowSeamLocals, scope flowSeamScope)
 	case *ast.CompositeLit:
 		return flowSeamTypeKind(expr.Type, scope.pkgs)
 	case *ast.Ident:
-		return locals[expr.Name]
+		return locals.kind(expr.Name)
 	case *ast.SelectorExpr:
 		owner := flowSeamExprKind(expr.X, locals, scope).named
 		if owner == "" {
@@ -343,12 +380,12 @@ func flowSeamExprKind(expr ast.Expr, locals flowSeamLocals, scope flowSeamScope)
 // declarations, and bindings of a literal, of another such name, of a struct
 // field, of a helper result, or of a slice or map element. Bindings chain, so
 // the walk repeats until it stops learning names.
-func flowSeamLaunchContextNames(node ast.Node, scope flowSeamScope) flowSeamLocals {
-	locals := make(flowSeamLocals)
+func flowSeamLaunchContextNames(node ast.Node, scope flowSeamScope) *flowSeamLocals {
+	locals := newFlowSeamLocals()
 	for {
-		before := len(locals)
+		locals.changed = false
 		flowSeamCollectLaunchContextNames(node, locals, scope)
-		if len(locals) == before {
+		if !locals.changed {
 			return locals
 		}
 	}
@@ -357,7 +394,7 @@ func flowSeamLaunchContextNames(node ast.Node, scope flowSeamScope) flowSeamLoca
 // flowSeamBindCallResults records the names on the left of a single-call
 // assignment whose matching result is a launch context, covering the
 // multi-result `ctx, decision, err := build()` shape as well as the single one.
-func flowSeamBindCallResults(lhs, rhs []ast.Expr, locals flowSeamLocals, scope flowSeamScope) {
+func flowSeamBindCallResults(lhs, rhs []ast.Expr, locals *flowSeamLocals, scope flowSeamScope) {
 	if len(rhs) != 1 {
 		return
 	}
@@ -376,7 +413,7 @@ func flowSeamBindCallResults(lhs, rhs []ast.Expr, locals flowSeamLocals, scope f
 	}
 }
 
-func flowSeamCollectLaunchContextNames(node ast.Node, locals flowSeamLocals, scope flowSeamScope) {
+func flowSeamCollectLaunchContextNames(node ast.Node, locals *flowSeamLocals, scope flowSeamScope) {
 	addFields := func(fields *ast.FieldList) {
 		if fields == nil {
 			return
@@ -798,6 +835,20 @@ func unrelatedNested(d decoy) {
 }`,
 			want: []string{},
 		},
+		"closure shadowing does not hide the outer marker write": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type decoy struct{}
+
+func shadowed(ctx actions.AgentLaunchContext) func() {
+	ctx.FlowRepair = true
+	return func() {
+		ctx := decoy{}
+		_ = ctx
+	}
+}`,
+			want: []string{"shadowed.FlowRepair"},
+		},
 		"unrelated struct sharing a real launch context field name": {
 			dir: "model", name: "keys.go",
 			source: `package model
@@ -905,8 +956,65 @@ var flowSeamAllowList = map[flowSeamAllowance]string{
 	{Dir: "model", File: "flow_session_release.go", Func: "Model.releaseFlowPhaseSessionsCmd"}: "Finalizes the hook records of launches that already ran and are being released.",
 }
 
-func flowSeamScanDirs() map[string]string {
-	return map[string]string{"model": ".", "actions": "../actions"}
+// flowSeamScanRoot is the repository root, reached from the model package.
+const flowSeamScanRoot = ".."
+
+// flowSeamSkippedDirs are directories with no Go of ours in them. `web` is the
+// separate Next.js deployable; the rest are tool and dependency output.
+var flowSeamSkippedDirs = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	"web":          true,
+}
+
+// flowSeamGoFile is one non-test Go file in the scan set, named the way a
+// violation reports it: package directory relative to the repository root,
+// plus file name.
+type flowSeamGoFile struct {
+	Dir  string
+	Name string
+	Path string
+}
+
+// flowSeamScanFiles walks every non-test Go file in the repository.
+// AgentLaunchContext is exported, so any package can build one; scanning only
+// the two packages that happen to do so today would let the next one in.
+func flowSeamScanFiles(t *testing.T) []flowSeamGoFile {
+	t.Helper()
+	var files []flowSeamGoFile
+	err := filepath.WalkDir(flowSeamScanRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if path != flowSeamScanRoot && (strings.HasPrefix(name, ".") || flowSeamSkippedDirs[name]) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		dir := filepath.ToSlash(filepath.Dir(path))
+		dir = strings.TrimPrefix(strings.TrimPrefix(dir, flowSeamScanRoot), "/")
+		if dir == "" {
+			dir = "."
+		}
+		files = append(files, flowSeamGoFile{Dir: dir, Name: name, Path: path})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", flowSeamScanRoot, err)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].Dir != files[j].Dir {
+			return files[i].Dir < files[j].Dir
+		}
+		return files[i].Name < files[j].Name
+	})
+	return files
 }
 
 // TestFlowLaunchContextLiteralsStayInsideTheLaunchModule is the enforcement:
@@ -928,24 +1036,27 @@ func TestFlowLaunchContextLiteralsStayInsideTheLaunchModule(t *testing.T) {
 	}
 	var sources []flowSeamSourceFile
 	shapes := newFlowSeamContextShapes()
-	for _, dir := range sortedKeys(flowSeamScanDirs()) {
-		path := flowSeamScanDirs()[dir]
-		entries, err := os.ReadDir(path)
+	scanned := flowSeamScanFiles(t)
+	if len(scanned) == 0 {
+		t.Fatalf("no Go files found under %s; the seam rule is scanning nothing", flowSeamScanRoot)
+	}
+	for _, source := range scanned {
+		file, err := parser.ParseFile(fset, source.Path, nil, 0)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("parse %s: %v", source.Path, err)
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			file, err := parser.ParseFile(fset, filepath.Join(path, name), nil, 0)
-			if err != nil {
-				t.Fatalf("parse %s/%s: %v", dir, name, err)
-			}
-			sources = append(sources, flowSeamSourceFile{dir: dir, name: name, file: file})
-			shapes.merge(flowSeamContextShapesOf(file))
+		sources = append(sources, flowSeamSourceFile{dir: source.Dir, name: source.Name, file: file})
+		shapes.merge(flowSeamContextShapesOf(file))
+	}
+	beyondTheLaunchPackages := false
+	for _, source := range scanned {
+		if source.Dir != "model" && source.Dir != "actions" {
+			beyondTheLaunchPackages = true
+			break
 		}
+	}
+	if !beyondTheLaunchPackages {
+		t.Fatal("the scan found nothing outside model/ and actions/; AgentLaunchContext is exported, so the walk has to reach every package")
 	}
 	if shapes.contextFieldCount() == 0 {
 		t.Fatal("no struct field of type actions.AgentLaunchContext found; the nested-field half of the seam rule is scanning nothing")
@@ -976,15 +1087,6 @@ func TestFlowLaunchContextLiteralsStayInsideTheLaunchModule(t *testing.T) {
 				allowance.Dir, allowance.File, allowance.Func)
 		}
 	}
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // TestFlowLaunchLifecycleBackstopStaysWired keeps the runtime half of the
