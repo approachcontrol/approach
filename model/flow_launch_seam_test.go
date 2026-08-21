@@ -88,12 +88,73 @@ func flowSeamLaunchContextLit(expr ast.Expr) *ast.CompositeLit {
 	return nil
 }
 
+// flowSeamContextFieldNames collects every struct field in file whose declared
+// type is an AgentLaunchContext. A marker written through such a field —
+// `msg.LaunchContext.FlowRepair = true` — builds Flow launch identity just as
+// surely as a write to a local, so the detector needs the field names to tell
+// those apart from a same-named field on an unrelated struct.
+func flowSeamContextFieldNames(file *ast.File) map[string]bool {
+	fields := make(map[string]bool)
+	ast.Inspect(file, func(n ast.Node) bool {
+		structType, ok := n.(*ast.StructType)
+		if !ok || structType.Fields == nil {
+			return true
+		}
+		for _, field := range structType.Fields.List {
+			if !flowSeamIsLaunchContextType(field.Type) {
+				continue
+			}
+			for _, name := range field.Names {
+				fields[name.Name] = true
+			}
+		}
+		return true
+	})
+	return fields
+}
+
+// flowSeamLaunchContextExpr reports whether expr provably yields a launch
+// context: a literal, a name already known to hold one, or a read of a struct
+// field declared as one, through any number of parentheses, address-of, and
+// dereference wrappers.
+func flowSeamLaunchContextExpr(expr ast.Expr, names, fields map[string]bool) bool {
+	if flowSeamLaunchContextLit(expr) != nil {
+		return true
+	}
+	switch expr := expr.(type) {
+	case *ast.ParenExpr:
+		return flowSeamLaunchContextExpr(expr.X, names, fields)
+	case *ast.StarExpr:
+		return flowSeamLaunchContextExpr(expr.X, names, fields)
+	case *ast.UnaryExpr:
+		if expr.Op == token.AND {
+			return flowSeamLaunchContextExpr(expr.X, names, fields)
+		}
+	case *ast.Ident:
+		return names[expr.Name]
+	case *ast.SelectorExpr:
+		return fields[expr.Sel.Name]
+	}
+	return false
+}
+
 // flowSeamLaunchContextNames collects every identifier in node that is
 // provably an AgentLaunchContext: parameters and results of the function and
-// of any closure inside it, `var` declarations, and `:=` bindings of a launch
-// context literal.
-func flowSeamLaunchContextNames(node ast.Node) map[string]bool {
+// of any closure inside it, `var` declarations, and bindings of a launch
+// context literal, of another such name, or of a launch context struct field.
+// Aliases chain, so the walk repeats until it stops learning names.
+func flowSeamLaunchContextNames(node ast.Node, fields map[string]bool) map[string]bool {
 	names := make(map[string]bool)
+	for {
+		before := len(names)
+		flowSeamCollectLaunchContextNames(node, names, fields)
+		if len(names) == before {
+			return names
+		}
+	}
+}
+
+func flowSeamCollectLaunchContextNames(node ast.Node, names, fields map[string]bool) {
 	addFields := func(fields *ast.FieldList) {
 		if fields == nil {
 			return
@@ -127,13 +188,13 @@ func flowSeamLaunchContextNames(node ast.Node) map[string]bool {
 				}
 			}
 			for index, value := range n.Values {
-				if flowSeamLaunchContextLit(value) != nil && index < len(n.Names) {
+				if index < len(n.Names) && flowSeamLaunchContextExpr(value, names, fields) {
 					names[n.Names[index].Name] = true
 				}
 			}
 		case *ast.AssignStmt:
 			for index, value := range n.Rhs {
-				if index >= len(n.Lhs) || flowSeamLaunchContextLit(value) == nil {
+				if index >= len(n.Lhs) || !flowSeamLaunchContextExpr(value, names, fields) {
 					continue
 				}
 				if ident, ok := n.Lhs[index].(*ast.Ident); ok {
@@ -143,14 +204,13 @@ func flowSeamLaunchContextNames(node ast.Node) map[string]bool {
 		}
 		return true
 	})
-	return names
 }
 
 // flowSeamNodeViolations reports marker fields set within one declaration:
 // keys on a launch context literal, and assignments to a marker field of a
 // name that is provably a launch context.
-func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers map[string]bool) []flowSeamViolation {
-	locals := flowSeamLaunchContextNames(node)
+func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers, fields map[string]bool) []flowSeamViolation {
+	locals := flowSeamLaunchContextNames(node, fields)
 	var violations []flowSeamViolation
 	record := func(field string) {
 		violations = append(violations, flowSeamViolation{Dir: dir, File: file, Func: function, Field: field})
@@ -177,8 +237,7 @@ func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers m
 				if !ok || !markers[selector.Sel.Name] {
 					continue
 				}
-				base, ok := selector.X.(*ast.Ident)
-				if ok && locals[base.Name] {
+				if flowSeamLaunchContextExpr(selector.X, locals, fields) {
 					record(selector.Sel.Name)
 				}
 			}
@@ -191,7 +250,7 @@ func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers m
 // flowSeamViolations reports every marker field set on a launch context in one
 // file, attributed to its enclosing top-level function. The launch module
 // itself is exempt.
-func flowSeamViolations(dir, name string, file *ast.File, markers map[string]bool) []flowSeamViolation {
+func flowSeamViolations(dir, name string, file *ast.File, markers, fields map[string]bool) []flowSeamViolation {
 	if dir == "model" && name == flowSeamLaunchContextExemptFile {
 		return nil
 	}
@@ -199,7 +258,7 @@ func flowSeamViolations(dir, name string, file *ast.File, markers map[string]boo
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 		if !ok {
-			violations = append(violations, flowSeamNodeViolations(dir, name, "", declaration, markers)...)
+			violations = append(violations, flowSeamNodeViolations(dir, name, "", declaration, markers, fields)...)
 			continue
 		}
 		if function.Body == nil {
@@ -211,7 +270,7 @@ func flowSeamViolations(dir, name string, file *ast.File, markers map[string]boo
 				label = receiver + "." + label
 			}
 		}
-		violations = append(violations, flowSeamNodeViolations(dir, name, label, function, markers)...)
+		violations = append(violations, flowSeamNodeViolations(dir, name, label, function, markers, fields)...)
 	}
 	return violations
 }
@@ -262,7 +321,7 @@ func flowSeamViolationsForSource(t *testing.T, dir, name, source string) []strin
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
-	found := flowSeamViolations(dir, name, file, flowSeamMarkerFields())
+	found := flowSeamViolations(dir, name, file, flowSeamMarkerFields(), flowSeamContextFieldNames(file))
 	reported := make([]string, 0, len(found))
 	for _, violation := range found {
 		reported = append(reported, violation.Func+"."+violation.Field)
@@ -353,6 +412,60 @@ func build() AgentLaunchContext {
 var seed = actions.AgentLaunchContext{FlowAutofix: true}`,
 			want: []string{".FlowAutofix"},
 		},
+		"marker assigned through an alias of a launch context": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func aliased(ctx actions.AgentLaunchContext) {
+	alias := ctx
+	alias.FlowRepair = true
+}`,
+			want: []string{"aliased.FlowRepair"},
+		},
+		"marker assigned through a launch context struct field": {
+			dir: "model", name: "messages.go",
+			source: `package model
+type launchMsg struct {
+	LaunchContext actions.AgentLaunchContext
+}
+
+func nested(msg launchMsg) {
+	msg.LaunchContext.FlowPhaseKind = "review"
+}`,
+			want: []string{"nested.FlowPhaseKind"},
+		},
+		"marker assigned through a pointer dereference": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func deref(ctx *actions.AgentLaunchContext) {
+	(*ctx).FlowLaunchTracked = true
+}`,
+			want: []string{"deref.FlowLaunchTracked"},
+		},
+		"marker assigned on an alias of a launch context field": {
+			dir: "model", name: "messages.go",
+			source: `package model
+type launchMsg struct {
+	LaunchContext actions.AgentLaunchContext
+}
+
+func copied(msg launchMsg) {
+	ctx := msg.LaunchContext
+	ctx.FlowID = "f"
+}`,
+			want: []string{"copied.FlowID"},
+		},
+		"same-named field on an unrelated nested struct": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type decoy struct {
+	LaunchContext otherpkg.Context
+}
+
+func unrelatedNested(d decoy) {
+	d.LaunchContext.FlowID = "f"
+}`,
+			want: []string{},
+		},
 		"builder-wrapped literal is still inspected": {
 			dir: "model", name: "ready_bead_slice.go",
 			source: `package model
@@ -409,6 +522,17 @@ func TestFlowLaunchContextLiteralsStayInsideTheLaunchModule(t *testing.T) {
 	fset := token.NewFileSet()
 	matched := make(map[flowSeamAllowance]bool)
 	var offenders []string
+
+	// Two passes: the struct fields that hold a launch context are declared in
+	// one file and written through in another, so the whole scan set has to be
+	// parsed before any of it can be judged.
+	type flowSeamSourceFile struct {
+		dir  string
+		name string
+		file *ast.File
+	}
+	var sources []flowSeamSourceFile
+	fields := make(map[string]bool)
 	for _, dir := range sortedKeys(flowSeamScanDirs()) {
 		path := flowSeamScanDirs()[dir]
 		entries, err := os.ReadDir(path)
@@ -424,14 +548,23 @@ func TestFlowLaunchContextLiteralsStayInsideTheLaunchModule(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse %s/%s: %v", dir, name, err)
 			}
-			for _, violation := range flowSeamViolations(dir, name, file, markers) {
-				allowance := flowSeamAllowance{Dir: violation.Dir, File: violation.File, Func: violation.Func}
-				if _, allowed := flowSeamAllowList[allowance]; allowed {
-					matched[allowance] = true
-					continue
-				}
-				offenders = append(offenders, violation.String())
+			sources = append(sources, flowSeamSourceFile{dir: dir, name: name, file: file})
+			for field := range flowSeamContextFieldNames(file) {
+				fields[field] = true
 			}
+		}
+	}
+	if len(fields) == 0 {
+		t.Fatal("no struct field of type actions.AgentLaunchContext found; the nested-field half of the seam rule is scanning nothing")
+	}
+	for _, source := range sources {
+		for _, violation := range flowSeamViolations(source.dir, source.name, source.file, markers, fields) {
+			allowance := flowSeamAllowance{Dir: violation.Dir, File: violation.File, Func: violation.Func}
+			if _, allowed := flowSeamAllowList[allowance]; allowed {
+				matched[allowance] = true
+				continue
+			}
+			offenders = append(offenders, violation.String())
 		}
 	}
 	sort.Strings(offenders)
