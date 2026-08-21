@@ -183,6 +183,8 @@ const (
 // text; that is Verdict.Reason, which varies by purpose for the same holder.
 func (holder Holder) String() string {
 	switch holder {
+	case HolderNone:
+		return "none"
 	case HolderLeaseUnreadable:
 		return "leaseUnreadable"
 	case HolderPeerLease:
@@ -212,7 +214,7 @@ func (holder Holder) String() string {
 	case HolderHeadlessWrite:
 		return "headlessWrite"
 	default:
-		return "none"
+		return "unknown"
 	}
 }
 

@@ -33,3 +33,18 @@ func TestFreeIsNotOccupied(t *testing.T) {
 		t.Fatalf("Free().Err() = %v, want nil", Free().Err())
 	}
 }
+
+// A corrupt or future Holder must not be readable as a free Flow. Naming
+// HolderNone explicitly keeps the default branch for values this package does
+// not know, the way Stage.String() already does.
+func TestHolderStringSeparatesNoneFromUnknown(t *testing.T) {
+	if got := HolderNone.String(); got != "none" {
+		t.Fatalf("HolderNone.String() = %q, want %q", got, "none")
+	}
+	if got := (HolderHeadlessWrite + 1).String(); got != "unknown" {
+		t.Fatalf("out-of-range Holder.String() = %q, want %q", got, "unknown")
+	}
+	if got := Holder(-1).String(); got != "unknown" {
+		t.Fatalf("negative Holder.String() = %q, want %q", got, "unknown")
+	}
+}

@@ -160,8 +160,10 @@ The rule, stated once so it stops living in comments:
 > alike. This is fail-closed in both directions and matches
 > `model/flow_launch_lifecycle.go:410` today.
 >
-> The tmux window probe is never read at `StageDrain` or `StagePreview`, because
-> it forks a subprocess (`model/tmux_mode.go:425-427`).
+> The tmux window probe is read only at `StageAdmission` and
+> `StageAuthoritative`, because it forks a subprocess
+> (`model/tmux_mode.go:425-427`). Every other stage — including the AutoMode
+> poll's `StageAutoAdvance` and `StageDrain` — never consults it.
 
 ### D4 — `Verdict` exposes a named `Holder` and a `Reason`, never the sources
 
