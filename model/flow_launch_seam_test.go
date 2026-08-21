@@ -139,8 +139,9 @@ func flowSeamFileScope(dir string, file *ast.File, aliases map[string]bool) flow
 }
 
 // flowSeamIsLaunchContextType matches every spelling of the type: the bare
-// ident from inside actions itself, a qualified name under whatever the file
-// imports the actions package as, and any declared alias of either.
+// ident inside the actions package itself, a qualified name under whatever the
+// file imports the actions package as, and any declared alias of either. A
+// package that declares its own type of the same name is not this type.
 func flowSeamIsLaunchContextType(expr ast.Expr, file flowSeamFile) bool {
 	switch typ := expr.(type) {
 	case *ast.ParenExpr:
@@ -148,7 +149,12 @@ func flowSeamIsLaunchContextType(expr ast.Expr, file flowSeamFile) bool {
 	case *ast.StarExpr:
 		return flowSeamIsLaunchContextType(typ.X, file)
 	case *ast.Ident:
-		return typ.Name == flowSeamLaunchContextIdent || file.aliases[flowSeamQualify(file.dir, typ.Name)]
+		// The bare spelling is the type only inside actions itself; elsewhere
+		// a package-local type of the same name is somebody else's.
+		if typ.Name == flowSeamLaunchContextIdent && file.dir == "actions" {
+			return true
+		}
+		return file.aliases[flowSeamQualify(file.dir, typ.Name)]
 	case *ast.SelectorExpr:
 		pkg, ok := typ.X.(*ast.Ident)
 		if !ok {
@@ -864,6 +870,18 @@ func build() AgentLaunchContext {
 	return AgentLaunchContext{FlowSavedSessionResume: true}
 }`,
 			want: []string{"build.FlowSavedSessionResume"},
+		},
+		"unrelated package declaring its own launch context name": {
+			dir: "flowoccupancy", name: "occupancy.go",
+			source: `package flowoccupancy
+type AgentLaunchContext struct {
+	FlowID string
+}
+
+func local() {
+	_ = AgentLaunchContext{FlowID: "f"}
+}`,
+			want: []string{},
 		},
 		"marker literal at package level": {
 			dir: "model", name: "keys.go",
