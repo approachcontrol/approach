@@ -32,14 +32,15 @@ the role builder. `newFlowLaunchContext` maps the variant to one canonical
 `actions.AgentLaunchContext` and route decision, then hands the finished context
 to the actions adapters.
 
-At that adapter boundary, actions recovers the role with
-`actions.FlowLaunchRoleOf` and validates the role-shaped metadata before it
-applies transport, prompt, resume, or reservation behavior. This division keeps
-lifecycle policy out of actions and keeps Flow marker combinations out of launch
-callers. It changes no storage ownership: provider hooks and the session store
-still own capture and transcript metadata, the Flow store still owns phase
-launch/session mirrors, and the embedded terminal still owns the live process.
-The lifecycle coordinates their ordering and exact-Flow occupancy.
+At that adapter boundary, the tracked tmux and embedded-prompt consumers recover
+the role with `actions.FlowLaunchRoleOf` and validate the role-shaped metadata
+they accept. Saved-session resume already knows its required role and validates
+the context against that role directly. This division keeps lifecycle policy out
+of actions and keeps Flow marker combinations out of launch callers. It changes
+no storage ownership: provider hooks and the session store still own capture and
+transcript metadata, the Flow store still owns phase launch/session mirrors, and
+the embedded terminal still owns the live process. The lifecycle coordinates
+their ordering and exact-Flow occupancy.
 
 ## Manual Hook Setup
 
