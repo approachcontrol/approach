@@ -282,6 +282,12 @@ type flowSeamContextShapes struct {
 	// aliases are the qualified names declared as an alias of the launch
 	// context anywhere in the scan set.
 	aliases map[string]bool
+	// embeds is qualified owner type -> what it embeds anonymously, either
+	// the launch context itself (under flowSeamEmbeddedContext) or another
+	// qualified type. Go promotes an embedded context's fields, so
+	// `type wrapper struct{ actions.AgentLaunchContext }` makes
+	// `w.FlowID = "f"` a marker write on a launch context.
+	embeds map[string]map[string]bool
 }
 
 // flowSeamScope pairs the scan-set-wide shapes with the file the expressions
@@ -296,6 +302,7 @@ func newFlowSeamContextShapes() flowSeamContextShapes {
 		fields:  make(map[string]map[string]flowSeamKind),
 		results: make(map[string]map[int]flowSeamKind),
 		aliases: make(map[string]bool),
+		embeds:  make(map[string]map[string]bool),
 	}
 }
 
@@ -321,6 +328,39 @@ func (s flowSeamContextShapes) merge(other flowSeamContextShapes) {
 	for alias := range other.aliases {
 		s.aliases[alias] = true
 	}
+	for owner, embedded := range other.embeds {
+		if s.embeds[owner] == nil {
+			s.embeds[owner] = make(map[string]bool)
+		}
+		for name := range embedded {
+			s.embeds[owner][name] = true
+		}
+	}
+}
+
+// flowSeamEmbeddedContext is the embeds entry for a struct that embeds the
+// launch context itself rather than another named type.
+const flowSeamEmbeddedContext = "<launch context>"
+
+// promotesContext reports whether owner has the launch context's fields
+// promoted into it, directly or through a chain of embedded types.
+func (s flowSeamContextShapes) promotesContext(owner string, seen map[string]bool) bool {
+	if owner == "" || seen[owner] {
+		return false
+	}
+	seen[owner] = true
+	for embedded := range s.embeds[owner] {
+		if embedded == flowSeamEmbeddedContext || s.promotesContext(embedded, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// holdsContext reports whether a marker write on a value of this kind writes a
+// launch context: the value is one, or embeds one and has its fields promoted.
+func (scope flowSeamScope) holdsContext(kind flowSeamKind) bool {
+	return kind.context || scope.shapes.promotesContext(kind.named, make(map[string]bool))
 }
 
 func (s flowSeamContextShapes) contextFieldCount() int {
@@ -347,6 +387,22 @@ func (s flowSeamContextShapes) resultKinds(call *ast.CallExpr) map[int]flowSeamK
 	return nil
 }
 
+// flowSeamEmbeddedName is the field name Go gives an anonymous field: the base
+// name of its type.
+func flowSeamEmbeddedName(expr ast.Expr) string {
+	switch typ := expr.(type) {
+	case *ast.ParenExpr:
+		return flowSeamEmbeddedName(typ.X)
+	case *ast.StarExpr:
+		return flowSeamEmbeddedName(typ.X)
+	case *ast.Ident:
+		return typ.Name
+	case *ast.SelectorExpr:
+		return typ.Sel.Name
+	}
+	return ""
+}
+
 func flowSeamContextShapesOf(dir string, file *ast.File, aliases map[string]bool) flowSeamContextShapes {
 	shapes := newFlowSeamContextShapes()
 	for alias := range aliases {
@@ -366,11 +422,32 @@ func flowSeamContextShapesOf(dir string, file *ast.File, aliases map[string]bool
 				if !kind.known() {
 					continue
 				}
+				names := make([]string, 0, len(field.Names))
 				for _, name := range field.Names {
+					names = append(names, name.Name)
+				}
+				if len(names) == 0 {
+					// An embedded field is named after its type, and its own
+					// fields are promoted into the embedding struct.
+					embeddedName := flowSeamEmbeddedName(field.Type)
+					if embeddedName == "" {
+						continue
+					}
+					names = append(names, embeddedName)
+					if shapes.embeds[owner] == nil {
+						shapes.embeds[owner] = make(map[string]bool)
+					}
+					if kind.context {
+						shapes.embeds[owner][flowSeamEmbeddedContext] = true
+					} else if kind.named != "" {
+						shapes.embeds[owner][kind.named] = true
+					}
+				}
+				for _, name := range names {
 					if shapes.fields[owner] == nil {
 						shapes.fields[owner] = make(map[string]flowSeamKind)
 					}
-					shapes.fields[owner][name.Name] = kind
+					shapes.fields[owner][name] = kind
 				}
 			}
 		case *ast.FuncDecl:
@@ -639,7 +716,7 @@ func flowSeamNodeViolations(dir, file, function string, node ast.Node, markers m
 				if !ok || !markers[selector.Sel.Name] {
 					continue
 				}
-				if flowSeamExprKind(selector.X, locals, scope).context {
+				if scope.holdsContext(flowSeamExprKind(selector.X, locals, scope)) {
 					record(selector.Sel.Name)
 				}
 			}
@@ -1097,6 +1174,58 @@ func unrelatedSharedOwnerName(e envelope) {
 type envelope struct {
 	Context actions.AgentLaunchContext
 }`}},
+			want: []string{},
+		},
+		"marker assigned on a promoted embedded launch context": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type wrapper struct {
+	actions.AgentLaunchContext
+}
+
+func viaEmbedding(w wrapper) {
+	w.FlowID = "f"
+}`,
+			want: []string{"viaEmbedding.FlowID"},
+		},
+		"marker assigned through a chain of embedded launch contexts": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type outerWrapper struct {
+	wrapper
+}
+
+func viaEmbeddingChain(o outerWrapper) {
+	o.FlowRepair = true
+}`,
+			neighbors: []flowSeamNeighbor{{source: `package model
+type wrapper struct {
+	actions.AgentLaunchContext
+}`}},
+			want: []string{"viaEmbeddingChain.FlowRepair"},
+		},
+		"marker assigned on the named embedded field": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type wrapper struct {
+	actions.AgentLaunchContext
+}
+
+func viaEmbeddedFieldName(w wrapper) {
+	w.AgentLaunchContext.FlowAgent = true
+}`,
+			want: []string{"viaEmbeddedFieldName.FlowAgent"},
+		},
+		"marker-named field on a struct embedding something else": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type plainWrapper struct {
+	otherpkg.Thing
+}
+
+func unrelatedEmbedding(w plainWrapper) {
+	w.FlowID = "f"
+}`,
 			want: []string{},
 		},
 		"marker assigned through a slice element": {
