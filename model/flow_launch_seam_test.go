@@ -221,10 +221,14 @@ type flowSeamKind struct {
 	context    bool
 	collection bool
 	named      string
+	// element is the qualified named type a slice or map holds, for
+	// `type wrapped []Base`, where whether this is a collection of contexts
+	// is only answerable once Base itself has been resolved.
+	element string
 }
 
 func (k flowSeamKind) known() bool {
-	return k.context || k.collection || k.named != ""
+	return k.context || k.collection || k.named != "" || k.element != ""
 }
 
 // flowSeamTypeKind classifies a type expression: an AgentLaunchContext, a
@@ -239,23 +243,29 @@ func flowSeamTypeKind(expr ast.Expr, file flowSeamFile) flowSeamKind {
 	case *ast.StarExpr:
 		return flowSeamTypeKind(typ.X, file)
 	case *ast.Ellipsis:
-		if flowSeamIsLaunchContextType(typ.Elt, file) {
-			return flowSeamKind{collection: true}
-		}
+		return flowSeamElementKind(typ.Elt, file)
 	case *ast.ArrayType:
-		if flowSeamIsLaunchContextType(typ.Elt, file) {
-			return flowSeamKind{collection: true}
-		}
+		return flowSeamElementKind(typ.Elt, file)
 	case *ast.MapType:
-		if flowSeamIsLaunchContextType(typ.Value, file) {
-			return flowSeamKind{collection: true}
-		}
+		return flowSeamElementKind(typ.Value, file)
 	case *ast.Ident:
 		return flowSeamKind{named: flowSeamQualify(file.dir, typ.Name)}
 	case *ast.SelectorExpr:
 		if pkg, ok := typ.X.(*ast.Ident); ok {
 			return flowSeamKind{named: flowSeamQualify(file.imports[pkg.Name], typ.Sel.Name)}
 		}
+	}
+	return flowSeamKind{}
+}
+
+// flowSeamElementKind classifies what a slice, array, or map holds: contexts
+// outright, or a named type that only the collected definitions can resolve.
+func flowSeamElementKind(expr ast.Expr, file flowSeamFile) flowSeamKind {
+	if flowSeamIsLaunchContextType(expr, file) {
+		return flowSeamKind{collection: true}
+	}
+	if element := flowSeamTypeKind(expr, file); element.named != "" {
+		return flowSeamKind{element: element.named}
 	}
 	return flowSeamKind{}
 }
@@ -373,19 +383,44 @@ func (s flowSeamContextShapes) promotesContext(owner string, seen map[string]boo
 // `type launchContexts []actions.AgentLaunchContext` reads as a collection
 // wherever one of its values appears.
 func (scope flowSeamScope) resolveKind(kind flowSeamKind) flowSeamKind {
-	seen := make(map[string]bool)
-	for kind.named != "" && !kind.context && !kind.collection {
-		if seen[kind.named] {
-			break
+	return scope.resolveKindSeen(kind, make(map[string]bool))
+}
+
+func (scope flowSeamScope) resolveKindSeen(kind flowSeamKind, seen map[string]bool) flowSeamKind {
+	for {
+		switch {
+		case kind.context, kind.collection:
+			return kind
+		case kind.element != "":
+			element := scope.resolveNamed(kind.element, seen)
+			if element.context {
+				return flowSeamKind{collection: true}
+			}
+			return kind
+		case kind.named != "" && !seen[kind.named]:
+			seen[kind.named] = true
+			resolved, ok := scope.shapes.underlying[kind.named]
+			if !ok {
+				return kind
+			}
+			kind = resolved
+		default:
+			return kind
 		}
-		seen[kind.named] = true
-		resolved, ok := scope.shapes.underlying[kind.named]
-		if !ok {
-			break
-		}
-		kind = resolved
 	}
-	return kind
+}
+
+// resolveNamed follows a qualified named type to what defining it made.
+func (scope flowSeamScope) resolveNamed(name string, seen map[string]bool) flowSeamKind {
+	if seen[name] {
+		return flowSeamKind{}
+	}
+	seen[name] = true
+	resolved, ok := scope.shapes.underlying[name]
+	if !ok {
+		return flowSeamKind{}
+	}
+	return scope.resolveKindSeen(resolved, seen)
 }
 
 // holdsContext reports whether a marker write on a value of this kind writes a
@@ -448,7 +483,7 @@ func flowSeamContextShapesOf(dir string, file *ast.File, aliases map[string]bool
 		switch n := n.(type) {
 		case *ast.TypeSpec:
 			if !n.Assign.IsValid() {
-				if kind := flowSeamTypeKind(n.Type, scope); kind.context || kind.collection {
+				if kind := flowSeamTypeKind(n.Type, scope); kind.known() {
 					shapes.underlying[flowSeamQualify(dir, n.Name.Name)] = kind
 				}
 			}
@@ -562,7 +597,7 @@ func flowSeamKindRank(kind flowSeamKind) int {
 		return 3
 	case kind.collection:
 		return 2
-	case kind.named != "":
+	case kind.named != "", kind.element != "":
 		return 1
 	}
 	return 0
@@ -1250,6 +1285,42 @@ func viaDefinedType(ctx definedContext) {
 	ctx.FlowPhaseTerminal = true
 }`,
 			want: []string{"viaDefinedType.FlowPhaseTerminal"},
+		},
+		"marker assigned through a chain of defined context types": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type base actions.AgentLaunchContext
+
+type wrapped base
+
+func viaDefinedChain(ctx wrapped) {
+	ctx.FlowRepair = true
+}`,
+			want: []string{"viaDefinedChain.FlowRepair"},
+		},
+		"marker assigned through a collection of defined context types": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type base actions.AgentLaunchContext
+
+type bases []base
+
+func viaDefinedCollection(xs bases) {
+	xs[0].FlowID = "f"
+}`,
+			want: []string{"viaDefinedCollection.FlowID"},
+		},
+		"collection of an unrelated named type stays unrelated": {
+			dir: "model", name: "keys.go",
+			source: `package model
+type thing struct{}
+
+type things []thing
+
+func unrelatedCollection(xs things) {
+	xs[0].FlowID = "f"
+}`,
+			want: []string{},
 		},
 		"marker assigned on a promoted embedded launch context": {
 			dir: "model", name: "keys.go",
