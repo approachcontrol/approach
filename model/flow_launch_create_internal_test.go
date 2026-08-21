@@ -586,6 +586,8 @@ func TestCreateFlowLaunchOwnsExactIdentityAndStartupOrdering(t *testing.T) {
 		t.Fatalf("launch contexts = %#v", h.contexts)
 	}
 	ctx := h.contexts[0]
+	// Embedded and FlowLaunchTracked are the builder's, not install's: this
+	// asserts they survive the whole create route to the terminal unrewritten.
 	if ctx.FlowID != h.record.FlowID || ctx.LaunchID != "launch-create-1" || ctx.FlowPhaseID != "plan" ||
 		ctx.WorktreePath != "/dev/alpha-worktrees/flow-new" || ctx.Commit != "abc123" || !ctx.Embedded || !ctx.FlowLaunchTracked {
 		t.Fatalf("launch context = %#v", ctx)
@@ -1738,5 +1740,69 @@ func TestCreateFlowLaunchReadyOriginSurfacesUnreadableBeadRefusal(t *testing.T) 
 	}
 	if followUp == nil {
 		t.Fatal("refused create did not issue the Flow surface fetch")
+	}
+}
+
+// TestCreateFlowLaunchPreInstallFailureIgnoresTrackedFlags pins the assumption
+// the createPhase builder's final transport flags rest on: the one failure
+// window between building a createPhase context and installing it
+// (failCreateFlowLaunchEmbedded) persists the same phase update whether or not
+// that context carries FlowLaunchTracked and Embedded. flowLaunchFailureUpdate
+// consults FlowLaunchTracked only for a resume, and a createPhase context
+// carries no ResumeSessionID.
+func TestCreateFlowLaunchPreInstallFailureIgnoresTrackedFlags(t *testing.T) {
+	m := newModelForTest(nil, Options{AgentCommand: "codex"})
+	base := launchContextCreatePhaseContext(launchContextCreatePhaseTarget())
+	if base.ResumeSessionID != "" {
+		t.Fatalf("createPhase context carries a resume session: %#v", base)
+	}
+	const errText = "launch proof changed before embedded install"
+	want, ok := m.flowLaunchFailureUpdate(base, errText)
+	if !ok || want.Status != flowstore.PhaseNeedsAttention || !strings.HasPrefix(want.Notes, "Agent launch failed") {
+		t.Fatalf("baseline failure update = %#v, ok=%v", want, ok)
+	}
+	for _, flags := range []struct {
+		embedded bool
+		tracked  bool
+	}{{false, false}, {false, true}, {true, false}, {true, true}} {
+		t.Run(fmt.Sprintf("embedded=%v/tracked=%v", flags.embedded, flags.tracked), func(t *testing.T) {
+			ctx := base
+			ctx.Embedded, ctx.FlowLaunchTracked = flags.embedded, flags.tracked
+			got, ok := m.flowLaunchFailureUpdate(ctx, errText)
+			if !ok || !reflect.DeepEqual(got, want) {
+				t.Fatalf("failure update = %#v (ok=%v), want %#v", got, ok, want)
+			}
+		})
+	}
+}
+
+// TestCreateFlowLaunchProofChangeBeforeInstallBlocksPhase drives the same
+// window end to end: the launch ID is written, but the phase is no longer
+// running by the time the create stage reads it back, so the launch fails
+// before install and regresses the phase it had claimed.
+func TestCreateFlowLaunchProofChangeBeforeInstallBlocksPhase(t *testing.T) {
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	m, cmd := h.admit(t, h.model(t))
+	m, event := advanceCreateLaunchToStage(t, m, cmd, flowLaunchStageCreateLaunchID)
+	// The proof is present; only the status moved out from under it.
+	event.Record.Phases = slices.Clone(event.Record.Phases)
+	event.Record.Phases[0].Status = flowstore.PhaseBlocked
+	m, cmd = m.handleFlowLaunchEvent(event)
+	m = drainCreateLaunch(t, m, cmd)
+
+	if strings.Contains(strings.Join(h.order, ","), "terminal") || len(h.contexts) != 0 {
+		t.Fatalf("proof change installed a terminal: order=%#v contexts=%#v", h.order, h.contexts)
+	}
+	if len(h.phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one", h.phaseUpdates)
+	}
+	update := h.phaseUpdates[0]
+	if update.PhaseID != "plan" || update.Status != flowstore.PhaseNeedsAttention ||
+		!strings.HasPrefix(update.Notes, "Agent launch failed") ||
+		!strings.Contains(update.Notes, "launch proof changed before embedded install") {
+		t.Fatalf("phase update = %#v", update)
+	}
+	if h.releases != 1 || m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "launch proof changed before embedded install") {
+		t.Fatalf("proof change result: releases=%d active=%d status=%q", h.releases, m.flowCreateReq.current, m.status.Text)
 	}
 }

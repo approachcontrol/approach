@@ -1093,17 +1093,10 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	if attempt.Kind != flowLaunchKindCreatePhase {
 		defer releaseFlowLaunchReservation(msg.Release)
 	}
+	// The context arrives final from newFlowLaunchContext, transport flags
+	// included: install reads it and hands it on, but never rewrites it. The
+	// local copy stays because every path below passes ctx by value.
 	ctx := msg.Context
-	ctx.Embedded = true
-	// All phase-untracked kinds stay untracked. A repair names no phase and must
-	// never be stamped tracked, or its failures would look for a phase to
-	// regress. For either worktree agent, forcing tracked would also run before
-	// the terminal open computes prefill, and the phase-untracked Flow agent would
-	// then fail both of ShouldPrefillEmbeddedPrompt's cases and send its prompt
-	// to argv instead of the dock.
-	if attempt.Kind != flowLaunchKindRepair && attempt.Kind != flowLaunchKindAutofix && attempt.Kind != flowLaunchKindWorktreeAgent && attempt.Kind != flowLaunchKindSavedSessionResume {
-		ctx.FlowLaunchTracked = true
-	}
 	if canceled, blocked := m.flowLaunchEmbeddedBackstop(attempt.Kind, ctx.FlowID); blocked {
 		if attempt.Kind == flowLaunchKindCreatePhase {
 			return m.failCreateFlowLaunchEmbedded(attempt, ctx, canceled, msg.Release)
