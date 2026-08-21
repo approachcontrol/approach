@@ -644,6 +644,12 @@ func flowSeamExprKindRaw(expr ast.Expr, locals *flowSeamLocals, scope flowSeamSc
 		if kind, ok := scope.shapes.resultKinds(expr)[0]; ok {
 			return kind
 		}
+		// The allocating builtins take the type itself as their first
+		// argument: `new(actions.AgentLaunchContext)` and
+		// `make([]actions.AgentLaunchContext, n)`.
+		if fn, ok := expr.Fun.(*ast.Ident); ok && (fn.Name == "new" || fn.Name == "make") && len(expr.Args) > 0 {
+			return flowSeamTypeKind(expr.Args[0], scope.file)
+		}
 		// A conversion is spelled like a call: `localContext(base)` yields
 		// whatever localContext was defined as.
 		if len(expr.Args) == 1 {
@@ -1142,6 +1148,24 @@ func viaHelperCollection() {
 	contexts[0].FlowRepair = true
 }`,
 			want: []string{"viaHelperCollection.FlowRepair"},
+		},
+		"marker assigned on a context allocated with new": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func viaNew() {
+	ctx := new(actions.AgentLaunchContext)
+	ctx.FlowRepair = true
+}`,
+			want: []string{"viaNew.FlowRepair"},
+		},
+		"marker assigned on a context slice allocated with make": {
+			dir: "model", name: "keys.go",
+			source: `package model
+func viaMake() {
+	contexts := make([]actions.AgentLaunchContext, 1)
+	contexts[0].FlowID = "f"
+}`,
+			want: []string{"viaMake.FlowID"},
 		},
 		"marker assigned on a converted launch context": {
 			dir: "model", name: "keys.go",
