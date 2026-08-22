@@ -10,11 +10,12 @@
 // # The contract
 //
 // A caller states its Flow, its purpose, and how fresh an answer it needs, and
-// gets back a verdict that names the holder and, when the caller renders
-// refusals, the exact text to show. Callers never see the underlying
-// representations — not the lease, not the attempt map, not the terminal slots,
-// not the session mirror. Adding a new source is a change inside this package;
-// today it is a change at every call site that could have read it.
+// gets back a verdict that names the holder, the occupied phase when relevant,
+// and any source error. Model owns user-visible refusal text so each migrated
+// caller can preserve its existing wording. Callers never see the underlying
+// representations such as the lease, attempt map, terminal slots, or session
+// mirror. Adding a new source is a change inside this package instead of every
+// call site that could have read it.
 //
 // Purpose is a (Role, Stage) pair. Role is actions.FlowLaunchRole, reused from
 // ADR 0002, and selects the vocabulary and the refusal order. Stage names the
@@ -51,11 +52,10 @@
 //
 // # Status
 //
-// This is the interface skeleton landed by approach-x0r.1. Every method body
-// is a stub; the implementation is approach-x0r.3, behind the characterization
-// tests approach-x0r.2 writes first. Query fails closed until then: it reports
-// occupancy with ErrUnimplemented, so a caller migrated early breaks loudly
-// rather than being told the Flow is free. No caller in model/ has been
-// migrated, no existing predicate has been deleted, and no behavior has
-// changed.
+// The in-process runtime source family is implemented. It classifies launch
+// attempts, Flow terminals, repair slots, pending headless writes, and repair
+// drain markers according to the purpose registry. Creation-time Plan Now is
+// the first migrated caller and asks the runtime-only create-admission purpose.
+// Purposes that require a later source family still fail closed with an error;
+// the lease, store, cache, session, and tmux-probe slices remain pending.
 package flowoccupancy
