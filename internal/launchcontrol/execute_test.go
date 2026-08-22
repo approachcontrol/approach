@@ -234,7 +234,7 @@ func TestExecutePhaseRecoverUsesObservedIdentity(t *testing.T) {
 	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
 		t.Fatal(err)
 	}
-	demoted, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"})
+	demoted, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}})
 	if err != nil {
 		t.Fatal(err)
 	}

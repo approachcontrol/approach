@@ -250,19 +250,28 @@ type FlowPhase struct {
 	Kind          PhaseKind `json:"kind"`
 	// Agent, Model, and ReasoningEffort are optional launch overrides; see
 	// PhaseAgentSettings and ResolvePhaseAgentSettings.
-	Agent           string      `json:"agent,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
-	DependsOn       []string    `json:"depends_on"`
-	Status          PhaseStatus `json:"status"`
-	Order           int         `json:"order"`
-	Outcome         string      `json:"outcome,omitempty"`
-	Notes           string      `json:"notes,omitempty"`
-	Summary         string      `json:"summary,omitempty"`
-	LaunchIDs       []string    `json:"launch_ids,omitempty"`
-	Sessions        []Session   `json:"sessions,omitempty"`
-	CreatedAt       time.Time   `json:"created_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	Agent           string               `json:"agent,omitempty"`
+	Model           string               `json:"model,omitempty"`
+	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
+	DependsOn       []string             `json:"depends_on"`
+	Status          PhaseStatus          `json:"status"`
+	Order           int                  `json:"order"`
+	Outcome         string               `json:"outcome,omitempty"`
+	Notes           string               `json:"notes,omitempty"`
+	Summary         string               `json:"summary,omitempty"`
+	Reconciliation  *PhaseReconciliation `json:"reconciliation,omitempty"`
+	LaunchIDs       []string             `json:"launch_ids,omitempty"`
+	Sessions        []Session            `json:"sessions,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
+	UpdatedAt       time.Time            `json:"updated_at"`
+}
+
+// PhaseReconciliation authenticates a demotion written by launch control.
+// DemotedAt binds the marker to the phase revision that recovery observes.
+type PhaseReconciliation struct {
+	Reason    string    `json:"reason"`
+	LaunchID  string    `json:"launch_id"`
+	DemotedAt time.Time `json:"demoted_at"`
 }
 
 // PhaseAgentSettings is the agent selection captured for a Flow phase.
@@ -622,12 +631,13 @@ type FlowFilter struct {
 
 // PhaseUpdate describes one persisted phase status update.
 type PhaseUpdate struct {
-	FlowID  string
-	PhaseID string
-	Status  PhaseStatus
-	Outcome string
-	Notes   string
-	Summary string
+	FlowID         string
+	PhaseID        string
+	Status         PhaseStatus
+	Outcome        string
+	Notes          string
+	Summary        string
+	Reconciliation *PhaseReconciliation
 }
 
 // PhaseAgentSettingsUpdate replaces one phase's complete persisted agent
@@ -1056,6 +1066,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		if err := validatePhaseUpdate(phase, update); err != nil {
 			return FlowRecord{}, err
 		}
+		if err := validatePhaseReconciliationUpdate(phase, update); err != nil {
+			return FlowRecord{}, err
+		}
 		phase.Status = update.Status
 		if clearsPhaseOutcome(string(update.Status)) {
 			phase.Outcome = ""
@@ -1068,6 +1081,12 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		}
 		if update.Summary != "" {
 			phase.Summary = update.Summary
+		}
+		phase.Reconciliation = nil
+		if update.Reconciliation != nil {
+			stamp := *update.Reconciliation
+			stamp.DemotedAt = now
+			phase.Reconciliation = &stamp
 		}
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
@@ -1105,6 +1124,29 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", syncErr, compErr)
 	}
 	return FlowRecord{}, syncErr
+}
+
+func validatePhaseReconciliationUpdate(phase FlowPhase, update PhaseUpdate) error {
+	stamp := update.Reconciliation
+	if stamp == nil {
+		return nil
+	}
+	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {
+		return fmt.Errorf("unsupported phase reconciliation reason %q", stamp.Reason)
+	}
+	if stamp.LaunchID == "" || LatestPhaseLaunchID(phase) != stamp.LaunchID {
+		return errors.New("phase reconciliation requires the current latest launch")
+	}
+	if SemanticKind(phase) == KindPlanReview {
+		if update.Status != PhaseBlocked || update.Outcome != OutcomeBlocked {
+			return errors.New("plan-review reconciliation requires blocked status and outcome")
+		}
+		return nil
+	}
+	if update.Status != PhaseNeedsAttention || update.Outcome != stamp.Reason {
+		return errors.New("phase reconciliation requires needs_attention with the reconciliation reason as outcome")
+	}
+	return nil
 }
 
 // SetPhaseAgentSettings atomically replaces only one phase's agent settings.
@@ -2312,6 +2354,7 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 		phase.Outcome = ""
 		phase.Notes = ""
 		phase.Summary = ""
+		phase.Reconciliation = nil
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
@@ -2327,18 +2370,18 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 }
 
 func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
-	if phase.Status == PhaseNeedsAttention &&
-		(phase.Outcome == OutcomePhaseResultMissing || phase.Outcome == OutcomePhaseResultStale) {
-		return phase.Outcome, true
-	}
-	if SemanticKind(phase) != KindPlanReview || phase.Status != PhaseBlocked || phase.Outcome != OutcomeBlocked {
+	stamp := phase.Reconciliation
+	if stamp == nil || stamp.LaunchID != LatestPhaseLaunchID(phase) || !stamp.DemotedAt.Equal(phase.UpdatedAt) {
 		return "", false
 	}
-	notes := strings.TrimSpace(phase.Notes)
-	for _, reason := range []string{OutcomePhaseResultMissing, OutcomePhaseResultStale} {
-		if strings.HasPrefix(notes, reason+":") {
-			return reason, true
-		}
+	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {
+		return "", false
+	}
+	if phase.Status == PhaseNeedsAttention && phase.Outcome == stamp.Reason {
+		return stamp.Reason, true
+	}
+	if SemanticKind(phase) == KindPlanReview && phase.Status == PhaseBlocked && phase.Outcome == OutcomeBlocked {
+		return stamp.Reason, true
 	}
 	return "", false
 }

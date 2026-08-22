@@ -317,12 +317,9 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			return nil, "", err
 		}
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
-			FlowID:  req.FlowID,
-			PhaseID: req.PhaseID,
-			Status:  flowstore.PhaseStatus(payload.Status),
-			Outcome: payload.Outcome,
-			Notes:   payload.Notes,
-			Summary: payload.Summary,
+			FlowID: req.FlowID, PhaseID: req.PhaseID,
+			Status: flowstore.PhaseStatus(payload.Status), Outcome: payload.Outcome,
+			Notes: payload.Notes, Summary: payload.Summary, Reconciliation: payload.Reconciliation,
 		})
 		return record, "", err
 	case VerbPhaseComplete, VerbPhaseBlock, VerbPhaseNeedsAttention:

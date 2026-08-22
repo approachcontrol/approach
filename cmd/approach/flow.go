@@ -930,6 +930,7 @@ Atomically recover a phase demoted by launch reconciliation to ready. Recovery
 accepts phase_result_missing and phase_result_stale, removes the exact stale
 latest launch and its ended sessions, and refuses if the phase changed. It also
 accepts the blocked/blocked form used when reconciliation demotes plan review.
+Only states stamped by launch reconciliation are eligible.
 
 Required flags:
   --flow-id FLOW_ID

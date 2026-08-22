@@ -204,7 +204,10 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 // validation — and records the demoted status as the launch's comparison
 // state, so a later replay measures against the reconciled phase.
 func (c *Controller) demote(log *Log, flowID, launchID string, update flowstore.PhaseUpdate, seq int, now time.Time) (Response, error) {
-	payload, err := json.Marshal(PhaseSetPayload{Status: string(update.Status), Outcome: update.Outcome, Notes: update.Notes})
+	payload, err := json.Marshal(PhaseSetPayload{
+		Status: string(update.Status), Outcome: update.Outcome, Notes: update.Notes,
+		Reconciliation: update.Reconciliation,
+	})
 	if err != nil {
 		return Response{}, err
 	}

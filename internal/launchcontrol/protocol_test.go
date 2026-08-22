@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 func TestVerbTableClassifiesEveryVerbOnce(t *testing.T) {
@@ -42,7 +44,7 @@ func TestVerbTableClassifiesEveryVerbOnce(t *testing.T) {
 
 func TestPayloadsRoundTripThroughJSON(t *testing.T) {
 	payloads := []any{
-		PhaseSetPayload{Status: "completed", Outcome: "approved", Summary: "s", Notes: "n"},
+		PhaseSetPayload{Status: "needs_attention", Outcome: "phase_result_missing", Notes: "n", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "l"}},
 		PhaseActionPayload{Outcome: "approved", Summary: "s", Notes: "n"},
 		PhaseRestartPayload{Notes: "again"},
 		PhaseRecoverPayload{ExpectedStatus: "needs_attention", ExpectedOutcome: "phase_result_missing", ExpectedLaunchID: "l", ExpectedUpdatedAt: time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)},

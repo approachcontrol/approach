@@ -98,17 +98,19 @@ Additional rules:
   terminal is attached to the same Flow phase.
 - `approach flow phase recover` handles a different state. It reads the current
   phase snapshot, then atomically verifies its status, reconciliation outcome,
-  update timestamp, and latest launch ID. The store removes that exact launch
-  and its ended sessions, clears the reconciliation text, persists `pending`,
-  and requires readiness derivation to produce `ready`. Any changed snapshot,
+  update timestamp, latest launch ID, and launch-control-owned reconciliation
+  stamp. Ordinary phase commands cannot create that stamp and clear it when
+  they update a phase. The store removes that exact launch and its ended
+  sessions, clears the reconciliation state, persists `pending`, and requires
+  readiness derivation to produce `ready`. Any changed snapshot,
   live or mismatched session, older live session, unsatisfied predecessor,
   duplicate phase row, or closed Flow rejects the whole transaction. The
   request is non-replayable: an unreachable controller may fall back to a
   direct store open, but a lost response is reported as indeterminate and is
   never retried. For plan review, recovery also accepts the reconciliation-
-  specific `blocked`/`blocked` form when the notes start with
-  `phase_result_missing` or `phase_result_stale`. A manually blocked review is
-  not recoverable this way.
+  specific `blocked`/`blocked` form carrying the same reconciliation stamp. A
+  manually blocked review is not recoverable this way, even if its notes use a
+  reconciliation reason.
 - The TUI can release an unfinished session on a selected phase, which is what
   recovers a phase blocked by a session that never reached `ended`. `x` runs the
   reset above when the phase is resettable and otherwise probes the session

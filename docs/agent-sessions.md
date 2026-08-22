@@ -243,11 +243,12 @@ The write is `needs_attention` with the reason as the outcome
 kind already uses for "the agent did not run". Every such note ends with the
 recovery command: `approach flow phase recover --flow-id <id> --phase-id
 <id>`. Recovery compares the phase snapshot inside one store transaction,
-removes the exact stale latest launch and its ended session attachments, and
-derives the phase to `ready`. It never writes an intermediate `running` state
-and never enters deferred replay. The same command accepts a plan-review
-`blocked`/`blocked` demotion when its notes retain the reconciliation reason;
-it refuses manually blocked reviews. Launch directories with nothing pending
+including a launch-control-owned reconciliation stamp that ordinary phase
+commands cannot create. It removes the exact stale latest launch and its ended
+session attachments, then derives the phase to `ready`. It never writes an
+intermediate `running` state and never enters deferred replay. The same command
+accepts a stamped plan-review `blocked`/`blocked` demotion and refuses manually
+blocked reviews. Launch directories with nothing pending
 are retired 14 days after their last state change; a directory with a pending
 request or a held lock is never removed, and neither is one whose launch is
 still the latest launch of a running phase — its agent's next result

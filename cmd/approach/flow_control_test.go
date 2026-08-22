@@ -213,7 +213,7 @@ func TestPhaseRecoverFallsBackDirectlyWhenEndpointCannotBeReached(t *testing.T) 
 	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-ended", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}); err != nil {
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}}); err != nil {
 		t.Fatal(err)
 	}
 	dead := filepath.Join(t.TempDir(), "dead.sock")
@@ -471,7 +471,7 @@ func TestNonReplayableWriteIsNotRetriedAfterALostResponse(t *testing.T) {
 	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-ended", LaunchID: "launch-1", Status: "ended"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}); err != nil {
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-1"}}); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()

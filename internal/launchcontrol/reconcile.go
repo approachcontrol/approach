@@ -187,7 +187,10 @@ func reconcileUpdate(phase flowstore.FlowPhase, reason string, ev *ExitEvidence,
 		fmt.Fprintf(&detail, "; observed %s", phase.Status)
 	}
 	fmt.Fprintf(&detail, ". Recover with: %s", RecoveryCommand(flowID, phase.PhaseID))
-	update := flowstore.PhaseUpdate{FlowID: flowID, PhaseID: phase.PhaseID, Notes: detail.String()}
+	update := flowstore.PhaseUpdate{
+		FlowID: flowID, PhaseID: phase.PhaseID, Notes: detail.String(),
+		Reconciliation: &flowstore.PhaseReconciliation{Reason: reason, LaunchID: launchID},
+	}
 	if flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
 		update.Status = flowstore.PhaseBlocked
 		update.Outcome = flowstore.OutcomeBlocked
