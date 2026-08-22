@@ -141,6 +141,48 @@ func TestQueryAnswersFromInProcessRuntime(t *testing.T) {
 	}
 }
 
+func TestStageInstallReadsPerRoleTerminalSources(t *testing.T) {
+	tests := []struct {
+		name       string
+		role       actions.FlowLaunchRole
+		flow       bool
+		repair     bool
+		wantHolder Holder
+	}{
+		{name: "tracked phase ignores Flow terminal", role: actions.RoleTrackedPhase, flow: true, wantHolder: HolderNone},
+		{name: "tracked phase reads repair terminal", role: actions.RoleTrackedPhase, repair: true, wantHolder: HolderRepairTerminal},
+		{name: "create phase reads Flow terminal", role: actions.RoleCreatePhase, flow: true, wantHolder: HolderFlowTerminal},
+		{name: "create phase reads repair terminal", role: actions.RoleCreatePhase, repair: true, wantHolder: HolderRepairTerminal},
+		{name: "phase resume ignores Flow terminal", role: actions.RolePhaseResume, flow: true, wantHolder: HolderNone},
+		{name: "phase resume reads repair terminal", role: actions.RolePhaseResume, repair: true, wantHolder: HolderRepairTerminal},
+		{name: "repair reads Flow terminal", role: actions.RoleRepair, flow: true, wantHolder: HolderFlowTerminal},
+		{name: "repair reads repair terminal", role: actions.RoleRepair, repair: true, wantHolder: HolderRepairTerminal},
+		{name: "autofix ignores Flow terminal", role: actions.RoleAutofix, flow: true, wantHolder: HolderNone},
+		{name: "autofix reads repair terminal", role: actions.RoleAutofix, repair: true, wantHolder: HolderRepairTerminal},
+		{name: "worktree agent reads Flow terminal", role: actions.RoleWorktreeAgent, flow: true, wantHolder: HolderFlowTerminal},
+		{name: "worktree agent reads repair terminal", role: actions.RoleWorktreeAgent, repair: true, wantHolder: HolderRepairTerminal},
+		{name: "saved-session resume reads Flow terminal", role: actions.RoleSavedSessionResume, flow: true, wantHolder: HolderFlowTerminal},
+		{name: "saved-session resume ignores repair terminal", role: actions.RoleSavedSessionResume, repair: true, wantHolder: HolderNone},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict := New(Sources{Runtime: runtimeFixture{
+				flows:   map[string]bool{"flow-1": tc.flow},
+				repairs: map[string]bool{"flow-1": tc.repair},
+			}}).Query(Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: tc.role, Stage: StageInstall},
+			})
+			if verdict.Holder() != tc.wantHolder {
+				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.wantHolder)
+			}
+			if verdict.Err() != nil {
+				t.Fatalf("Err() = %v, want nil", verdict.Err())
+			}
+		})
+	}
+}
+
 // Free() stays the way callers and tests express "nothing holds it", and must
 // not drift into occupancy alongside the fail-closed stub.
 func TestFreeIsNotOccupied(t *testing.T) {

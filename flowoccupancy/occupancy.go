@@ -203,11 +203,11 @@ var purposeRegistry = map[Purpose]purposePolicy{
 
 	// Matrix section 2.2 and section 4.2: every installed launch kind has a
 	// terminal-slot backstop.
-	{Role: actions.RoleTrackedPhase, Stage: StageInstall}:       {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleTrackedPhase, Stage: StageInstall}:       {sources: readRuntime, runtime: readRepairTerminal, freshness: allowAuthoritative},
 	{Role: actions.RoleCreatePhase, Stage: StageInstall}:        {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
-	{Role: actions.RolePhaseResume, Stage: StageInstall}:        {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
-	{Role: actions.RoleRepair, Stage: StageInstall}:             {sources: readRuntime, runtime: readFlowTerminal, freshness: allowAuthoritative},
-	{Role: actions.RoleAutofix, Stage: StageInstall}:            {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RolePhaseResume, Stage: StageInstall}:        {sources: readRuntime, runtime: readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleRepair, Stage: StageInstall}:             {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleAutofix, Stage: StageInstall}:            {sources: readRuntime, runtime: readRepairTerminal, freshness: allowAuthoritative},
 	{Role: actions.RoleWorktreeAgent, Stage: StageInstall}:      {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
 	{Role: actions.RoleSavedSessionResume, Stage: StageInstall}: {sources: readRuntime, runtime: readFlowTerminal, freshness: allowAuthoritative},
 
