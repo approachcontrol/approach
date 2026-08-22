@@ -19,9 +19,13 @@ const (
 	// StageUnknown is the zero value and is never a legal query. A caller that
 	// forgot its stage must not silently get the cheapest answer.
 	StageUnknown Stage = iota
-	// StagePreview renders a footer affordance or a preview, every frame.
-	// Cached sources only: no store walk, no subprocess.
+	// StagePreview answers a launch preview from cached sources only. Footer-only
+	// occupancy belongs to StageFooter.
 	StagePreview
+	// StageFooter renders a footer affordance every frame. It is separate from
+	// StagePreview because some footers add occupancy that their launch preview
+	// deliberately ignores.
+	StageFooter
 	// StageAdmission decides a keypress admission. In-process sources plus a
 	// lease inspect; still no session-store walk.
 	StageAdmission
@@ -44,6 +48,10 @@ const (
 	// StageDrain runs at 1 Hz from the AutoMode poll. Cached only, and it must
 	// never fork a subprocess.
 	StageDrain
+	// StageDrainControl decides whether repair state disarms the AutoMode drain.
+	// It stays separate from StageDrain's launch gate because repair state does
+	// not occupy that gate.
+	StageDrainControl
 	// StageSessionRelease is the non-launch release gesture, which asks about
 	// the launch lifecycle rather than about a launch of its own.
 	StageSessionRelease
@@ -54,6 +62,8 @@ func (stage Stage) String() string {
 	switch stage {
 	case StagePreview:
 		return "preview"
+	case StageFooter:
+		return "footer"
 	case StageAdmission:
 		return "admission"
 	case StageAutoAdvance:
@@ -66,6 +76,8 @@ func (stage Stage) String() string {
 		return "install"
 	case StageDrain:
 		return "drain"
+	case StageDrainControl:
+		return "drainControl"
 	case StageSessionRelease:
 		return "sessionRelease"
 	default:
@@ -101,7 +113,7 @@ type Purpose struct {
 }
 
 // Valid reports whether this purpose names a consumer that exists. It is backed
-// by the purpose registry: roughly 25 rows, one per real consumer in
+// by the purpose registry: one row per real consumer policy in
 // docs/flow-occupancy-matrix.md section 2, each carrying the source set that
 // purpose may read and the probe method, if any, it may call.
 //
@@ -111,10 +123,10 @@ type Purpose struct {
 // error. approach-x0r.11 asserts the registry both ways, so a consumer with no
 // purpose and a purpose with no caller are both build failures.
 //
-// StageSessionRelease, the one non-launch stage, carries actions.RoleNone;
-// every other stage requires a real role. There is deliberately no quit stage:
-// the handoff-pending check quit defers on is a process-wide policy rather than
-// a per-Flow question, so it stays in model. See ADR 0003 D5.
+// The session-release footer and gesture carry actions.RoleNone; every launch
+// purpose requires a real role. There is deliberately no quit stage: the
+// handoff-pending check quit defers on is a process-wide policy rather than a
+// per-Flow question, so it stays in model. See ADR 0003 D5.
 func (purpose Purpose) Valid() bool {
 	_, ok := purposeRegistry[purpose]
 	return ok
@@ -212,19 +224,27 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	{Role: actions.RoleWorktreeAgent, Stage: StageInstall}:      {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
 	{Role: actions.RoleSavedSessionResume, Stage: StageInstall}: {sources: readRuntime, runtime: readFlowTerminal, freshness: allowAuthoritative},
 
-	// Matrix section 2.3: footer and preview consumers use mirrors only.
-	{Role: actions.RoleTrackedPhase, Stage: StagePreview}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
-	{Role: actions.RolePhaseResume, Stage: StagePreview}:   {sources: readRuntime | readLease, runtime: readFlowTerminalWithoutRepair, freshness: allowCached},
-	{Role: actions.RoleRepair, Stage: StagePreview}:        {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
-	{Role: actions.RoleAutofix, Stage: StagePreview}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
-	{Role: actions.RoleWorktreeAgent, Stage: StagePreview}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, freshness: allowCached},
+	// Matrix section 2.3: launch previews omit footer-only occupancy terms.
+	{Role: actions.RoleTrackedPhase, Stage: StagePreview}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
+	{Role: actions.RoleRepair, Stage: StagePreview}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
+	// Matrix section 2.3: rendered affordances use mirrors only. Tracked phase
+	// and repair add the headless-write term their launch previews omit.
+	{Role: actions.RoleTrackedPhase, Stage: StageFooter}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RolePhaseResume, Stage: StageFooter}:   {sources: readRuntime | readLease, runtime: readFlowTerminalWithoutRepair, freshness: allowCached},
+	{Role: actions.RoleRepair, Stage: StageFooter}:        {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RoleAutofix, Stage: StageFooter}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RoleWorktreeAgent, Stage: StageFooter}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, freshness: allowCached},
+	{Role: actions.RoleNone, Stage: StageFooter}:          {sources: readFlowCache, freshness: allowCached},
 
 	// Matrix sections 2.1 and 2.2: AutoMode has cached and authoritative halves.
 	{Role: actions.RoleTrackedPhase, Stage: StageAutoAdvance}: {sources: readRuntime | readLease | readFlowStore | readSessionStore, runtime: readAdmissionRuntime, freshness: allowCached | allowAuthoritative},
-	// Matrix section 2.4: the 1 Hz drain reads runtime state and mirrors only.
-	{Role: actions.RoleTrackedPhase, Stage: StageDrain}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAttempt | readFlowTerminal | readRepairTerminal | readRepairDrain, freshness: allowCached},
-	// Matrix section 2.5: release preview and keypress share one non-launch purpose.
-	{Role: actions.RoleNone, Stage: StageSessionRelease}: {sources: readRuntime | readSessionCache | readSessionStore, runtime: readAttempt | readHeadlessWrite, freshness: allowCached | allowAuthoritative},
+	// Matrix section 2.4: the 1 Hz drain gate reads runtime state and its cached
+	// Flow record. Repair state belongs to the separate arm/disarm consumer.
+	{Role: actions.RoleTrackedPhase, Stage: StageDrain}:        {sources: readRuntime | readLease | readFlowCache, runtime: readAttempt | readFlowTerminal, freshness: allowCached},
+	{Role: actions.RoleTrackedPhase, Stage: StageDrainControl}: {sources: readRuntime, runtime: readRepairTerminal | readRepairDrain, freshness: allowCached},
+	// Matrix section 2.5: the release gesture adds launch-lifecycle and
+	// authoritative session checks to the footer's cached Flow check.
+	{Role: actions.RoleNone, Stage: StageSessionRelease}: {sources: readRuntime | readFlowCache | readSessionStore, runtime: readAttempt | readHeadlessWrite, freshness: allowAuthoritative},
 }
 
 // SessionIdentity exempts one provider session from the session-occupancy rule.
@@ -422,11 +442,11 @@ type Runtime interface {
 //
 // The two methods are not one method with a flag. FlowAgentRunning unions the
 // record's phase launch IDs with the autofix registry and serves repair;
-// AutofixAgentRunning is the registry half alone and serves the g keypress, the
-// resume keypress, and autofix. Widening the keystroke probes to every phase of
-// the record would newly refuse g for a finished agent whose window the user
-// merely left open (model/tmux_mode.go:435-438), so collapsing them is a
-// behavior change, not a simplification.
+// AutofixAgentRunning is the registry half alone and serves tracked-phase,
+// phase-resume, and worktree-agent admission. Widening those probes to every
+// phase of the record would newly refuse a tracked launch for a finished agent
+// whose window the user merely left open (model/tmux_mode.go:435-438), so
+// collapsing them is a behavior change, not a simplification.
 //
 // Both take the record and a fallback repo path because both must locate the
 // worktree, and a flow ID alone cannot without a store read.
@@ -532,9 +552,9 @@ func resolveFreshness(stage Stage, freshness Freshness) (Freshness, bool) {
 		return freshness, true
 	case FreshnessDefault:
 		switch stage {
-		case StagePreview, StageAutoAdvance, StageDrain, StageSessionRelease:
+		case StagePreview, StageFooter, StageAutoAdvance, StageDrain, StageDrainControl:
 			return FreshnessCached, true
-		case StageAdmission, StageAuthoritative, StageReserved, StageInstall:
+		case StageAdmission, StageAuthoritative, StageReserved, StageInstall, StageSessionRelease:
 			return FreshnessAuthoritative, true
 		default:
 			return FreshnessDefault, false

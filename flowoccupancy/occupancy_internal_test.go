@@ -9,13 +9,13 @@ import (
 
 func TestPurposeValidRegistry(t *testing.T) {
 	validStages := map[actions.FlowLaunchRole][]Stage{
-		actions.RoleNone:               {StageSessionRelease},
-		actions.RoleTrackedPhase:       {StagePreview, StageAdmission, StageAutoAdvance, StageAuthoritative, StageReserved, StageInstall, StageDrain},
+		actions.RoleNone:               {StageFooter, StageSessionRelease},
+		actions.RoleTrackedPhase:       {StagePreview, StageFooter, StageAdmission, StageAutoAdvance, StageAuthoritative, StageReserved, StageInstall, StageDrain, StageDrainControl},
 		actions.RoleCreatePhase:        {StageAdmission, StageAuthoritative, StageInstall},
-		actions.RolePhaseResume:        {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
-		actions.RoleRepair:             {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
-		actions.RoleAutofix:            {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
-		actions.RoleWorktreeAgent:      {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RolePhaseResume:        {StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleRepair:             {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleAutofix:            {StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleWorktreeAgent:      {StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 		actions.RoleSavedSessionResume: {StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 	}
 	want := make(map[Purpose]bool)
@@ -88,9 +88,11 @@ func TestQueryRejectsInvalidInputsAndMissingRuntime(t *testing.T) {
 }
 
 type runtimeFixture struct {
-	attempts map[string]actions.FlowLaunchRole
-	flows    map[string]bool
-	repairs  map[string]bool
+	attempts     map[string]actions.FlowLaunchRole
+	flows        map[string]bool
+	repairs      map[string]bool
+	headless     map[string]bool
+	repairDrains map[string]bool
 }
 
 func (runtime runtimeFixture) AttemptHolder(flowID string) (actions.FlowLaunchRole, bool) {
@@ -100,8 +102,12 @@ func (runtime runtimeFixture) AttemptHolder(flowID string) (actions.FlowLaunchRo
 
 func (runtime runtimeFixture) HasFlowTerminal(flowID string) bool   { return runtime.flows[flowID] }
 func (runtime runtimeFixture) HasRepairTerminal(flowID string) bool { return runtime.repairs[flowID] }
-func (runtime runtimeFixture) HeadlessWritePending(string) bool     { return false }
-func (runtime runtimeFixture) RepairDrainPending(string) bool       { return false }
+func (runtime runtimeFixture) HeadlessWritePending(flowID string) bool {
+	return runtime.headless[flowID]
+}
+func (runtime runtimeFixture) RepairDrainPending(flowID string) bool {
+	return runtime.repairDrains[flowID]
+}
 
 func TestQueryAnswersFromInProcessRuntime(t *testing.T) {
 	tests := []struct {
@@ -191,7 +197,7 @@ func TestAutofixAdmissionUsesWholeFlowAgentProbe(t *testing.T) {
 }
 
 func TestPhaseResumePreviewPreservesRepairSlotException(t *testing.T) {
-	policy := purposeRegistry[Purpose{Role: actions.RolePhaseResume, Stage: StagePreview}]
+	policy := purposeRegistry[Purpose{Role: actions.RolePhaseResume, Stage: StageFooter}]
 	tests := []struct {
 		name       string
 		flow       bool
@@ -213,6 +219,66 @@ func TestPhaseResumePreviewPreservesRepairSlotException(t *testing.T) {
 				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.wantHolder)
 			}
 		})
+	}
+}
+
+func TestPreviewAndFooterKeepHeadlessWritePoliciesSeparate(t *testing.T) {
+	for _, role := range []actions.FlowLaunchRole{actions.RoleTrackedPhase, actions.RoleRepair} {
+		runtime := runtimeFixture{headless: map[string]bool{"flow-1": true}}
+		preview := purposeRegistry[Purpose{Role: role, Stage: StagePreview}]
+		if verdict := queryRuntime(preview.runtime, runtime, "flow-1"); verdict.Holder() != HolderNone {
+			t.Errorf("%s preview holder = %v, want none", role, verdict.Holder())
+		}
+		footer := purposeRegistry[Purpose{Role: role, Stage: StageFooter}]
+		if verdict := queryRuntime(footer.runtime, runtime, "flow-1"); verdict.Holder() != HolderHeadlessWrite {
+			t.Errorf("%s footer holder = %v, want %v", role, verdict.Holder(), HolderHeadlessWrite)
+		}
+	}
+}
+
+func TestDrainGateAndControlKeepRepairStateSeparate(t *testing.T) {
+	gate := purposeRegistry[Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain}]
+	control := purposeRegistry[Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrainControl}]
+	tests := []struct {
+		name        string
+		runtime     runtimeFixture
+		wantGate    Holder
+		wantControl Holder
+	}{
+		{name: "Flow terminal gates", runtime: runtimeFixture{flows: map[string]bool{"flow-1": true}}, wantGate: HolderFlowTerminal},
+		{name: "repair slot controls", runtime: runtimeFixture{repairs: map[string]bool{"flow-1": true}}, wantControl: HolderRepairTerminal},
+		{name: "repair marker controls", runtime: runtimeFixture{repairDrains: map[string]bool{"flow-1": true}}, wantControl: HolderRepairDrain},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if verdict := queryRuntime(gate.runtime, tc.runtime, "flow-1"); verdict.Holder() != tc.wantGate {
+				t.Errorf("gate holder = %v, want %v", verdict.Holder(), tc.wantGate)
+			}
+			if verdict := queryRuntime(control.runtime, tc.runtime, "flow-1"); verdict.Holder() != tc.wantControl {
+				t.Errorf("control holder = %v, want %v", verdict.Holder(), tc.wantControl)
+			}
+		})
+	}
+	if gate.sources&readSessionCache != 0 {
+		t.Fatal("drain gate reads the session mirror, want cached Flow record only")
+	}
+}
+
+func TestSessionReleaseFooterAndGestureKeepSourcesSeparate(t *testing.T) {
+	footer := purposeRegistry[Purpose{Role: actions.RoleNone, Stage: StageFooter}]
+	if footer.sources != readFlowCache || footer.runtime != 0 {
+		t.Fatalf("footer policy = {sources:%v runtime:%v}, want cached Flow only", footer.sources, footer.runtime)
+	}
+	gesture := purposeRegistry[Purpose{Role: actions.RoleNone, Stage: StageSessionRelease}]
+	wantSources := readRuntime | readFlowCache | readSessionStore
+	if gesture.sources != wantSources {
+		t.Fatalf("gesture sources = %v, want %v", gesture.sources, wantSources)
+	}
+	if gesture.runtime != readAttempt|readHeadlessWrite {
+		t.Fatalf("gesture runtime = %v, want attempt and headless-write sources", gesture.runtime)
+	}
+	if freshness, ok := resolveFreshness(StageSessionRelease, FreshnessDefault); !ok || freshness != FreshnessAuthoritative {
+		t.Fatalf("default freshness = (%v, %v), want (%v, true)", freshness, ok, FreshnessAuthoritative)
 	}
 }
 

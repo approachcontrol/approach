@@ -21,14 +21,16 @@
 // ADR 0002, and selects the vocabulary and the refusal order. Stage names the
 // consumer class and selects the source set:
 //
-//	StagePreview         renders per frame; cached sources only
+//	StagePreview         answers a launch preview from cached sources
+//	StageFooter          renders an affordance with footer-only occupancy
 //	StageAdmission       runs on a keypress; in-process sources plus the lease
 //	StageAutoAdvance     the AutoMode advance poll's admission and read
 //	StageAuthoritative   runs in a command; full store access
 //	StageReserved        runs under the cross-process reservation
 //	StageInstall         the last check before a terminal slot is allocated
-//	StageDrain           runs at 1 Hz; cached only, and never forks a subprocess
-//	StageSessionRelease  the non-launch release gesture
+//	StageDrain           gates an AutoMode launch at 1 Hz
+//	StageDrainControl    applies repair state to drain arm and disarm
+//	StageSessionRelease  runs the authoritative non-launch release gesture
 //
 // # The freshness rule
 //
@@ -40,9 +42,8 @@
 // they are the state rather than a mirror of it, and are read at every
 // freshness. A lease that cannot be read is occupancy under every purpose, in
 // both directions, fail-closed. The tmux window probe forks a subprocess and is
-// therefore consulted only at StageAdmission and StageAuthoritative — never at
-// any other stage, and in particular never from the AutoMode poll path
-// (StageAutoAdvance, StageDrain).
+// therefore consulted only at StageAdmission and StageAuthoritative, never from
+// the cached rendering or AutoMode poll stages.
 //
 // # What this package must never do
 //
