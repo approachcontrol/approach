@@ -2,6 +2,8 @@ package flowoccupancy
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
@@ -114,8 +116,114 @@ type Purpose struct {
 // the handoff-pending check quit defers on is a process-wide policy rather than
 // a per-Flow question, so it stays in model. See ADR 0003 D5.
 func (purpose Purpose) Valid() bool {
-	// implemented in approach-x0r.3
-	return false
+	_, ok := purposeRegistry[purpose]
+	return ok
+}
+
+type sourcePermission uint16
+
+const (
+	readRuntime sourcePermission = 1 << iota
+	readLease
+	readFlowCache
+	readFlowStore
+	readSessionCache
+	readSessionStore
+)
+
+type probeChoice uint8
+
+const (
+	probeNone probeChoice = iota
+	probeAutofixAgent
+	probeFlowAgent
+)
+
+type runtimePermission uint8
+
+const (
+	readAttempt runtimePermission = 1 << iota
+	readFlowTerminal
+	readRepairTerminal
+	readHeadlessWrite
+	readRepairDrain
+)
+
+const readAdmissionRuntime = readAttempt | readFlowTerminal | readRepairTerminal
+
+type freshnessPermission uint8
+
+const (
+	allowCached freshnessPermission = 1 << iota
+	allowAuthoritative
+)
+
+type purposePolicy struct {
+	sources   sourcePermission
+	runtime   runtimePermission
+	probe     probeChoice
+	freshness freshnessPermission
+}
+
+// purposeRegistry is the executable transcription of the consumers in
+// docs/flow-occupancy-matrix.md section 2. A row records every source family a
+// purpose may eventually read, including families implemented by later slices.
+var purposeRegistry = map[Purpose]purposePolicy{
+	// Matrix section 2.1: manual phase admission and its g-key tmux probe.
+	{Role: actions.RoleTrackedPhase, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: creation-time Plan Now admission is runtime-only.
+	{Role: actions.RoleCreatePhase, Stage: StageAdmission}: {sources: readRuntime, runtime: readAdmissionRuntime, freshness: allowAuthoritative},
+	// Matrix section 2.1: phase-resume admission and its keypress probe.
+	{Role: actions.RolePhaseResume, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: repair admission and its whole-Flow agent probe.
+	{Role: actions.RoleRepair, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: autofix admission and its registry-only agent probe.
+	{Role: actions.RoleAutofix, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: worktree-agent admission reads every source family.
+	{Role: actions.RoleWorktreeAgent, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: saved-session resume admits after resolving its Flow.
+	{Role: actions.RoleSavedSessionResume, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowAuthoritative},
+
+	// Matrix section 2.2: authoritative lifecycle reads.
+	{Role: actions.RoleTrackedPhase, Stage: StageAuthoritative}:       {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleCreatePhase, Stage: StageAuthoritative}:        {sources: readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RolePhaseResume, Stage: StageAuthoritative}:        {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleRepair, Stage: StageAuthoritative}:             {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleAutofix, Stage: StageAuthoritative}:            {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleWorktreeAgent, Stage: StageAuthoritative}:      {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleSavedSessionResume, Stage: StageAuthoritative}: {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+
+	// Matrix section 2.2: prepare stages recheck under the reservation.
+	{Role: actions.RoleTrackedPhase, Stage: StageReserved}:       {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RolePhaseResume, Stage: StageReserved}:        {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RoleRepair, Stage: StageReserved}:             {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RoleAutofix, Stage: StageReserved}:            {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RoleWorktreeAgent, Stage: StageReserved}:      {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleSavedSessionResume, Stage: StageReserved}: {sources: readLease, freshness: allowAuthoritative},
+
+	// Matrix section 2.2 and section 4.2: every installed launch kind has a
+	// terminal-slot backstop.
+	{Role: actions.RoleTrackedPhase, Stage: StageInstall}:       {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleCreatePhase, Stage: StageInstall}:        {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RolePhaseResume, Stage: StageInstall}:        {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleRepair, Stage: StageInstall}:             {sources: readRuntime, runtime: readFlowTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleAutofix, Stage: StageInstall}:            {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleWorktreeAgent, Stage: StageInstall}:      {sources: readRuntime, runtime: readFlowTerminal | readRepairTerminal, freshness: allowAuthoritative},
+	{Role: actions.RoleSavedSessionResume, Stage: StageInstall}: {sources: readRuntime, runtime: readFlowTerminal, freshness: allowAuthoritative},
+
+	// Matrix section 2.3: footer and preview consumers use mirrors only.
+	{Role: actions.RoleTrackedPhase, Stage: StagePreview}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RolePhaseResume, Stage: StagePreview}:   {sources: readRuntime | readLease, runtime: readFlowTerminal | readRepairTerminal, freshness: allowCached},
+	{Role: actions.RoleRepair, Stage: StagePreview}:        {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RoleAutofix, Stage: StagePreview}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RoleWorktreeAgent, Stage: StagePreview}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, freshness: allowCached},
+
+	// Matrix sections 2.1 and 2.2: AutoMode has cached and authoritative halves.
+	{Role: actions.RoleTrackedPhase, Stage: StageAutoAdvance}: {sources: readRuntime | readLease | readFlowStore | readSessionStore, runtime: readAdmissionRuntime, freshness: allowCached | allowAuthoritative},
+	// Matrix section 2.4: the 1 Hz drain reads runtime state and mirrors only.
+	{Role: actions.RoleTrackedPhase, Stage: StageDrain}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAttempt | readFlowTerminal | readRepairTerminal | readRepairDrain, freshness: allowCached},
+	// Matrix section 2.5: release preview and keypress share one non-launch purpose.
+	{Role: actions.RoleNone, Stage: StageSessionRelease}: {sources: readRuntime | readSessionCache | readSessionStore, runtime: readAttempt | readHeadlessWrite, freshness: allowCached | allowAuthoritative},
 }
 
 // SessionIdentity exempts one provider session from the session-occupancy rule.
@@ -245,7 +353,7 @@ type Verdict struct {
 }
 
 // Occupied reports whether anything holds the Flow for this purpose.
-func (verdict Verdict) Occupied() bool { return verdict.holder != HolderNone }
+func (verdict Verdict) Occupied() bool { return verdict.holder != HolderNone || verdict.err != nil }
 
 // Holder names what holds it, or HolderNone.
 func (verdict Verdict) Holder() Holder { return verdict.holder }
@@ -349,17 +457,107 @@ func New(sources Sources) Occupancy {
 	return Occupancy{sources: sources}
 }
 
-// ErrUnimplemented is the error every Query carries until approach-x0r.3 lands
-// the source reads. It exists so a caller migrated ahead of the implementation
-// fails loudly instead of being told the Flow is free.
-var ErrUnimplemented = errors.New("flowoccupancy: Query is not implemented yet")
+var (
+	// ErrInvalidQuery marks a programming error in a query. Query fails closed
+	// instead of panicking because it runs inside the TUI update loop.
+	ErrInvalidQuery = errors.New("flowoccupancy: invalid query")
+	// ErrMissingRuntime marks a purpose that needs the in-process adapter but
+	// received none.
+	ErrMissingRuntime      = errors.New("flowoccupancy: runtime source is required")
+	errPendingSourceFamily = errors.New("flowoccupancy: a required source family is not implemented yet")
+)
 
 // Query answers one occupancy question. A query whose purpose is not Valid
 // yields an occupied fail-closed verdict rather than a free one.
 func (occupancy Occupancy) Query(query Query) Verdict {
-	// implemented in approach-x0r.3. Until then every purpose is invalid, so the
-	// fail-closed branch above is the whole behavior: occupied, with an error.
-	return Verdict{holder: HolderLeaseUnreadable, err: ErrUnimplemented}
+	flowID := strings.TrimSpace(query.FlowID)
+	if flowID == "" {
+		return failedVerdict(fmt.Errorf("%w: Flow ID is required", ErrInvalidQuery))
+	}
+	policy, ok := purposeRegistry[query.Purpose]
+	if !ok {
+		return failedVerdict(fmt.Errorf("%w: purpose (%s, %s) is not registered", ErrInvalidQuery, query.Purpose.Role, query.Purpose.Stage))
+	}
+	freshness, ok := resolveFreshness(query.Purpose.Stage, query.Freshness)
+	if !ok || !policy.freshness.allows(freshness) {
+		return failedVerdict(fmt.Errorf("%w: freshness %d is unsupported for purpose (%s, %s)", ErrInvalidQuery, query.Freshness, query.Purpose.Role, query.Purpose.Stage))
+	}
+	if policy.sources&readRuntime == 0 {
+		return failedVerdict(errPendingSourceFamily)
+	}
+	if policy.sources&^readRuntime != 0 || policy.probe != probeNone {
+		return failedVerdict(errPendingSourceFamily)
+	}
+	if occupancy.sources.Runtime == nil {
+		return failedVerdict(ErrMissingRuntime)
+	}
+
+	if policy.runtime&readAttempt != 0 {
+		if role, occupied := occupancy.sources.Runtime.AttemptHolder(flowID); occupied {
+			return Verdict{holder: attemptHolder(role)}
+		}
+	}
+	// A repair slot and a live Flow terminal deliberately overlap. Prefer the
+	// more specific repair holder so the result stays deterministic.
+	if policy.runtime&readRepairTerminal != 0 && occupancy.sources.Runtime.HasRepairTerminal(flowID) {
+		return Verdict{holder: HolderRepairTerminal}
+	}
+	if policy.runtime&readFlowTerminal != 0 && occupancy.sources.Runtime.HasFlowTerminal(flowID) {
+		return Verdict{holder: HolderFlowTerminal}
+	}
+	if policy.runtime&readRepairDrain != 0 && occupancy.sources.Runtime.RepairDrainPending(flowID) {
+		return Verdict{holder: HolderRepairDrain}
+	}
+	if policy.runtime&readHeadlessWrite != 0 && occupancy.sources.Runtime.HeadlessWritePending(flowID) {
+		return Verdict{holder: HolderHeadlessWrite}
+	}
+	return Free()
+}
+
+func failedVerdict(err error) Verdict {
+	return Verdict{err: err}
+}
+
+func resolveFreshness(stage Stage, freshness Freshness) (Freshness, bool) {
+	switch freshness {
+	case FreshnessCached, FreshnessAuthoritative:
+		return freshness, true
+	case FreshnessDefault:
+		switch stage {
+		case StagePreview, StageAutoAdvance, StageDrain, StageSessionRelease:
+			return FreshnessCached, true
+		case StageAdmission, StageAuthoritative, StageReserved, StageInstall:
+			return FreshnessAuthoritative, true
+		default:
+			return FreshnessDefault, false
+		}
+	default:
+		return FreshnessDefault, false
+	}
+}
+
+func (permission freshnessPermission) allows(freshness Freshness) bool {
+	switch freshness {
+	case FreshnessCached:
+		return permission&allowCached != 0
+	case FreshnessAuthoritative:
+		return permission&allowAuthoritative != 0
+	default:
+		return false
+	}
+}
+
+func attemptHolder(role actions.FlowLaunchRole) Holder {
+	switch role {
+	case actions.RoleRepair:
+		return HolderRepairAttempt
+	case actions.RolePhaseResume:
+		return HolderPhaseResumeAttempt
+	case actions.RoleTrackedPhase, actions.RoleCreatePhase:
+		return HolderPhaseAttempt
+	default:
+		return HolderOtherAttempt
+	}
 }
 
 // Free is the verdict for an unoccupied Flow. It exists so callers and tests

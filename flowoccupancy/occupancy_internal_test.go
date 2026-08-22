@@ -7,19 +7,137 @@ import (
 	"github.com/approachcontrol/approach/actions"
 )
 
-// The skeleton must never report a Flow free. Until approach-x0r.3 reads the
-// sources, a caller migrated early has to fail closed and fail loudly.
-func TestQueryFailsClosedWhileUnimplemented(t *testing.T) {
-	verdict := New(Sources{}).Query(Query{
-		FlowID:  "flow-1",
-		Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageAdmission},
-	})
-
-	if !verdict.Occupied() {
-		t.Fatalf("Occupied() = false, want true while Query is unimplemented")
+func TestPurposeValidRegistry(t *testing.T) {
+	validStages := map[actions.FlowLaunchRole][]Stage{
+		actions.RoleNone:               {StageSessionRelease},
+		actions.RoleTrackedPhase:       {StagePreview, StageAdmission, StageAutoAdvance, StageAuthoritative, StageReserved, StageInstall, StageDrain},
+		actions.RoleCreatePhase:        {StageAdmission, StageAuthoritative, StageInstall},
+		actions.RolePhaseResume:        {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleRepair:             {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleAutofix:            {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleWorktreeAgent:      {StagePreview, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RoleSavedSessionResume: {StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 	}
-	if !errors.Is(verdict.Err(), ErrUnimplemented) {
-		t.Fatalf("Err() = %v, want ErrUnimplemented", verdict.Err())
+	want := make(map[Purpose]bool)
+	for role, stages := range validStages {
+		for _, stage := range stages {
+			want[Purpose{Role: role, Stage: stage}] = true
+		}
+	}
+	roles := []actions.FlowLaunchRole{
+		actions.RoleNone, actions.RoleTrackedPhase, actions.RolePhaseResume,
+		actions.RoleRepair, actions.RoleAutofix, actions.RoleWorktreeAgent,
+		actions.RoleSavedSessionResume, actions.RoleCreatePhase,
+	}
+	for _, role := range roles {
+		for stage := StageUnknown; stage <= StageSessionRelease; stage++ {
+			purpose := Purpose{Role: role, Stage: stage}
+			if got := purpose.Valid(); got != want[purpose] {
+				t.Errorf("Purpose{%s, %s}.Valid() = %v, want %v", role, stage, got, want[purpose])
+			}
+		}
+	}
+	if len(purposeRegistry) != len(want) {
+		t.Fatalf("purpose registry has %d rows, want %d", len(purposeRegistry), len(want))
+	}
+}
+
+func TestQueryRejectsInvalidInputsAndMissingRuntime(t *testing.T) {
+	tests := []struct {
+		name  string
+		query Query
+		want  error
+	}{
+		{
+			name:  "blank Flow ID",
+			query: Query{FlowID: "   ", Purpose: Purpose{Role: actions.RoleCreatePhase, Stage: StageAdmission}},
+			want:  ErrInvalidQuery,
+		},
+		{
+			name:  "phantom purpose",
+			query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleAutofix, Stage: StageDrain}},
+			want:  ErrInvalidQuery,
+		},
+		{
+			name:  "unsupported freshness",
+			query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StagePreview}, Freshness: FreshnessAuthoritative},
+			want:  ErrInvalidQuery,
+		},
+		{
+			name:  "unknown freshness",
+			query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleCreatePhase, Stage: StageAdmission}, Freshness: FreshnessAuthoritative + 1},
+			want:  ErrInvalidQuery,
+		},
+		{
+			name:  "required runtime adapter missing",
+			query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleCreatePhase, Stage: StageAdmission}},
+			want:  ErrMissingRuntime,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict := New(Sources{}).Query(tc.query)
+			if !verdict.Occupied() {
+				t.Fatal("Occupied() = false, want fail-closed occupancy")
+			}
+			if !errors.Is(verdict.Err(), tc.want) {
+				t.Fatalf("Err() = %v, want errors.Is(_, %v)", verdict.Err(), tc.want)
+			}
+		})
+	}
+}
+
+type runtimeFixture struct {
+	attempts map[string]actions.FlowLaunchRole
+	flows    map[string]bool
+	repairs  map[string]bool
+}
+
+func (runtime runtimeFixture) AttemptHolder(flowID string) (actions.FlowLaunchRole, bool) {
+	role, ok := runtime.attempts[flowID]
+	return role, ok
+}
+
+func (runtime runtimeFixture) HasFlowTerminal(flowID string) bool   { return runtime.flows[flowID] }
+func (runtime runtimeFixture) HasRepairTerminal(flowID string) bool { return runtime.repairs[flowID] }
+func (runtime runtimeFixture) HeadlessWritePending(string) bool     { return false }
+func (runtime runtimeFixture) RepairDrainPending(string) bool       { return false }
+
+func TestQueryAnswersFromInProcessRuntime(t *testing.T) {
+	tests := []struct {
+		name    string
+		runtime runtimeFixture
+		flowID  string
+		want    Holder
+	}{
+		{name: "free", runtime: runtimeFixture{}, flowID: "flow-1", want: HolderNone},
+		{name: "exact Flow ID only", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-10": actions.RoleRepair}}, flowID: "flow-1", want: HolderNone},
+		{name: "repair attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}}, flowID: "flow-1", want: HolderRepairAttempt},
+		{name: "phase resume attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RolePhaseResume}}, flowID: "flow-1", want: HolderPhaseResumeAttempt},
+		{name: "tracked phase attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleTrackedPhase}}, flowID: "flow-1", want: HolderPhaseAttempt},
+		{name: "create phase attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleCreatePhase}}, flowID: "flow-1", want: HolderPhaseAttempt},
+		{name: "other attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleAutofix}}, flowID: "flow-1", want: HolderOtherAttempt},
+		{name: "Flow terminal", runtime: runtimeFixture{flows: map[string]bool{"flow-1": true}}, flowID: "flow-1", want: HolderFlowTerminal},
+		{name: "repair slot", runtime: runtimeFixture{repairs: map[string]bool{"flow-1": true}}, flowID: "flow-1", want: HolderRepairTerminal},
+		{name: "repair slot with live terminal", runtime: runtimeFixture{flows: map[string]bool{"flow-1": true}, repairs: map[string]bool{"flow-1": true}}, flowID: "flow-1", want: HolderRepairTerminal},
+		{name: "attempt wins simultaneous sources", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}, repairs: map[string]bool{"flow-1": true}}, flowID: "flow-1", want: HolderRepairAttempt},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict := New(Sources{Runtime: tc.runtime}).Query(Query{
+				FlowID:  tc.flowID,
+				Purpose: Purpose{Role: actions.RoleCreatePhase, Stage: StageAdmission},
+			})
+			if verdict.Holder() != tc.want {
+				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.want)
+			}
+			if verdict.Occupied() != (tc.want != HolderNone) {
+				t.Fatalf("Occupied() = %v, want %v", verdict.Occupied(), tc.want != HolderNone)
+			}
+			if verdict.Err() != nil {
+				t.Fatalf("Err() = %v, want nil", verdict.Err())
+			}
+		})
 	}
 }
 

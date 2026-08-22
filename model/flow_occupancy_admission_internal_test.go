@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -152,7 +153,7 @@ func TestCreatePhaseAdmissionIgnoresTheLease(t *testing.T) {
 				Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginNewFlow, Request: 1},
 				RepoPath:     f.record.RepoPath,
 			}
-			m := f.m
+			m := f.m.setStatus(statusOther, "leave this status alone")
 			m.flowCreateReq.current = create.Presentation.Request
 
 			next, _ := m.handleCreateFlowAllocated(flowLaunchEventMsg{
@@ -165,8 +166,46 @@ func TestCreatePhaseAdmissionIgnoresTheLease(t *testing.T) {
 			if reserved == tc.wantRefused {
 				t.Fatalf("createPhase reserved = %v, want refused = %v", reserved, tc.wantRefused)
 			}
-			if tc.wantRefused && next.status.Text != noLaunchableFlowPhaseStatus {
-				t.Fatalf("status = %q, want %q", next.status.Text, noLaunchableFlowPhaseStatus)
+			if tc.wantRefused {
+				if next.status.Text != noLaunchableFlowPhaseStatus {
+					t.Fatalf("status = %q, want %q", next.status.Text, noLaunchableFlowPhaseStatus)
+				}
+				return
+			}
+			attempt, ok := next.flowLaunchAttempt(f.flowID())
+			if !ok || attempt.State != flowLaunchStateCreateSessionReading {
+				t.Fatalf("attempt = %#v, ok = %v, want createSessionReading reservation", attempt, ok)
+			}
+			if next.status.Text != "leave this status alone" {
+				t.Fatalf("status = %q, want the pre-existing status untouched", next.status.Text)
+			}
+		})
+	}
+}
+
+func TestFlowOccupancyRuntimeClassifiesEveryLaunchKind(t *testing.T) {
+	tests := []struct {
+		kind flowLaunchKind
+		want actions.FlowLaunchRole
+	}{
+		{kind: flowLaunchKindManualPhase, want: actions.RoleTrackedPhase},
+		{kind: flowLaunchKindAutoPhase, want: actions.RoleTrackedPhase},
+		{kind: flowLaunchKindCreatePhase, want: actions.RoleCreatePhase},
+		{kind: flowLaunchKindPhaseResume, want: actions.RolePhaseResume},
+		{kind: flowLaunchKindRepair, want: actions.RoleRepair},
+		{kind: flowLaunchKindAutofix, want: actions.RoleAutofix},
+		{kind: flowLaunchKindWorktreeAgent, want: actions.RoleWorktreeAgent},
+		{kind: flowLaunchKindSavedSessionResume, want: actions.RoleSavedSessionResume},
+	}
+	for _, tc := range tests {
+		t.Run(tc.want.String(), func(t *testing.T) {
+			m := newOccupancyFixture(t).m
+			m.flowLaunchAttempts = map[string]flowLaunchAttempt{
+				"flow-1": {Token: "token", Kind: tc.kind, FlowID: "flow-1"},
+			}
+			role, ok := (flowOccupancyRuntime{model: m}).AttemptHolder("flow-1")
+			if !ok || role != tc.want {
+				t.Fatalf("AttemptHolder() = (%v, %v), want (%v, true)", role, ok, tc.want)
 			}
 		})
 	}
