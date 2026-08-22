@@ -2107,9 +2107,6 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
-		if slices.Contains(phase.RecoveredLaunchIDs, launchID) {
-			return FlowRecord{}, fmt.Errorf("flow phase launch id %q was recovered and cannot be reused", launchID)
-		}
 		// Launching a phase is a mutation that derives its readiness. Custom graphs
 		// persist with pending roots (Create defers readiness derivation), so a
 		// now-eligible pending target would otherwise be rejected as an invalid

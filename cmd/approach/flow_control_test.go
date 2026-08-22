@@ -226,6 +226,14 @@ func TestPhaseRecoverFallsBackDirectlyWhenEndpointCannotBeReached(t *testing.T) 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.UpdatedPhase.Status != flowstore.PhaseReady {
 		t.Fatalf("output = %s (%v)", stdout.String(), err)
 	}
+	stdout.Reset()
+	err = run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "late", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-stale", created.FlowID, "plan")}))
+	if err == nil || !strings.Contains(err.Error(), "recovered launch") {
+		t.Fatalf("late direct-fallback completion = %v, want recovered-launch refusal", err)
+	}
+	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseReady {
+		t.Fatalf("late direct-fallback completion changed phase = %#v", phase)
+	}
 }
 
 func TestReplayableWriteSpoolsWhenEndpointUnreachableAndDatabaseIncompatible(t *testing.T) {

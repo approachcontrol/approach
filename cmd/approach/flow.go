@@ -1703,6 +1703,17 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		Endpoint: control.endpoint, Token: control.token,
 		LaunchID: control.launchID, FlowID: control.flowID, PhaseID: control.phaseID,
 	}
+	req.SchemaVersion = launchcontrol.ProtocolSchemaVersion
+	if req.RequestID == "" {
+		req.RequestID = launchcontrol.NewRequestID()
+	}
+	req.LaunchID = control.launchID
+	if req.FlowID == "" {
+		req.FlowID = control.flowID
+	}
+	if req.PhaseID == "" {
+		req.PhaseID = control.phaseID
+	}
 	resp, err := client.Call(req)
 	if err == nil {
 		return resp, nil
