@@ -160,8 +160,8 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 }
 
 // RecoveryCommand is the one command every demotion's notes end with.
-func RecoveryCommand(flowID, phaseID, reason string) string {
-	return fmt.Sprintf("approach flow phase set --flow-id %s --phase-id %s --status running --notes %q", flowID, phaseID, reason)
+func RecoveryCommand(flowID, phaseID string) string {
+	return fmt.Sprintf("approach flow phase recover --flow-id %s --phase-id %s", flowID, phaseID)
 }
 
 // reconcileUpdate builds the demotion write for a phase. Plan-review kinds
@@ -186,7 +186,7 @@ func reconcileUpdate(phase flowstore.FlowPhase, reason string, ev *ExitEvidence,
 	} else {
 		fmt.Fprintf(&detail, "; observed %s", phase.Status)
 	}
-	fmt.Fprintf(&detail, ". Recover with: %s", RecoveryCommand(flowID, phase.PhaseID, reason))
+	fmt.Fprintf(&detail, ". Recover with: %s", RecoveryCommand(flowID, phase.PhaseID))
 	update := flowstore.PhaseUpdate{FlowID: flowID, PhaseID: phase.PhaseID, Notes: detail.String()}
 	if flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
 		update.Status = flowstore.PhaseBlocked

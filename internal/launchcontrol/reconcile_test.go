@@ -50,7 +50,7 @@ func TestSweepDemotesOnExitJSONWithCodeInNotes(t *testing.T) {
 	for _, want := range []string{
 		"phase_result_missing: launch launch-1 exited (periodic_sweep, exit code 3) without a valid result for phase plan",
 		"observed running",
-		"Recover with: approach flow phase set --flow-id " + created.FlowID + ` --phase-id plan --status running --notes "phase_result_missing"`,
+		"Recover with: approach flow phase recover --flow-id " + created.FlowID + ` --phase-id plan`,
 	} {
 		if !strings.Contains(phase.Notes, want) {
 			t.Fatalf("notes = %q, missing %q", phase.Notes, want)

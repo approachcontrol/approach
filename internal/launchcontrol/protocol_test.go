@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVerbTableClassifiesEveryVerbOnce(t *testing.T) {
@@ -16,6 +17,7 @@ func TestVerbTableClassifiesEveryVerbOnce(t *testing.T) {
 		VerbPRSet: ClassProxiedReplayable, VerbMergeSet: ClassProxiedReplayable,
 		VerbPhaseRestart: ClassProxiedNonReplayable, VerbPhaseAddChild: ClassProxiedNonReplayable,
 		VerbPhaseAgentSet: ClassProxiedNonReplayable,
+		VerbPhaseRecover:  ClassProxiedNonReplayable,
 		VerbFlowCreate:    ClassDirect, VerbPhaseReset: ClassDirect,
 	}
 	if len(AllVerbs()) != len(want) {
@@ -43,6 +45,7 @@ func TestPayloadsRoundTripThroughJSON(t *testing.T) {
 		PhaseSetPayload{Status: "completed", Outcome: "approved", Summary: "s", Notes: "n"},
 		PhaseActionPayload{Outcome: "approved", Summary: "s", Notes: "n"},
 		PhaseRestartPayload{Notes: "again"},
+		PhaseRecoverPayload{ExpectedStatus: "needs_attention", ExpectedOutcome: "phase_result_missing", ExpectedLaunchID: "l", ExpectedUpdatedAt: time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)},
 		AddChildPayload{ParentPhaseID: "implementation", PhaseID: "api", Title: "API", Order: 2},
 		AgentSetPayload{Agent: "claude", Model: "m", ReasoningEffort: "high"},
 		AgentSetPayload{Clear: true},

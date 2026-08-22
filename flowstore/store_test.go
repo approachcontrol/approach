@@ -1688,6 +1688,227 @@ func TestStoreResetRecoverableRunningPhaseRejectsLiveSessionMergedFromDuplicateR
 	}
 }
 
+func TestStoreRecoverReconciledPhaseRemovesOnlyExpectedLaunch(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := mustCreateFlow(t, store, "Recover reconciled phase")
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-stale", Resume: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconcile", Summary: "stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := phaseByID(t, record, "plan")
+
+	record, err = store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{
+		FlowID: record.FlowID, PhaseID: "plan", ExpectedStatus: observed.Status,
+		ExpectedOutcome: observed.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: observed.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("RecoverReconciledPhase() error = %v", err)
+	}
+	phase := phaseByID(t, record, "plan")
+	if phase.Status != flowstore.PhaseReady || phase.Outcome != "" || phase.Notes != "" || phase.Summary != "" {
+		t.Fatalf("recovered phase = %#v", phase)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-old" {
+		t.Fatalf("launch ids = %#v, want only launch-old", phase.LaunchIDs)
+	}
+	if len(phase.Sessions) != 1 || phase.Sessions[0].SessionID != "session-old" {
+		t.Fatalf("sessions = %#v, want only session-old", phase.Sessions)
+	}
+}
+
+func TestStoreRecoverReconciledPhaseRefusesDriftAndUnsafeRecordsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate)
+	}{
+		{name: "changed status", prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate) {
+			phase := phaseByID(t, record, "plan")
+			return record, flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: "plan", ExpectedStatus: flowstore.PhaseBlocked, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}
+		}},
+		{name: "changed outcome", prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate) {
+			phase := phaseByID(t, record, "plan")
+			return record, flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status, ExpectedOutcome: flowstore.OutcomePhaseResultStale, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}
+		}},
+		{name: "replaced launch", prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate) {
+			phase := phaseByID(t, record, "plan")
+			return record, flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-other", ExpectedUpdatedAt: phase.UpdatedAt}
+		}},
+		{name: "changed timestamp", prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate) {
+			phase := phaseByID(t, record, "plan")
+			return record, flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt.Add(-time.Second)}
+		}},
+		{name: "live session", prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate) {
+			read, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "claude", SessionID: "session-live", LaunchID: "launch-stale", Status: "running"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			phase := phaseByID(t, read, "plan")
+			return read, flowstore.PhaseRecoveryUpdate{FlowID: read.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}
+		}},
+		{name: "closed flow", prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) (flowstore.FlowRecord, flowstore.PhaseRecoveryUpdate) {
+			phase := phaseByID(t, record, "plan")
+			update := flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}
+			closed, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed for test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return closed, update
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := mustCreateFlow(t, store, "Reject recovery "+tc.name)
+			record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-stale"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, update := tc.prepare(t, store, record)
+			beforeJSON, _ := json.Marshal(before)
+			if _, err := store.RecoverReconciledPhase(update); err == nil {
+				t.Fatal("RecoverReconciledPhase() succeeded")
+			}
+			after, err := store.Read(record.FlowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterJSON, _ := json.Marshal(after)
+			if string(afterJSON) != string(beforeJSON) {
+				t.Fatalf("record changed after refusal\nbefore: %s\nafter:  %s", beforeJSON, afterJSON)
+			}
+		})
+	}
+}
+
+func TestStoreRecoverReconciledPhaseRefusesUnsupportedAndAmbiguousRecords(t *testing.T) {
+	tests := []struct {
+		name   string
+		phases []flowstore.FlowPhase
+	}{
+		{
+			name:   "plan-review blocked form",
+			phases: []flowstore.FlowPhase{{PhaseID: "plan-review", Title: "Plan review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, LaunchIDs: []string{"launch-stale"}, Sessions: []flowstore.Session{{Provider: "codex", SessionID: "s", LaunchID: "launch-stale", Status: "ended"}}}},
+		},
+		{
+			name: "duplicate phase rows",
+			phases: []flowstore.FlowPhase{
+				{PhaseID: "Plan", Title: "Plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, LaunchIDs: []string{"launch-stale"}},
+				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, LaunchIDs: []string{"launch-stale"}},
+			},
+		},
+		{
+			name:   "session launch mismatch",
+			phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, LaunchIDs: []string{"launch-stale"}, Sessions: []flowstore.Session{{Provider: "codex", SessionID: "s", LaunchID: "launch-other", Status: "ended"}}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{FlowID: "recover-refusal", Title: tc.name, Instructions: tc.name, RepoPath: filepath.Join(root, "repo"), Phases: tc.phases})
+			if err != nil {
+				t.Fatal(err)
+			}
+			phase := phaseByID(t, record, tc.phases[len(tc.phases)-1].PhaseID)
+			before, _ := json.Marshal(record)
+			_, err = store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: phase.PhaseID, ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt})
+			if err == nil {
+				t.Fatal("RecoverReconciledPhase() succeeded")
+			}
+			after, readErr := store.Read(record.FlowID)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			afterJSON, _ := json.Marshal(after)
+			if string(afterJSON) != string(before) {
+				t.Fatalf("record changed after refusal\nbefore: %s\nafter:  %s", before, afterJSON)
+			}
+		})
+	}
+}
+
+func TestStoreRecoverReconciledPhaseRefusesUnsatisfiedPredecessorWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID: "recover-dependency", Title: "Recover dependency", Instructions: "refuse drift", RepoPath: filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+			{PhaseID: "target", Title: "Target", DependsOn: []string{"alpha"}, Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Order: 2, LaunchIDs: []string{"launch-stale"}, Sessions: []flowstore.Session{{Provider: "codex", SessionID: "s", LaunchID: "launch-stale", Status: "ended"}}, UpdatedAt: time.Now().UTC()},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := phaseByID(t, record, "target")
+	for i := range record.Phases {
+		if record.Phases[i].PhaseID == "alpha" {
+			record.Phases[i].Status = flowstore.PhaseRunning
+		}
+	}
+	data, _ := json.Marshal(record)
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE flows SET record = ? WHERE flow_id = ?", data, record.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	before, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON, _ := json.Marshal(before)
+	_, err = store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{FlowID: record.FlowID, PhaseID: "target", ExpectedStatus: target.Status, ExpectedOutcome: target.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: target.UpdatedAt})
+	if err == nil || !strings.Contains(err.Error(), "requires satisfied predecessors") {
+		t.Fatalf("RecoverReconciledPhase() error = %v", err)
+	}
+	after, _ := store.Read(record.FlowID)
+	afterJSON, _ := json.Marshal(after)
+	if string(afterJSON) != string(beforeJSON) {
+		t.Fatalf("record changed after refusal\nbefore: %s\nafter:  %s", beforeJSON, afterJSON)
+	}
+}
+
 func TestStoreResetRecoverableRunningPhaseRejectsOtherLiveLaunchMergedFromDuplicateRow(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

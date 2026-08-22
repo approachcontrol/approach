@@ -13,7 +13,7 @@ import (
 )
 
 // PhaseActionResult is what `flow phase complete|block|needs-attention|
-// restart|reset` print: the updated phase, the next actionable phase, and the
+// restart|reset|recover` print: the updated phase, the next actionable phase, and the
 // whole record. It lives here so the proxied and direct paths print one shape.
 type PhaseActionResult struct {
 	FlowID       string               `json:"flow_id"`
@@ -112,6 +112,18 @@ func Validate(req Request) error {
 	case VerbPhaseReset:
 		if strings.TrimSpace(req.PhaseID) == "" {
 			return fmt.Errorf("flow phase reset requires --phase-id")
+		}
+		return nil
+	case VerbPhaseRecover:
+		var payload PhaseRecoverPayload
+		if err := decodePayload(req, &payload); err != nil {
+			return err
+		}
+		if strings.TrimSpace(req.PhaseID) == "" {
+			return fmt.Errorf("flow phase recover requires --phase-id")
+		}
+		if payload.ExpectedStatus == "" || payload.ExpectedOutcome == "" || payload.ExpectedLaunchID == "" || payload.ExpectedUpdatedAt.IsZero() {
+			return errors.New("flow phase recover requires a complete observed phase snapshot")
 		}
 		return nil
 	case VerbPhaseAddChild:
@@ -224,6 +236,8 @@ func verbLabel(verb Verb) string {
 		return "flow phase restart"
 	case VerbPhaseReset:
 		return "flow phase reset"
+	case VerbPhaseRecover:
+		return "flow phase recover"
 	case VerbPhaseAddChild:
 		return "flow phase add-child"
 	case VerbPhaseAgentSet:
@@ -357,6 +371,20 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		return phaseActionResult(record, req.PhaseID)
 	case VerbPhaseReset:
 		record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID})
+		if err != nil {
+			return nil, "", err
+		}
+		return phaseActionResult(record, req.PhaseID)
+	case VerbPhaseRecover:
+		var payload PhaseRecoverPayload
+		if err := decodePayload(req, &payload); err != nil {
+			return nil, "", err
+		}
+		record, err := store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID,
+			ExpectedStatus: flowstore.PhaseStatus(payload.ExpectedStatus), ExpectedOutcome: payload.ExpectedOutcome,
+			ExpectedLaunchID: payload.ExpectedLaunchID, ExpectedUpdatedAt: payload.ExpectedUpdatedAt,
+		})
 		if err != nil {
 			return nil, "", err
 		}

@@ -691,6 +691,18 @@ type PhaseResetUpdate struct {
 	PhaseID string
 }
 
+// PhaseRecoveryUpdate identifies one reconciliation-demoted phase snapshot.
+// Recovery compares every field before removing the stale launch so a request
+// can never apply to phase state newer than the command observed.
+type PhaseRecoveryUpdate struct {
+	FlowID            string
+	PhaseID           string
+	ExpectedStatus    PhaseStatus
+	ExpectedOutcome   string
+	ExpectedLaunchID  string
+	ExpectedUpdatedAt time.Time
+}
+
 // PhaseLaunchEndUpdate records that a tracked Flow launch has ended.
 type PhaseLaunchEndUpdate struct {
 	FlowID   string
@@ -2225,6 +2237,100 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+const (
+	OutcomePhaseResultMissing = "phase_result_missing"
+	OutcomePhaseResultStale   = "phase_result_stale"
+)
+
+// RecoverReconciledPhase atomically removes the exact stale launch from a
+// reconciliation-demoted phase and derives that phase back to ready.
+func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
+		return FlowRecord{}, errors.New("phase id is required")
+	}
+	if update.ExpectedLaunchID == "" {
+		return FlowRecord{}, errors.New("phase recovery requires an expected latest launch id")
+	}
+	if update.ExpectedUpdatedAt.IsZero() {
+		return FlowRecord{}, errors.New("phase recovery requires an expected update timestamp")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "recover a phase on")
+		}
+		phaseIndex := -1
+		matches := 0
+		for i, phase := range record.Phases {
+			if artifacts.NormalizePhaseID(phase.PhaseID) == update.PhaseID {
+				matches++
+				if phase.PhaseID == requestedPhaseID || phaseIndex < 0 {
+					phaseIndex = i
+				}
+			}
+		}
+		if matches == 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		if matches != 1 {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires an unambiguous phase; %q has %d rows", update.PhaseID, matches)
+		}
+		phase := record.Phases[phaseIndex]
+		if phase.Status != update.ExpectedStatus {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed status for %s: expected %s, found %s", phase.PhaseID, update.ExpectedStatus, phase.Status)
+		}
+		if phase.Outcome != update.ExpectedOutcome {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed outcome for %s: expected %q, found %q", phase.PhaseID, update.ExpectedOutcome, phase.Outcome)
+		}
+		if phase.Status != PhaseNeedsAttention ||
+			(phase.Outcome != OutcomePhaseResultMissing && phase.Outcome != OutcomePhaseResultStale) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires needs_attention with outcome %s or %s", OutcomePhaseResultMissing, OutcomePhaseResultStale)
+		}
+		if !phase.UpdatedAt.Equal(update.ExpectedUpdatedAt) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed update timestamp for %s", phase.PhaseID)
+		}
+		if latest := LatestPhaseLaunchID(phase); latest != update.ExpectedLaunchID {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed latest launch for %s: expected %q, found %q", phase.PhaseID, update.ExpectedLaunchID, latest)
+		}
+		if PhaseSessionLaunchMismatch(phase) {
+			return FlowRecord{}, errors.New("flow phase recover requires attached sessions to match phase launch ids")
+		}
+		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires satisfied predecessors for %s", phase.PhaseID)
+		}
+		if _, ok := recoverablePhaseLaunchRemovalReason(phase, update.ExpectedLaunchID); !ok {
+			return FlowRecord{}, errors.New("flow phase recover requires the stale launch and all older sessions to be ended")
+		}
+		phase.LaunchIDs = removePhaseLaunchID(phase.LaunchIDs, update.ExpectedLaunchID)
+		phase.Sessions = removePhaseSessionsForLaunchID(phase.Sessions, update.ExpectedLaunchID)
+		phase.Status = PhasePending
+		phase.Outcome = ""
+		phase.Notes = ""
+		phase.Summary = ""
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		recoveredIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if recoveredIndex < 0 || record.Phases[recoveredIndex].Status != PhaseReady {
+			return FlowRecord{}, fmt.Errorf("flow phase recover could not derive %s back to ready", update.PhaseID)
+		}
+		record.Status = DeriveStatus(record)
+		return record, nil
+	})
+}
+
+func recoverablePhaseLaunchRemovalReason(phase FlowPhase, latestLaunchID string) (string, bool) {
+	running := phase
+	running.Status = PhaseRunning
+	return recoverableRunningPhaseResetReasonForLaunch(running, latestLaunchID)
 }
 
 func removePhaseSessionsForLaunchID(values []Session, target string) []Session {

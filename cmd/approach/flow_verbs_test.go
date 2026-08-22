@@ -29,6 +29,7 @@ func TestVerbTableCoversEveryFlowCLILeaf(t *testing.T) {
 		"runFlowPhase/needs-attention": launchcontrol.VerbPhaseNeedsAttention,
 		"runFlowPhase/restart":         launchcontrol.VerbPhaseRestart,
 		"runFlowPhase/reset":           launchcontrol.VerbPhaseReset,
+		"runFlowPhase/recover":         launchcontrol.VerbPhaseRecover,
 		"runFlowPhase/add-child":       launchcontrol.VerbPhaseAddChild,
 		"runFlowPhase/agent":           launchcontrol.VerbPhaseAgentSet,
 	}

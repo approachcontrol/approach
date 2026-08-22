@@ -40,6 +40,7 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		"approach flow phase needs-attention --flow-id",
 		"approach flow phase restart --flow-id",
 		"approach flow phase reset --flow-id",
+		"approach flow phase recover --flow-id",
 		"approach flow phase set --flow-id",
 		"approach flow phase agent set --flow-id",
 		"approach flow issue set --flow-id",
@@ -62,13 +63,14 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|recover|add-child|agent> [flags]",
 		"approach flow phase set --flow-id",
 		"approach flow phase complete --flow-id",
 		"approach flow phase block --flow-id",
 		"approach flow phase needs-attention --flow-id",
 		"approach flow phase restart --flow-id",
 		"approach flow phase reset --flow-id",
+		"approach flow phase recover --flow-id",
 		"--status completed",
 		"approach flow phase add-child --flow-id",
 		"approach flow phase agent set --flow-id",
@@ -268,6 +270,15 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "phase recover",
+			args: []string{"approach", "flow", "phase", "recover", "--help"},
+			wants: []string{
+				"Usage: approach flow phase recover [flags]",
+				"phase_result_missing and phase_result_stale",
+				"approach flow phase recover --flow-id",
+			},
+		},
+		{
 			name: "plan set",
 			args: []string{"approach", "flow", "plan", "set", "--help"},
 			wants: []string{
@@ -346,7 +357,7 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|recover|add-child|agent> [flags]",
 	})
 }
 
@@ -2160,6 +2171,50 @@ func TestRunFlowPhaseResetReturnsAwaitingSessionPhaseToReady(t *testing.T) {
 	}
 	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 {
 		t.Fatalf("updated phase = %#v, want ready with orphan removed", result.UpdatedPhase)
+	}
+}
+
+func TestRunFlowPhaseRecoverReadsSnapshotAndReturnsDemotedPhaseToReady(t *testing.T) {
+	root := t.TempDir()
+	record := mustRunFlowReadyForImplementation(t, root, "recover demoted", "flow/recover-demoted")
+	store := mustFlowStore(t, root)
+	var err error
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "implementation", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "implementation", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultStale, Notes: "reconciled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{"approach", "flow", "phase", "recover", "--state-root", root}, noScanDeps(t, runDeps{
+		stdout: &stdout,
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return record.FlowID
+			case "APPROACH_FLOW_PHASE_ID":
+				return "implementation"
+			default:
+				return ""
+			}
+		},
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 || len(result.UpdatedPhase.Sessions) != 0 {
+		t.Fatalf("updated phase = %#v", result.UpdatedPhase)
 	}
 }
 

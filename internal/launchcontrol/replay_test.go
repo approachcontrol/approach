@@ -183,7 +183,7 @@ func TestReplayCase3DemotesRunningPhaseOwnedByThisLaunch(t *testing.T) {
 	for _, want := range []string{
 		"phase_result_stale: launch launch-1",
 		"intended completed, observed running",
-		`approach flow phase set --flow-id ` + created.FlowID + ` --phase-id plan --status running --notes "phase_result_stale"`,
+		`approach flow phase recover --flow-id ` + created.FlowID + ` --phase-id plan`,
 	} {
 		if !strings.Contains(phase.Notes, want) {
 			t.Fatalf("notes = %q, missing %q", phase.Notes, want)

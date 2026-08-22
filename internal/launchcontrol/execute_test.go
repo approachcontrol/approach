@@ -226,3 +226,29 @@ func TestExecuteRefusesDirectVerbsAndUnknownVerbs(t *testing.T) {
 		t.Fatalf("phase.reset = %#v", resp)
 	}
 }
+
+func TestExecutePhaseRecoverUsesObservedIdentity(t *testing.T) {
+	store, _ := newTestStore(t)
+	created := createFlow(t, store, "Recover")
+	launchPhase(t, store, created.FlowID, "plan", "launch-stale")
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
+		t.Fatal(err)
+	}
+	demoted, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase, _ := PhaseByID(demoted, "plan")
+	resp, err := Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
+	if err != nil || !resp.OK {
+		t.Fatalf("phase.recover = %#v, %v", resp, err)
+	}
+	result := decodeResult[PhaseActionResult](t, resp)
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 {
+		t.Fatalf("recovered phase = %#v", result.UpdatedPhase)
+	}
+	resp, err = Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
+	if err != nil || resp.OK || !resp.Refused {
+		t.Fatalf("stale phase.recover = %#v, %v", resp, err)
+	}
+}

@@ -72,6 +72,7 @@ Commands:
                    Mark a Flow phase as needing attention.
   phase restart    Restart a blocked or needs-attention phase.
   phase reset      Recover a stale running phase back to ready.
+  phase recover    Recover a reconciliation-demoted phase back to ready.
   phase set        Advance a Flow phase with explicit status.
   phase add-child  Add or update an implementation child phase.
   phase agent set  Replace or clear a phase's agent settings stamp.
@@ -89,6 +90,7 @@ Examples:
   approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --notes "Revise scope"
   approach flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
   approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
+  approach flow phase recover --flow-id "$FLOW_ID" --phase-id implementation
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   approach flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
   approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --agent claude --model claude-opus-5
@@ -435,7 +437,7 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return errors.New("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]")
+		return errors.New("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|recover|add-child|agent> [flags]")
 	}
 	switch args[0] {
 	case "set":
@@ -462,12 +464,14 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return runFlowPhaseRestart(args[1:], deps)
 	case "reset":
 		return runFlowPhaseReset(args[1:], deps)
+	case "recover":
+		return runFlowPhaseRecover(args[1:], deps)
 	case "add-child":
 		return runFlowPhaseAddChild(args[1:], deps)
 	case "agent":
 		return runFlowPhaseAgent(args[1:], deps)
 	default:
-		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "restart", "reset", "add-child", "agent"}, flowPhaseHelpText)
+		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "restart", "reset", "recover", "add-child", "agent"}, flowPhaseHelpText)
 	}
 }
 
@@ -475,7 +479,7 @@ func printFlowPhaseHelp(w io.Writer) {
 	io.WriteString(w, flowPhaseHelpText)
 }
 
-const flowPhaseHelpText = `Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]
+const flowPhaseHelpText = `Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|recover|add-child|agent> [flags]
 
 Update Flow phase state. Readiness is derived by approach; agents set running,
 completed, needs_attention, blocked, or skipped.
@@ -487,6 +491,7 @@ Commands:
   needs-attention  Mark a phase as needing attention.
   restart          Restart a blocked or needs-attention phase.
   reset            Recover a stale running phase back to ready.
+  recover          Recover a reconciliation-demoted phase back to ready.
   add-child        Add or update an implementation child phase.
   agent set        Replace or clear a phase's agent settings stamp.
 
@@ -498,6 +503,7 @@ Examples:
   approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
   approach flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
   approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
+  approach flow phase recover --flow-id "$FLOW_ID" --phase-id implementation
   approach flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
   approach flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
   approach flow phase agent set --flow-id "$FLOW_ID" --phase-id implementation --agent claude --model claude-opus-5
@@ -864,6 +870,75 @@ Common flags:
 
 Examples:
   approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
+`)
+}
+
+func runFlowPhaseRecover(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow phase recover", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPhaseRecoverHelp(deps.stdout) }
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	phaseID := flags.String("phase-id", deps.getenv("APPROACH_FLOW_PHASE_ID"), "phase id")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
+		return err
+	}
+	if *flowID == "" {
+		return errors.New("flow phase recover requires --flow-id")
+	}
+	if *phaseID == "" {
+		return errors.New("flow phase recover requires --phase-id")
+	}
+	readReq, err := launchcontrol.NewRequest(launchcontrol.VerbFlowRead, launchcontrol.ReadPayload{})
+	if err != nil {
+		return err
+	}
+	readReq.FlowID = *flowID
+	resp, err := runFlowRequest(deps, *stateRoot, readReq, flowstore.RoleReader)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(resp.Result, &record); err != nil {
+		return fmt.Errorf("decode Flow record for phase recover: %w", err)
+	}
+	phase, ok := launchcontrol.PhaseByID(record, *phaseID)
+	if !ok {
+		return fmt.Errorf("phase %q not found in flow %q", *phaseID, *flowID)
+	}
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseRecover, launchcontrol.PhaseRecoverPayload{
+		ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome,
+		ExpectedLaunchID: flowstore.LatestPhaseLaunchID(phase), ExpectedUpdatedAt: phase.UpdatedAt,
+	})
+	if err != nil {
+		return err
+	}
+	req.FlowID, req.PhaseID = *flowID, *phaseID
+	return runFlowLeaf(deps, *stateRoot, req, flowstore.RoleWriter)
+}
+
+func printFlowPhaseRecoverHelp(w io.Writer) {
+	io.WriteString(w, `Usage: approach flow phase recover [flags]
+
+Atomically recover a phase demoted by launch reconciliation to ready. Recovery
+accepts phase_result_missing and phase_result_stale, removes the exact stale
+latest launch and its ended sessions, and refuses if the phase changed.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+
+Common flags:
+  --state-root PATH
+
+Example:
+  approach flow phase recover --flow-id "$FLOW_ID" --phase-id implementation
 `)
 }
 
