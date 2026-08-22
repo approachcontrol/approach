@@ -92,17 +92,19 @@ of them.
 
 | Stage | Consumers | Constraint |
 | --- | --- | --- |
-| `StagePreview` | matrix §2.3 | Runs per frame. Cached only. |
+| `StagePreview` | matrix §2.3 launch previews | Cached only. Omits terms added only by the footer. |
+| `StageFooter` | matrix §2.3 footer predicates | Runs per frame. Cached only. |
 | `StageAdmission` | matrix §2.1, keypress rows | Runs on a keypress. In-process sources plus the lease; no session-store walk. |
 | `StageAutoAdvance` | matrix §2.1 "Auto phase", §2.2 "AutoMode read" | The AutoMode advance poll. Never reads S14, refuses in silence, and its read adds S10-minus-the-candidate. |
 | `StageAuthoritative` | matrix §2.2 read stages | Runs in a `tea.Cmd`. Full store access. |
 | `StageReserved` | matrix §2.2 prepare stages | Runs under the cross-process reservation. Re-checks the lease. |
 | `StageInstall` | `flowLaunchEmbeddedBackstop` | Last check before a slot is allocated. Slot sources only. |
-| `StageDrain` | matrix §2.4 | Runs at 1 Hz. Cached only, and must never shell out. |
+| `StageDrain` | matrix §2.4 drain gate and session pre-filter | Runs at 1 Hz. Cached only, and must never shell out. |
+| `StageDrainControl` | matrix §2.4 arm/disarm pass | Applies repair-slot and repair-marker state without widening the drain gate. |
 
-One non-launch purpose does not fit the role axis and gets `RoleNone` with its
-own stage: `StageSessionRelease` (matrix §2.5,
-`model/flow_session_release.go:115`).
+The non-launch session-release consumers use `RoleNone`: `StageFooter` for its
+cached affordance and `StageSessionRelease` for the authoritative gesture
+(matrix §2.5, `model/flow_session_release.go:88,115`).
 
 The quit deferral (`model/embedded_terminal.go:920,942`) is deliberately *not*
 a purpose, even though matrix §2.5 lists it. It reads S5 alone, and D5 keeps S5
@@ -166,15 +168,16 @@ The rule, stated once so it stops living in comments:
 > The tmux window probe is read only at `StageAdmission` and
 > `StageAuthoritative`, because it forks a subprocess
 > (`model/tmux_mode.go:425-427`). Every other stage — including the AutoMode
-> poll's `StageAutoAdvance` and `StageDrain` — never consults it.
+> poll's `StageAutoAdvance`, `StageDrain`, and `StageDrainControl` — never
+> consults it.
 
-### D4 — `Verdict` exposes a named `Holder` and a `Reason`, never the sources
+### D4 — `Verdict` exposes policy results, never sources or presentation text
 
 ```
 Verdict.Occupied() bool
 Verdict.Holder()   Holder
-Verdict.Reason()   string
 Verdict.PhaseID()  string
+Verdict.Err()      error
 ```
 
 `Holder` is a closed enum over matrix §1, collapsed to what consumers actually
@@ -203,14 +206,8 @@ path "re-reserves while the slot it is about to dismiss is still installed"
 transient, with per-purpose overrides for repair, autofix, and the install
 backstop. Three overrides in one table beats four ladders in four files.
 
-`Reason()` is likewise a table keyed by `(Purpose, Holder)`. The same holder
-gets different text per role by design — `flowRepairTerminalStatus`,
-`flowAutofixTerminalStatus`, `flowWorktreeAgentSlotStatus`, and
-`flowPhaseResumeTerminalStatus` are four strings for one slot — so the strings
-move into `flowoccupancy` with the table. Callers that refuse in silence (auto
-phase, create, phase resume: matrix D3) simply do not read `Reason()`; loudness
-stays the caller's decision, because it is a presentation concern and the poll's
-1 Hz repaint is the reason for it.
+Presentation text stays in `model`, as confirmed by Q3 below. The module owns
+which holder wins and returns the phase identity needed by model's copy table.
 
 ### D5 — six adapter interfaces, one per source family
 
@@ -242,11 +239,14 @@ exists to hide. See decision request Q4.
 
 | Consumer | After |
 | --- | --- |
-| Each admission | one `Occupancy.Query` call; refuse on `Occupied()`, render `Reason()` or stay silent per role |
-| `previewFlowLaunch`, `previewRepairLaunch`, `previewPhaseResume`, the three footer predicates | one `StagePreview` query, conjoined with the existing launchability half, which is unchanged |
+| Each admission | one `Occupancy.Query` call; refuse on `Occupied()`, render model-owned text or stay silent per role |
+| `previewFlowLaunch`, `previewRepairLaunch` | one `StagePreview` query, conjoined with the existing launchability half |
+| Footer predicates, including phase resume | one `StageFooter` query, preserving footer-only terms |
 | `flowAutoAdvanceOccupied` and the drain's session pre-filter | one `StageDrain` query |
+| Drain arm/disarm repair checks | one `StageDrainControl` query |
+| Session release gesture | one authoritative `StageSessionRelease` query after its `RoleNone` footer check |
 | `flowRepairOccupancyRefusal` | deleted; the ladder is the repair rows of the priority and reason tables |
-| `flowLaunchEmbeddedBackstop` | one `StageInstall` query per kind; the per-kind strings move into the reason table |
+| `flowLaunchEmbeddedBackstop` | one `StageInstall` query per kind; model keeps the per-kind strings |
 | `flowLaunchAdmissionOccupied`, `flowLaunchRuntimeOccupied` | deleted once the last caller migrates |
 | `flowLaunchPhaseSessionOccupied(Except)`, `phaseHasMatchingLiveSession(Except)` | move into `flowoccupancy` as the phase-session rule; the resume exemption becomes a `Query` field |
 | tmux keypress probes | unchanged in placement, but reached through `AgentProbe` so the module can refuse to call them at the wrong stage |
@@ -255,15 +255,14 @@ exists to hide. See decision request Q4.
 
 - The four ladders of matrix F2 become one table, and `approach-x0r.11` can
   assert that no new one appears.
-- The C3 rule becomes checkable: a `StagePreview` query that reached
-  `ListFlowSessions` is a bug the module can catch, not a review comment.
+- The C3 rule becomes checkable: a `StagePreview` or `StageFooter` query that
+  reached `ListFlowSessions` is a bug the module can catch, not a review comment.
 - Behavior is preserved exactly, including the per-purpose ordering differences
   D4 names. `approach-x0r.2` pins that with characterization tests *before* any
   caller moves; this ADR is written on the assumption that those tests exist
   first.
-- The user-facing strings move out of `model/`. That is a large, mechanical, and
-  reviewable diff, and it is the point: today's four vocabularies for one holder
-  are only visible once they sit in one table.
+- User-facing strings stay in one exhaustive table in `model/`; the module owns
+  holder selection and ordering.
 - `flowoccupancy` will import `actions`, `flowstore`, and `sessions`, and
   nothing else in this repo. Any future need to import `model` means the
   boundary was drawn wrong.
@@ -306,20 +305,20 @@ than guessing a destination name now.
 ### Q1 - `Purpose` as a `(Role, Stage)` pair: **confirmed, with a `Valid()` registry**
 
 The pair stands. The axes are sparse and irregular rather than orthogonal:
-`StageSessionRelease` admits only `RoleNone`, and `StageAutoAdvance` and
-`StageDrain` admit only `RoleTrackedPhase`. That is a real argument for a flat
-enum and the ADR did not make it against itself.
+`StageSessionRelease` admits only `RoleNone`; `StageAutoAdvance`, `StageDrain`,
+and `StageDrainControl` admit only `RoleTrackedPhase`. That is a real argument
+for a flat enum and the ADR did not make it against itself.
 
 The pair wins anyway, on a stronger ground than D2 gives. The rule most worth
-making machine-checkable is C3, "no `StagePreview` query ever reaches
+making machine-checkable is C3, "no cached rendering query ever reaches
 `ListFlowSessions`". That is expressible only if `Stage` is a value the module
 can quantify over. Flatten it and C3 goes back to being a review comment, which
 is what `approach-x0r.11` exists to end.
 
 Phantom combinations are closed by the `Purpose.Valid()` table rather than by the
-type system. That table becomes the single registry of real consumers, roughly
-25 rows, each `(Role, Stage)` annotated with its matrix section 2 citation, and
-each carrying the source set that purpose may read. An invalid purpose yields a
+type system. That table becomes the single registry of real consumer policies,
+each `(Role, Stage)` annotated with its matrix section 2 citation and carrying
+the source set that purpose may read. An invalid purpose yields a
 fail-closed occupied verdict with `Err`, never a panic: a TUI must not crash on a
 programming error. `approach-x0r.11` asserts the registry both ways, so a
 consumer without a purpose and a purpose without a caller are both build

@@ -6,9 +6,75 @@ import (
 	"strings"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
+
+// flowOccupancyRuntime keeps the occupancy package on the lifecycle's existing
+// model-side seams without exposing the Model's maps or terminal slots.
+type flowOccupancyRuntime struct {
+	model Model
+}
+
+var _ flowoccupancy.Runtime = flowOccupancyRuntime{}
+
+func (runtime flowOccupancyRuntime) AttemptHolder(flowID string) (actions.FlowLaunchRole, bool) {
+	attempt, ok := runtime.model.flowLaunchAttempt(flowID)
+	if !ok {
+		return actions.RoleNone, false
+	}
+	return flowLaunchRole(attempt.Kind), true
+}
+
+func (runtime flowOccupancyRuntime) HasFlowTerminal(flowID string) bool {
+	return runtime.model.hasFlowEmbeddedTerminalForFlow(flowID)
+}
+
+func (runtime flowOccupancyRuntime) HasRepairTerminal(flowID string) bool {
+	return runtime.model.hasFlowRepairEmbeddedTerminalForFlow(flowID)
+}
+
+func (runtime flowOccupancyRuntime) HeadlessWritePending(flowID string) bool {
+	return runtime.model.flowHeadlessWritePending(flowID)
+}
+
+func (runtime flowOccupancyRuntime) RepairDrainPending(flowID string) bool {
+	return runtime.model.hasPendingRepairAutoDrainMarker(flowID)
+}
+
+func flowLaunchRole(kind flowLaunchKind) actions.FlowLaunchRole {
+	switch kind {
+	case flowLaunchKindManualPhase, flowLaunchKindAutoPhase:
+		return actions.RoleTrackedPhase
+	case flowLaunchKindCreatePhase:
+		return actions.RoleCreatePhase
+	case flowLaunchKindPhaseResume:
+		return actions.RolePhaseResume
+	case flowLaunchKindRepair:
+		return actions.RoleRepair
+	case flowLaunchKindAutofix:
+		return actions.RoleAutofix
+	case flowLaunchKindWorktreeAgent:
+		return actions.RoleWorktreeAgent
+	case flowLaunchKindSavedSessionResume:
+		return actions.RoleSavedSessionResume
+	default:
+		return actions.RoleNone
+	}
+}
+
+func (m Model) createFlowAdmissionOccupancy(flowID string) flowoccupancy.Verdict {
+	return flowoccupancy.New(flowoccupancy.Sources{
+		Runtime: flowOccupancyRuntime{model: m},
+	}).Query(flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  actions.RoleCreatePhase,
+			Stage: flowoccupancy.StageAdmission,
+		},
+	})
+}
 
 // flowLaunchSeams is the authoritative boundary the launch lifecycle reads and
 // writes through. It is built once in NewWithOptions and stored on the Model so

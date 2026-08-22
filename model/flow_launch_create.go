@@ -421,7 +421,7 @@ func (m Model) handleCreateFlowAllocated(msg flowLaunchEventMsg) (Model, tea.Cmd
 	if !artifacts.IsSafeID(msg.FlowID) {
 		return m.refuseCreateFlowLaunch(msg.Create, fmt.Sprintf("Flow ID allocation returned invalid ID %q", msg.FlowID))
 	}
-	if m.flowLaunchRuntimeOccupied(msg.FlowID) {
+	if m.createFlowAdmissionOccupancy(msg.FlowID).Occupied() {
 		return m.refuseCreateFlowLaunch(msg.Create, noLaunchableFlowPhaseStatus)
 	}
 	attempt := flowLaunchAttempt{
