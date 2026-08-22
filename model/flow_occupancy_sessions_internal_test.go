@@ -421,7 +421,7 @@ func TestGenericFlowRuntimeOccupancyReasonOrdersSessionBeforeRunning(t *testing.
 		}
 	})
 
-	t.Run("a later phase's session outranks an earlier phase's running status", func(t *testing.T) {
+	t.Run("an earlier phase's running status outranks a later phase's session", func(t *testing.T) {
 		// Both reasons exist, in different phases. The earlier phase is reached
 		// first, so its running reason is the one reported — the session-first
 		// rule is per phase, not per record.
