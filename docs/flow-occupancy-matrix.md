@@ -234,7 +234,26 @@ Recorded as observations against `3d147d4`, not as work items for this slice.
   a tracked phase launch admitted by AutoMode can land in a worktree an autofix
   agent still owns. This is stated as a known limit
   (`tmux_mode.go:421-427`), not a bug this epic introduces.
+
+  *Follow-up, 2026-08-20 (`approach-x0r.13` grill, decision Q6).* Frozen in
+  `approach-x0r` and filed separately. A registry-only check at `StageDrain`
+  looked free — `flowAutofixTmuxLaunchIDs` is a map lookup with no I/O — but is
+  not viable: registry entries are never removed (`model/model.go:236-244`, "It
+  needs no expiry"), so it would permanently block AutoMode on any Flow that ran
+  a single autofix in the session.
 - **F6 — S9 keeps a Flow occupied after its process exits.** An exited Flow
   terminal still satisfies S6 until `dismissExitedFlowEmbeddedTerminals`
   (`embedded_terminal.go:1048`) sweeps it, so occupancy briefly outlives the
   agent. Consumers do not distinguish the two states today.
+
+  *Correction, 2026-08-20 (`approach-x0r.13` grill, decision Q4).* As written
+  this finding conflates two phenomena with very different lifetimes. For
+  auto-closing slots — phase, repair, createPhase, resume — the sweep runs on
+  `embeddedTerminalTickMsg` (`model/model.go:2104-2105`) and
+  `embeddedTerminalRepaintInterval = time.Second / 30`
+  (`embedded_terminal.go:293`), so the window is 33ms, one frame. For
+  `FlowAgent` and `FlowSavedSessionResume` slots the sweep skips them entirely
+  (`:1051`, `:1067`) and the exited terminal is retained until the user
+  dismisses it — not a race window but the `embeddedTerminalDetachNever` policy
+  of §2.5, which exists to preserve occupancy. Only the first case is a window,
+  and 33ms is not worth closing. `approach-x0r` freezes both.
