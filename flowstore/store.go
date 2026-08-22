@@ -2288,9 +2288,8 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 		if phase.Outcome != update.ExpectedOutcome {
 			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed outcome for %s: expected %q, found %q", phase.PhaseID, update.ExpectedOutcome, phase.Outcome)
 		}
-		if phase.Status != PhaseNeedsAttention ||
-			(phase.Outcome != OutcomePhaseResultMissing && phase.Outcome != OutcomePhaseResultStale) {
-			return FlowRecord{}, fmt.Errorf("flow phase recover requires needs_attention with outcome %s or %s", OutcomePhaseResultMissing, OutcomePhaseResultStale)
+		if _, ok := reconciledPhaseRecoveryReason(phase); !ok {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires needs_attention with outcome %s or %s, or reconciliation-blocked plan review", OutcomePhaseResultMissing, OutcomePhaseResultStale)
 		}
 		if !phase.UpdatedAt.Equal(update.ExpectedUpdatedAt) {
 			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed update timestamp for %s", phase.PhaseID)
@@ -2325,6 +2324,23 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
+	if phase.Status == PhaseNeedsAttention &&
+		(phase.Outcome == OutcomePhaseResultMissing || phase.Outcome == OutcomePhaseResultStale) {
+		return phase.Outcome, true
+	}
+	if SemanticKind(phase) != KindPlanReview || phase.Status != PhaseBlocked || phase.Outcome != OutcomeBlocked {
+		return "", false
+	}
+	notes := strings.TrimSpace(phase.Notes)
+	for _, reason := range []string{OutcomePhaseResultMissing, OutcomePhaseResultStale} {
+		if strings.HasPrefix(notes, reason+":") {
+			return reason, true
+		}
+	}
+	return "", false
 }
 
 func recoverablePhaseLaunchRemovalReason(phase FlowPhase, latestLaunchID string) (string, bool) {

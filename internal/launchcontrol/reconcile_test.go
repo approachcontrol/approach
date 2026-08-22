@@ -165,7 +165,7 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	if phase.Status != flowstore.PhaseBlocked || phase.Outcome != flowstore.OutcomeBlocked || !strings.HasPrefix(phase.Notes, "phase_result_missing: launch launch-1 exited (terminal_exit, exit code 1)") {
 		t.Fatalf("plan-review = %#v", phase)
 	}
-	wantRecovery := "Recover with: approach flow phase restart --flow-id " + created.FlowID + " --phase-id plan-review"
+	wantRecovery := "Recover with: approach flow phase recover --flow-id " + created.FlowID + " --phase-id plan-review"
 	if !strings.Contains(phase.Notes, wantRecovery) {
 		t.Fatalf("plan-review notes = %q, missing %q", phase.Notes, wantRecovery)
 	}

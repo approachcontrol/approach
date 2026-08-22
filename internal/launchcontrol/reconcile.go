@@ -159,16 +159,9 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 	return outcome, nil
 }
 
-// RecoveryCommand is the command ordinary reconciliation demotions advertise.
+// RecoveryCommand is the command every reconciliation demotion advertises.
 func RecoveryCommand(flowID, phaseID string) string {
 	return fmt.Sprintf("approach flow phase recover --flow-id %s --phase-id %s", flowID, phaseID)
-}
-
-func reconciliationRecoveryCommand(phase flowstore.FlowPhase, flowID string) string {
-	if flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
-		return fmt.Sprintf("approach flow phase restart --flow-id %s --phase-id %s", flowID, phase.PhaseID)
-	}
-	return RecoveryCommand(flowID, phase.PhaseID)
 }
 
 // reconcileUpdate builds the demotion write for a phase. Plan-review kinds
@@ -193,7 +186,7 @@ func reconcileUpdate(phase flowstore.FlowPhase, reason string, ev *ExitEvidence,
 	} else {
 		fmt.Fprintf(&detail, "; observed %s", phase.Status)
 	}
-	fmt.Fprintf(&detail, ". Recover with: %s", reconciliationRecoveryCommand(phase, flowID))
+	fmt.Fprintf(&detail, ". Recover with: %s", RecoveryCommand(flowID, phase.PhaseID))
 	update := flowstore.PhaseUpdate{FlowID: flowID, PhaseID: phase.PhaseID, Notes: detail.String()}
 	if flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
 		update.Status = flowstore.PhaseBlocked

@@ -2218,6 +2218,39 @@ func TestRunFlowPhaseRecoverReadsSnapshotAndReturnsDemotedPhaseToReady(t *testin
 	}
 }
 
+func TestRunFlowPhaseRecoverReturnsReconciliationBlockedPlanReviewToReady(t *testing.T) {
+	root := t.TempDir()
+	record := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "recover plan review", "--instructions", "review it", "--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root})
+	record = mustSetFlowPhase(t, root, record.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+	store := mustFlowStore(t, root)
+	var err error
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan-review", LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: flowstore.OutcomePhaseResultMissing + ": reconciled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{"approach", "flow", "phase", "recover", "--flow-id", record.FlowID, "--phase-id", "plan-review", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || result.UpdatedPhase.Outcome != "" || len(result.UpdatedPhase.LaunchIDs) != 0 || len(result.UpdatedPhase.Sessions) != 0 {
+		t.Fatalf("updated plan-review phase = %#v", result.UpdatedPhase)
+	}
+}
+
 func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {

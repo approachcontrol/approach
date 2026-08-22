@@ -69,8 +69,9 @@ stale `running` phase whose latest launch has no live session. Use `recover`
 only for `needs_attention` with `phase_result_missing` or
 `phase_result_stale`; it atomically removes the observed stale launch and
 derives `ready`. Recovery is non-replayable and does not release a retained
-embedded terminal. A plan-review phase in the reconciliation-specific
-`blocked`/`blocked` form must be restarted instead.
+embedded terminal. It also accepts a plan-review phase in the reconciliation-
+specific `blocked`/`blocked` form when its notes retain one of those reasons;
+manually blocked reviews still use `restart`.
 
 After any transition, rerun the pinned Flow read command shown at the start and
 confirm the active phase's status and outcome. A command or readback failure is

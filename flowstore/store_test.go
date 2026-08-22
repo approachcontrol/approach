@@ -1736,6 +1736,44 @@ func TestStoreRecoverReconciledPhaseRemovesOnlyExpectedLaunch(t *testing.T) {
 	}
 }
 
+func TestStoreRecoverReconciledPlanReviewPhase(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := mustCreateFlow(t, store, "Recover reconciled plan review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan-review", LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: flowstore.OutcomePhaseResultMissing + ": reconciled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := phaseByID(t, record, "plan-review")
+
+	record, err = store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{
+		FlowID: record.FlowID, PhaseID: "plan-review", ExpectedStatus: observed.Status,
+		ExpectedOutcome: observed.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: observed.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("RecoverReconciledPhase() error = %v", err)
+	}
+	phase := phaseByID(t, record, "plan-review")
+	if phase.Status != flowstore.PhaseReady || phase.Outcome != "" || phase.Notes != "" || len(phase.LaunchIDs) != 0 || len(phase.Sessions) != 0 {
+		t.Fatalf("recovered plan-review phase = %#v", phase)
+	}
+}
+
 func TestStoreRecoverReconciledPhaseRefusesDriftAndUnsafeRecordsWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1818,8 +1856,8 @@ func TestStoreRecoverReconciledPhaseRefusesUnsupportedAndAmbiguousRecords(t *tes
 		phases []flowstore.FlowPhase
 	}{
 		{
-			name:   "plan-review blocked form",
-			phases: []flowstore.FlowPhase{{PhaseID: "plan-review", Title: "Plan review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, LaunchIDs: []string{"launch-stale"}, Sessions: []flowstore.Session{{Provider: "codex", SessionID: "s", LaunchID: "launch-stale", Status: "ended"}}}},
+			name:   "manually blocked plan-review",
+			phases: []flowstore.FlowPhase{{PhaseID: "plan-review", Title: "Plan review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: "waiting for a decision", LaunchIDs: []string{"launch-stale"}, Sessions: []flowstore.Session{{Provider: "codex", SessionID: "s", LaunchID: "launch-stale", Status: "ended"}}}},
 		},
 		{
 			name: "duplicate phase rows",

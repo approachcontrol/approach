@@ -105,8 +105,10 @@ Additional rules:
   duplicate phase row, or closed Flow rejects the whole transaction. The
   request is non-replayable: an unreachable controller may fall back to a
   direct store open, but a lost response is reported as indeterminate and is
-  never retried. The plan-review `blocked`/`blocked` reconciliation form is not
-  recoverable this way; use `restart` to rerun that review.
+  never retried. For plan review, recovery also accepts the reconciliation-
+  specific `blocked`/`blocked` form when the notes start with
+  `phase_result_missing` or `phase_result_stale`. A manually blocked review is
+  not recoverable this way.
 - The TUI can release an unfinished session on a selected phase, which is what
   recovers a phase blocked by a session that never reached `ended`. `x` runs the
   reset above when the phase is resettable and otherwise probes the session

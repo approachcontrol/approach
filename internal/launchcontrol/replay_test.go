@@ -217,15 +217,20 @@ func TestReplayCase3OnPlanReviewKindWritesBlockedAndSucceeds(t *testing.T) {
 	if phase.Status != flowstore.PhaseBlocked || phase.Outcome != flowstore.OutcomeBlocked || !strings.HasPrefix(phase.Notes, ReasonPhaseResultStale+":") {
 		t.Fatalf("plan-review phase = %#v", phase)
 	}
-	wantRecovery := "Recover with: approach flow phase restart --flow-id " + created.FlowID + " --phase-id plan-review"
+	wantRecovery := "Recover with: approach flow phase recover --flow-id " + created.FlowID + " --phase-id plan-review"
 	if !strings.Contains(phase.Notes, wantRecovery) {
 		t.Fatalf("plan-review notes = %q, missing %q", phase.Notes, wantRecovery)
 	}
-	// blocked -> running is legal and clears the outcome.
-	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseRunning, Notes: ReasonPhaseResultStale}); err != nil {
+	if _, err := store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{
+		FlowID: created.FlowID, PhaseID: "plan-review", ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome,
+		ExpectedLaunchID: "launch-1", ExpectedUpdatedAt: phase.UpdatedAt,
+	}); err != nil {
 		t.Fatalf("recovery: %v", err)
 	}
-	if got := phaseOf(t, store, created.FlowID, "plan-review"); got.Status != flowstore.PhaseRunning || got.Outcome != "" {
+	if report := c.Sweep(); report.Reconciled != 0 {
+		t.Fatalf("post-recovery sweep = %#v", report)
+	}
+	if got := phaseOf(t, store, created.FlowID, "plan-review"); got.Status != flowstore.PhaseReady || got.Outcome != "" || len(got.LaunchIDs) != 0 {
 		t.Fatalf("after recovery = %#v", got)
 	}
 }
