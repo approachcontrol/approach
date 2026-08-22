@@ -118,6 +118,33 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 	}
 }
 
+func TestControllerRefusesWritesFromRecoveredLaunch(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Recovered capability")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	_, endpoint := serveTestController(t, store, root, Registration{FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1", Kind: "phase"})
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "ended", LaunchID: "launch-1", Status: "ended"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if _, err := store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{FlowID: created.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status, ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-1", ExpectedUpdatedAt: phase.UpdatedAt}); err != nil {
+		t.Fatal(err)
+	}
+	client := Client{Endpoint: endpoint.Path, Token: endpoint.Token, LaunchID: "launch-1", FlowID: created.FlowID, PhaseID: "plan"}
+	req, _ := NewRequest(VerbPhaseComplete, PhaseActionPayload{Summary: "late"})
+	resp, err := client.Call(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK || !resp.Refused || !strings.Contains(resp.Error, "was recovered") {
+		t.Fatalf("late recovered-launch write = %#v", resp)
+	}
+}
+
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -72,7 +72,8 @@ derives `ready`. Recovery is non-replayable and does not release a retained
 embedded terminal. The phase must carry the launch-control-owned reconciliation
 stamp; ordinary phase commands cannot create it. Recovery also accepts a
 stamped plan-review phase in the reconciliation-specific `blocked`/`blocked`
-form; manually blocked reviews still use `restart`.
+form; manually blocked reviews still use `restart`. The recovered launch ID is
+fenced, so late phase writes are refused and late session hooks are ignored.
 
 After any transition, rerun the pinned Flow read command shown at the start and
 confirm the active phase's status and outcome. A command or readback failure is

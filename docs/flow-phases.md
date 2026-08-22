@@ -101,8 +101,10 @@ Additional rules:
   update timestamp, latest launch ID, and launch-control-owned reconciliation
   stamp. Ordinary phase commands cannot create that stamp and clear it when
   they update a phase. The store removes that exact launch and its ended
-  sessions, clears the reconciliation state, persists `pending`, and requires
-  readiness derivation to produce `ready`. Any changed snapshot,
+  sessions, records the launch ID as recovered, clears the reconciliation
+  state, persists `pending`, and requires readiness derivation to produce
+  `ready`. The recovered-launch record fences late phase writes and session
+  hooks from recreating ownership. Any changed snapshot,
   live or mismatched session, older live session, unsatisfied predecessor,
   duplicate phase row, or closed Flow rejects the whole transaction. The
   request is non-replayable: an unreachable controller may fall back to a

@@ -263,6 +263,13 @@ func TestExecutePhaseRecoverUsesObservedIdentity(t *testing.T) {
 	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 {
 		t.Fatalf("recovered phase = %#v", result.UpdatedPhase)
 	}
+	resp, err = Execute(store, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-stale", PhaseActionPayload{Summary: "late stale result"}))
+	if err != nil || resp.OK || !resp.Refused || !strings.Contains(resp.Error, "recovered launch") {
+		t.Fatalf("late recovered-launch completion = %#v, %v", resp, err)
+	}
+	if phase := phaseOf(t, store, created.FlowID, "plan"); phase.Status != flowstore.PhaseReady {
+		t.Fatalf("late completion changed recovered phase = %#v", phase)
+	}
 	resp, err = Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
 	if err != nil || resp.OK || !resp.Refused {
 		t.Fatalf("stale phase.recover = %#v, %v", resp, err)

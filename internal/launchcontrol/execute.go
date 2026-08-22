@@ -317,12 +317,13 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			return nil, "", err
 		}
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
-			FlowID:  req.FlowID,
-			PhaseID: req.PhaseID,
-			Status:  flowstore.PhaseStatus(payload.Status),
-			Outcome: payload.Outcome,
-			Notes:   payload.Notes,
-			Summary: payload.Summary,
+			FlowID:          req.FlowID,
+			PhaseID:         req.PhaseID,
+			Status:          flowstore.PhaseStatus(payload.Status),
+			Outcome:         payload.Outcome,
+			Notes:           payload.Notes,
+			Summary:         payload.Summary,
+			RequestLaunchID: req.LaunchID,
 		})
 		return record, "", err
 	case VerbPhaseComplete, VerbPhaseBlock, VerbPhaseNeedsAttention:
@@ -344,12 +345,13 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			outcome = defaultPhaseActionOutcome(string(flowstore.SemanticKind(phase)), action)
 		}
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
-			FlowID:  req.FlowID,
-			PhaseID: req.PhaseID,
-			Status:  flowstore.PhaseStatus(action.status),
-			Outcome: outcome,
-			Notes:   payload.Notes,
-			Summary: payload.Summary,
+			FlowID:          req.FlowID,
+			PhaseID:         req.PhaseID,
+			Status:          flowstore.PhaseStatus(action.status),
+			Outcome:         outcome,
+			Notes:           payload.Notes,
+			Summary:         payload.Summary,
+			RequestLaunchID: req.LaunchID,
 		})
 		if err != nil {
 			return nil, "", err

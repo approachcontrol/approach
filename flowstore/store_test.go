@@ -1735,8 +1735,19 @@ func TestStoreRecoverReconciledPhaseRemovesOnlyExpectedLaunch(t *testing.T) {
 	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-old" {
 		t.Fatalf("launch ids = %#v, want only launch-old", phase.LaunchIDs)
 	}
+	if len(phase.RecoveredLaunchIDs) != 1 || phase.RecoveredLaunchIDs[0] != "launch-stale" {
+		t.Fatalf("recovered launch ids = %#v, want launch-stale", phase.RecoveredLaunchIDs)
+	}
 	if len(phase.Sessions) != 1 || phase.Sessions[0].SessionID != "session-old" {
 		t.Fatalf("sessions = %#v, want only session-old", phase.Sessions)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "late-session", LaunchID: "launch-stale", Status: "running"}})
+	if err != nil {
+		t.Fatalf("late AttachSession() error = %v", err)
+	}
+	phase = phaseByID(t, record, "plan")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].SessionID != "session-old" || flowstore.PhaseSessionLaunchMismatch(phase) {
+		t.Fatalf("late recovered-launch session changed phase = %#v", phase)
 	}
 }
 

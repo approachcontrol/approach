@@ -250,24 +250,24 @@ type FlowPhase struct {
 	Kind          PhaseKind `json:"kind"`
 	// Agent, Model, and ReasoningEffort are optional launch overrides; see
 	// PhaseAgentSettings and ResolvePhaseAgentSettings.
-	Agent           string               `json:"agent,omitempty"`
-	Model           string               `json:"model,omitempty"`
-	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
-	DependsOn       []string             `json:"depends_on"`
-	Status          PhaseStatus          `json:"status"`
-	Order           int                  `json:"order"`
-	Outcome         string               `json:"outcome,omitempty"`
-	Notes           string               `json:"notes,omitempty"`
-	Summary         string               `json:"summary,omitempty"`
-	Reconciliation  *PhaseReconciliation `json:"reconciliation,omitempty"`
-	LaunchIDs       []string             `json:"launch_ids,omitempty"`
-	Sessions        []Session            `json:"sessions,omitempty"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	Agent              string               `json:"agent,omitempty"`
+	Model              string               `json:"model,omitempty"`
+	ReasoningEffort    string               `json:"reasoning_effort,omitempty"`
+	DependsOn          []string             `json:"depends_on"`
+	Status             PhaseStatus          `json:"status"`
+	Order              int                  `json:"order"`
+	Outcome            string               `json:"outcome,omitempty"`
+	Notes              string               `json:"notes,omitempty"`
+	Summary            string               `json:"summary,omitempty"`
+	Reconciliation     *PhaseReconciliation `json:"reconciliation,omitempty"`
+	LaunchIDs          []string             `json:"launch_ids,omitempty"`
+	RecoveredLaunchIDs []string             `json:"recovered_launch_ids,omitempty"`
+	Sessions           []Session            `json:"sessions,omitempty"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
 // PhaseReconciliation authenticates a demotion written by launch control.
-// DemotedAt binds the marker to the phase revision that recovery observes.
 type PhaseReconciliation struct {
 	Reason   string `json:"reason"`
 	LaunchID string `json:"launch_id"`
@@ -630,12 +630,13 @@ type FlowFilter struct {
 
 // PhaseUpdate describes one persisted phase status update.
 type PhaseUpdate struct {
-	FlowID  string
-	PhaseID string
-	Status  PhaseStatus
-	Outcome string
-	Notes   string
-	Summary string
+	FlowID          string
+	PhaseID         string
+	Status          PhaseStatus
+	Outcome         string
+	Notes           string
+	Summary         string
+	RequestLaunchID string
 }
 
 // ReconciliationDemotionUpdate is the launch-control-owned form of PhaseUpdate.
@@ -1078,6 +1079,9 @@ func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation
 
 		now := flowMutationTime(record, s.now())
 		phase := record.Phases[phaseIndex]
+		if update.RequestLaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, update.RequestLaunchID) {
+			return FlowRecord{}, fmt.Errorf("phase write refused recovered launch %q for %s", update.RequestLaunchID, phase.PhaseID)
+		}
 		priorStatus := phase.Status
 		if err := validatePhaseUpdate(phase, update); err != nil {
 			return FlowRecord{}, err
@@ -2103,6 +2107,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
+		if slices.Contains(phase.RecoveredLaunchIDs, launchID) {
+			return FlowRecord{}, fmt.Errorf("flow phase launch id %q was recovered and cannot be reused", launchID)
+		}
 		// Launching a phase is a mutation that derives its readiness. Custom graphs
 		// persist with pending roots (Create defers readiness derivation), so a
 		// now-eligible pending target would otherwise be rejected as an invalid
@@ -2365,6 +2372,7 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 			return FlowRecord{}, errors.New("flow phase recover requires the stale launch and all older sessions to be ended")
 		}
 		phase.LaunchIDs = removePhaseLaunchID(phase.LaunchIDs, update.ExpectedLaunchID)
+		phase.RecoveredLaunchIDs = appendUnique(phase.RecoveredLaunchIDs, update.ExpectedLaunchID)
 		phase.Sessions = removePhaseSessionsForLaunchID(phase.Sessions, update.ExpectedLaunchID)
 		phase.Status = PhasePending
 		phase.Outcome = ""
@@ -2524,6 +2532,9 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		}
 		phase := record.Phases[phaseIndex]
 		session := update.Session
+		if session.LaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, session.LaunchID) {
+			return record, nil
+		}
 		replaced := false
 		for i, existing := range phase.Sessions {
 			if sameSession(existing, session) {
@@ -3525,6 +3536,9 @@ func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 		}
 		for _, launchID := range phase.LaunchIDs {
 			survivor.LaunchIDs = appendUnique(survivor.LaunchIDs, launchID)
+		}
+		for _, launchID := range phase.RecoveredLaunchIDs {
+			survivor.RecoveredLaunchIDs = appendUnique(survivor.RecoveredLaunchIDs, launchID)
 		}
 		for _, session := range phase.Sessions {
 			survivor.Sessions = appendUniqueSession(survivor.Sessions, session)
