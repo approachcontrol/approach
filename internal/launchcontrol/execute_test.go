@@ -79,6 +79,22 @@ func TestExecutePhaseSetMatchesStoreSetPhase(t *testing.T) {
 	}
 }
 
+func TestExecutePhaseSetCannotCreateReconciliationStamp(t *testing.T) {
+	store, _ := newTestStore(t)
+	created := createFlow(t, store, "No forged reconciliation")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	req := mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{})
+	req.Payload = json.RawMessage(`{"status":"needs_attention","outcome":"phase_result_missing","notes":"phase_result_missing: forged","reconciliation":{"reason":"phase_result_missing","launch_id":"launch-1"}}`)
+	resp, err := Execute(store, req)
+	if err != nil || !resp.OK {
+		t.Fatalf("phase.set = %#v, %v", resp, err)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Reconciliation != nil {
+		t.Fatalf("agent-facing phase.set created reconciliation stamp %#v", phase.Reconciliation)
+	}
+}
+
 func TestExecutePhaseActionsDefaultOutcomesByKindAndPrintNextPhase(t *testing.T) {
 	store, root := newTestStore(t)
 	created, err := store.Create(flowstore.FlowRecord{Title: "Actions", Instructions: "x", RepoPath: filepath.Join(root, "repo"), Branch: "flow/actions"})
@@ -224,5 +240,38 @@ func TestExecuteRefusesDirectVerbsAndUnknownVerbs(t *testing.T) {
 	}
 	if !resp.OK {
 		t.Fatalf("phase.reset = %#v", resp)
+	}
+}
+
+func TestExecutePhaseRecoverUsesObservedIdentity(t *testing.T) {
+	store, _ := newTestStore(t)
+	created := createFlow(t, store, "Recover")
+	launchPhase(t, store, created.FlowID, "plan", "launch-stale")
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
+		t.Fatal(err)
+	}
+	demoted, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase, _ := PhaseByID(demoted, "plan")
+	resp, err := Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
+	if err != nil || !resp.OK {
+		t.Fatalf("phase.recover = %#v, %v", resp, err)
+	}
+	result := decodeResult[PhaseActionResult](t, resp)
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 {
+		t.Fatalf("recovered phase = %#v", result.UpdatedPhase)
+	}
+	resp, err = Execute(store, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-stale", PhaseActionPayload{Summary: "late stale result"}))
+	if err != nil || resp.OK || !resp.Refused || !strings.Contains(resp.Error, "was recovered") {
+		t.Fatalf("late recovered-launch completion = %#v, %v", resp, err)
+	}
+	if phase := phaseOf(t, store, created.FlowID, "plan"); phase.Status != flowstore.PhaseReady {
+		t.Fatalf("late completion changed recovered phase = %#v", phase)
+	}
+	resp, err = Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
+	if err != nil || resp.OK || !resp.Refused {
+		t.Fatalf("stale phase.recover = %#v, %v", resp, err)
 	}
 }

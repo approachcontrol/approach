@@ -69,6 +69,8 @@ func (h *manualLaunchHarness) resume(m Model) Model {
 
 func TestTrackedFlowPhaseResumePersistsResumeAndOpensOneSlot(t *testing.T) {
 	record := resumeLaunchFlowRecord()
+	// A phase launched headlessly still resumes through the interactive route.
+	record.Headless = true
 	h := newManualLaunchHarness(t, record)
 
 	m := h.resume(h.resumeModel())

@@ -209,8 +209,8 @@ The endpoint serves exactly the launcher's root (the exported
 `--state-root` — a scratch root under test — is never proxied into the
 launcher's database and opens the root it named directly, as before.
 When the socket does not answer, reads open the database read-only or exit
-non-zero (a read never exits 0 without data); `phase restart`, `add-child`,
-and `agent set` open the database or exit non-zero (`cannot be deferred`) —
+non-zero (a read never exits 0 without data); `phase restart`, `phase recover`,
+`add-child`, and `agent set` open the database or exit non-zero (`cannot be deferred`) —
 except when the request was sent and only the answer was lost, in which case
 they exit non-zero without running again, because the controller may already
 have applied a write that is not idempotent;
@@ -241,10 +241,16 @@ The write is `needs_attention` with the reason as the outcome
 (`phase_result_missing` or `phase_result_stale`); on a plan-review kind it is
 `blocked`/`blocked` with the reason leading the notes, the convention that
 kind already uses for "the agent did not run". Every such note ends with the
-recovery command: `approach flow phase set --flow-id <id> --phase-id <id>
---status running --notes "<reason>"`. An operator who runs it without
-relaunching keeps that launch as the latest one, so a later stale replay will
-demote it again — loud over silent. Launch directories with nothing pending
+recovery command: `approach flow phase recover --flow-id <id> --phase-id
+<id>`. Recovery compares the phase snapshot inside one store transaction,
+including a launch-control-owned reconciliation stamp that ordinary phase
+commands cannot create. It removes the exact stale latest launch and its ended
+session attachments, records a recovered-launch fence, then derives the phase
+to `ready`. Late phase writes carrying that launch ID are refused, and late
+session hooks for it are ignored. Recovery never writes an intermediate
+`running` state and never enters deferred replay. The same command accepts a
+stamped plan-review `blocked`/`blocked` demotion and refuses manually blocked
+reviews. Launch directories with nothing pending
 are retired 14 days after their last state change; a directory with a pending
 request or a held lock is never removed, and neither is one whose launch is
 still the latest launch of a running phase — its agent's next result
@@ -318,3 +324,12 @@ embedded terminal on that Flow — on any phase and in any state — refuses the
 resume out loud until it is closed, detached, or dismissed, while a repair
 terminal and another lifecycle attempt — a manual launch, an auto launch, or a
 repair — refuse it silently.
+
+Phase resume remains interactive even when the original tracked launch was
+headless. It opens an embedded terminal or a tracked tmux window according to
+the interactive resume route and never inherits the Flow's headless launch
+preference. A fresh manual `g` launch is separate and continues to use the
+persisted `headless` value. If recovery leaves an exited embedded terminal
+retained for inspection, that terminal still owns the Flow. Manual launch names
+it and asks the operator to close, detach, or dismiss it; recovery performs no
+terminal cleanup.

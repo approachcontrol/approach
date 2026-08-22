@@ -25,10 +25,8 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 		{name: "pending headless write", sources: []occupancySource{srcHeadlessWrite}, want: flowHeadlessWritePendingStatus},
 		{name: "held lease", sources: []occupancySource{srcLeaseHeld}, want: flowLeaseOccupiedStatus},
 		{name: "unreadable lease", sources: []occupancySource{srcLeaseError}, want: flowLeaseSetupErrorStatus(occupancyLeaseErr())},
-		// Every runtime holder collapses into one generic status: the manual
-		// admission never names which of the three is blocking.
 		{name: "competing attempt", sources: []occupancySource{srcAttemptRepair}, want: noLaunchableFlowPhaseStatus},
-		{name: "Flow terminal", sources: []occupancySource{srcFlowTerminal}, want: noLaunchableFlowPhaseStatus},
+		{name: "Flow terminal", sources: []occupancySource{srcFlowTerminal}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
 		{name: "terminal-less repair slot", sources: []occupancySource{srcRepairSlot}, want: noLaunchableFlowPhaseStatus},
 		{
 			// The headless rung is checked before the lease, so it wins even
@@ -76,6 +74,26 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 				t.Fatalf("status = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestManualPhaseAdmissionNamesRetainedTerminalAndAdmitsAfterRelease(t *testing.T) {
+	f := newOccupancyFixture(t, srcFlowTerminal)
+	f.m.embeddedTerminals[0].Identity = "implementation"
+	next, cmd, admitted := f.m.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: f.flowID()})
+	if admitted || cmd != nil {
+		t.Fatal("retained terminal admitted a launch")
+	}
+	const want = `Close, detach, or dismiss Flow terminal "implementation" before launching this Flow`
+	if next.status.Text != want {
+		t.Fatalf("status = %q, want %q", next.status.Text, want)
+	}
+
+	released := f.m
+	released.embeddedTerminals = nil
+	_, cmd, admitted = released.requestFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: f.flowID()})
+	if !admitted || cmd == nil {
+		t.Fatalf("launch after release admitted = %v, cmd = %T", admitted, cmd)
 	}
 }
 

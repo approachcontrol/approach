@@ -48,7 +48,9 @@ Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
 for the common `completed`, `blocked`, and `needs_attention` outcomes. The
 `approach flow phase restart` wrapper records `running` with a rerun note.
 `approach flow phase reset` is an Approach-owned recovery operation for stale running
-phases, not an agent-facing transition. These wrappers print JSON with the
+phases, not an agent-facing transition. `approach flow phase recover` is the
+atomic recovery for a `needs_attention` phase demoted by reconciliation with
+`phase_result_missing` or `phase_result_stale`. These wrappers print JSON with the
 updated phase and next actionable phase state.
 They do not add separate notes requirements; store validation remains the
 source of truth. Setting `ready` is rejected with "readiness is derived"; the
@@ -94,6 +96,23 @@ Additional rules:
   session launch mismatches, and unsatisfied predecessor gates are rejected.
   The TUI reset is unavailable while a running or starting embedded Flow
   terminal is attached to the same Flow phase.
+- `approach flow phase recover` handles a different state. It reads the current
+  phase snapshot, then atomically verifies its status, reconciliation outcome,
+  update timestamp, latest launch ID, and launch-control-owned reconciliation
+  stamp. Ordinary phase commands cannot create that stamp and clear it when
+  they update a phase. The store removes that exact launch and its ended
+  sessions, records the launch ID as recovered, clears the reconciliation
+  state, persists `pending`, and requires readiness derivation to produce
+  `ready`. The recovered-launch record fences late phase writes and session
+  hooks from recreating ownership. Any changed snapshot,
+  live or mismatched session, older live session, unsatisfied predecessor,
+  duplicate phase row, or closed Flow rejects the whole transaction. The
+  request is non-replayable: an unreachable controller may fall back to a
+  direct store open, but a lost response is reported as indeterminate and is
+  never retried. For plan review, recovery also accepts the reconciliation-
+  specific `blocked`/`blocked` form carrying the same reconciliation stamp. A
+  manually blocked review is not recoverable this way, even if its notes use a
+  reconciliation reason.
 - The TUI can release an unfinished session on a selected phase, which is what
   recovers a phase blocked by a session that never reached `ended`. `x` runs the
   reset above when the phase is resettable and otherwise probes the session
@@ -119,7 +138,8 @@ Additional rules:
 ## Derived readiness
 
 The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetPR`,
-`AddPhaseLaunchID`, and `ResetRecoverableRunningPhase`) re-derive readiness with
+`AddPhaseLaunchID`, `ResetRecoverableRunningPhase`, and
+`RecoverReconciledPhase`) re-derive readiness with
 `refreshPhaseReadiness`, regardless of graph shape. Agents never need to know
 which phase becomes ready next; they only report their own phase.
 
@@ -649,3 +669,11 @@ mutation is rejected and the record is left unchanged. Preserved attached
 session history on the merged logical phase must already be ended; any live or
 unknown-status session must finish before reset is allowed. Session mismatches
 are higher priority than `ended-session` and must be resolved instead of reset.
+
+After reconciliation has already changed a phase to `needs_attention` with
+`phase_result_missing` or `phase_result_stale`, use `approach flow phase
+recover`, not `reset` or a manual status write. A retained embedded terminal is
+not persisted launch history and recovery does not dismiss it. Manual `g`
+continues to refuse the recovered `ready` phase while that terminal owns the
+Flow; the refusal names the terminal and tells the operator to close, detach,
+or dismiss it.

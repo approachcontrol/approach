@@ -250,19 +250,27 @@ type FlowPhase struct {
 	Kind          PhaseKind `json:"kind"`
 	// Agent, Model, and ReasoningEffort are optional launch overrides; see
 	// PhaseAgentSettings and ResolvePhaseAgentSettings.
-	Agent           string      `json:"agent,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
-	DependsOn       []string    `json:"depends_on"`
-	Status          PhaseStatus `json:"status"`
-	Order           int         `json:"order"`
-	Outcome         string      `json:"outcome,omitempty"`
-	Notes           string      `json:"notes,omitempty"`
-	Summary         string      `json:"summary,omitempty"`
-	LaunchIDs       []string    `json:"launch_ids,omitempty"`
-	Sessions        []Session   `json:"sessions,omitempty"`
-	CreatedAt       time.Time   `json:"created_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	Agent              string               `json:"agent,omitempty"`
+	Model              string               `json:"model,omitempty"`
+	ReasoningEffort    string               `json:"reasoning_effort,omitempty"`
+	DependsOn          []string             `json:"depends_on"`
+	Status             PhaseStatus          `json:"status"`
+	Order              int                  `json:"order"`
+	Outcome            string               `json:"outcome,omitempty"`
+	Notes              string               `json:"notes,omitempty"`
+	Summary            string               `json:"summary,omitempty"`
+	Reconciliation     *PhaseReconciliation `json:"reconciliation,omitempty"`
+	LaunchIDs          []string             `json:"launch_ids,omitempty"`
+	RecoveredLaunchIDs []string             `json:"recovered_launch_ids,omitempty"`
+	Sessions           []Session            `json:"sessions,omitempty"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
+}
+
+// PhaseReconciliation authenticates a demotion written by launch control.
+type PhaseReconciliation struct {
+	Reason   string `json:"reason"`
+	LaunchID string `json:"launch_id"`
 }
 
 // PhaseAgentSettings is the agent selection captured for a Flow phase.
@@ -622,12 +630,20 @@ type FlowFilter struct {
 
 // PhaseUpdate describes one persisted phase status update.
 type PhaseUpdate struct {
-	FlowID  string
-	PhaseID string
-	Status  PhaseStatus
-	Outcome string
-	Notes   string
-	Summary string
+	FlowID          string
+	PhaseID         string
+	Status          PhaseStatus
+	Outcome         string
+	Notes           string
+	Summary         string
+	RequestLaunchID string
+}
+
+// ReconciliationDemotionUpdate is the launch-control-owned form of PhaseUpdate.
+type ReconciliationDemotionUpdate struct {
+	PhaseUpdate
+	Reason   string
+	LaunchID string
 }
 
 // PhaseAgentSettingsUpdate replaces one phase's complete persisted agent
@@ -689,6 +705,18 @@ type PhaseLaunchUpdate struct {
 type PhaseResetUpdate struct {
 	FlowID  string
 	PhaseID string
+}
+
+// PhaseRecoveryUpdate identifies one reconciliation-demoted phase snapshot.
+// Recovery compares every field before removing the stale launch so a request
+// can never apply to phase state newer than the command observed.
+type PhaseRecoveryUpdate struct {
+	FlowID            string
+	PhaseID           string
+	ExpectedStatus    PhaseStatus
+	ExpectedOutcome   string
+	ExpectedLaunchID  string
+	ExpectedUpdatedAt time.Time
 }
 
 // PhaseLaunchEndUpdate records that a tracked Flow launch has ended.
@@ -1007,6 +1035,17 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 //
 // See syncLinkedPlanPhase for the ordering and its accepted windows.
 func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
+	return s.setPhase(update, nil)
+}
+
+// DemoteReconciledPhase persists a launch-control reconciliation marker with
+// the phase transition. Agent-facing phase commands do not expose this method.
+func (s *Store) DemoteReconciledPhase(update ReconciliationDemotionUpdate) (FlowRecord, error) {
+	stamp := &PhaseReconciliation{Reason: update.Reason, LaunchID: update.LaunchID}
+	return s.setPhase(update.PhaseUpdate, stamp)
+}
+
+func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation) (FlowRecord, error) {
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
@@ -1040,8 +1079,14 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 
 		now := flowMutationTime(record, s.now())
 		phase := record.Phases[phaseIndex]
+		if update.RequestLaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, update.RequestLaunchID) {
+			return FlowRecord{}, fmt.Errorf("phase write refused recovered launch %q for %s", update.RequestLaunchID, phase.PhaseID)
+		}
 		priorStatus := phase.Status
 		if err := validatePhaseUpdate(phase, update); err != nil {
+			return FlowRecord{}, err
+		}
+		if err := validatePhaseReconciliationUpdate(phase, update, reconciliation); err != nil {
 			return FlowRecord{}, err
 		}
 		phase.Status = update.Status
@@ -1056,6 +1101,11 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		}
 		if update.Summary != "" {
 			phase.Summary = update.Summary
+		}
+		phase.Reconciliation = nil
+		if reconciliation != nil {
+			stamp := *reconciliation
+			phase.Reconciliation = &stamp
 		}
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
@@ -1093,6 +1143,28 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", syncErr, compErr)
 	}
 	return FlowRecord{}, syncErr
+}
+
+func validatePhaseReconciliationUpdate(phase FlowPhase, update PhaseUpdate, stamp *PhaseReconciliation) error {
+	if stamp == nil {
+		return nil
+	}
+	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {
+		return fmt.Errorf("unsupported phase reconciliation reason %q", stamp.Reason)
+	}
+	if stamp.LaunchID == "" || LatestPhaseLaunchID(phase) != stamp.LaunchID {
+		return errors.New("phase reconciliation requires the current latest launch")
+	}
+	if SemanticKind(phase) == KindPlanReview {
+		if update.Status != PhaseBlocked || update.Outcome != OutcomeBlocked {
+			return errors.New("plan-review reconciliation requires blocked status and outcome")
+		}
+		return nil
+	}
+	if update.Status != PhaseNeedsAttention || update.Outcome != stamp.Reason {
+		return errors.New("phase reconciliation requires needs_attention with the reconciliation reason as outcome")
+	}
+	return nil
 }
 
 // SetPhaseAgentSettings atomically replaces only one phase's agent settings.
@@ -1388,6 +1460,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		phase.Status = PhaseRunning
 		phase.Outcome = ""
 		phase.Notes = update.Notes
+		phase.Reconciliation = nil
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
@@ -2083,6 +2156,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		if launchPhaseUpdate.Notes != "" {
 			phase.Notes = launchPhaseUpdate.Notes
 		}
+		phase.Reconciliation = nil
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
@@ -2227,6 +2301,135 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 	})
 }
 
+const (
+	OutcomePhaseResultMissing = "phase_result_missing"
+	OutcomePhaseResultStale   = "phase_result_stale"
+)
+
+// RecoverReconciledPhase atomically removes the exact stale launch from a
+// reconciliation-demoted phase and derives that phase back to ready.
+func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
+		return FlowRecord{}, errors.New("phase id is required")
+	}
+	if update.ExpectedLaunchID == "" {
+		return FlowRecord{}, errors.New("phase recovery requires an expected latest launch id")
+	}
+	if update.ExpectedUpdatedAt.IsZero() {
+		return FlowRecord{}, errors.New("phase recovery requires an expected update timestamp")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "recover a phase on")
+		}
+		phaseIndex := -1
+		matches := 0
+		for i, phase := range record.Phases {
+			if artifacts.NormalizePhaseID(phase.PhaseID) == update.PhaseID {
+				matches++
+				if phase.PhaseID == requestedPhaseID || phaseIndex < 0 {
+					phaseIndex = i
+				}
+			}
+		}
+		if matches == 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		if matches != 1 {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires an unambiguous phase; %q has %d rows", update.PhaseID, matches)
+		}
+		phase := record.Phases[phaseIndex]
+		if phase.Status != update.ExpectedStatus {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed status for %s: expected %s, found %s", phase.PhaseID, update.ExpectedStatus, phase.Status)
+		}
+		if phase.Outcome != update.ExpectedOutcome {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed outcome for %s: expected %q, found %q", phase.PhaseID, update.ExpectedOutcome, phase.Outcome)
+		}
+		if _, ok := reconciledPhaseRecoveryReason(phase); !ok {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires needs_attention with outcome %s or %s, or reconciliation-blocked plan review", OutcomePhaseResultMissing, OutcomePhaseResultStale)
+		}
+		if !phase.UpdatedAt.Equal(update.ExpectedUpdatedAt) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed update timestamp for %s", phase.PhaseID)
+		}
+		if latest := LatestPhaseLaunchID(phase); latest != update.ExpectedLaunchID {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed latest launch for %s: expected %q, found %q", phase.PhaseID, update.ExpectedLaunchID, latest)
+		}
+		if PhaseSessionLaunchMismatch(phase) {
+			return FlowRecord{}, errors.New("flow phase recover requires attached sessions to match phase launch ids")
+		}
+		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires satisfied predecessors for %s", phase.PhaseID)
+		}
+		if _, ok := recoverablePhaseLaunchRemovalReason(phase, update.ExpectedLaunchID); !ok {
+			return FlowRecord{}, errors.New("flow phase recover requires the stale launch and all older sessions to be ended")
+		}
+		phase.LaunchIDs = removePhaseLaunchID(phase.LaunchIDs, update.ExpectedLaunchID)
+		phase.RecoveredLaunchIDs = appendUnique(phase.RecoveredLaunchIDs, update.ExpectedLaunchID)
+		phase.Sessions = removePhaseSessionsForLaunchID(phase.Sessions, update.ExpectedLaunchID)
+		phase.Status = PhasePending
+		phase.Outcome = ""
+		phase.Notes = ""
+		phase.Summary = ""
+		phase.Reconciliation = nil
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		recoveredIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if recoveredIndex < 0 || record.Phases[recoveredIndex].Status != PhaseReady {
+			return FlowRecord{}, fmt.Errorf("flow phase recover could not derive %s back to ready", update.PhaseID)
+		}
+		record.Status = DeriveStatus(record)
+		return record, nil
+	})
+}
+
+// PhaseLaunchRecovered reports whether recovery revoked a launch for a phase.
+func (s *Store) PhaseLaunchRecovered(flowID, phaseID, launchID string) (bool, error) {
+	launchID = strings.TrimSpace(launchID)
+	if launchID == "" {
+		return false, nil
+	}
+	record, err := s.Read(flowID)
+	if err != nil {
+		return false, err
+	}
+	phaseIndex := phaseIndexByID(record.Phases, artifacts.NormalizePhaseID(phaseID))
+	if phaseIndex < 0 {
+		return false, fmt.Errorf("phase %q not found in flow %q", phaseID, flowID)
+	}
+	return slices.Contains(record.Phases[phaseIndex].RecoveredLaunchIDs, launchID), nil
+}
+
+func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
+	stamp := phase.Reconciliation
+	if stamp == nil || stamp.LaunchID != LatestPhaseLaunchID(phase) {
+		return "", false
+	}
+	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {
+		return "", false
+	}
+	if phase.Status == PhaseNeedsAttention && phase.Outcome == stamp.Reason {
+		return stamp.Reason, true
+	}
+	if SemanticKind(phase) == KindPlanReview && phase.Status == PhaseBlocked && phase.Outcome == OutcomeBlocked {
+		return stamp.Reason, true
+	}
+	return "", false
+}
+
+func recoverablePhaseLaunchRemovalReason(phase FlowPhase, latestLaunchID string) (string, bool) {
+	running := phase
+	running.Status = PhaseRunning
+	return recoverableRunningPhaseResetReasonForLaunch(running, latestLaunchID)
+}
+
 func removePhaseSessionsForLaunchID(values []Session, target string) []Session {
 	if target == "" {
 		return values
@@ -2343,6 +2546,10 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		}
 		phase := record.Phases[phaseIndex]
 		session := update.Session
+		session.LaunchID = strings.TrimSpace(session.LaunchID)
+		if session.LaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, session.LaunchID) {
+			return record, nil
+		}
 		replaced := false
 		for i, existing := range phase.Sessions {
 			if sameSession(existing, session) {
@@ -3344,6 +3551,9 @@ func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 		}
 		for _, launchID := range phase.LaunchIDs {
 			survivor.LaunchIDs = appendUnique(survivor.LaunchIDs, launchID)
+		}
+		for _, launchID := range phase.RecoveredLaunchIDs {
+			survivor.RecoveredLaunchIDs = appendUnique(survivor.RecoveredLaunchIDs, launchID)
 		}
 		for _, session := range phase.Sessions {
 			survivor.Sessions = appendUniqueSession(survivor.Sessions, session)

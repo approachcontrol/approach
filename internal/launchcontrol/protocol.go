@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 )
 
 // ProtocolSchemaVersion is the wire and log schema. Bumping it is a
@@ -31,6 +32,7 @@ const (
 	VerbMergeSet            Verb = "merge.set"
 	VerbFlowCreate          Verb = "flow.create"
 	VerbPhaseReset          Verb = "phase.reset"
+	VerbPhaseRecover        Verb = "phase.recover"
 )
 
 // VerbClass decides what happens to a verb when the control endpoint is set.
@@ -69,6 +71,7 @@ var verbTable = map[Verb]VerbClass{
 	VerbPhaseAgentSet:       ClassProxiedNonReplayable,
 	VerbFlowCreate:          ClassDirect,
 	VerbPhaseReset:          ClassDirect,
+	VerbPhaseRecover:        ClassProxiedNonReplayable,
 }
 
 // Classify reports the class of v and whether v is a known verb.
@@ -149,6 +152,15 @@ type PhaseRestartPayload struct {
 
 // PhaseResetPayload mirrors `flow phase reset`; the phase is the request's.
 type PhaseResetPayload struct{}
+
+// PhaseRecoverPayload is the phase snapshot observed by the command before it
+// requests the compare-and-set recovery mutation.
+type PhaseRecoverPayload struct {
+	ExpectedStatus    string    `json:"expected_status"`
+	ExpectedOutcome   string    `json:"expected_outcome"`
+	ExpectedLaunchID  string    `json:"expected_launch_id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
 
 // AddChildPayload mirrors `flow phase add-child`.
 type AddChildPayload struct {

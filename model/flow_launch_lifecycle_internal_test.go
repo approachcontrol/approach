@@ -1513,11 +1513,11 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			wantStatus:   "No launchable Flow phase",
 		},
 		{
-			name:         "occupancy reuses the existing launchability refusal",
+			name:         "retained terminal names the actionable refusal",
 			record:       launchable,
 			agentCommand: "",
 			occupy:       true,
-			wantStatus:   noLaunchableFlowPhaseStatus,
+			wantStatus:   `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`,
 		},
 		{
 			name:         "pending headless write wins over occupancy",
@@ -1921,9 +1921,10 @@ func TestAutoModePreparationFailureReleasesReservation(t *testing.T) {
 func TestFlowLaunchAdmissionRejectsCompetingOccupancy(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	tests := []struct {
-		name      string
-		occupy    func(Model) Model
-		heldToken string
+		name       string
+		occupy     func(Model) Model
+		heldToken  string
+		wantStatus string
 	}{
 		{
 			name: "repair attempt",
@@ -1960,6 +1961,7 @@ func TestFlowLaunchAdmissionRejectsCompetingOccupancy(t *testing.T) {
 				})
 				return m
 			},
+			wantStatus: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`,
 		},
 		{
 			name: "flow repair terminal",
@@ -1987,8 +1989,12 @@ func TestFlowLaunchAdmissionRejectsCompetingOccupancy(t *testing.T) {
 			if cmd != nil {
 				t.Fatal("occupied Flow should not start any launch work")
 			}
-			if got := next.status.Text; got != noLaunchableFlowPhaseStatus {
-				t.Fatalf("status = %q, want %q", got, noLaunchableFlowPhaseStatus)
+			wantStatus := tc.wantStatus
+			if wantStatus == "" {
+				wantStatus = noLaunchableFlowPhaseStatus
+			}
+			if got := next.status.Text; got != wantStatus {
+				t.Fatalf("status = %q, want %q", got, wantStatus)
 			}
 			attempt, held := h.attempt(next, record.FlowID)
 			if tc.heldToken == "" && held {
