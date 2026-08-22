@@ -145,6 +145,7 @@ const (
 	readAttempt runtimePermission = 1 << iota
 	readFlowTerminal
 	readRepairTerminal
+	readFlowTerminalWithoutRepair
 	readHeadlessWrite
 	readRepairDrain
 )
@@ -177,8 +178,8 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	{Role: actions.RolePhaseResume, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: repair admission and its whole-Flow agent probe.
 	{Role: actions.RoleRepair, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
-	// Matrix section 2.1: autofix admission and its registry-only agent probe.
-	{Role: actions.RoleAutofix, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: autofix admission and its whole-Flow agent probe.
+	{Role: actions.RoleAutofix, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: worktree-agent admission reads every source family.
 	{Role: actions.RoleWorktreeAgent, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: saved-session resume admits after resolving its Flow.
@@ -213,7 +214,7 @@ var purposeRegistry = map[Purpose]purposePolicy{
 
 	// Matrix section 2.3: footer and preview consumers use mirrors only.
 	{Role: actions.RoleTrackedPhase, Stage: StagePreview}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
-	{Role: actions.RolePhaseResume, Stage: StagePreview}:   {sources: readRuntime | readLease, runtime: readFlowTerminal | readRepairTerminal, freshness: allowCached},
+	{Role: actions.RolePhaseResume, Stage: StagePreview}:   {sources: readRuntime | readLease, runtime: readFlowTerminalWithoutRepair, freshness: allowCached},
 	{Role: actions.RoleRepair, Stage: StagePreview}:        {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
 	{Role: actions.RoleAutofix, Stage: StagePreview}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
 	{Role: actions.RoleWorktreeAgent, Stage: StagePreview}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, freshness: allowCached},
@@ -491,24 +492,31 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 	if occupancy.sources.Runtime == nil {
 		return failedVerdict(ErrMissingRuntime)
 	}
+	return queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+}
 
-	if policy.runtime&readAttempt != 0 {
-		if role, occupied := occupancy.sources.Runtime.AttemptHolder(flowID); occupied {
+func queryRuntime(permission runtimePermission, runtime Runtime, flowID string) Verdict {
+	if permission&readAttempt != 0 {
+		if role, occupied := runtime.AttemptHolder(flowID); occupied {
 			return Verdict{holder: attemptHolder(role)}
 		}
 	}
-	// A repair slot and a live Flow terminal deliberately overlap. Prefer the
-	// more specific repair holder so the result stays deterministic.
-	if policy.runtime&readRepairTerminal != 0 && occupancy.sources.Runtime.HasRepairTerminal(flowID) {
-		return Verdict{holder: HolderRepairTerminal}
-	}
-	if policy.runtime&readFlowTerminal != 0 && occupancy.sources.Runtime.HasFlowTerminal(flowID) {
+	if permission&readFlowTerminalWithoutRepair != 0 &&
+		runtime.HasFlowTerminal(flowID) && !runtime.HasRepairTerminal(flowID) {
 		return Verdict{holder: HolderFlowTerminal}
 	}
-	if policy.runtime&readRepairDrain != 0 && occupancy.sources.Runtime.RepairDrainPending(flowID) {
+	// A repair slot and a live Flow terminal deliberately overlap. Prefer the
+	// more specific repair holder so the result stays deterministic.
+	if permission&readRepairTerminal != 0 && runtime.HasRepairTerminal(flowID) {
+		return Verdict{holder: HolderRepairTerminal}
+	}
+	if permission&readFlowTerminal != 0 && runtime.HasFlowTerminal(flowID) {
+		return Verdict{holder: HolderFlowTerminal}
+	}
+	if permission&readRepairDrain != 0 && runtime.RepairDrainPending(flowID) {
 		return Verdict{holder: HolderRepairDrain}
 	}
-	if policy.runtime&readHeadlessWrite != 0 && occupancy.sources.Runtime.HeadlessWritePending(flowID) {
+	if permission&readHeadlessWrite != 0 && runtime.HeadlessWritePending(flowID) {
 		return Verdict{holder: HolderHeadlessWrite}
 	}
 	return Free()

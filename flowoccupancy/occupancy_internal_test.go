@@ -183,6 +183,39 @@ func TestStageInstallReadsPerRoleTerminalSources(t *testing.T) {
 	}
 }
 
+func TestAutofixAdmissionUsesWholeFlowAgentProbe(t *testing.T) {
+	policy := purposeRegistry[Purpose{Role: actions.RoleAutofix, Stage: StageAdmission}]
+	if policy.probe != probeFlowAgent {
+		t.Fatalf("probe = %v, want whole-Flow agent probe %v", policy.probe, probeFlowAgent)
+	}
+}
+
+func TestPhaseResumePreviewPreservesRepairSlotException(t *testing.T) {
+	policy := purposeRegistry[Purpose{Role: actions.RolePhaseResume, Stage: StagePreview}]
+	tests := []struct {
+		name       string
+		flow       bool
+		repair     bool
+		wantHolder Holder
+	}{
+		{name: "neither", wantHolder: HolderNone},
+		{name: "Flow terminal only", flow: true, wantHolder: HolderFlowTerminal},
+		{name: "repair slot only", repair: true, wantHolder: HolderNone},
+		{name: "overlapping Flow terminal and repair slot", flow: true, repair: true, wantHolder: HolderNone},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict := queryRuntime(policy.runtime, runtimeFixture{
+				flows:   map[string]bool{"flow-1": tc.flow},
+				repairs: map[string]bool{"flow-1": tc.repair},
+			}, "flow-1")
+			if verdict.Holder() != tc.wantHolder {
+				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.wantHolder)
+			}
+		})
+	}
+}
+
 // Free() stays the way callers and tests express "nothing holds it", and must
 // not drift into occupancy alongside the fail-closed stub.
 func TestFreeIsNotOccupied(t *testing.T) {
