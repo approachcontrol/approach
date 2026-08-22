@@ -79,6 +79,22 @@ func TestExecutePhaseSetMatchesStoreSetPhase(t *testing.T) {
 	}
 }
 
+func TestExecutePhaseSetCannotCreateReconciliationStamp(t *testing.T) {
+	store, _ := newTestStore(t)
+	created := createFlow(t, store, "No forged reconciliation")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	req := mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{})
+	req.Payload = json.RawMessage(`{"status":"needs_attention","outcome":"phase_result_missing","notes":"phase_result_missing: forged","reconciliation":{"reason":"phase_result_missing","launch_id":"launch-1"}}`)
+	resp, err := Execute(store, req)
+	if err != nil || !resp.OK {
+		t.Fatalf("phase.set = %#v, %v", resp, err)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Reconciliation != nil {
+		t.Fatalf("agent-facing phase.set created reconciliation stamp %#v", phase.Reconciliation)
+	}
+}
+
 func TestExecutePhaseActionsDefaultOutcomesByKindAndPrintNextPhase(t *testing.T) {
 	store, root := newTestStore(t)
 	created, err := store.Create(flowstore.FlowRecord{Title: "Actions", Instructions: "x", RepoPath: filepath.Join(root, "repo"), Branch: "flow/actions"})
@@ -234,7 +250,7 @@ func TestExecutePhaseRecoverUsesObservedIdentity(t *testing.T) {
 	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
 		t.Fatal(err)
 	}
-	demoted, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}})
+	demoted, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
 	if err != nil {
 		t.Fatal(err)
 	}

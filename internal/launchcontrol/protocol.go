@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"time"
-
-	"github.com/approachcontrol/approach/flowstore"
 )
 
 // ProtocolSchemaVersion is the wire and log schema. Bumping it is a
@@ -134,11 +132,10 @@ type Response struct {
 
 // PhaseSetPayload mirrors `flow phase set`.
 type PhaseSetPayload struct {
-	Status         string                         `json:"status"`
-	Outcome        string                         `json:"outcome,omitempty"`
-	Summary        string                         `json:"summary,omitempty"`
-	Notes          string                         `json:"notes,omitempty"`
-	Reconciliation *flowstore.PhaseReconciliation `json:"reconciliation,omitempty"`
+	Status  string `json:"status"`
+	Outcome string `json:"outcome,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Notes   string `json:"notes,omitempty"`
 }
 
 // PhaseActionPayload mirrors `flow phase complete|block|needs-attention`.

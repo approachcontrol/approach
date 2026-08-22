@@ -1711,7 +1711,11 @@ func TestStoreRecoverReconciledPhaseRemovesOnlyExpectedLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconcile", Summary: "stale", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}})
+	record, err = store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconcile", Summary: "stale"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended", EndedAt: time.Now().UTC()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1755,7 +1759,7 @@ func TestStoreRecoverReconciledPlanReviewPhase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: flowstore.OutcomePhaseResultMissing + ": reconciled", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}})
+	record, err = store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: flowstore.OutcomePhaseResultMissing + ": reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1829,7 +1833,7 @@ func TestStoreRecoverReconciledPhaseRefusesDriftAndUnsafeRecordsWithoutMutation(
 			if err != nil {
 				t.Fatal(err)
 			}
-			record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled", Reconciliation: &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}})
+			record, err = store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1926,7 +1930,7 @@ func TestStoreRecoverReconciledPhaseRefusesUnsatisfiedPredecessorWithoutMutation
 			record.Phases[i].Status = flowstore.PhaseRunning
 		}
 		if record.Phases[i].PhaseID == "target" {
-			record.Phases[i].Reconciliation = &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale", DemotedAt: target.UpdatedAt}
+			record.Phases[i].Reconciliation = &flowstore.PhaseReconciliation{Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}
 		}
 	}
 	data, _ := json.Marshal(record)
@@ -2417,15 +2421,17 @@ func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
 		t.Fatalf("RestartPhase(ready) error = %v, want ready rejection", err)
 	}
 
-	record, err = store.SetPhase(flowstore.PhaseUpdate{
-		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
-		Status:  flowstore.PhaseNeedsAttention,
-		Outcome: "needs_attention",
-		Notes:   "Follow-up concern remains.",
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "autoreview", LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(autoreview) error = %v", err)
+	}
+	record, err = store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{
+		PhaseUpdate: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "autoreview", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "phase_result_missing: launch ended"},
+		Reason:      flowstore.OutcomePhaseResultMissing,
+		LaunchID:    "launch-stale",
 	})
 	if err != nil {
-		t.Fatalf("SetPhase(needs_attention) error = %v", err)
+		t.Fatalf("DemoteReconciledPhase(autoreview) error = %v", err)
 	}
 	record, err = store.RestartPhase(flowstore.PhaseRestartUpdate{
 		FlowID:  record.FlowID,
@@ -2436,7 +2442,7 @@ func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
 		t.Fatalf("RestartPhase(needs_attention) error = %v", err)
 	}
 	phase := phaseByID(t, record, "autoreview")
-	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" {
+	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" || phase.Reconciliation != nil {
 		t.Fatalf("autoreview after restart = %#v, want running with cleared outcome", phase)
 	}
 }

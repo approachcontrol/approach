@@ -269,9 +269,8 @@ type FlowPhase struct {
 // PhaseReconciliation authenticates a demotion written by launch control.
 // DemotedAt binds the marker to the phase revision that recovery observes.
 type PhaseReconciliation struct {
-	Reason    string    `json:"reason"`
-	LaunchID  string    `json:"launch_id"`
-	DemotedAt time.Time `json:"demoted_at"`
+	Reason   string `json:"reason"`
+	LaunchID string `json:"launch_id"`
 }
 
 // PhaseAgentSettings is the agent selection captured for a Flow phase.
@@ -631,13 +630,19 @@ type FlowFilter struct {
 
 // PhaseUpdate describes one persisted phase status update.
 type PhaseUpdate struct {
-	FlowID         string
-	PhaseID        string
-	Status         PhaseStatus
-	Outcome        string
-	Notes          string
-	Summary        string
-	Reconciliation *PhaseReconciliation
+	FlowID  string
+	PhaseID string
+	Status  PhaseStatus
+	Outcome string
+	Notes   string
+	Summary string
+}
+
+// ReconciliationDemotionUpdate is the launch-control-owned form of PhaseUpdate.
+type ReconciliationDemotionUpdate struct {
+	PhaseUpdate
+	Reason   string
+	LaunchID string
 }
 
 // PhaseAgentSettingsUpdate replaces one phase's complete persisted agent
@@ -1029,6 +1034,17 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 //
 // See syncLinkedPlanPhase for the ordering and its accepted windows.
 func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
+	return s.setPhase(update, nil)
+}
+
+// DemoteReconciledPhase persists a launch-control reconciliation marker with
+// the phase transition. Agent-facing phase commands do not expose this method.
+func (s *Store) DemoteReconciledPhase(update ReconciliationDemotionUpdate) (FlowRecord, error) {
+	stamp := &PhaseReconciliation{Reason: update.Reason, LaunchID: update.LaunchID}
+	return s.setPhase(update.PhaseUpdate, stamp)
+}
+
+func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation) (FlowRecord, error) {
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
@@ -1066,7 +1082,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		if err := validatePhaseUpdate(phase, update); err != nil {
 			return FlowRecord{}, err
 		}
-		if err := validatePhaseReconciliationUpdate(phase, update); err != nil {
+		if err := validatePhaseReconciliationUpdate(phase, update, reconciliation); err != nil {
 			return FlowRecord{}, err
 		}
 		phase.Status = update.Status
@@ -1083,9 +1099,8 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			phase.Summary = update.Summary
 		}
 		phase.Reconciliation = nil
-		if update.Reconciliation != nil {
-			stamp := *update.Reconciliation
-			stamp.DemotedAt = now
+		if reconciliation != nil {
+			stamp := *reconciliation
 			phase.Reconciliation = &stamp
 		}
 		phase.PhaseID = update.PhaseID
@@ -1126,8 +1141,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	return FlowRecord{}, syncErr
 }
 
-func validatePhaseReconciliationUpdate(phase FlowPhase, update PhaseUpdate) error {
-	stamp := update.Reconciliation
+func validatePhaseReconciliationUpdate(phase FlowPhase, update PhaseUpdate, stamp *PhaseReconciliation) error {
 	if stamp == nil {
 		return nil
 	}
@@ -1442,6 +1456,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		phase.Status = PhaseRunning
 		phase.Outcome = ""
 		phase.Notes = update.Notes
+		phase.Reconciliation = nil
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
@@ -2137,6 +2152,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		if launchPhaseUpdate.Notes != "" {
 			phase.Notes = launchPhaseUpdate.Notes
 		}
+		phase.Reconciliation = nil
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
@@ -2371,7 +2387,7 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 
 func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
 	stamp := phase.Reconciliation
-	if stamp == nil || stamp.LaunchID != LatestPhaseLaunchID(phase) || !stamp.DemotedAt.Equal(phase.UpdatedAt) {
+	if stamp == nil || stamp.LaunchID != LatestPhaseLaunchID(phase) {
 		return "", false
 	}
 	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {

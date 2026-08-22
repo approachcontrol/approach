@@ -185,7 +185,7 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 		}
 		if live.Status == string(flowstore.PhaseRunning) {
 			update := reconcileUpdate(phase, ReasonPhaseResultStale, nil, flowID, log.LaunchID(), intended)
-			resp, err := c.demote(log, flowID, log.LaunchID(), update, last, now)
+			resp, err := c.demote(log, flowID, log.LaunchID(), ReasonPhaseResultStale, update, last, now)
 			if err != nil {
 				return result, err
 			}
@@ -200,29 +200,25 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 	return result, nil
 }
 
-// demote applies a reconciliation update through Execute — never bypassing
-// validation — and records the demoted status as the launch's comparison
-// state, so a later replay measures against the reconciled phase.
-func (c *Controller) demote(log *Log, flowID, launchID string, update flowstore.PhaseUpdate, seq int, now time.Time) (Response, error) {
-	payload, err := json.Marshal(PhaseSetPayload{
-		Status: string(update.Status), Outcome: update.Outcome, Notes: update.Notes,
-		Reconciliation: update.Reconciliation,
+// demote applies the controller-only reconciliation mutation and records the
+// demoted status as the launch's comparison state, so a later replay measures
+// against the reconciled phase. Agent-facing phase.set cannot create the stamp.
+func (c *Controller) demote(log *Log, flowID, launchID, reason string, update flowstore.PhaseUpdate, seq int, now time.Time) (Response, error) {
+	record, err := c.store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{
+		PhaseUpdate: update, Reason: reason, LaunchID: launchID,
 	})
+	if err != nil {
+		return refuse(err), nil
+	}
+	result, warning, err := phaseActionResult(record, update.PhaseID)
 	if err != nil {
 		return Response{}, err
 	}
-	req := Request{
-		SchemaVersion: ProtocolSchemaVersion, RequestID: NewRequestID(),
-		LaunchID: launchID, FlowID: flowID, PhaseID: update.PhaseID,
-		Verb: VerbPhaseSet, Payload: payload,
-	}
-	resp, err := Execute(c.store, req)
+	data, err := json.Marshal(result)
 	if err != nil {
-		return resp, err
+		return Response{}, fmt.Errorf("encode reconciled phase result: %w", err)
 	}
-	if !resp.OK {
-		return resp, nil
-	}
+	resp := Response{SchemaVersion: ProtocolSchemaVersion, OK: true, Result: data, Warning: warning}
 	if err := log.WriteApplied(AppliedState{AppliedSeq: seq, Status: string(update.Status), Result: ResultReconciled, AppliedAt: now}); err != nil {
 		return resp, err
 	}

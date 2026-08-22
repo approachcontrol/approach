@@ -146,7 +146,7 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 	if all, err := log.Requests(); err == nil && len(all) > 0 {
 		seq = all[len(all)-1].Seq
 	}
-	resp, err := c.demote(log, flowID, launchID, update, seq, c.now())
+	resp, err := c.demote(log, flowID, launchID, ReasonPhaseResultMissing, update, seq, c.now())
 	if err != nil {
 		return outcome, err
 	}
@@ -187,10 +187,7 @@ func reconcileUpdate(phase flowstore.FlowPhase, reason string, ev *ExitEvidence,
 		fmt.Fprintf(&detail, "; observed %s", phase.Status)
 	}
 	fmt.Fprintf(&detail, ". Recover with: %s", RecoveryCommand(flowID, phase.PhaseID))
-	update := flowstore.PhaseUpdate{
-		FlowID: flowID, PhaseID: phase.PhaseID, Notes: detail.String(),
-		Reconciliation: &flowstore.PhaseReconciliation{Reason: reason, LaunchID: launchID},
-	}
+	update := flowstore.PhaseUpdate{FlowID: flowID, PhaseID: phase.PhaseID, Notes: detail.String()}
 	if flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
 		update.Status = flowstore.PhaseBlocked
 		update.Outcome = flowstore.OutcomeBlocked
@@ -315,7 +312,7 @@ func (c *Controller) sweepLaunch(launchID string, source ExitSource) (notices []
 	if all, err := log.Requests(); err == nil && len(all) > 0 {
 		seq = all[len(all)-1].Seq
 	}
-	resp, err := c.demote(log, flowID, launchID, update, seq, c.now())
+	resp, err := c.demote(log, flowID, launchID, ReasonPhaseResultMissing, update, seq, c.now())
 	if err != nil {
 		return notices, replayed, replay.Reconciled, err
 	}
