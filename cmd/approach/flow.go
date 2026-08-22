@@ -886,6 +886,9 @@ func runFlowPhaseRecover(args []string, deps runDeps) error {
 		}
 		return err
 	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
 	if *flowID == "" {
 		return errors.New("flow phase recover requires --flow-id")
 	}

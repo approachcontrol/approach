@@ -137,6 +137,32 @@ func TestRunFlowPhaseActionHelpPrintsExamplesWithoutLoadingConfig(t *testing.T) 
 	}
 }
 
+func TestRunFlowPhaseRecoverRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
+	err := run([]string{
+		"approach", "flow", "phase", "recover",
+		"oops", "--state-root", t.TempDir(),
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run before positional argument validation")
+			return config.Config{}, nil
+		},
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return "flow-id"
+			case "APPROACH_FLOW_PHASE_ID":
+				return "phase-id"
+			default:
+				return ""
+			}
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil || !strings.Contains(err.Error(), `unexpected argument "oops"`) {
+		t.Fatalf("flow phase recover error = %v, want the unexpected-argument refusal", err)
+	}
+}
+
 func TestRunFlowPhaseSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	var stdout bytes.Buffer
 	err := run([]string{"approach", "flow", "phase", "set", "--help"}, noScanDeps(t, runDeps{
