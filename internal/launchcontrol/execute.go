@@ -273,6 +273,15 @@ func Execute(store *flowstore.Store, req Request) (Response, error) {
 	if store == nil {
 		return Response{}, errors.New("launch control executor requires a store")
 	}
+	if req.LaunchID != "" && req.PhaseID != "" && !IsRead(req.Verb) {
+		recovered, err := store.PhaseLaunchRecovered(req.FlowID, req.PhaseID, req.LaunchID)
+		if err != nil {
+			return refuse(err), nil
+		}
+		if recovered {
+			return refuse(fmt.Errorf("launch %q was recovered and can no longer write", req.LaunchID)), nil
+		}
+	}
 	result, warning, err := executeVerb(store, req)
 	if err != nil {
 		return refuse(err), nil

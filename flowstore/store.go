@@ -2390,6 +2390,23 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 	})
 }
 
+// PhaseLaunchRecovered reports whether recovery revoked a launch for a phase.
+func (s *Store) PhaseLaunchRecovered(flowID, phaseID, launchID string) (bool, error) {
+	launchID = strings.TrimSpace(launchID)
+	if launchID == "" {
+		return false, nil
+	}
+	record, err := s.Read(flowID)
+	if err != nil {
+		return false, err
+	}
+	phaseIndex := phaseIndexByID(record.Phases, artifacts.NormalizePhaseID(phaseID))
+	if phaseIndex < 0 {
+		return false, fmt.Errorf("phase %q not found in flow %q", phaseID, flowID)
+	}
+	return slices.Contains(record.Phases[phaseIndex].RecoveredLaunchIDs, launchID), nil
+}
+
 func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
 	stamp := phase.Reconciliation
 	if stamp == nil || stamp.LaunchID != LatestPhaseLaunchID(phase) {
@@ -2529,6 +2546,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		}
 		phase := record.Phases[phaseIndex]
 		session := update.Session
+		session.LaunchID = strings.TrimSpace(session.LaunchID)
 		if session.LaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, session.LaunchID) {
 			return record, nil
 		}

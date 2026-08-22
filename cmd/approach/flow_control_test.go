@@ -228,11 +228,18 @@ func TestPhaseRecoverFallsBackDirectlyWhenEndpointCannotBeReached(t *testing.T) 
 	}
 	stdout.Reset()
 	err = run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "late", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-stale", created.FlowID, "plan")}))
-	if err == nil || !strings.Contains(err.Error(), "recovered launch") {
+	if err == nil || !strings.Contains(err.Error(), "was recovered") {
 		t.Fatalf("late direct-fallback completion = %v, want recovered-launch refusal", err)
 	}
 	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseReady {
 		t.Fatalf("late direct-fallback completion changed phase = %#v", phase)
+	}
+	err = run([]string{"approach", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "99", "--url", "https://github.com/o/r/issues/99", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, "", "tok", "launch-stale", created.FlowID, "plan")}))
+	if err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch direct issue write = %v, want recovered-launch refusal", err)
+	}
+	if read := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}); read.Issue.Number != 0 {
+		t.Fatalf("recovered launch changed issue metadata = %#v", read.Issue)
 	}
 }
 

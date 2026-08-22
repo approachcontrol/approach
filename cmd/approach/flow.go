@@ -1695,14 +1695,6 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		return launchcontrol.Response{}, fmt.Errorf("unknown launch control verb %q", req.Verb)
 	}
 	control := flowControlContextFromEnv(deps)
-	if class == launchcontrol.ClassDirect || control.endpoint == "" ||
-		!control.servesRoot(stateRoot) || !control.servesFlow(req.FlowID) {
-		return runFlowRequestDirect(deps, stateRoot, req, role)
-	}
-	client := launchcontrol.Client{
-		Endpoint: control.endpoint, Token: control.token,
-		LaunchID: control.launchID, FlowID: control.flowID, PhaseID: control.phaseID,
-	}
 	req.SchemaVersion = launchcontrol.ProtocolSchemaVersion
 	if req.RequestID == "" {
 		req.RequestID = launchcontrol.NewRequestID()
@@ -1713,6 +1705,14 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	}
 	if req.PhaseID == "" {
 		req.PhaseID = control.phaseID
+	}
+	if class == launchcontrol.ClassDirect || control.endpoint == "" ||
+		!control.servesRoot(stateRoot) || !control.servesFlow(req.FlowID) {
+		return runFlowRequestDirect(deps, stateRoot, req, role)
+	}
+	client := launchcontrol.Client{
+		Endpoint: control.endpoint, Token: control.token,
+		LaunchID: control.launchID, FlowID: control.flowID, PhaseID: control.phaseID,
 	}
 	resp, err := client.Call(req)
 	if err == nil {
