@@ -307,11 +307,15 @@ launch yet.
 
 Optional templates for Flow phase launch prompts and the `U` autofix launcher.
 Blank or omitted keys use the built-in prompt for that key. Unknown placeholders
-remain literal. Approach appends `After completing this phase goal, mark this
-Flow phase done with approach-flow.` to both built-in phase prompts and
-configured phase templates unless the template already ends with that exact
-standalone instruction. The `autofix` key is not a phase prompt and never
-receives that suffix.
+remain literal. Approach appends a two-line suffix to both built-in phase
+prompts and configured phase templates: `Before your final response, wait for
+every spawned background or delegated task to finish and consume its result;
+if any cannot finish safely, stop it and persist needs_attention or blocked
+with useful notes.` followed by `After completing this phase goal, mark this
+Flow phase done with approach-flow.` A template already ending with that exact
+pair is left alone; a template ending with only the phase-done instruction has
+that line replaced with the full pair. The `autofix` key is not a phase prompt
+and never receives that suffix.
 
 The `f2` prompt-template picker also manages these Flow prompt keys. Saving a
 blank or whitespace-only template with `ctrl+s` resets that key by removing the
@@ -791,12 +795,15 @@ use the `commit` skill, Review Loop to use the review-loop workflow with goal
 `review-and-revise` and `commit` when revisions are made, PR Creation to use
 the `ship` skill, and Autoreview to use `ship` when fixes require commits or
 pushes. All Flow phase launch prompts also end with:
+`Before your final response, wait for every spawned background or delegated
+task to finish and consume its result; if any cannot finish safely, stop it
+and persist needs_attention or blocked with useful notes.` followed by
 `After completing this phase goal, mark this Flow phase done with approach-flow.`
 Autoreview launch prompts include the PR target metadata but leave detailed
 completion, needs-attention, blocked, and restart mechanics to the high-level
 Flow phase commands.
 Override `[flow_prompts]` keys to customize those phase templates; Approach still
-appends the common phase-done instruction to custom templates.
+appends the common pending-work and phase-done instructions to custom templates.
 
 The PR Creation phase should record structured PR metadata with
 `approach flow pr set` after a pull request exists. The command currently supports
