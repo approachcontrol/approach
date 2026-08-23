@@ -57,6 +57,14 @@ source of truth. Setting `ready` is rejected with "readiness is derived"; the
 CLI rejects unknown statuses with the valid list, and the store rejects them as
 `invalid phase status`.
 
+Every generated phase prompt, including prompts built from `[flow_prompts]`
+templates, ends with the same lifecycle rule. Before its final response, the
+agent waits for all spawned background or delegated work and consumes every
+result. If work cannot finish safely, the agent stops it and records
+`needs_attention` with useful notes for unfinished actionable work, or
+`blocked` for a genuine external blocker. The phase-result write comes after
+that drain, so `completed` never claims success while tracked work is running.
+
 ## Canonical transition table
 
 | From \ To | running | needs_attention | completed | blocked | skipped |

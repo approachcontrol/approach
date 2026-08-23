@@ -10,7 +10,10 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 )
 
-const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with approach-flow."
+const (
+	flowPendingWorkInstruction = "Before your final response, wait for every spawned background or delegated task to finish and consume its result; if any cannot finish safely, stop it and persist needs_attention or blocked with useful notes."
+	flowPhaseDoneInstruction   = "After completing this phase goal, mark this Flow phase done with approach-flow."
+)
 
 // FlowPromptTemplates stores optional launch prompt templates for Flow phases
 // and the U autofix launcher. Unknown placeholders are left literal so users
@@ -104,24 +107,55 @@ func prNumberPlaceholder(number int) string {
 	return strconv.Itoa(number)
 }
 
-func ensureFlowPhaseDoneInstruction(prompt, guardSource string) string {
+func ensureFlowPhaseWorkflowSuffix(prompt, guardSource string) string {
 	guard := guardSource
 	if strings.TrimSpace(guard) == "" {
 		guard = prompt
 	}
-	if lastNonEmptyPromptLine(guard) == flowPhaseDoneInstruction {
+	guardLines := nonEmptyPromptLines(guard)
+	if hasExactPromptSuffix(guardLines, flowPendingWorkInstruction, flowPhaseDoneInstruction) {
 		return strings.TrimRight(prompt, " \t\r\n")
 	}
-	return strings.TrimRight(prompt, " \t\r\n") + "\n\n" + flowPhaseDoneInstruction
+	if hasExactPromptSuffix(guardLines, flowPhaseDoneInstruction) {
+		prompt = removeExactFinalPromptLine(prompt, flowPhaseDoneInstruction)
+	} else if hasExactPromptSuffix(guardLines, flowPendingWorkInstruction) {
+		return strings.TrimRight(prompt, " \t\r\n") + "\n\n" + flowPhaseDoneInstruction
+	}
+	return strings.TrimRight(prompt, " \t\r\n") + "\n\n" + flowPendingWorkInstruction + "\n" + flowPhaseDoneInstruction
 }
 
-func lastNonEmptyPromptLine(text string) string {
+func nonEmptyPromptLines(text string) []string {
 	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSuffix(lines[i], "\r")
+	nonEmpty := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
 		if strings.TrimSpace(line) != "" {
-			return line
+			nonEmpty = append(nonEmpty, line)
 		}
+	}
+	return nonEmpty
+}
+
+func hasExactPromptSuffix(lines []string, suffix ...string) bool {
+	if len(lines) < len(suffix) {
+		return false
+	}
+	start := len(lines) - len(suffix)
+	for i := range suffix {
+		if lines[start+i] != suffix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func removeExactFinalPromptLine(prompt, line string) string {
+	trimmed := strings.TrimRight(prompt, " \t\r\n")
+	if !hasExactPromptSuffix(nonEmptyPromptLines(trimmed), line) {
+		return trimmed
+	}
+	if newline := strings.LastIndex(trimmed, "\n"); newline >= 0 {
+		return strings.TrimRight(trimmed[:newline], " \t\r\n")
 	}
 	return ""
 }
@@ -180,7 +214,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 	bin := flowPromptBinary(binary)
 	if template := templates.templateForPhase(phase); strings.TrimSpace(template) != "" {
 		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody, bin)
-		return ensureFlowPhaseDoneInstruction(prompt, template)
+		return ensureFlowPhaseWorkflowSuffix(prompt, template)
 	}
 	var prompt string
 	switch flowstore.SemanticKind(phase) {
@@ -201,7 +235,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 	default:
 		prompt = flowGenericPhasePrompt(record, phase, planPath, planBody, bin)
 	}
-	return ensureFlowPhaseDoneInstruction(prompt, "")
+	return ensureFlowPhaseWorkflowSuffix(prompt, "")
 }
 
 func flowPhasePromptNeedsPlanBody(phase flowstore.FlowPhase) bool {

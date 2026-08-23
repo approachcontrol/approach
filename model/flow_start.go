@@ -722,7 +722,7 @@ func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templa
 	bin := flowPromptBinary(binary)
 	if strings.TrimSpace(templates.Plan) != "" {
 		prompt := renderFlowPromptTemplate(templates.Plan, flow, phase, flow.PlanPath, "", bin)
-		return ensureFlowPhaseDoneInstruction(prompt, templates.Plan)
+		return ensureFlowPhaseWorkflowSuffix(prompt, templates.Plan)
 	}
 	var b strings.Builder
 	b.WriteString("Use the approach-flow skill for this launch.\n\n")
@@ -730,5 +730,5 @@ func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templa
 	b.WriteString("\nProduce a plan only; do not start coding in this phase.")
 	b.WriteString("\nCreate and persist the plan with " + bin + " plan save, link it back with " + bin + " flow plan set, then report Flow persistence failures explicitly before ending.")
 	b.WriteString("\nIf the task references a GitHub issue, link it with " + bin + " flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.")
-	return ensureFlowPhaseDoneInstruction(b.String(), "")
+	return ensureFlowPhaseWorkflowSuffix(b.String(), "")
 }
