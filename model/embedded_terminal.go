@@ -759,11 +759,13 @@ func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
 	case actions.RoleSavedSessionResume:
 		return "session " + shortSessionID(ctx.ResumeSessionID)
 	case actions.RoleAutofix:
-		// The PR number is prompt payload, not dock identity. An autofix launch
-		// that carries no PR number, or that is not running in the dock, has no
-		// label of its own to offer and takes the generic ladder below.
-		if ctx.FlowAutofixPRNumber > 0 && ctx.Embedded && !ctx.Headless {
-			return "autofix"
+		// The PR number and the transport are payload rather than role, so they
+		// stay here: an autofix launch that carries no PR number, or that is not
+		// running in the dock, has no label of its own to offer and takes the
+		// generic ladder below. Headless launches occupy a dock slot like
+		// interactive ones, so they carry the same label.
+		if ctx.FlowAutofixPRNumber > 0 && ctx.Embedded {
+			return fmt.Sprintf("autofix pr %d", ctx.FlowAutofixPRNumber)
 		}
 	}
 	for _, value := range []string{

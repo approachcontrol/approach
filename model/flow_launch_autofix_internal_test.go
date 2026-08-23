@@ -640,11 +640,11 @@ func TestAutofixLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
 				t.Fatalf("embedded terminals = %#v, want exactly one slot", m.embeddedTerminals)
 			}
 			slot := m.embeddedTerminals[0]
-			if slot.Number != 1 || slot.Provider != tc.provider || slot.Identity != "autofix" ||
+			if slot.Number != 1 || slot.Provider != tc.provider || slot.Identity != "autofix pr 116" ||
 				slot.Terminal.State() != "running" || !slot.PrefillPending {
 				t.Fatalf("autofix terminal slot = %#v", slot)
 			}
-			wantLabel := "1 " + tc.provider + " autofix running"
+			wantLabel := "1 " + tc.provider + " autofix pr 116 running"
 			view := ansi.Strip(m.View())
 			if !strings.Contains(view, wantLabel) {
 				t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
@@ -672,7 +672,7 @@ func TestAutofixLaunchHonorsModelAndEffortAndHeadless(t *testing.T) {
 	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
 	m.claudeModel = "claude-opus-4-1"
 
-	h.autofix(m)
+	m = h.autofix(m)
 
 	if len(h.launchContexts) != 1 {
 		t.Fatalf("embedded launches = %#v, want exactly one", h.launchContexts)
@@ -686,6 +686,9 @@ func TestAutofixLaunchHonorsModelAndEffortAndHeadless(t *testing.T) {
 	}
 	if !ctx.Headless {
 		t.Fatal("a headless Flow must launch its autofix agent headless")
+	}
+	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].Identity != "autofix pr 116" {
+		t.Fatalf("headless autofix slot = %#v, want the autofix identity", m.embeddedTerminals)
 	}
 }
 
@@ -942,10 +945,10 @@ func TestAutofixPrepareUsesReservedPRNumber(t *testing.T) {
 		t.Fatalf("reserved PR launch metadata = number %d prompt %q, want 204 and %q",
 			ctx.FlowAutofixPRNumber, ctx.InitialPrompt, "autofix pr #204")
 	}
-	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].Identity != "autofix" {
+	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].Identity != "autofix pr 204" {
 		t.Fatalf("reserved PR terminal slot = %#v", m.embeddedTerminals)
 	}
-	wantLabel := "1 codex autofix running"
+	wantLabel := "1 codex autofix pr 204 running"
 	if view := ansi.Strip(m.View()); !strings.Contains(view, wantLabel) {
 		t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
 	}

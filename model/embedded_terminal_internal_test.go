@@ -248,7 +248,7 @@ func TestFlowEmbeddedTerminalIdentityAutofix(t *testing.T) {
 		mutate func(*actions.AgentLaunchContext)
 		want   string
 	}{
-		{name: "valid", want: "autofix"},
+		{name: "valid", want: "autofix pr 116"},
 		{name: "repair precedence", mutate: func(ctx *actions.AgentLaunchContext) {
 			ctx.FlowRepair = true
 		}, want: "repair"},
@@ -286,7 +286,7 @@ func TestFlowEmbeddedTerminalIdentityAutofix(t *testing.T) {
 		}, want: "flow-1"},
 		{name: "headless", mutate: func(ctx *actions.AgentLaunchContext) {
 			ctx.Headless = true
-		}, want: "flow-1"},
+		}, want: "autofix pr 116"},
 		{name: "tracked without phase", mutate: func(ctx *actions.AgentLaunchContext) {
 			ctx.FlowLaunchTracked = true
 		}, want: "flow-1"},

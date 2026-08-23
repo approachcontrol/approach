@@ -247,22 +247,22 @@ func TestFlowLaunchRoleMatrixConsumerDecisions(t *testing.T) {
 				LaunchID: "launch-1", Record: autofixRecord, PlanPath: autofixRecord.PlanPath,
 			},
 			want: flowLaunchRoleMatrixDecisions{
-				Identity:          "autofix",
+				Identity:          "autofix pr 116",
 				Detach:            embeddedTerminalDetachAllowed,
 				TmuxEligible:      true,
 				RequiresLifecycle: true,
 			},
 		},
 		{
-			// Headless autofix has no dock to label, so it takes the generic
-			// ladder and shows the Flow ID.
+			// Headless autofix occupies a dock slot like the interactive
+			// launch, so it carries the same label.
 			name: "V14 autofix embedded headless",
 			target: autofixTarget{
 				LaunchID: "launch-1", Record: headlessAutofixRecord,
 				PlanPath: headlessAutofixRecord.PlanPath,
 			},
 			want: flowLaunchRoleMatrixDecisions{
-				Identity:          "flow-1",
+				Identity:          "autofix pr 116",
 				Detach:            embeddedTerminalDetachAllowed,
 				RequiresLifecycle: true,
 			},
