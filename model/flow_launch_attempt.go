@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -10,56 +11,23 @@ import (
 // states are ordered but not all reachable for every kind: handoffPending only
 // exists on the external route, and failurePersisting is reachable from any
 // state on a token match alone.
-type flowLaunchState int
+type flowLaunchState = flowownership.State
 
 const (
-	flowLaunchStateReserved flowLaunchState = iota + 1
-	flowLaunchStateReadingSession
-	flowLaunchStateReading
-	flowLaunchStatePreparing
-	flowLaunchStateHandoffPending
-	flowLaunchStateFailurePersisting
-	flowLaunchStateCreateSessionReading
-	flowLaunchStateCreateWriting
-	flowLaunchStateCreateReserving
-	flowLaunchStateCreateWorktree
-	flowLaunchStateCreateBootstrap
-	flowLaunchStateCreateLaunchID
-	flowLaunchStateCreateMetadata
+	flowLaunchStateReserved             = flowownership.StateReserved
+	flowLaunchStateReadingSession       = flowownership.StateReadingSession
+	flowLaunchStateReading              = flowownership.StateReading
+	flowLaunchStatePreparing            = flowownership.StatePreparing
+	flowLaunchStateHandoffPending       = flowownership.StateHandoffPending
+	flowLaunchStateFailurePersisting    = flowownership.StateFailurePersisting
+	flowLaunchStateCreateSessionReading = flowownership.StateCreateSessionReading
+	flowLaunchStateCreateWriting        = flowownership.StateCreateWriting
+	flowLaunchStateCreateReserving      = flowownership.StateCreateReserving
+	flowLaunchStateCreateWorktree       = flowownership.StateCreateWorktree
+	flowLaunchStateCreateBootstrap      = flowownership.StateCreateBootstrap
+	flowLaunchStateCreateLaunchID       = flowownership.StateCreateLaunchID
+	flowLaunchStateCreateMetadata       = flowownership.StateCreateMetadata
 )
-
-func (state flowLaunchState) String() string {
-	switch state {
-	case flowLaunchStateReserved:
-		return "reserved"
-	case flowLaunchStateReadingSession:
-		return "readingSession"
-	case flowLaunchStateReading:
-		return "reading"
-	case flowLaunchStatePreparing:
-		return "preparing"
-	case flowLaunchStateHandoffPending:
-		return "handoffPending"
-	case flowLaunchStateFailurePersisting:
-		return "failurePersisting"
-	case flowLaunchStateCreateSessionReading:
-		return "createSessionReading"
-	case flowLaunchStateCreateWriting:
-		return "createWriting"
-	case flowLaunchStateCreateReserving:
-		return "createReserving"
-	case flowLaunchStateCreateWorktree:
-		return "createWorktree"
-	case flowLaunchStateCreateBootstrap:
-		return "createBootstrap"
-	case flowLaunchStateCreateLaunchID:
-		return "createLaunchID"
-	case flowLaunchStateCreateMetadata:
-		return "createMetadata"
-	default:
-		return "unknown"
-	}
-}
 
 // flowLaunchAttempt reserves one Flow for one launch. It is the only per-Flow
 // launch reservation the lifecycle owns; a retained embedded terminal slot owns
@@ -101,12 +69,7 @@ func (m Model) flowLaunchAttemptOccupied(flowID string) bool {
 }
 
 func (m Model) flowLaunchHandoffPending() bool {
-	for _, attempt := range m.flowLaunchAttempts {
-		if attempt.State == flowLaunchStateHandoffPending {
-			return true
-		}
-	}
-	return false
+	return m.flowOwnership.AnyState(flowLaunchStateHandoffPending)
 }
 
 // flowLaunchAttemptKind names what is holding this Flow, for the callers that
@@ -127,9 +90,16 @@ func (m Model) flowLaunchAttempt(flowID string) (flowLaunchAttempt, bool) {
 	if flowID == "" {
 		return flowLaunchAttempt{}, false
 	}
-	attempt, ok := m.flowLaunchAttempts[flowID]
-	if !ok || strings.TrimSpace(attempt.Token) == "" {
+	record, ok := m.flowOwnership.Lookup(flowID)
+	if !ok {
 		return flowLaunchAttempt{}, false
+	}
+	attempt := record.Payload()
+	attempt.FlowID = record.FlowID()
+	attempt.Token = record.Token()
+	attempt.State = record.State()
+	if record.HasSession() {
+		attempt.SessionKey = record.SessionKey()
 	}
 	return attempt, true
 }
@@ -161,33 +131,20 @@ func (m Model) reserveFlowLaunchAttempt(attempt flowLaunchAttempt, state flowLau
 	if attempt.FlowID == "" || attempt.Token == "" {
 		return m, false
 	}
-	if m.flowLaunchAttemptOccupied(attempt.FlowID) {
-		return m, false
-	}
+	var sessionKey *flowLaunchSavedSessionKey
 	if attempt.Kind == flowLaunchKindSavedSessionResume {
 		if !attempt.SessionKey.valid() {
 			return m, false
 		}
-		if _, occupied := m.flowLaunchSessionOwners[attempt.SessionKey]; occupied {
-			return m, false
-		}
+		sessionKey = &attempt.SessionKey
 	}
 	attempt.State = state
-	m = m.withFlowLaunchAttempt(attempt)
-	if attempt.Kind == flowLaunchKindSavedSessionResume {
-		owners := make(map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner, len(m.flowLaunchSessionOwners)+1)
-		for key, owner := range m.flowLaunchSessionOwners {
-			owners[key] = owner
-		}
-		owners[attempt.SessionKey] = flowLaunchSavedSessionOwner{Token: attempt.Token, FlowID: attempt.FlowID}
-		m.flowLaunchSessionOwners = owners
+	ownership, ok := m.flowOwnership.Reserve(attempt.FlowID, attempt.Token, state, attempt, sessionKey)
+	if !ok {
+		return m, false
 	}
+	m.flowOwnership = ownership
 	return m, true
-}
-
-type flowLaunchSavedSessionOwner struct {
-	Token  string
-	FlowID string
 }
 
 // transferSavedSessionFlowLaunchAttempt moves both ownership indexes in one
@@ -199,29 +156,21 @@ func (m Model) transferSavedSessionFlowLaunchAttempt(fromFlowID, token string, k
 	if !ok || destinationFlowID == "" || attempt.SessionKey != key {
 		return m, false
 	}
-	owner, ok := m.flowLaunchSessionOwners[key]
-	if !ok || owner.Token != attempt.Token || owner.FlowID != fromFlowID {
-		return m, false
-	}
 	if destinationFlowID != fromFlowID && m.flowLaunchAdmissionOccupied(destinationFlowID) {
 		return m, false
 	}
-	attempt.FlowID = destinationFlowID
-	attempt.State = flowLaunchStateReading
-	attempts := make(map[string]flowLaunchAttempt, len(m.flowLaunchAttempts))
-	for flowID, existing := range m.flowLaunchAttempts {
-		if flowID != fromFlowID {
-			attempts[flowID] = existing
-		}
+	ownership, ok := m.flowOwnership.TransferSession(
+		fromFlowID,
+		token,
+		key,
+		destinationFlowID,
+		flowLaunchStateReadingSession,
+		flowLaunchStateReading,
+	)
+	if !ok {
+		return m, false
 	}
-	attempts[destinationFlowID] = attempt
-	owners := make(map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner, len(m.flowLaunchSessionOwners))
-	for existingKey, existingOwner := range m.flowLaunchSessionOwners {
-		owners[existingKey] = existingOwner
-	}
-	owners[key] = flowLaunchSavedSessionOwner{Token: attempt.Token, FlowID: destinationFlowID}
-	m.flowLaunchAttempts = attempts
-	m.flowLaunchSessionOwners = owners
+	m.flowOwnership = ownership
 	return m, true
 }
 
@@ -229,12 +178,16 @@ func (m Model) transferSavedSessionFlowLaunchAttempt(fromFlowID, token string, k
 // Any transition whose source state does not match is a fenced no-op, so a
 // stale event cannot move a superseded attempt.
 func (m Model) transitionFlowLaunchAttempt(flowID, token string, from, to flowLaunchState) (Model, bool) {
-	attempt, ok := m.matchingFlowLaunchAttempt(flowID, token, 0, from)
+	_, ok := m.matchingFlowLaunchAttempt(flowID, token, 0, from)
 	if !ok {
 		return m, false
 	}
-	attempt.State = to
-	return m.withFlowLaunchAttempt(attempt), true
+	ownership, ok := m.flowOwnership.Transition(flowID, token, from, to)
+	if !ok {
+		return m, false
+	}
+	m.flowOwnership = ownership
+	return m, true
 }
 
 // updateFlowLaunchAttempt edits the attempt this Flow and token name. Unlike
@@ -245,8 +198,14 @@ func (m Model) updateFlowLaunchAttempt(flowID, token string, mutate func(*flowLa
 	if !ok || attempt.Token != strings.TrimSpace(token) {
 		return m
 	}
-	mutate(&attempt)
-	return m.withFlowLaunchAttempt(attempt)
+	ownership, ok := m.flowOwnership.UpdatePayload(flowID, token, func(payload flowLaunchAttempt) flowLaunchAttempt {
+		mutate(&payload)
+		return payload
+	})
+	if ok {
+		m.flowOwnership = ownership
+	}
+	return m
 }
 
 // markFlowLaunchAttemptMutatedPhase records that this attempt persisted a
@@ -262,34 +221,9 @@ func (m Model) markFlowLaunchAttemptMutatedPhase(flowID, token string) Model {
 // a no-op on mismatch, so a late release from a superseded attempt can never
 // free a live one.
 func (m Model) releaseFlowLaunchAttempt(flowID, token string) Model {
-	flowID = strings.TrimSpace(flowID)
-	attempt, ok := m.flowLaunchAttempt(flowID)
-	if !ok || attempt.Token != strings.TrimSpace(token) {
-		return m
-	}
-	attempts := make(map[string]flowLaunchAttempt, len(m.flowLaunchAttempts))
-	for existingFlowID, existing := range m.flowLaunchAttempts {
-		if existingFlowID != flowID {
-			attempts[existingFlowID] = existing
-		}
-	}
-	if len(attempts) == 0 {
-		attempts = nil
-	}
-	m.flowLaunchAttempts = attempts
-	if attempt.SessionKey.valid() {
-		if owner, owned := m.flowLaunchSessionOwners[attempt.SessionKey]; owned && owner.Token == attempt.Token && owner.FlowID == flowID {
-			owners := make(map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner, len(m.flowLaunchSessionOwners)-1)
-			for key, existing := range m.flowLaunchSessionOwners {
-				if key != attempt.SessionKey {
-					owners[key] = existing
-				}
-			}
-			if len(owners) == 0 {
-				owners = nil
-			}
-			m.flowLaunchSessionOwners = owners
-		}
+	ownership, ok := m.flowOwnership.Release(flowID, token)
+	if ok {
+		m.flowOwnership = ownership
 	}
 	return m
 }
@@ -325,11 +259,15 @@ func (m Model) suppressUnpersistedAutoFlowLaunchRetry(flowID string) Model {
 }
 
 func (m Model) withFlowLaunchAttempt(attempt flowLaunchAttempt) Model {
-	attempts := make(map[string]flowLaunchAttempt, len(m.flowLaunchAttempts)+1)
-	for flowID, existing := range m.flowLaunchAttempts {
-		attempts[flowID] = existing
-	}
-	attempts[attempt.FlowID] = attempt
-	m.flowLaunchAttempts = attempts
-	return m
+	return m.updateFlowLaunchAttempt(attempt.FlowID, attempt.Token, func(current *flowLaunchAttempt) {
+		*current = attempt
+	})
+}
+
+func (m Model) flowLaunchOwnershipCount() int { return m.flowOwnership.Len() }
+
+func (m Model) flowLaunchSessionOwnerCount() int { return m.flowOwnership.SessionLen() }
+
+func (m Model) flowLaunchSessionOwner(key flowLaunchSavedSessionKey) (flowownership.SessionOwner, bool) {
+	return m.flowOwnership.SessionOwner(key)
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // The composed admissions of §2.1, the previews and footers of §2.3, and the
@@ -248,9 +249,11 @@ func TestFlowOccupancyRuntimeClassifiesEveryLaunchKind(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.want.String(), func(t *testing.T) {
 			m := newOccupancyFixture(t).m
-			m.flowLaunchAttempts = map[string]flowLaunchAttempt{
-				"flow-1": {Token: "token", Kind: tc.kind, FlowID: "flow-1"},
+			attempt := flowLaunchAttempt{Token: "token", Kind: tc.kind, FlowID: "flow-1"}
+			if tc.kind == flowLaunchKindSavedSessionResume {
+				attempt.SessionKey = flowLaunchSavedSessionKey{Provider: sessions.ProviderCodex, SessionID: "session-1"}
 			}
+			m, _ = m.reserveFlowLaunchAttempt(attempt, flowLaunchStateReserved)
 			role, ok := (flowOccupancyRuntime{model: m}).AttemptHolder("flow-1")
 			if !ok || role != tc.want {
 				t.Fatalf("AttemptHolder() = (%v, %v), want (%v, true)", role, ok, tc.want)

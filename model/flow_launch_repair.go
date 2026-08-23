@@ -8,7 +8,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -137,7 +137,7 @@ func (m Model) cachedRepairTarget(intent flowLaunchIntent) (flowstore.FlowRecord
 // their conjunction.
 func (m Model) previewRepairLaunch(intent flowLaunchIntent) (flowstore.FlowRecord, bool) {
 	record, ok := m.cachedRepairTarget(intent)
-	if !ok || m.repairOccupancy(record.FlowID, flowoccupancy.StagePreview).Occupied() {
+	if !ok || m.repairOccupancy(record.FlowID, flowownership.StagePreview).Occupied() {
 		return flowstore.FlowRecord{}, false
 	}
 	return record, true
@@ -155,7 +155,7 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	flowID := strings.TrimSpace(record.FlowID)
 	intent.FlowID = flowID
-	if verdict := m.repairOccupancy(flowID, flowoccupancy.StageAdmission); verdict.Occupied() {
+	if verdict := m.repairOccupancy(flowID, flowownership.StageAdmission); verdict.Occupied() {
 		return m.setStatus(statusOther, flowRepairOccupancyStatus(verdict)), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -189,25 +189,25 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
-func flowRepairOccupancyStatus(verdict flowoccupancy.Verdict) string {
+func flowRepairOccupancyStatus(verdict flowownership.Verdict) string {
 	switch verdict.Holder() {
-	case flowoccupancy.HolderLeaseUnreadable:
+	case flowownership.HolderLeaseUnreadable:
 		return flowLeaseSetupErrorStatus(verdict.Err())
-	case flowoccupancy.HolderPeerLease:
+	case flowownership.HolderPeerLease:
 		return flowLeaseOccupiedStatus
-	case flowoccupancy.HolderRepairAttempt:
+	case flowownership.HolderRepairAttempt:
 		return flowRepairPendingStatus
-	case flowoccupancy.HolderPhaseResumeAttempt:
+	case flowownership.HolderPhaseResumeAttempt:
 		return flowRepairResumePendingStatus
-	case flowoccupancy.HolderPhaseAttempt:
+	case flowownership.HolderPhaseAttempt:
 		return flowRepairPhasePendingStatus
-	case flowoccupancy.HolderOtherAttempt,
-		flowoccupancy.HolderFlowTerminal,
-		flowoccupancy.HolderRepairTerminal:
+	case flowownership.HolderOtherAttempt,
+		flowownership.HolderFlowTerminal,
+		flowownership.HolderRepairTerminal:
 		return flowRepairTerminalStatus
-	case flowoccupancy.HolderHeadlessWrite:
+	case flowownership.HolderHeadlessWrite:
 		return flowHeadlessWritePendingStatus
-	case flowoccupancy.HolderNone:
+	case flowownership.HolderNone:
 		if verdict.Err() != nil {
 			return flowLeaseSetupErrorStatus(verdict.Err())
 		}
@@ -314,14 +314,14 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 // because which CLI escape is even legal depends on it. Iteration follows the
 // record's own phase order so a Flow with two occupied phases reports the same
 // one every press.
-func flowRepairAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowoccupancy.Verdict) string {
+func flowRepairAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowownership.Verdict) string {
 	if strings.TrimSpace(record.FlowID) != flowID {
 		return flowRepairNotRepairableStatus
 	}
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
-	if verdict.Holder() == flowoccupancy.HolderPhaseSession {
+	if verdict.Holder() == flowownership.HolderPhaseSession {
 		if phase, ok := flowPhaseByID(record, verdict.PhaseID()); ok {
 			return flowRepairLiveSessionStatus(flowID, phase)
 		}
@@ -373,12 +373,12 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// drops the advisory launch/close lock on every path out of here.
 		event.Release = release
 		verdict := m.flowReservedOccupancy(m.launchSeams, msg.FlowID, current, actions.RoleRepair)
-		if verdict.Holder() == flowoccupancy.HolderLeaseUnreadable {
+		if verdict.Holder() == flowownership.HolderLeaseUnreadable {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(verdict.Err())
 			return event
-		} else if verdict.Holder() == flowoccupancy.HolderPeerLease {
+		} else if verdict.Holder() == flowownership.HolderPeerLease {
 			event.LeaseDeferred = true
 			event.Err = flowLeaseOccupiedStatus
 			return event

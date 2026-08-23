@@ -10,7 +10,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
@@ -291,20 +291,20 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	if flowID == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
-	occupancy := m.trackedPhaseOccupancy(flowID, flowoccupancy.StageFooter)
+	occupancy := m.trackedPhaseOccupancy(flowID, flowownership.StageFooter)
 	switch occupancy.Holder() {
-	case flowoccupancy.HolderHeadlessWrite:
+	case flowownership.HolderHeadlessWrite:
 		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil, false
-	case flowoccupancy.HolderLeaseUnreadable:
+	case flowownership.HolderLeaseUnreadable:
 		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(occupancy.Err())), nil, false
-	case flowoccupancy.HolderPeerLease:
+	case flowownership.HolderPeerLease:
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
 	}
 	record, phase, ok := m.cachedFlowLaunchTarget(intent)
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
-	if occupancy.Holder() == flowoccupancy.HolderFlowTerminal {
+	if occupancy.Holder() == flowownership.HolderFlowTerminal {
 		status, _ := m.retainedFlowTerminalLaunchStatus(record.FlowID)
 		return m.setStatus(statusOther, status), nil, false
 	}
@@ -434,7 +434,7 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	if flowID == "" {
 		return false
 	}
-	return m.trackedPhaseOccupancy(flowID, flowoccupancy.StagePreview).Occupied()
+	return m.trackedPhaseOccupancy(flowID, flowownership.StagePreview).Occupied()
 }
 
 // flowLaunchRuntimeOccupied is the in-process ownership half of admission.
@@ -612,12 +612,12 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			event.Err = noLaunchableFlowPhaseStatus
 			return event
 		}
-		occupancy := trackedPhaseAuthoritativeOccupancy(seams, intent.FlowID, record, phase.PhaseID, flowoccupancy.StageAuthoritative)
+		occupancy := trackedPhaseAuthoritativeOccupancy(seams, intent.FlowID, record, phase.PhaseID, flowownership.StageAuthoritative)
 		if occupancy.Err() != nil {
 			event.Err = occupancy.Err().Error()
 			return event
 		}
-		if occupancy.Holder() == flowoccupancy.HolderPhaseSession {
+		if occupancy.Holder() == flowownership.HolderPhaseSession {
 			// The phase itself is launchable — admission and the candidate
 			// lookup both passed — so the refusal has to name the session, not
 			// the phase, and say how to clear it.
@@ -697,13 +697,13 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			event.Outcome = flowLaunchOutcomeStale
 			return event
 		}
-		occupancy := trackedPhaseAuthoritativeOccupancy(seams, intent.FlowID, record, phase.PhaseID, flowoccupancy.StageAutoAdvance)
+		occupancy := trackedPhaseAuthoritativeOccupancy(seams, intent.FlowID, record, phase.PhaseID, flowownership.StageAutoAdvance)
 		if occupancy.Err() != nil {
 			event.Outcome = flowLaunchOutcomeFailed
 			event.Err = occupancy.Err().Error()
 			return event
 		}
-		if occupancy.Holder() == flowoccupancy.HolderRunningPhase || occupancy.Holder() == flowoccupancy.HolderPhaseSession {
+		if occupancy.Holder() == flowownership.HolderRunningPhase || occupancy.Holder() == flowownership.HolderPhaseSession {
 			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}
@@ -1209,6 +1209,7 @@ func (m Model) failCreateFlowLaunchEmbedded(attempt flowLaunchAttempt, ctx actio
 			PersistErr:    err,
 			Release:       release,
 			Create:        &attempt.Create,
+			TokenFenced:   true,
 		}
 	}
 }
@@ -1399,6 +1400,7 @@ func flowLaunchFailurePersistCmd(
 			LaunchContext: ctx,
 			OriginalErr:   errText,
 			PersistErr:    err,
+			TokenFenced:   true,
 		}
 	}
 }

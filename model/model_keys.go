@@ -3207,6 +3207,7 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 		Status:  status,
 		Outcome: outcome,
 		Notes:   notes,
+		Fence:   flowstore.PhaseLaunchFence{LaunchID: ctx.LaunchID},
 	}, true
 }
 
@@ -3247,7 +3248,19 @@ func (m Model) startFlowLaunchFailureWithPreparationOwner(ctx actions.AgentLaunc
 }
 
 func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMsg) (Model, tea.Cmd) {
+	attempt, ownsFailure := m.matchingFlowLaunchAttempt(
+		msg.LaunchContext.FlowID,
+		msg.LaunchContext.LaunchID,
+		0,
+		flowLaunchStateFailurePersisting,
+	)
+	// The launch/close reservation belongs to the completed command, not to
+	// current in-process ownership. Always release that command's callback;
+	// only Model mutation is token-fenced below.
 	releaseFlowLaunchReservation(msg.Release)
+	if msg.TokenFenced && !ownsFailure {
+		return m, nil
+	}
 	ctx := msg.LaunchContext
 	presentCreate := true
 	create := msg.Create
@@ -3260,7 +3273,7 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 	// A mismatch skips only the release: this message is shared with every
 	// source that has no lifecycle attempt, and returning early would swallow
 	// their status and Flow surface refresh.
-	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateFailurePersisting); ok {
+	if ownsFailure {
 		if attempt.Kind == flowLaunchKindCreatePhase {
 			presentCreate = m.createFlowLaunchOriginCurrent(attempt.Create)
 			if create == nil {

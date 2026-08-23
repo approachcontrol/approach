@@ -7,7 +7,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -266,14 +266,14 @@ func autofixFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, to
 // repair reports no obstruction for a merge-eligible Flow, so U would be dead
 // with no in-TUI recovery. A merge-eligible Flow has every predecessor
 // completed, so counting terminal phases would be exactly that wider rule.
-func autofixAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowoccupancy.Verdict) string {
+func autofixAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowownership.Verdict) string {
 	if strings.TrimSpace(record.FlowID) != flowID {
 		return flowAutofixDriftStatus
 	}
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
-	if verdict.Holder() == flowoccupancy.HolderPhaseSession {
+	if verdict.Holder() == flowownership.HolderPhaseSession {
 		return flowAutofixLiveSessionStatus
 	}
 	return flowAutofixDriftStatus
@@ -347,12 +347,12 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			event.PlanPath = record.PlanPath
 		}
 		verdict := m.flowReservedOccupancy(m.launchSeams, msg.FlowID, record, actions.RoleAutofix)
-		if verdict.Holder() == flowoccupancy.HolderLeaseUnreadable {
+		if verdict.Holder() == flowownership.HolderLeaseUnreadable {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(verdict.Err())
 			return event
-		} else if verdict.Holder() == flowoccupancy.HolderPeerLease {
+		} else if verdict.Holder() == flowownership.HolderPeerLease {
 			event.LeaseDeferred = true
 			event.Err = flowLeaseOccupiedStatus
 			return event

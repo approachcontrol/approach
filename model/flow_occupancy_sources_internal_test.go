@@ -260,14 +260,15 @@ func TestFlowLaunchAttemptOccupancySources(t *testing.T) {
 	}
 }
 
-// TestFlowLaunchAttemptKindIsZeroForATokenlessAttempt pins the other way an
-// attempt entry fails to count: the map holds it, but its token is blank, so
-// every lookup treats the Flow as unheld.
+// TestFlowLaunchAttemptKindIsZeroForATokenlessAttempt pins invalid ownership
+// at the module boundary.
 func TestFlowLaunchAttemptKindIsZeroForATokenlessAttempt(t *testing.T) {
 	f := newOccupancyFixture(t)
 	m := f.m
-	m.flowLaunchAttempts = map[string]flowLaunchAttempt{
-		f.flowID(): {Kind: flowLaunchKindRepair, FlowID: f.flowID(), State: flowLaunchStateReading},
+	if _, ok := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Kind: flowLaunchKindRepair, FlowID: f.flowID(),
+	}, flowLaunchStateReading); ok {
+		t.Fatal("an attempt with no token must be rejected")
 	}
 	if m.flowLaunchAttemptOccupied(f.flowID()) {
 		t.Fatal("an attempt with no token must not occupy the Flow")

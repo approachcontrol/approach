@@ -19,6 +19,7 @@ import (
 	"github.com/approachcontrol/approach/claudestream"
 	"github.com/approachcontrol/approach/cursorstream"
 	"github.com/approachcontrol/approach/embeddedterm"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -134,6 +135,7 @@ type embeddedTerminalSlot struct {
 	Terminal               EmbeddedTerminal
 	ID                     embeddedTerminalID
 	PrefillPending         bool
+	FailureRetained        bool
 	// ExitReconciled marks a Flow terminal whose exit has been reported to the
 	// launch controller, so a slot that stays visible (a failed launch) is
 	// reconciled once, not on every tick.
@@ -562,6 +564,7 @@ func (m Model) retainEmbeddedTerminalAfterPrefillFailure(id embeddedTerminalID, 
 		}
 		slot.PrefillPending = false
 		slot.DetachPolicy = embeddedTerminalDetachNever
+		slot.FailureRetained = true
 		if activate {
 			m.activeTerminalNum = slot.Number
 		}
@@ -972,7 +975,7 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 	if !ok || slot.Terminal == nil {
 		return m, nil
 	}
-	if slot.DetachPolicy == embeddedTerminalDetachNever {
+	if flowOwnershipSlot(slot).DetachDropsOwnership() {
 		return m.setStatus(statusOther, "Detach unavailable: this Flow terminal must remain attached to preserve occupancy"), nil
 	}
 	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
@@ -1044,13 +1047,29 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 	}
 }
 
+func flowOwnershipSlot(slot embeddedTerminalSlot) flowownership.Slot {
+	state := ""
+	if slot.Terminal != nil {
+		state = slot.Terminal.State()
+	}
+	return flowownership.Slot{
+		FlowID:             slot.FlowID,
+		Flow:               slot.Scope == embeddedTerminalScopeFlow,
+		Repair:             slot.FlowRepair,
+		WorktreeAgent:      slot.FlowAgent,
+		SavedSessionResume: slot.FlowSavedSessionResume,
+		PrefillPending:     slot.PrefillPending,
+		FailureRetained:    slot.FailureRetained,
+		TerminalPresent:    slot.Terminal != nil,
+		TerminalRunning:    embeddedTerminalRunning(slot.Terminal),
+		TerminalExited:     flowEmbeddedTerminalAutoCloses(state),
+	}
+}
+
 func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 	ids := make([]embeddedTerminalID, 0)
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.FlowSavedSessionResume || slot.Terminal == nil {
-			continue
-		}
-		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
+		if flowOwnershipSlot(slot).AutoCloses() {
 			ids = append(ids, slot.ID)
 		}
 	}
@@ -1062,10 +1081,7 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 
 func (m Model) hasExitedFlowEmbeddedTerminalAutoClose() bool {
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowAgent || slot.FlowSavedSessionResume || slot.Terminal == nil {
-			continue
-		}
-		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
+		if flowOwnershipSlot(slot).AutoCloses() {
 			return true
 		}
 	}

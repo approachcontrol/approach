@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/approachcontrol/approach/actions"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -40,7 +40,7 @@ func storedSession(provider, sessionID, launchID, status string) sessions.Sessio
 	}
 }
 
-func testAuthoritativeOccupancy(record flowstore.FlowRecord, records []sessions.SessionRecord, role actions.FlowLaunchRole) flowoccupancy.Verdict {
+func testAuthoritativeOccupancy(record flowstore.FlowRecord, records []sessions.SessionRecord, role actions.FlowLaunchRole) flowownership.Verdict {
 	for i := range records {
 		if records[i].FlowID == "" {
 			records[i].FlowID = record.FlowID
@@ -53,7 +53,7 @@ func testAuthoritativeOccupancy(record flowstore.FlowRecord, records []sessions.
 
 func repairAuthoritativePhaseSession(record flowstore.FlowRecord, records []sessions.SessionRecord) (flowstore.FlowPhase, bool) {
 	verdict := testAuthoritativeOccupancy(record, records, actions.RoleRepair)
-	if verdict.Holder() != flowoccupancy.HolderPhaseSession {
+	if verdict.Holder() != flowownership.HolderPhaseSession {
 		return flowstore.FlowPhase{}, false
 	}
 	return flowPhaseByID(record, verdict.PhaseID())
@@ -69,7 +69,7 @@ func worktreeAgentRecordOccupancyReason(record flowstore.FlowRecord) string {
 
 func testActiveFlowSession(records []sessions.SessionRecord) bool {
 	record := flowstore.FlowRecord{FlowID: "flow-1"}
-	return testAuthoritativeOccupancy(record, records, actions.RoleWorktreeAgent).Holder() == flowoccupancy.HolderFlowSession
+	return testAuthoritativeOccupancy(record, records, actions.RoleWorktreeAgent).Holder() == flowownership.HolderFlowSession
 }
 
 // TestFlowLaunchPhaseSessionOccupiedUnionRule runs one table across both halves

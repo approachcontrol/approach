@@ -559,6 +559,7 @@ type flowLaunchFailurePersistedMsg struct {
 	PersistErr                error
 	Release                   func()
 	Create                    *flowLaunchCreateRequest
+	TokenFenced               bool
 	releaseReadyBeadAdmission bool
 	preparationKind           flowPreparationKind
 	preparationToken          uint64

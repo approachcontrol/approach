@@ -1761,6 +1761,9 @@ func TestCreateFlowLaunchPreInstallFailureIgnoresTrackedFlags(t *testing.T) {
 	if !ok || want.Status != flowstore.PhaseNeedsAttention || !strings.HasPrefix(want.Notes, "Agent launch failed") {
 		t.Fatalf("baseline failure update = %#v, ok=%v", want, ok)
 	}
+	if want.Fence.LaunchID != base.LaunchID {
+		t.Fatalf("baseline failure fence = %q, want launch ID %q", want.Fence.LaunchID, base.LaunchID)
+	}
 	for _, flags := range []struct {
 		embedded bool
 		tracked  bool

@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 )
 
 // The ordered refusals of docs/flow-occupancy-matrix.md §4. F2 records that four
@@ -66,7 +66,7 @@ func TestFlowRepairOccupancyRefusalLadder(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newOccupancyFixture(t, tc.sources...)
-			verdict := f.m.repairOccupancy(f.flowID(), flowoccupancy.StageAdmission)
+			verdict := f.m.repairOccupancy(f.flowID(), flowownership.StageAdmission)
 			if got := flowRepairOccupancyStatus(verdict); got != tc.want {
 				t.Fatalf("flowRepairOccupancyStatus = %q, want %q", got, tc.want)
 			}

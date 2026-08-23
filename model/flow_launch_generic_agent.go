@@ -8,7 +8,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -115,9 +115,9 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	}
 	if advice := m.worktreeAgentFooterAdvice(record); advice.Defer() {
 		switch advice.Holder() {
-		case flowoccupancy.HolderPhaseSession:
+		case flowownership.HolderPhaseSession:
 			return m.setStatus(statusOther, fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", advice.PhaseID())), nil, false
-		case flowoccupancy.HolderRunningPhase:
+		case flowownership.HolderRunningPhase:
 			return m.setStatus(statusOther, fmt.Sprintf("a running phase %s already occupies this Flow", advice.PhaseID())), nil, false
 		}
 	}
@@ -155,7 +155,7 @@ func genericWorktreeAgentFlowEligible(record flowstore.FlowRecord) bool {
 		!flowstore.PreparationLaunchBlocked(record)
 }
 
-func worktreeAgentAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowoccupancy.Verdict) string {
+func worktreeAgentAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowownership.Verdict) string {
 	if strings.TrimSpace(record.FlowID) != flowID {
 		return flowWorktreeAgentStaleStatus
 	}
@@ -163,11 +163,11 @@ func worktreeAgentAuthoritativeOccupancyStatus(flowID string, record flowstore.F
 		return verdict.Err().Error()
 	}
 	switch verdict.Holder() {
-	case flowoccupancy.HolderFlowSession:
+	case flowownership.HolderFlowSession:
 		return flowWorktreeAgentSessionStatus
-	case flowoccupancy.HolderPhaseSession:
+	case flowownership.HolderPhaseSession:
 		return fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", verdict.PhaseID())
-	case flowoccupancy.HolderRunningPhase:
+	case flowownership.HolderRunningPhase:
 		return fmt.Sprintf("a running phase %s already occupies this Flow", verdict.PhaseID())
 	default:
 		return flowWorktreeAgentStaleStatus
@@ -235,12 +235,12 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		}
 		event.Release = release
 		verdict := m.flowReservedOccupancy(seams, msg.FlowID, record, actions.RoleWorktreeAgent)
-		if verdict.Holder() == flowoccupancy.HolderLeaseUnreadable {
+		if verdict.Holder() == flowownership.HolderLeaseUnreadable {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(verdict.Err())
 			return event
-		} else if verdict.Holder() == flowoccupancy.HolderPeerLease {
+		} else if verdict.Holder() == flowownership.HolderPeerLease {
 			event.LeaseDeferred = true
 			event.Err = flowLeaseOccupiedStatus
 			return event
