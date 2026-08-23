@@ -247,7 +247,7 @@ func TestFlowLaunchRoleMatrixConsumerDecisions(t *testing.T) {
 				LaunchID: "launch-1", Record: autofixRecord, PlanPath: autofixRecord.PlanPath,
 			},
 			want: flowLaunchRoleMatrixDecisions{
-				Identity:          "autofix pr 116",
+				Identity:          "autofix",
 				Detach:            embeddedTerminalDetachAllowed,
 				TmuxEligible:      true,
 				RequiresLifecycle: true,

@@ -248,7 +248,7 @@ func TestFlowEmbeddedTerminalIdentityAutofix(t *testing.T) {
 		mutate func(*actions.AgentLaunchContext)
 		want   string
 	}{
-		{name: "valid", want: "autofix pr 116"},
+		{name: "valid", want: "autofix"},
 		{name: "repair precedence", mutate: func(ctx *actions.AgentLaunchContext) {
 			ctx.FlowRepair = true
 		}, want: "repair"},
