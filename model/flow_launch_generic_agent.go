@@ -36,10 +36,7 @@ func (m Model) selectedFlowWorktreeAgentReady() bool {
 	if !ok || !genericWorktreeAgentFlowEligible(record) {
 		return false
 	}
-	if m.flowLaunchAdmissionOccupied(record.FlowID) || m.hasKnownActiveFlowSession(record.FlowID) {
-		return false
-	}
-	return genericFlowRuntimeOccupancyReason(record) == ""
+	return !m.worktreeAgentFooterAdvice(record).Defer()
 }
 
 func (m Model) hasKnownActiveFlowSession(flowID string) bool {

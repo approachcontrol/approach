@@ -3,9 +3,209 @@ package flowoccupancy
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
+
+type flowCacheFixture struct {
+	record flowstore.FlowRecord
+	found  bool
+	calls  int
+}
+
+func (cache *flowCacheFixture) CachedFlow(flowID string) (flowstore.FlowRecord, bool) {
+	cache.calls++
+	if cache.record.FlowID != flowID {
+		return flowstore.FlowRecord{}, false
+	}
+	return cache.record, cache.found
+}
+
+func TestAdvisoryCachedRunningPhaseDefers(t *testing.T) {
+	cache := &flowCacheFixture{
+		found: true,
+		record: flowstore.FlowRecord{
+			FlowID: "flow-1",
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseRunning}},
+		},
+	}
+	advice := New(Sources{
+		FlowCache: cache,
+		Lease:     &leaseFixture{t: t, wantFlowID: "flow-1"},
+		Runtime:   runtimeFixture{},
+	}).Advise(Query{
+		FlowID: "flow-1",
+		Purpose: Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: StageDrain,
+		},
+	})
+	if !advice.Defer() {
+		t.Fatal("Defer() = false, want cached running phase to defer")
+	}
+	if advice.verdict.Holder() != HolderRunningPhase || advice.verdict.PhaseID() != "implementation" {
+		t.Fatalf("advice = (%v, %q), want running phase implementation", advice.verdict.Holder(), advice.verdict.PhaseID())
+	}
+	if advice.verdict.Err() != nil {
+		t.Fatalf("Err() = %v, want nil", advice.verdict.Err())
+	}
+	if cache.calls != 1 {
+		t.Fatalf("CachedFlow calls = %d, want 1", cache.calls)
+	}
+}
+
+type sessionCacheFixture struct {
+	records    []sessions.SessionRecord
+	wantFlowID string
+	calls      int
+}
+
+func (cache *sessionCacheFixture) ActiveFlowSessions(flowID string) []sessions.SessionRecord {
+	cache.calls++
+	if flowID != cache.wantFlowID {
+		panic("unexpected Flow ID")
+	}
+	return cache.records
+}
+
+type panicFlowReader struct{}
+
+func (panicFlowReader) ReadFlow(string) (flowstore.FlowRecord, error) {
+	panic("advisory query reached Flow store")
+}
+
+type panicSessionStore struct{}
+
+func (panicSessionStore) ListFlowSessions(string) ([]sessions.SessionRecord, error) {
+	panic("advisory query reached session store")
+}
+
+type panicAgentProbe struct{}
+
+func (panicAgentProbe) FlowAgentRunning(flowstore.FlowRecord, string) bool {
+	panic("advisory query reached tmux probe")
+}
+
+func (panicAgentProbe) AutofixAgentRunning(flowstore.FlowRecord, string) bool {
+	panic("advisory query reached tmux probe")
+}
+
+func TestAdvisoryCachedEvidence(t *testing.T) {
+	ended := time.Now()
+	phaseWithSession := flowstore.FlowPhase{
+		PhaseID:   "implementation",
+		LaunchIDs: []string{" launch-1 "},
+		Sessions:  []flowstore.Session{{SessionID: "session-1", LaunchID: "launch-1", Status: "active"}},
+	}
+	tests := []struct {
+		name       string
+		purpose    Purpose
+		phaseID    string
+		flow       flowstore.FlowRecord
+		sessions   []sessions.SessionRecord
+		runtime    runtimeFixture
+		wantHolder Holder
+		wantPhase  string
+	}{
+		{
+			name:       "drain phase session is launch scoped",
+			purpose:    Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain},
+			phaseID:    "implementation",
+			flow:       flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{phaseWithSession}},
+			wantHolder: HolderPhaseSession,
+			wantPhase:  "implementation",
+		},
+		{
+			name:    "drain ignores unmatched phase session",
+			purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain},
+			phaseID: "implementation",
+			flow: flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation", LaunchIDs: []string{"launch-other"},
+				Sessions: []flowstore.Session{{SessionID: "session-1", LaunchID: "launch-1", Status: "active"}},
+			}}},
+		},
+		{
+			name:    "drain ignores ended phase session",
+			purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain},
+			phaseID: "implementation",
+			flow: flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation", LaunchIDs: []string{"launch-1"},
+				Sessions: []flowstore.Session{{SessionID: "session-1", LaunchID: "launch-1", Status: "ended", EndedAt: ended}},
+			}}},
+		},
+		{
+			name:       "drain attempt outranks cached running phase and terminal",
+			purpose:    Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain},
+			flow:       flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseRunning}}},
+			runtime:    runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleTrackedPhase}, flows: map[string]bool{"flow-1": true}},
+			wantHolder: HolderPhaseAttempt,
+		},
+		{
+			name:       "worktree footer reads whole Flow session mirror",
+			purpose:    Purpose{Role: actions.RoleWorktreeAgent, Stage: StageFooter},
+			flow:       flowstore.FlowRecord{FlowID: "flow-1"},
+			sessions:   []sessions.SessionRecord{{FlowID: " flow-1 ", SessionID: "session-1", Status: "active"}},
+			wantHolder: HolderFlowSession,
+		},
+		{
+			name:       "worktree runtime holder outranks both cached families",
+			purpose:    Purpose{Role: actions.RoleWorktreeAgent, Stage: StageFooter},
+			flow:       flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{phaseWithSession}},
+			sessions:   []sessions.SessionRecord{{FlowID: "flow-1", SessionID: "session-1", Status: "active"}},
+			runtime:    runtimeFixture{flows: map[string]bool{"flow-1": true}},
+			wantHolder: HolderFlowTerminal,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			flowCache := &flowCacheFixture{record: tc.flow, found: true}
+			sessionCache := &sessionCacheFixture{records: tc.sessions, wantFlowID: "flow-1"}
+			advice := EvaluateAdvisory(Sources{
+				Flows: panicFlowReader{}, FlowCache: flowCache,
+				Sessions: panicSessionStore{}, Cache: sessionCache,
+				Lease: &leaseFixture{t: t, wantFlowID: "flow-1"}, Runtime: tc.runtime,
+				Probe: panicAgentProbe{},
+			}, Query{FlowID: " flow-1 ", Purpose: tc.purpose, PhaseID: tc.phaseID})
+			if advice.verdict.Holder() != tc.wantHolder || advice.verdict.PhaseID() != tc.wantPhase {
+				t.Fatalf("advice = (%v, %q), want (%v, %q)", advice.verdict.Holder(), advice.verdict.PhaseID(), tc.wantHolder, tc.wantPhase)
+			}
+			if advice.Defer() != (tc.wantHolder != HolderNone) {
+				t.Fatalf("Defer() = %v, want %v", advice.Defer(), tc.wantHolder != HolderNone)
+			}
+			if tc.purpose.Role == actions.RoleTrackedPhase && sessionCache.calls != 0 {
+				t.Fatalf("session cache calls = %d, want drain to skip the whole-Flow session mirror", sessionCache.calls)
+			}
+		})
+	}
+}
+
+func TestAdvisoryFailsClosedForInvalidQueriesAndMissingCaches(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources Sources
+		query   Query
+		wantErr error
+	}{
+		{name: "blank Flow ID", query: Query{Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain}}, wantErr: ErrInvalidQuery},
+		{name: "authoritative purpose", query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageAuthoritative}}, wantErr: ErrInvalidQuery},
+		{name: "missing Flow cache", sources: Sources{Lease: &leaseFixture{}, Runtime: runtimeFixture{}}, query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageDrain}}, wantErr: ErrMissingFlowCache},
+		{name: "missing session cache", sources: Sources{FlowCache: &flowCacheFixture{record: flowstore.FlowRecord{FlowID: "flow-1"}, found: true}, Lease: &leaseFixture{}, Runtime: runtimeFixture{}}, query: Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleWorktreeAgent, Stage: StageFooter}}, wantErr: ErrMissingSessionCache},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			advice := EvaluateAdvisory(tc.sources, tc.query)
+			if !advice.Defer() {
+				t.Fatal("Defer() = false, want fail-closed deferral")
+			}
+			if !errors.Is(advice.verdict.Err(), tc.wantErr) {
+				t.Fatalf("Err() = %v, want errors.Is(_, %v)", advice.verdict.Err(), tc.wantErr)
+			}
+		})
+	}
+}
 
 func TestPurposeValidRegistry(t *testing.T) {
 	validStages := map[actions.FlowLaunchRole][]Stage{

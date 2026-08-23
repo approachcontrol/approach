@@ -389,6 +389,16 @@ func (verdict Verdict) PhaseID() string { return verdict.phaseID }
 // refusal while HolderLeaseUnreadable remains the module decision.
 func (verdict Verdict) Err() error { return verdict.err }
 
+// Advisory is cached evidence that may only defer work. It deliberately has no
+// inverse operation: a caller can filter on Defer, but cannot turn a cache miss
+// into permission to mutate state.
+type Advisory struct {
+	verdict Verdict
+}
+
+// Defer reports whether cached evidence says the caller should wait.
+func (advisory Advisory) Defer() bool { return advisory.verdict.Occupied() }
+
 // FlowReader reads a Flow authoritatively.
 type FlowReader interface {
 	ReadFlow(flowID string) (flowstore.FlowRecord, error)
@@ -487,6 +497,12 @@ func Evaluate(sources Sources, query Query) Verdict {
 	return New(sources).Query(query)
 }
 
+// EvaluateAdvisory answers one cached advisory query against a short-lived
+// source set.
+func EvaluateAdvisory(sources Sources, query Query) Advisory {
+	return New(sources).Advise(query)
+}
+
 var (
 	// ErrInvalidQuery marks a programming error in a query. Query fails closed
 	// instead of panicking because it runs inside the TUI update loop.
@@ -496,9 +512,138 @@ var (
 	ErrMissingRuntime = errors.New("flowoccupancy: runtime source is required")
 	// ErrMissingLease marks a purpose that needs the cross-process lease adapter
 	// but received none.
-	ErrMissingLease        = errors.New("flowoccupancy: lease source is required")
+	ErrMissingLease = errors.New("flowoccupancy: lease source is required")
+	// ErrMissingFlowCache marks a cached purpose without its Flow mirror.
+	ErrMissingFlowCache = errors.New("flowoccupancy: cached Flow source is required")
+	// ErrMissingSessionCache marks a cached purpose without its session panes.
+	ErrMissingSessionCache = errors.New("flowoccupancy: cached session source is required")
 	errPendingSourceFamily = errors.New("flowoccupancy: a required source family is not implemented yet")
 )
+
+// Advise answers a cached query that may only defer its caller.
+func (occupancy Occupancy) Advise(query Query) Advisory {
+	flowID := strings.TrimSpace(query.FlowID)
+	if flowID == "" {
+		return Advisory{verdict: failedVerdict(fmt.Errorf("%w: Flow ID is required", ErrInvalidQuery))}
+	}
+	policy, ok := purposeRegistry[query.Purpose]
+	if !ok {
+		return Advisory{verdict: failedVerdict(fmt.Errorf("%w: purpose (%s, %s) is not registered", ErrInvalidQuery, query.Purpose.Role, query.Purpose.Stage))}
+	}
+	freshness, ok := resolveFreshness(query.Purpose.Stage, query.Freshness)
+	if !ok || freshness != FreshnessCached || !policy.freshness.allows(freshness) {
+		return Advisory{verdict: failedVerdict(fmt.Errorf("%w: purpose (%s, %s) is not a cached advisory query", ErrInvalidQuery, query.Purpose.Role, query.Purpose.Stage))}
+	}
+	if policy.sources&(readFlowStore|readSessionStore) != 0 || policy.probe != probeNone {
+		return Advisory{verdict: failedVerdict(fmt.Errorf("%w: cached advisory query requests an authoritative source", ErrInvalidQuery))}
+	}
+
+	lease := Free()
+	if policy.sources&readLease != 0 {
+		lease = queryLease(occupancy.sources.Lease, flowID)
+	}
+	runtime := Free()
+	if policy.sources&readRuntime != 0 {
+		if occupancy.sources.Runtime == nil {
+			return Advisory{verdict: failedVerdict(ErrMissingRuntime)}
+		}
+		runtime = queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+	}
+	flowCache := Free()
+	if policy.sources&readFlowCache != 0 {
+		if occupancy.sources.FlowCache == nil {
+			return Advisory{verdict: failedVerdict(ErrMissingFlowCache)}
+		}
+		flowCache = queryFlowCache(occupancy.sources.FlowCache, flowID, strings.TrimSpace(query.PhaseID), query.Purpose)
+	}
+	sessionCache := Free()
+	if policy.sources&readSessionCache != 0 {
+		if occupancy.sources.Cache == nil {
+			return Advisory{verdict: failedVerdict(ErrMissingSessionCache)}
+		}
+		sessionCache = querySessionCache(occupancy.sources.Cache, flowID)
+	}
+
+	return Advisory{verdict: chooseAdvisory(query.Purpose, lease, runtime, flowCache, sessionCache)}
+}
+
+func queryFlowCache(cache FlowCache, flowID, phaseID string, purpose Purpose) Verdict {
+	record, ok := cache.CachedFlow(flowID)
+	if !ok {
+		return Free()
+	}
+	if strings.TrimSpace(record.FlowID) != flowID {
+		return failedVerdict(fmt.Errorf("%w: cached Flow identity does not match %q", ErrInvalidQuery, flowID))
+	}
+	for _, phase := range record.Phases {
+		currentPhaseID := strings.TrimSpace(phase.PhaseID)
+		if phaseID != "" && currentPhaseID != phaseID {
+			continue
+		}
+		readPhaseSessions := purpose.Role == actions.RoleWorktreeAgent || phaseID != ""
+		if readPhaseSessions && phaseHasLiveSession(phase) {
+			return Verdict{holder: HolderPhaseSession, phaseID: currentPhaseID}
+		}
+		readRunningPhases := purpose.Stage != StageDrain || phaseID == ""
+		if readRunningPhases && phase.Status == flowstore.PhaseRunning {
+			return Verdict{holder: HolderRunningPhase, phaseID: currentPhaseID}
+		}
+	}
+	return Free()
+}
+
+func phaseHasLiveSession(phase flowstore.FlowPhase) bool {
+	launches := make(map[string]struct{}, len(phase.LaunchIDs))
+	for _, launchID := range phase.LaunchIDs {
+		if launchID = strings.TrimSpace(launchID); launchID != "" {
+			launches[launchID] = struct{}{}
+		}
+	}
+	for _, session := range phase.Sessions {
+		if strings.TrimSpace(session.SessionID) == "" {
+			continue
+		}
+		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {
+			continue
+		}
+		if sessions.IsActive(session.Status, session.EndedAt) {
+			return true
+		}
+	}
+	return false
+}
+
+func querySessionCache(cache SessionCache, flowID string) Verdict {
+	for _, record := range cache.ActiveFlowSessions(flowID) {
+		if strings.TrimSpace(record.FlowID) == flowID && sessions.IsActive(record.Status, record.EndedAt) {
+			return Verdict{holder: HolderFlowSession}
+		}
+	}
+	return Free()
+}
+
+func chooseAdvisory(purpose Purpose, lease, runtime, flowCache, sessionCache Verdict) Verdict {
+	if lease.Occupied() {
+		return lease
+	}
+	if purpose.Role == actions.RoleWorktreeAgent {
+		if runtime.Occupied() {
+			return runtime
+		}
+		if sessionCache.Occupied() {
+			return sessionCache
+		}
+		return flowCache
+	}
+	switch runtime.Holder() {
+	case HolderRepairAttempt, HolderPhaseResumeAttempt, HolderPhaseAttempt, HolderOtherAttempt:
+		return runtime
+	}
+	if flowCache.Occupied() {
+		return flowCache
+	}
+	return runtime
+}
 
 // Query answers one occupancy question. A query whose purpose is not Valid
 // yields an occupied fail-closed verdict rather than a free one.
