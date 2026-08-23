@@ -1278,6 +1278,78 @@ func TestAutoFlowLaunchOccupancyRefusedAtRead(t *testing.T) {
 	}
 }
 
+func TestAutoMergeRetryDoesNotLaunchUnrelatedAutoModePhase(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	record.Phases = []flowstore.FlowPhase{
+		{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseCompleted, Order: 1},
+		{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2, DependsOn: []string{"plan"}},
+		{PhaseID: "merge", Title: "Merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 3, DependsOn: []string{"plan"}},
+	}
+	tests := []struct {
+		name  string
+		state flowLaunchState
+		event flowLaunchEventMsg
+	}{
+		{
+			name:  "read retry",
+			state: flowLaunchStateReading,
+			event: flowLaunchEventMsg{From: flowLaunchStateReading, Stage: flowLaunchStageRead, Outcome: flowLaunchOutcomeRetry},
+		},
+		{
+			name:  "read failure",
+			state: flowLaunchStateReading,
+			event: flowLaunchEventMsg{From: flowLaunchStateReading, Stage: flowLaunchStageRead, Outcome: flowLaunchOutcomeFailed, Err: "store unavailable"},
+		},
+		{
+			name:  "prepared lease deferral",
+			state: flowLaunchStatePreparing,
+			event: flowLaunchEventMsg{From: flowLaunchStatePreparing, Stage: flowLaunchStagePrepared, LeaseDeferred: true},
+		},
+		{
+			name:  "prepared failure",
+			state: flowLaunchStatePreparing,
+			event: flowLaunchEventMsg{From: flowLaunchStatePreparing, Stage: flowLaunchStagePrepared, Err: "store unavailable"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newManualLaunchHarness(t, record)
+			opts := h.options()
+			opts.FlowAutoMerge = true
+			m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+			var reserved bool
+			m, reserved = m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+				Token: "auto-merge-1", Kind: flowLaunchKindAutoPhase, FlowID: record.FlowID, PhaseID: "merge", AutoMerge: true,
+			}, tc.state)
+			if !reserved {
+				t.Fatal("auto-merge attempt reservation should succeed")
+			}
+			event := tc.event
+			event.Token = "auto-merge-1"
+			event.Kind = flowLaunchKindAutoPhase
+			event.FlowID = record.FlowID
+			event.PhaseID = "merge"
+			event.AutoMerge = true
+			var eventCmd tea.Cmd
+			m, eventCmd = m.handleFlowLaunchEvent(event)
+			m = h.drain(m, eventCmd, 0)
+			if _, held := m.flowLaunchAttempt(record.FlowID); held {
+				t.Fatal("retry should release the auto-merge attempt")
+			}
+			if m.autoAdvanceDrainArmed(record.FlowID) {
+				t.Fatal("auto-merge retry must not arm the AutoMode drain")
+			}
+
+			m, cmd, admitted := m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{record}, 0)
+			h.drain(m, cmd, 0)
+			if len(h.launchUpdates) != 1 || h.launchUpdates[0].PhaseID != "merge" {
+				t.Fatalf("launch updates = %#v admitted=%#v, want only the level-triggered merge retry", h.launchUpdates, admitted)
+			}
+		})
+	}
+}
+
 // A crashed agent whose session record never reaches "ended" stalls the Flow's
 // AutoMode indefinitely and silently. That is accepted for now, and pinned here
 // so a future change to liveness has a test to answer to.

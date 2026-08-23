@@ -379,12 +379,13 @@ func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, boo
 	// every auto launch fail Preflight with "Press A to choose …".
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
 	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
-		Token:    token,
-		Kind:     intent.Kind,
-		FlowID:   flowID,
-		PhaseID:  intent.PhaseID,
-		Origin:   intent.Origin,
-		Settings: settings,
+		Token:     token,
+		Kind:      intent.Kind,
+		FlowID:    flowID,
+		PhaseID:   intent.PhaseID,
+		Origin:    intent.Origin,
+		Settings:  settings,
+		AutoMerge: intent.AutoMerge,
 	}, flowLaunchStateReserved)
 	if !reserved {
 		return m, nil, false
@@ -929,7 +930,10 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			releaseFlowLaunchReservation(msg.Release)
 			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 			if attempt.Kind == flowLaunchKindAutoPhase {
-				return m.armAutoAdvanceDrain(attempt.FlowID), nil
+				if !msg.AutoMerge {
+					m = m.armAutoAdvanceDrain(attempt.FlowID)
+				}
+				return m, nil
 			}
 			return m.setStatus(statusOther, msg.Err), nil
 		}
@@ -1006,17 +1010,24 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 		// attempt cannot re-arm a drain a newer one owns. The status is the
 		// 3 s transient today's synchronous preflight failure already sets;
 		// its expiry command has to be returned or it never fires. The re-arm
-		// is also what makes this failure repeat on the next poll, which is why
-		// it reports through the yielding setter: it will be back, and the
-		// transition it would otherwise overwrite will not.
-		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID)
+		// makes an AutoMode failure repeat on the next poll. Auto-merge is
+		// already level-triggered by every poll, so arming the completion-edge
+		// drain there could launch an unrelated ready phase first.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		if !msg.AutoMerge {
+			m = m.armAutoAdvanceDrain(attempt.FlowID)
+		}
 		return m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + msg.Err)
 	case flowLaunchOutcomeBlocked:
 		return m.blockAutoFlowLaunchPhase(attempt, msg)
 	case flowLaunchOutcomeRetry:
-		// The blocker clears on its own, so re-arming is what makes the launch
-		// resume without waiting for another completion edge.
-		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID), nil
+		// The blocker clears on its own. AutoMode needs the completion-edge
+		// drain re-armed; auto-merge is retried by its level-triggered poll.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		if !msg.AutoMerge {
+			m = m.armAutoAdvanceDrain(attempt.FlowID)
+		}
+		return m, nil
 	default:
 		// stale, and the inert zero value: drop the attempt and leave the drain
 		// disarmed. Whatever superseded the candidate produces its own edge.

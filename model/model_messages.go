@@ -1470,6 +1470,7 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	autoMergeRetry := false
 	if msg.AutoAdvanceLaunchID != "" {
 		attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing)
 		if !ok {
@@ -1479,12 +1480,14 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 		if msg.Err == "" || attempt.AutoRetrySuppressed {
 			return m, nil
 		}
+		autoMergeRetry = attempt.AutoMerge
 	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
-	if msg.AutoAdvanceRetryFlowID != "" {
+	if msg.AutoAdvanceRetryFlowID != "" && !autoMergeRetry {
 		// Token and stop-edge validation above keep a delayed failure from
-		// undoing newer drain state.
+		// undoing newer drain state. Auto-merge retries stay level-triggered;
+		// arming this completion-edge drain could launch another ready phase.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.takeoverVisible() || m.isCurrentRepo(msg.RepoPath) {
@@ -1499,9 +1502,9 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 		title = msg.AutoAdvanceRetryFlowID
 	}
 	// The prepare-stage sibling of the read-stage failure in
-	// handleAutoFlowLaunchRead, and ranked with it: this path re-armed the drain
-	// above, so the failure repeats on the next poll and must not displace a
-	// transition edge that will not.
+	// handleAutoFlowLaunchRead, and ranked with it: AutoMode's drain or
+	// auto-merge's level-triggered poll repeats the failure on the next tick, so
+	// it must not displace a transition edge that will not.
 	var statusCmd tea.Cmd
 	m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + title + ": " + msg.Err)
 	return m, statusCmd
