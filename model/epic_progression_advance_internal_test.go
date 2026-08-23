@@ -127,7 +127,9 @@ func TestEpicProgressionAdvanceUsesReadableFlowsFromPartialList(t *testing.T) {
 		agentConfig:      agentConfig{agentCommand: "codex"},
 	}
 
-	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{
+		Flows: []flowstore.FlowRecord{terminal}, Degradation: partial, Request: 1,
+	})
 	result := epicProgressionAdvanceMessage(t, cmd)
 	if result.disposition != epicProgressionAdvanceSelected || result.owned.ChildID != "epic.b" {
 		t.Fatalf("advance result = %#v, want readable linked child skipped and epic.b selected", result)
