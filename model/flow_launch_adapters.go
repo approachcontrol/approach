@@ -85,6 +85,40 @@ func (runtime flowOccupancyRuntime) RepairDrainPending(flowID string) bool {
 	return runtime.model.hasPendingRepairAutoDrainMarker(flowID)
 }
 
+type flowOccupancyFlowCache struct {
+	record flowstore.FlowRecord
+}
+
+var _ flowoccupancy.FlowCache = flowOccupancyFlowCache{}
+
+func (cache flowOccupancyFlowCache) CachedFlow(flowID string) (flowstore.FlowRecord, bool) {
+	flowID = strings.TrimSpace(flowID)
+	return cache.record, flowID != "" && strings.TrimSpace(cache.record.FlowID) == flowID
+}
+
+type flowOccupancySessionCache struct {
+	flowSessions     []sessions.SessionRecord
+	worktreeSessions []sessions.SessionRecord
+}
+
+var _ flowoccupancy.SessionCache = flowOccupancySessionCache{}
+
+func (cache flowOccupancySessionCache) ActiveFlowSessions(flowID string) []sessions.SessionRecord {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return nil
+	}
+	var active []sessions.SessionRecord
+	for _, records := range [][]sessions.SessionRecord{cache.flowSessions, cache.worktreeSessions} {
+		for _, record := range records {
+			if strings.TrimSpace(record.FlowID) == flowID && sessions.IsActive(record.Status, record.EndedAt) {
+				active = append(active, record)
+			}
+		}
+	}
+	return active
+}
+
 func flowLaunchRole(kind flowLaunchKind) actions.FlowLaunchRole {
 	switch kind {
 	case flowLaunchKindManualPhase, flowLaunchKindAutoPhase:
@@ -154,6 +188,47 @@ func (m Model) repairOccupancy(flowID string, stage flowoccupancy.Stage) flowocc
 		Purpose: flowoccupancy.Purpose{
 			Role:  actions.RoleRepair,
 			Stage: stage,
+		},
+	})
+}
+
+func (m Model) trackedPhaseDrainAdvice(record flowstore.FlowRecord, phaseID string) flowoccupancy.Advisory {
+	return flowoccupancy.EvaluateAdvisory(flowoccupancy.Sources{
+		FlowCache: flowOccupancyFlowCache{record: record},
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowoccupancy.Query{
+		FlowID: record.FlowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: flowoccupancy.StageDrain,
+		},
+		PhaseID: phaseID,
+	})
+}
+
+func (m Model) worktreeAgentFooterAdvice(record flowstore.FlowRecord) flowoccupancy.Advisory {
+	return flowoccupancy.EvaluateAdvisory(flowoccupancy.Sources{
+		FlowCache: flowOccupancyFlowCache{record: record},
+		Cache: flowOccupancySessionCache{
+			flowSessions:     m.sessions.Items(),
+			worktreeSessions: m.worktreeSessions.Items(),
+		},
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowoccupancy.Query{
+		FlowID: record.FlowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  actions.RoleWorktreeAgent,
+			Stage: flowoccupancy.StageFooter,
 		},
 	})
 }

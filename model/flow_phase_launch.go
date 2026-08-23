@@ -742,7 +742,7 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 		// long as the session stays live. The mirrored sessions the poll
 		// already carries answer the common case for free. Deferral is silent
 		// and leaves the drain armed, exactly as the lifecycle's retry does.
-		if phaseHasMatchingLiveSession(phase) {
+		if m.trackedPhaseDrainAdvice(record, phase.PhaseID).Defer() {
 			continue
 		}
 		next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
@@ -764,20 +764,7 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
-	if occupied, err := m.trackedFlowLeaseOccupied(record.FlowID); err != nil || occupied {
-		return true
-	}
-	// A pending repair is a lifecycle attempt now, so attempt occupancy covers
-	// it without a second signal.
-	if m.flowLaunchAttemptOccupied(record.FlowID) {
-		return true
-	}
-	for _, phase := range record.Phases {
-		if phase.Status == flowstore.PhaseRunning {
-			return true
-		}
-	}
-	return m.hasFlowEmbeddedTerminalForFlow(record.FlowID)
+	return m.trackedPhaseDrainAdvice(record, "").Defer()
 }
 
 func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
