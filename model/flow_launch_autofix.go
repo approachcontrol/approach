@@ -5,9 +5,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
-	"github.com/approachcontrol/approach/sessions"
 )
 
 // The autofix refusals. Each is new against
@@ -236,13 +237,8 @@ func autofixFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, to
 			event.Err = flowAutofixDriftStatus
 			return event
 		}
-		records, err := seams.ListFlowSessions(intent.FlowID)
-		if err != nil {
-			event.Err = err.Error()
-			return event
-		}
-		if flowRecordHasLivePhaseSession(record, records) {
-			event.Err = flowAutofixLiveSessionStatus
+		if verdict := flowAuthoritativeOccupancy(seams, intent.FlowID, record, actions.RoleAutofix); verdict.Occupied() {
+			event.Err = autofixAuthoritativeOccupancyStatus(intent.FlowID, record, verdict)
 			return event
 		}
 		repoPath := record.RepoPath
@@ -261,24 +257,26 @@ func autofixFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, to
 	}
 }
 
-// flowRecordHasLivePhaseSession applies the phase-scoped live-session rule
-// across every non-terminal phase of the record. It stays phase-scoped, and
+// autofixAuthoritativeOccupancyStatus keeps autofix's existing refusal text in
+// model. The module applies the phase-scoped live-session rule across every
+// non-terminal phase of the record. It stays phase-scoped, and
 // skips terminal phases, for the same reason flowLaunchPhaseSessionOccupied's
 // own doc comment gives: a wider rule would let one crashed agent make the Flow
 // permanently unlaunchable, and here that would be worse than elsewhere —
 // repair reports no obstruction for a merge-eligible Flow, so U would be dead
 // with no in-TUI recovery. A merge-eligible Flow has every predecessor
 // completed, so counting terminal phases would be exactly that wider rule.
-func flowRecordHasLivePhaseSession(record flowstore.FlowRecord, records []sessions.SessionRecord) bool {
-	for _, phase := range record.Phases {
-		if flowstore.PhaseStatusTerminal(string(phase.Status)) {
-			continue
-		}
-		if flowLaunchPhaseSessionOccupied(phase, records) {
-			return true
-		}
+func autofixAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowoccupancy.Verdict) string {
+	if strings.TrimSpace(record.FlowID) != flowID {
+		return flowAutofixDriftStatus
 	}
-	return false
+	if verdict.Err() != nil {
+		return verdict.Err().Error()
+	}
+	if verdict.Holder() == flowoccupancy.HolderPhaseSession {
+		return flowAutofixLiveSessionStatus
+	}
+	return flowAutofixDriftStatus
 }
 
 // autofixFlowLaunchPrepareCmd takes the cross-process launch/close
@@ -327,16 +325,6 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		// advisory launch/close lock; losing it would block every later launch,
 		// close, repair, or resume on this Flow until it timed out.
 		event.Release = release
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
-			event.LeaseDeferred = true
-			event.LeaseSetupError = true
-			event.Err = flowLeaseSetupErrorStatus(inspectErr)
-			return event
-		} else if occupied {
-			event.LeaseDeferred = true
-			event.Err = flowLeaseOccupiedStatus
-			return event
-		}
 		record := msg.Record
 		headless := msg.Headless
 		repoPath := msg.RepoPath
@@ -345,10 +333,6 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		// stage validated. flowLaunchPreparation.prepare guards its own refresh the
 		// same way.
 		if !reserved.UpdatedAt.IsZero() {
-			if !autofixFlowEligible(reserved) || reserved.PR.Number <= 0 {
-				event.Err = flowAutofixDriftStatus
-				return event
-			}
 			record = reserved
 			headless = reserved.Headless
 			if reservedRepoPath := strings.TrimSpace(reserved.RepoPath); reservedRepoPath != "" {
@@ -361,6 +345,24 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 			// The record's plan path verbatim, exactly as the read stage passes it
 			// through: this agent needs no plan body.
 			event.PlanPath = record.PlanPath
+		}
+		verdict := m.flowReservedOccupancy(m.launchSeams, msg.FlowID, record, actions.RoleAutofix)
+		if verdict.Holder() == flowoccupancy.HolderLeaseUnreadable {
+			event.LeaseDeferred = true
+			event.LeaseSetupError = true
+			event.Err = flowLeaseSetupErrorStatus(verdict.Err())
+			return event
+		} else if verdict.Holder() == flowoccupancy.HolderPeerLease {
+			event.LeaseDeferred = true
+			event.Err = flowLeaseOccupiedStatus
+			return event
+		} else if verdict.Occupied() {
+			event.Err = autofixAuthoritativeOccupancyStatus(msg.FlowID, record, verdict)
+			return event
+		}
+		if !autofixFlowEligible(record) || record.PR.Number <= 0 {
+			event.Err = flowAutofixDriftStatus
+			return event
 		}
 		// The read stage's repo path is submitted as a fallback rather than
 		// applied here: the builder owns the precedence between it and the record,

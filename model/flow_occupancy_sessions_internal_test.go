@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -36,6 +38,38 @@ func storedSession(provider, sessionID, launchID, status string) sessions.Sessio
 		LaunchID:  launchID,
 		Status:    status,
 	}
+}
+
+func testAuthoritativeOccupancy(record flowstore.FlowRecord, records []sessions.SessionRecord, role actions.FlowLaunchRole) flowoccupancy.Verdict {
+	for i := range records {
+		if records[i].FlowID == "" {
+			records[i].FlowID = record.FlowID
+		}
+	}
+	return flowAuthoritativeOccupancy(flowLaunchSeams{
+		ListFlowSessions: func(string) ([]sessions.SessionRecord, error) { return records, nil },
+	}, record.FlowID, record, role)
+}
+
+func repairAuthoritativePhaseSession(record flowstore.FlowRecord, records []sessions.SessionRecord) (flowstore.FlowPhase, bool) {
+	verdict := testAuthoritativeOccupancy(record, records, actions.RoleRepair)
+	if verdict.Holder() != flowoccupancy.HolderPhaseSession {
+		return flowstore.FlowPhase{}, false
+	}
+	return flowPhaseByID(record, verdict.PhaseID())
+}
+
+func worktreeAgentRecordOccupancyReason(record flowstore.FlowRecord) string {
+	verdict := testAuthoritativeOccupancy(record, nil, actions.RoleWorktreeAgent)
+	if !verdict.Occupied() {
+		return ""
+	}
+	return worktreeAgentAuthoritativeOccupancyStatus(record.FlowID, record, verdict)
+}
+
+func testActiveFlowSession(records []sessions.SessionRecord) bool {
+	record := flowstore.FlowRecord{FlowID: "flow-1"}
+	return testAuthoritativeOccupancy(record, records, actions.RoleWorktreeAgent).Holder() == flowoccupancy.HolderFlowSession
 }
 
 // TestFlowLaunchPhaseSessionOccupiedUnionRule runs one table across both halves
@@ -308,7 +342,7 @@ func TestFlowRepairPhaseSessionOccupiedReportsTheFirstOrderedPhase(t *testing.T)
 			occupied("implementation", "", 2),
 			{PhaseID: "plan", Status: flowstore.PhaseCompleted, Order: 1},
 		}
-		phase, ok := flowRepairPhaseSessionOccupied(record, nil)
+		phase, ok := repairAuthoritativePhaseSession(record, nil)
 		if !ok {
 			t.Fatal("a Flow with two session-occupied phases is occupied")
 		}
@@ -326,7 +360,7 @@ func TestFlowRepairPhaseSessionOccupiedReportsTheFirstOrderedPhase(t *testing.T)
 			occupied("review-loop", "", 3),
 			occupied("plan-review", "plan", 2),
 		}
-		phase, ok := flowRepairPhaseSessionOccupied(record, nil)
+		phase, ok := repairAuthoritativePhaseSession(record, nil)
 		if !ok {
 			t.Fatal("a Flow with two session-occupied phases is occupied")
 		}
@@ -336,7 +370,7 @@ func TestFlowRepairPhaseSessionOccupiedReportsTheFirstOrderedPhase(t *testing.T)
 	})
 
 	t.Run("no session-attached phase is not occupancy", func(t *testing.T) {
-		if _, ok := flowRepairPhaseSessionOccupied(occupancyFlowRecord(), nil); ok {
+		if _, ok := repairAuthoritativePhaseSession(occupancyFlowRecord(), nil); ok {
 			t.Fatal("a Flow with no session-attached phase is not occupied")
 		}
 	})
@@ -357,10 +391,10 @@ func TestFlowRepairPhaseSessionOccupiedUnionsTheStoreListing(t *testing.T) {
 		storedSession(occupancySessionProvider, occupancyStoreSessionID, occupancyStoreLaunchID, "active"),
 	}
 
-	if _, ok := flowRepairPhaseSessionOccupied(record, nil); ok {
+	if _, ok := repairAuthoritativePhaseSession(record, nil); ok {
 		t.Fatal("the mirror alone shows nothing here")
 	}
-	phase, ok := flowRepairPhaseSessionOccupied(record, store)
+	phase, ok := repairAuthoritativePhaseSession(record, store)
 	if !ok || phase.PhaseID != "implementation" {
 		t.Fatalf("phase = %q, ok = %v, want the store listing to occupy the phase", phase.PhaseID, ok)
 	}
@@ -385,7 +419,7 @@ func TestGenericFlowRuntimeOccupancyReasonOrdersSessionBeforeRunning(t *testing.
 	}
 
 	t.Run("no occupancy reports nothing", func(t *testing.T) {
-		if reason := genericFlowRuntimeOccupancyReason(occupancyFlowRecord()); reason != "" {
+		if reason := worktreeAgentRecordOccupancyReason(occupancyFlowRecord()); reason != "" {
 			t.Fatalf("reason = %q, want empty", reason)
 		}
 	})
@@ -393,7 +427,7 @@ func TestGenericFlowRuntimeOccupancyReasonOrdersSessionBeforeRunning(t *testing.
 	t.Run("a running phase is named", func(t *testing.T) {
 		record := withOccupancyRunningPhase(occupancyFlowRecord())
 		want := "a running phase implementation already occupies this Flow"
-		if reason := genericFlowRuntimeOccupancyReason(record); reason != want {
+		if reason := worktreeAgentRecordOccupancyReason(record); reason != want {
 			t.Fatalf("reason = %q, want %q", reason, want)
 		}
 	})
@@ -402,7 +436,7 @@ func TestGenericFlowRuntimeOccupancyReasonOrdersSessionBeforeRunning(t *testing.
 		record := occupancyFlowRecord()
 		record.Phases = []flowstore.FlowPhase{sessionPhase("implementation", 1, flowstore.PhaseRunning)}
 		want := "an active persisted session on phase implementation already occupies this Flow"
-		if reason := genericFlowRuntimeOccupancyReason(record); reason != want {
+		if reason := worktreeAgentRecordOccupancyReason(record); reason != want {
 			t.Fatalf("reason = %q, want %q", reason, want)
 		}
 	})
@@ -416,7 +450,7 @@ func TestGenericFlowRuntimeOccupancyReasonOrdersSessionBeforeRunning(t *testing.
 			sessionPhase("implementation", 1, flowstore.PhaseReady),
 		}
 		want := "an active persisted session on phase review-loop already occupies this Flow"
-		if reason := genericFlowRuntimeOccupancyReason(record); reason != want {
+		if reason := worktreeAgentRecordOccupancyReason(record); reason != want {
 			t.Fatalf("reason = %q, want %q — the loop is not order-normalized", reason, want)
 		}
 	})
@@ -431,7 +465,7 @@ func TestGenericFlowRuntimeOccupancyReasonOrdersSessionBeforeRunning(t *testing.
 			sessionPhase("review-loop", 2, flowstore.PhaseReady),
 		}
 		want := fmt.Sprintf("a running phase %s already occupies this Flow", "implementation")
-		if reason := genericFlowRuntimeOccupancyReason(record); reason != want {
+		if reason := worktreeAgentRecordOccupancyReason(record); reason != want {
 			t.Fatalf("reason = %q, want %q", reason, want)
 		}
 	})
@@ -459,8 +493,8 @@ func TestActiveFlowSessionIsWholeFlowScoped(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := activeFlowSession(tc.records); got != tc.want {
-				t.Fatalf("activeFlowSession = %v, want %v", got, tc.want)
+			if got := testActiveFlowSession(tc.records); got != tc.want {
+				t.Fatalf("testActiveFlowSession = %v, want %v", got, tc.want)
 			}
 		})
 	}

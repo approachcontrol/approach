@@ -6,10 +6,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
-	"github.com/approachcontrol/approach/sessions"
 )
 
 // The repair refusals. Two of these are shared for the same load-bearing
@@ -245,16 +245,8 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 			event.Err = flowRepairNotRepairableStatus
 			return event
 		}
-		records, err := seams.ListFlowSessions(intent.FlowID)
-		if err != nil {
-			event.Err = err.Error()
-			return event
-		}
-		if phase, occupied := flowRepairPhaseSessionOccupied(record, records); occupied {
-			// The intent's Flow ID, not the record's: admission stamped it, the
-			// read resolved this record from it, and it is the exact string
-			// `approach flow read --flow-id` already takes.
-			event.Err = flowRepairLiveSessionStatus(intent.FlowID, phase)
+		if verdict := flowAuthoritativeOccupancy(seams, intent.FlowID, record, actions.RoleRepair); verdict.Occupied() {
+			event.Err = flowRepairAuthoritativeOccupancyStatus(intent.FlowID, record, verdict)
 			return event
 		}
 		repoPath, worktreePath, ok := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, intent.FallbackRepoPath)
@@ -290,7 +282,9 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 	}
 }
 
-// flowRepairPhaseSessionOccupied is repair's Flow-scoped occupancy rule: a live
+// flowRepairAuthoritativeOccupancyStatus translates repair's Flow-scoped
+// occupancy verdict without moving model-owned recovery instructions into the
+// occupancy module. A live
 // session whose launch ID belongs to any phase of this Flow refuses the repair.
 // The per-phase evidence is the same scoping a phase launch uses, but the
 // effect is Flow-wide on purpose — the repair prompt authorizes phase reset,
@@ -320,13 +314,19 @@ func repairFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, tok
 // because which CLI escape is even legal depends on it. Iteration follows the
 // record's own phase order so a Flow with two occupied phases reports the same
 // one every press.
-func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessions.SessionRecord) (flowstore.FlowPhase, bool) {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if flowLaunchPhaseSessionOccupied(phase, records) {
-			return phase, true
+func flowRepairAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowoccupancy.Verdict) string {
+	if strings.TrimSpace(record.FlowID) != flowID {
+		return flowRepairNotRepairableStatus
+	}
+	if verdict.Err() != nil {
+		return verdict.Err().Error()
+	}
+	if verdict.Holder() == flowoccupancy.HolderPhaseSession {
+		if phase, ok := flowPhaseByID(record, verdict.PhaseID()); ok {
+			return flowRepairLiveSessionStatus(flowID, phase)
 		}
 	}
-	return flowstore.FlowPhase{}, false
+	return flowRepairNotRepairableStatus
 }
 
 // repairFlowLaunchPrepareCmd takes the cross-process repair reservation and
@@ -337,14 +337,10 @@ func flowRepairPhaseSessionOccupied(record flowstore.FlowRecord, records []sessi
 // launch for" vs "launch an agent for") and that text reaches the user. The
 // wrapper prefix is preserved verbatim for the same reason.
 //
-// There is no phase write here and no second session listing. What a re-listing
-// would close is not the self-inflicted race the tracked kinds have — repair
-// never calls AddPhaseLaunchID, so it publishes no launch ID of its own to race
-// against. What stays open is a peer approach process starting a phase session
-// between the read stage's listing and this reservation, and a second listing
-// would only narrow that window, not close it: the reservation excludes
-// CloseFlow and other repairs, and was never a session fence. Resume accepts
-// the same window for the same reason.
+// There is no phase write here. The reserved occupancy query re-lists sessions
+// against the reservation's Flow record, closing the read-to-reserve window as
+// far as the existing session-store seam allows. The reservation is not itself
+// a session fence, so a peer can still publish after this final listing.
 func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	reserve := m.reserveFlowRepairLaunch
 	if reserve == nil {
@@ -376,14 +372,18 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		// Handed over before the revalidation below can refuse, so the handler
 		// drops the advisory launch/close lock on every path out of here.
 		event.Release = release
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+		verdict := m.flowReservedOccupancy(m.launchSeams, msg.FlowID, current, actions.RoleRepair)
+		if verdict.Holder() == flowoccupancy.HolderLeaseUnreadable {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
-			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			event.Err = flowLeaseSetupErrorStatus(verdict.Err())
 			return event
-		} else if occupied {
+		} else if verdict.Holder() == flowoccupancy.HolderPeerLease {
 			event.LeaseDeferred = true
 			event.Err = flowLeaseOccupiedStatus
+			return event
+		} else if verdict.Occupied() {
+			event.Err = flowRepairAuthoritativeOccupancyStatus(msg.FlowID, current, verdict)
 			return event
 		}
 		if strings.TrimSpace(current.FlowID) != msg.FlowID {
