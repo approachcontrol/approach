@@ -90,9 +90,10 @@ type epicProgressionAdvanceResultMsg struct {
 	disposition  epicProgressionAdvanceDisposition
 	// owned and childTitle are selection-only: the chosen child and its Bead
 	// title, carried to the create-then-launch intent that follows.
-	owned      epicProgressionOwnedSuccessor
-	childTitle string
-	status     string
+	owned       epicProgressionOwnedSuccessor
+	childTitle  string
+	degradation *flowstore.PartialListError
+	status      string
 }
 
 type epicProgressionHaltRequest struct {
@@ -185,11 +186,12 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 	setProgression := m.setEpicProgression
 	repoPath := filepath.Clean(baseline.RepoPath)
 	epicID := strings.TrimSpace(baseline.Bead.EpicID)
+	var degradation *flowstore.PartialListError
 	result := func(disposition epicProgressionAdvanceDisposition, status string) epicProgressionAdvanceResultMsg {
 		return epicProgressionAdvanceResultMsg{
 			request: request.Request, ownerToken: request.OwnerToken, epicKey: request.EpicKey,
 			repoPath: repoPath, epicID: epicID, sourceFlowID: request.SourceFlowID,
-			disposition: disposition, status: status,
+			disposition: disposition, degradation: degradation, status: status,
 		}
 	}
 	return func() tea.Msg {
@@ -231,7 +233,9 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not list ready children for epic %s: %v", epicID, readyErr))
 		}
 		flows, flowsErr := listFlows(flowstore.FlowFilter{RepoPath: repoPath})
-		if flowsErr != nil {
+		if partial, ok := flowstore.AsPartialList(flowsErr); ok {
+			degradation = partial
+		} else if flowsErr != nil {
 			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not check existing child Flows for epic %s: %v", epicID, flowsErr))
 		}
 		direct := make(map[string]struct{}, len(children))
@@ -477,6 +481,9 @@ func (m Model) handleEpicProgressionAdvanceResult(msg epicProgressionAdvanceResu
 		m.flowPreparationMatches(flowPreparationEpicAdvance, msg.ownerToken)
 	if !current {
 		return m, nil
+	}
+	if msg.degradation != nil {
+		m = m.setFlowDegradation(ui.ModeFlows, msg.repoPath, msg.degradation)
 	}
 	if msg.disposition == epicProgressionAdvanceSelected {
 		// The advance is not over: it continues as one create-then-launch

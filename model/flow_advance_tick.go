@@ -89,12 +89,18 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	if msg.Request == 0 || msg.Request != m.autoAdvanceInFlight {
 		return m.finishAutoAdvanceFetch(msg.Request)
 	}
-	if msg.Err != "" || msg.Degradation != nil {
+	if msg.Err != "" {
 		return m.finishAutoAdvanceFetch(msg.Request)
 	}
 
 	previous := cloneFlowRecords(m.autoAdvanceSnapshot)
 	current := cloneFlowRecords(msg.Flows)
+	if msg.Degradation != nil {
+		var progressionCmd, tickCmd tea.Cmd
+		m, progressionCmd = m.prepareEpicProgressionAdvance(current, msg.Request)
+		m, tickCmd = m.finishAutoAdvanceFetch(msg.Request)
+		return m, batchNonNil(progressionCmd, tickCmd)
+	}
 
 	var cmds []tea.Cmd
 	var autoCmd tea.Cmd

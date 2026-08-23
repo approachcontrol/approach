@@ -97,6 +97,94 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 	}
 }
 
+func TestEpicProgressionAdvanceUsesReadableFlowsFromPartialList(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	terminal := cloneFlowRecord(source)
+	terminal.Status = flowstore.StatusCompleted
+	linked := progressionAdvanceFlow("linked-a", repo, "epic.a", epic, flowstore.StatusPending)
+	partial := testPartialList("unreadable-flow")
+
+	m := Model{
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.a"}, {ID: "epic.b"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.a"}, {ID: "epic.b", Title: "B"}}, nil
+		},
+		listFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			if filter.RepoPath != repo {
+				t.Fatalf("listFlows filter = %#v, want repository scope %q", filter, repo)
+			}
+			return []flowstore.FlowRecord{terminal, linked}, partial
+		},
+		autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1},
+		agentConfig:      agentConfig{agentCommand: "codex"},
+	}
+
+	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{
+		Flows: []flowstore.FlowRecord{terminal}, Degradation: partial, Request: 1,
+	})
+	result := epicProgressionAdvanceMessage(t, cmd)
+	if result.disposition != epicProgressionAdvanceSelected || result.owned.ChildID != "epic.b" {
+		t.Fatalf("advance result = %#v, want readable linked child skipped and epic.b selected", result)
+	}
+	if result.degradation != partial || result.degradation.Entries[0].FlowID != "unreadable-flow" {
+		t.Fatalf("advance degradation = %#v, want typed diagnostic %#v", result.degradation, partial)
+	}
+}
+
+func TestEpicProgressionAdvanceKeepsFatalFlowListFailureRetryable(t *testing.T) {
+	repo, epic := "/repo", "epic"
+	key := epicProgressionBaselineKey(repo, epic)
+	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
+	terminal := cloneFlowRecord(source)
+	terminal.Status = flowstore.StatusCompleted
+	setCalls, haltCalls := 0, 0
+
+	m := Model{
+		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
+		},
+		listChildrenBeads: func(string, string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.a"}, {ID: "epic.b"}}, nil
+		},
+		listReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "epic.b"}}, nil
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, errors.New("database unavailable")
+		},
+		setEpicProgression: func(flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
+			setCalls++
+			return flowstore.EpicProgression{}, nil
+		},
+		haltEpicProgression: func(flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
+			haltCalls++
+			return flowstore.EpicProgression{}, nil
+		},
+		autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1},
+	}
+
+	_, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{terminal}, Request: 1})
+	result := epicProgressionAdvanceMessage(t, cmd)
+	if result.disposition != epicProgressionAdvanceRetryable || result.owned.ChildID != "" || result.degradation != nil {
+		t.Fatalf("advance result = %#v, want an undecorated retryable failure", result)
+	}
+	if !strings.Contains(result.status, "database unavailable") {
+		t.Fatalf("status = %q, want fatal list cause", result.status)
+	}
+	if setCalls != 0 || haltCalls != 0 {
+		t.Fatalf("fatal list failure set progression %d times and halted %d times", setCalls, haltCalls)
+	}
+}
+
 func TestEpicProgressionAdvanceSkipsAnEpicWhoseChildIsAlreadyInFlight(t *testing.T) {
 	repo, epic := "/repo", "epic"
 	key := epicProgressionBaselineKey(repo, epic)

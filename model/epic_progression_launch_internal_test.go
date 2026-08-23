@@ -422,3 +422,65 @@ func TestProgressionCreateSurfacesBeadSlotRefusalAndHalts(t *testing.T) {
 		t.Fatalf("owned successors = %#v, want none; adopting the winner livelocks reconciliation", m.epicProgressionOwnedSuccessors)
 	}
 }
+
+func TestProgressionCreateUnreadableBeadRefusalHaltsAndStopsLaterPolls(t *testing.T) {
+	refusal := &flowstore.BeadFlowUnreadableError{
+		RepoPath: progressionLaunchRepo, BeadID: progressionLaunchChild,
+		FlowID: "20260823T210000Z-unreadable", Err: errors.New("unsupported schema version 9999"),
+	}
+	fixture, m := newProgressionLaunchFixture(t, flowstore.EpicProgressionSuccessorAccepted, nil)
+	h := fixture.harness
+	h.createErr = refusal
+
+	m, cmd := fixture.admit(t, m)
+	m = drainProgressionLaunch(t, m, cmd)
+
+	if fixture.halted != 1 || len(fixture.updates) != 1 {
+		t.Fatalf("unreadable refusal halted %d times: %#v", fixture.halted, fixture.updates)
+	}
+	halt := fixture.updates[0].Halt
+	if halt.ChildBeadID != progressionLaunchChild || halt.Status != flowstore.StatusBlocked ||
+		!strings.Contains(halt.Message, refusal.FlowID) {
+		t.Fatalf("halt tuple = %#v, want child %q and unreadable Flow %q", halt, progressionLaunchChild, refusal.FlowID)
+	}
+	if m.status.Text != refusal.Error() {
+		t.Fatalf("status = %q, want refusal %q", m.status.Text, refusal.Error())
+	}
+	for _, step := range h.order {
+		if step == "worktree" || step == "finalize" || strings.HasPrefix(step, "reconcile:") || strings.HasPrefix(step, "launch-id:") {
+			t.Fatalf("unreadable refusal produced a post-create side effect: %#v", h.order)
+		}
+	}
+	if len(h.contexts) != 0 || len(h.phaseUpdates) != 0 {
+		t.Fatalf("unreadable refusal launched or updated phases: contexts=%#v updates=%#v", h.contexts, h.phaseUpdates)
+	}
+	if m.activeEpicProgressionAdvance.Request != 0 || m.flowPreparationAdmission {
+		t.Fatalf("halt retained advance admission: active=%#v admission=%t", m.activeEpicProgressionAdvance, m.flowPreparationAdmission)
+	}
+	if _, tracked := m.epicProgressionBaselines[fixture.key]; tracked {
+		t.Fatalf("halt retained baseline: %#v", m.epicProgressionBaselines)
+	}
+	if len(m.epicProgressionBaselineMinimumRequests) != 0 || len(m.epicProgressionOwnedSuccessors) != 0 {
+		t.Fatalf("halt retained progression tracking: minimum=%#v owned=%#v",
+			m.epicProgressionBaselineMinimumRequests, m.epicProgressionOwnedSuccessors)
+	}
+
+	readCalls := 0
+	m.readEpicProgression = func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
+		readCalls++
+		return flowstore.EpicProgression{RepoPath: progressionLaunchRepo, EpicID: progressionLaunchEpic, Enabled: true}, true, nil
+	}
+	m.autoAdvanceInFlight = 1
+	later := cloneFlowRecord(fixture.source)
+	later.Status = flowstore.StatusCompleted
+	next, laterCmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{later}, Request: 1})
+	for _, msg := range immediateFlowRefreshMessages(laterCmd) {
+		if _, ok := msg.(epicProgressionAdvanceResultMsg); ok {
+			t.Fatal("later poll scheduled the durably halted epic again")
+		}
+	}
+	if readCalls != 0 || next.activeEpicProgressionAdvance.Request != 0 || next.flowPreparationAdmission {
+		t.Fatalf("later poll touched halted progression: reads=%d active=%#v admission=%t",
+			readCalls, next.activeEpicProgressionAdvance, next.flowPreparationAdmission)
+	}
+}
