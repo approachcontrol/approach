@@ -173,6 +173,9 @@ type Model struct {
 	setFlowAutoMerge          func(flowstore.AutoMergeUpdate) (flowstore.FlowRecord, error)
 	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	autoMerge                 bool
+	autoMergePolicy           *autoMergePolicyGate
+	globalAutoMergeWrite      globalAutoMergeWrite
+	globalAutoMergeWriteSeq   uint64
 	saveFlowAutoMerge         func(bool) error
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
 	lookupPRStatus            func(context.Context, int, string) (actions.PullRequestStatus, error)
@@ -1087,6 +1090,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		setFlowAutoMerge:          setFlowAutoMerge,
 		setFlowHeadless:           setFlowHeadless,
 		autoMerge:                 opts.FlowAutoMerge,
+		autoMergePolicy:           newAutoMergePolicyGate(opts.FlowAutoMerge),
 		saveFlowAutoMerge:         saveFlowAutoMerge,
 		lookupPRStatus:            lookupPRStatus,
 		lookupPRMerge:             lookupPRMerge,
@@ -2300,7 +2304,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case GlobalAutoMergeSetMsg:
 		return m.handleGlobalAutoMergeSet(msg)
 	case GlobalAutoMergeSetFailedMsg:
-		return m.handleGlobalAutoMergeSetFailed(msg), nil
+		return m.handleGlobalAutoMergeSetFailed(msg)
 	case FlowHeadlessSetMsg:
 		return m.handleFlowHeadlessSet(msg)
 	case FlowHeadlessSetFailedMsg:

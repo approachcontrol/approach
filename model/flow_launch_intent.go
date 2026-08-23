@@ -101,6 +101,10 @@ type flowLaunchIntent struct {
 	FlowTitle       string
 	AutoMerge       bool
 	GlobalAutoMerge bool
+	// AutoMergePolicyGeneration fences a true global snapshot against a
+	// successful global toggle while this launch is in flight. The final Flow
+	// override may have changed to inherit since the authoritative read.
+	AutoMergePolicyGeneration uint64
 	// Provider, ProviderSessionID, and ResumeCommand are phase-resume identity.
 	// Provider is the normalized session provider and ProviderSessionID the
 	// persisted ID verbatim — both stores key a session by its raw ID, so

@@ -737,6 +737,86 @@ func TestAutoFlowLaunchNeverLaunchesMergePhases(t *testing.T) {
 	}
 }
 
+func TestAutoMergeGlobalDisableRevokesAdmittedLaunchBeforePersistence(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		override *bool
+	}{
+		{name: "inherited global permission"},
+		{name: "explicit on can become inherit", override: boolPointer(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := autoLaunchFlowRecord()
+			record.AutoMode = false
+			record.AutoMerge = tc.override
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "merge", Title: "Merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 1},
+			}
+			h := newManualLaunchHarness(t, record)
+			opts := h.options()
+			opts.FlowAutoMerge = true
+			opts.SaveFlowAutoMerge = func(bool) error { return nil }
+			m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+
+			m, readCmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
+				Kind:            flowLaunchKindAutoPhase,
+				FlowID:          record.FlowID,
+				PhaseID:         "merge",
+				Origin:          flowLaunchOriginAutoMode,
+				AutoMerge:       true,
+				GlobalAutoMerge: true,
+			})
+			if !admitted || readCmd == nil {
+				t.Fatal("auto-merge launch was not admitted")
+			}
+			readEvent, ok := readCmd().(flowLaunchEventMsg)
+			if !ok {
+				t.Fatalf("read command returned %T, want flowLaunchEventMsg", readCmd())
+			}
+			m, prepareCmd := m.handleFlowLaunchEvent(readEvent)
+			if prepareCmd == nil {
+				t.Fatal("authoritative read did not produce prepare command")
+			}
+
+			// The config save has completed, but Bubble Tea has not processed its
+			// result yet. The shared gate must already reflect the persisted value.
+			_ = m.saveGlobalAutoMergeCmd(false, 1)()
+			preparedEvent := flowLaunchEventFromCommand(t, prepareCmd)
+			m, launchCmd := m.handleFlowLaunchEvent(preparedEvent)
+			if launchCmd != nil {
+				t.Fatal("globally disabled auto-merge produced a launch command")
+			}
+			if len(h.launchUpdates) != 0 {
+				t.Fatalf("globally disabled auto-merge persisted launch updates: %#v", h.launchUpdates)
+			}
+		})
+	}
+}
+
+func flowLaunchEventFromCommand(t *testing.T, cmd tea.Cmd) flowLaunchEventMsg {
+	t.Helper()
+	msg, ok := runCommandWithoutWaiting(cmd)
+	if !ok {
+		t.Fatal("flow launch command did not settle")
+	}
+	if event, ok := msg.(flowLaunchEventMsg); ok {
+		return event
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, batched := range batch {
+			msg, settled := runCommandWithoutWaiting(batched)
+			if !settled {
+				continue
+			}
+			if event, ok := msg.(flowLaunchEventMsg); ok {
+				return event
+			}
+		}
+	}
+	t.Fatalf("flow launch command returned %T without flowLaunchEventMsg", msg)
+	return flowLaunchEventMsg{}
+}
+
 // TestAutoFlowLaunchNeverLaunchesAutoreviewRecovery covers the second half of
 // flowLaunchCandidatePhase's manual-only rule. Autoreview recovery is the one
 // launch target that is not `ready`: a needs_attention or blocked autoreview

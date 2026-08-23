@@ -166,10 +166,11 @@ type flowLaunchEventMsg struct {
 	// Headless and AutoLaunch are resolved once in the read stage and carried,
 	// so prepare cannot re-derive headless from the record and launch an
 	// AutoMode phase interactively.
-	Headless        bool
-	AutoLaunch      bool
-	AutoMerge       bool
-	GlobalAutoMerge bool
+	Headless                  bool
+	AutoLaunch                bool
+	AutoMerge                 bool
+	GlobalAutoMerge           bool
+	AutoMergePolicyGeneration uint64
 	// Preflight-resolved paths threaded from read to prepare. RepoPath is not
 	// Record.RepoPath: it falls back to the current repo, and ActionFailedMsg
 	// gates its status on it.
@@ -366,6 +367,9 @@ func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, boo
 	intent.FlowID = flowID
 	if flowID == "" || m.flowLaunchAdmissionOccupied(flowID) {
 		return m, nil, false
+	}
+	if intent.AutoMerge && intent.GlobalAutoMerge {
+		_, intent.AutoMergePolicyGeneration = m.autoMergePolicy.snapshot()
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
@@ -663,12 +667,13 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			Stage:   flowLaunchStageRead,
 			// Seeded so a failed read still renders "Flow <title>: <err>";
 			// overwritten from the fresh record the moment one exists.
-			FlowTitle:       intent.FlowTitle,
-			AutoLaunch:      true,
-			AutoMerge:       intent.AutoMerge,
-			GlobalAutoMerge: intent.GlobalAutoMerge,
-			Headless:        true,
-			Outcome:         flowLaunchOutcomeOK,
+			FlowTitle:                 intent.FlowTitle,
+			AutoLaunch:                true,
+			AutoMerge:                 intent.AutoMerge,
+			GlobalAutoMerge:           intent.GlobalAutoMerge,
+			AutoMergePolicyGeneration: intent.AutoMergePolicyGeneration,
+			Headless:                  true,
+			Outcome:                   flowLaunchOutcomeOK,
 		}
 		record, err := seams.ReadFlow(intent.FlowID)
 		if err != nil {
@@ -771,6 +776,12 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 		return m.worktreeAgentFlowLaunchPrepareCmd(msg, settings)
 	}
 	launcher := settings.apply(m.flowLaunchLauncher(msg.Token))
+	if msg.AutoMerge && msg.GlobalAutoMerge {
+		addPhaseLaunchID := launcher.AddFlowPhaseLaunchID
+		launcher.AddFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return m.autoMergePolicy.addGlobalSnapshotLaunch(msg.AutoMergePolicyGeneration, addPhaseLaunchID, update)
+		}
+	}
 	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
 	if !ok {
 		return func() tea.Msg {

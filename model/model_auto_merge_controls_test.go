@@ -39,6 +39,42 @@ func TestModel_CtrlGTogglesGlobalAutoMergeOnlyAfterSaveSucceeds(t *testing.T) {
 	}
 }
 
+func TestModel_CtrlGCoalescesOverlappingTogglesInOrder(t *testing.T) {
+	var saves []bool
+	m := newTestModel(testRepos(), model.Options{
+		SaveFlowAutoMerge: func(enabled bool) error {
+			saves = append(saves, enabled)
+			return nil
+		},
+	})
+
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, second := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	if first == nil || second != nil {
+		t.Fatalf("overlapping toggle commands = first %v second %v, want one serialized write", first != nil, second != nil)
+	}
+	var followup tea.Cmd
+	m, followup = update(m, first())
+	if followup == nil {
+		t.Fatal("first completion did not start coalesced disable")
+	}
+	for _, msg := range testCommandMessages(followup) {
+		m, _ = update(m, msg)
+	}
+	if len(saves) != 2 || !saves[0] || saves[1] {
+		t.Fatalf("serialized saves = %v, want enable then disable", saves)
+	}
+
+	_, next := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	if next == nil {
+		t.Fatal("settled off value did not accept a new enable toggle")
+	}
+	_ = next()
+	if len(saves) != 3 || !saves[2] {
+		t.Fatalf("next save = %v, want enable after settled off", saves)
+	}
+}
+
 func TestModel_FailedGlobalAutoMergeSaveLeavesPriorValueInForce(t *testing.T) {
 	m := inRightPane(newTestModel(testRepos(), model.Options{
 		SaveFlowAutoMerge: func(bool) error { return errors.New("config locked") },

@@ -2533,11 +2533,11 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	if sp.EmbeddedTerminalActive {
 		return renderGenericFooterShortcuts(sp, sections)
 	}
-	sections = compactFlowAutoMergeFooter(sections)
 	full := "  " + renderFooterHintList(flowFooterSectionOrder(sections))
 	if lipgloss.Width(full) <= sp.Width {
 		return full
 	}
+	sections = compactFlowAutoMergeFooter(sections)
 	for _, drop := range [][]string{
 		{"ctrl+p"},
 		{"ctrl+p", "f2"},

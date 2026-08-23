@@ -67,7 +67,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if !m.searchActive && m.listInputEligible() && key == "ctrl+g" {
-		return m, m.saveGlobalAutoMergeCmd(!m.autoMerge)
+		return m.toggleGlobalAutoMerge()
 	}
 
 	m = m.clearAnyStatus()
@@ -1171,12 +1171,42 @@ func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
 	return m, m.setFlowAutoModeCmd(repoPath, record.FlowID, !record.AutoMode)
 }
 
-func (m Model) saveGlobalAutoMergeCmd(enabled bool) tea.Cmd {
+func (m Model) toggleGlobalAutoMerge() (Model, tea.Cmd) {
+	desired := !m.autoMerge
+	if m.globalAutoMergeWrite.inFlight {
+		desired = !m.globalAutoMergeWrite.desired
+	}
+	m.globalAutoMergeWrite.desired = desired
+	if m.globalAutoMergeWrite.inFlight {
+		return m, nil
+	}
+	return m.startGlobalAutoMergeWrite(desired)
+}
+
+func (m Model) startGlobalAutoMergeWrite(enabled bool) (Model, tea.Cmd) {
+	m.globalAutoMergeWriteSeq++
+	m.globalAutoMergeWrite = globalAutoMergeWrite{
+		inFlight: true,
+		value:    enabled,
+		desired:  enabled,
+		request:  m.globalAutoMergeWriteSeq,
+	}
+	return m, m.saveGlobalAutoMergeCmd(enabled, m.globalAutoMergeWrite.request)
+}
+
+func (m Model) saveGlobalAutoMergeCmd(enabled bool, request uint64) tea.Cmd {
 	return func() tea.Msg {
-		if err := m.saveFlowAutoMerge(enabled); err != nil {
-			return GlobalAutoMergeSetFailedMsg{Err: fmt.Sprintf("failed to save global auto-merge setting: %v", err)}
+		// The config write and the launch-ID write share one gate. Whichever
+		// acquires it first completes before the other observes the policy, so
+		// the persisted setting and launch permission cannot disagree.
+		if err := m.autoMergePolicy.save(enabled, m.saveFlowAutoMerge); err != nil {
+			return GlobalAutoMergeSetFailedMsg{
+				Enabled: enabled,
+				Request: request,
+				Err:     fmt.Sprintf("failed to save global auto-merge setting: %v", err),
+			}
 		}
-		return GlobalAutoMergeSetMsg{Enabled: enabled}
+		return GlobalAutoMergeSetMsg{Enabled: enabled, Request: request}
 	}
 }
 

@@ -1278,6 +1278,24 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeWideFooterShowsAutoMergeControls(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                    500,
+		Mode:                     ModeFlows,
+		ActivePane:               PaneBottom,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowAutoModeSelected:     false,
+		FlowAutoMergeSelected:    nil,
+		GlobalAutoMerge:          true,
+		FlowWorktreePathSelected: true,
+	})
+
+	if !strings.Contains(bar, "G:i ctrl+g:on effective:on") {
+		t.Fatalf("wide Flow footer missing auto-merge controls and state, got %q", bar)
+	}
+}
+
 func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 	flowRow := renderStatusBarWithState(statusBarParams{
 		Width:                180,

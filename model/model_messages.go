@@ -383,9 +383,16 @@ type FlowAutoMergeSetFailedMsg struct {
 	Err      string
 }
 
-type GlobalAutoMergeSetMsg struct{ Enabled bool }
+type GlobalAutoMergeSetMsg struct {
+	Enabled bool
+	Request uint64
+}
 
-type GlobalAutoMergeSetFailedMsg struct{ Err string }
+type GlobalAutoMergeSetFailedMsg struct {
+	Enabled bool
+	Request uint64
+	Err     string
+}
 
 type FlowHeadlessSetMsg struct {
 	RepoPath        string
@@ -1692,20 +1699,33 @@ func (m Model) handleFlowAutoMergeSetFailed(msg FlowAutoMergeSetFailedMsg) Model
 }
 
 func (m Model) handleGlobalAutoMergeSet(msg GlobalAutoMergeSetMsg) (Model, tea.Cmd) {
+	if !m.globalAutoMergeWrite.inFlight || msg.Request != m.globalAutoMergeWrite.request ||
+		msg.Enabled != m.globalAutoMergeWrite.value {
+		return m, nil
+	}
 	m.autoMerge = msg.Enabled
+	m.globalAutoMergeWrite.inFlight = false
 	m = m.setStatus(statusOther, fmt.Sprintf("Global auto-merge: %s", onOff(msg.Enabled)))
+	if m.globalAutoMergeWrite.desired != msg.Enabled {
+		return m.startGlobalAutoMergeWrite(m.globalAutoMergeWrite.desired)
+	}
 	if msg.Enabled {
 		return m.startAutoAdvanceFetch()
 	}
 	return m, nil
 }
 
-func (m Model) handleGlobalAutoMergeSetFailed(msg GlobalAutoMergeSetFailedMsg) Model {
+func (m Model) handleGlobalAutoMergeSetFailed(msg GlobalAutoMergeSetFailedMsg) (Model, tea.Cmd) {
+	if !m.globalAutoMergeWrite.inFlight || msg.Request != m.globalAutoMergeWrite.request ||
+		msg.Enabled != m.globalAutoMergeWrite.value {
+		return m, nil
+	}
+	m.globalAutoMergeWrite = globalAutoMergeWrite{desired: m.autoMerge}
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "failed to save global auto-merge setting"
 	}
-	return m.setStatus(statusOther, errText)
+	return m.setStatus(statusOther, errText), nil
 }
 
 func onOff(enabled bool) string {
