@@ -216,6 +216,76 @@ func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
 	})
 }
 
+func TestRepairPurposeHolderPrecedence(t *testing.T) {
+	leaseErr := errors.New("unsafe flow-leases directory")
+	tests := []struct {
+		name          string
+		leaseOccupied bool
+		leaseErr      error
+		runtime       runtimeFixture
+		wantPreview   Holder
+		wantAdmission Holder
+		wantFooter    Holder
+	}{
+		{name: "free"},
+		{name: "repair attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}}, wantPreview: HolderRepairAttempt, wantAdmission: HolderRepairAttempt, wantFooter: HolderRepairAttempt},
+		{name: "phase resume attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RolePhaseResume}}, wantPreview: HolderPhaseResumeAttempt, wantAdmission: HolderPhaseResumeAttempt, wantFooter: HolderPhaseResumeAttempt},
+		{name: "phase attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleTrackedPhase}}, wantPreview: HolderPhaseAttempt, wantAdmission: HolderPhaseAttempt, wantFooter: HolderPhaseAttempt},
+		{name: "other attempt", runtime: runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleAutofix}}, wantPreview: HolderOtherAttempt, wantAdmission: HolderOtherAttempt, wantFooter: HolderOtherAttempt},
+		{name: "Flow terminal", runtime: runtimeFixture{flows: map[string]bool{"flow-1": true}}, wantPreview: HolderFlowTerminal, wantAdmission: HolderFlowTerminal, wantFooter: HolderFlowTerminal},
+		{name: "terminal-less repair slot", runtime: runtimeFixture{repairs: map[string]bool{"flow-1": true}}, wantPreview: HolderRepairTerminal, wantAdmission: HolderRepairTerminal, wantFooter: HolderRepairTerminal},
+		{name: "headless write", runtime: runtimeFixture{headless: map[string]bool{"flow-1": true}}, wantAdmission: HolderHeadlessWrite, wantFooter: HolderHeadlessWrite},
+		{
+			name:          "repair attempt wins every runtime source",
+			runtime:       runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}, repairs: map[string]bool{"flow-1": true}, headless: map[string]bool{"flow-1": true}},
+			wantPreview:   HolderRepairAttempt,
+			wantAdmission: HolderRepairAttempt,
+			wantFooter:    HolderRepairAttempt,
+		},
+		{
+			name:          "held lease wins every runtime source",
+			leaseOccupied: true,
+			runtime:       runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}, repairs: map[string]bool{"flow-1": true}, headless: map[string]bool{"flow-1": true}},
+			wantPreview:   HolderPeerLease,
+			wantAdmission: HolderPeerLease,
+			wantFooter:    HolderPeerLease,
+		},
+		{
+			name:          "unreadable lease wins every runtime source",
+			leaseErr:      leaseErr,
+			runtime:       runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}, repairs: map[string]bool{"flow-1": true}, headless: map[string]bool{"flow-1": true}},
+			wantPreview:   HolderLeaseUnreadable,
+			wantAdmission: HolderLeaseUnreadable,
+			wantFooter:    HolderLeaseUnreadable,
+		},
+	}
+	for _, tc := range tests {
+		for _, stage := range []struct {
+			name  string
+			stage Stage
+			want  Holder
+		}{
+			{name: "preview", stage: StagePreview, want: tc.wantPreview},
+			{name: "admission", stage: StageAdmission, want: tc.wantAdmission},
+			{name: "footer", stage: StageFooter, want: tc.wantFooter},
+		} {
+			t.Run(tc.name+"/"+stage.name, func(t *testing.T) {
+				lease := &leaseFixture{occupied: tc.leaseOccupied, err: tc.leaseErr, t: t, wantFlowID: "flow-1"}
+				verdict := New(Sources{Lease: lease, Runtime: tc.runtime}).Query(Query{
+					FlowID:  "flow-1",
+					Purpose: Purpose{Role: actions.RoleRepair, Stage: stage.stage},
+				})
+				if verdict.Holder() != stage.want {
+					t.Fatalf("Holder() = %v, want %v", verdict.Holder(), stage.want)
+				}
+				if !errors.Is(verdict.Err(), tc.leaseErr) {
+					t.Fatalf("Err() = %v, want errors.Is(_, %v)", verdict.Err(), tc.leaseErr)
+				}
+			})
+		}
+	}
+}
+
 func (runtime runtimeFixture) AttemptHolder(flowID string) (actions.FlowLaunchRole, bool) {
 	role, ok := runtime.attempts[flowID]
 	return role, ok

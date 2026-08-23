@@ -2,6 +2,8 @@ package model
 
 import (
 	"testing"
+
+	"github.com/approachcontrol/approach/flowoccupancy"
 )
 
 // The ordered refusals of docs/flow-occupancy-matrix.md §4. F2 records that four
@@ -10,14 +12,17 @@ import (
 // same time, because a ladder that only ever sees one source cannot be shown to
 // be ordered at all.
 
-// TestFlowRepairOccupancyRefusalLadder is §4.1. The lease sits above all five of
-// these ranks and is answered separately, so it does not appear here.
+// TestFlowRepairOccupancyRefusalLadder is §4.1. It exercises the module verdict
+// and the model-owned rendering together so neither side can silently reorder
+// or rename a refusal.
 func TestFlowRepairOccupancyRefusalLadder(t *testing.T) {
 	tests := []struct {
 		name    string
 		sources []occupancySource
 		want    string
 	}{
+		{name: "lease unreadable above the runtime ladder", sources: []occupancySource{srcLeaseError, srcAttemptRepair}, want: flowLeaseSetupErrorStatus(occupancyLeaseErr())},
+		{name: "held lease above the runtime ladder", sources: []occupancySource{srcLeaseHeld, srcAttemptRepair}, want: flowLeaseOccupiedStatus},
 		// Rank 1–3 key on the attempt's kind.
 		{name: "rank 1: repair attempt", sources: []occupancySource{srcAttemptRepair}, want: flowRepairPendingStatus},
 		{name: "rank 2: phase resume attempt", sources: []occupancySource{srcAttemptPhaseResume}, want: flowRepairResumePendingStatus},
@@ -56,19 +61,14 @@ func TestFlowRepairOccupancyRefusalLadder(t *testing.T) {
 			sources: []occupancySource{srcAttemptRepair, srcFlowTerminal, srcRepairSlot, srcHeadlessWrite},
 			want:    flowRepairPendingStatus,
 		},
-		{
-			// Rank 5 is a fallthrough, not a test. With nothing at all holding
-			// the Flow it still answers with the headless status, and that
-			// surprising fact is exactly what a migration would silently change.
-			name: "rank 5 is a fallthrough, so it answers even with nothing pending",
-			want: flowHeadlessWritePendingStatus,
-		},
+		{name: "free Flow has no refusal"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newOccupancyFixture(t, tc.sources...)
-			if got := f.m.flowRepairOccupancyRefusal(f.flowID()); got != tc.want {
-				t.Fatalf("flowRepairOccupancyRefusal = %q, want %q", got, tc.want)
+			verdict := f.m.repairOccupancy(f.flowID(), flowoccupancy.StageAdmission)
+			if got := flowRepairOccupancyStatus(verdict); got != tc.want {
+				t.Fatalf("flowRepairOccupancyStatus = %q, want %q", got, tc.want)
 			}
 		})
 	}

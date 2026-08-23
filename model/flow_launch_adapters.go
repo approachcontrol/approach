@@ -138,6 +138,26 @@ func (m Model) trackedPhaseOccupancy(flowID string, stage flowoccupancy.Stage) f
 	})
 }
 
+func (m Model) repairOccupancy(flowID string, stage flowoccupancy.Stage) flowoccupancy.Verdict {
+	if strings.TrimSpace(flowID) == "" {
+		return flowoccupancy.Free()
+	}
+	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  actions.RoleRepair,
+			Stage: stage,
+		},
+	})
+}
+
 // flowLaunchSeams is the authoritative boundary the launch lifecycle reads and
 // writes through. It is built once in NewWithOptions and stored on the Model so
 // the lifecycle never reaches for a pane snapshot or a package-level store.

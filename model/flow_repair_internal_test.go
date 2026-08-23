@@ -234,10 +234,9 @@ func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *test
 		if repairSlot.selectedFlowRepairReady() {
 			t.Fatalf("selectedFlowRepairReady() = true in mode %v with a terminal-less repair slot", mode)
 		}
-		// The headless term lives outside the preview boundary, because
-		// admission's occupancy set has no headless notion and is shared with
-		// kinds that must not inherit one. The footer still has to withdraw for
-		// exactly as long as admission refuses.
+		// The headless term lives outside the preview boundary. Repair admission
+		// includes it, and the footer still has to withdraw for exactly as long
+		// as admission refuses.
 		pendingHeadless := m.markFlowHeadlessWritePending(pendingFlowHeadlessWrite{
 			flowID:   record.FlowID,
 			repoPath: record.RepoPath,

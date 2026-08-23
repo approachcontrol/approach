@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -84,10 +85,11 @@ func TestSimultaneousSourcesReportPerConsumerStatuses(t *testing.T) {
 		if got := statusFromRefusedLaunch(t, f, flowLaunchKindAutoPhase); got != "" {
 			t.Fatalf("auto phase status = %q, want silence", got)
 		}
-		// The lease is ranked above repair's five-rung ladder and answered
-		// separately, so the ladder itself still reports its own rank 3.
-		if got := f.m.flowRepairOccupancyRefusal(f.flowID()); got != flowRepairPhasePendingStatus {
-			t.Fatalf("repair ladder = %q, want %q", got, flowRepairPhasePendingStatus)
+		// The module owns the lease and runtime ordering together, so the named
+		// verdict reports the lease above repair's runtime ladder.
+		verdict := f.m.repairOccupancy(f.flowID(), flowoccupancy.StageAdmission)
+		if got := flowRepairOccupancyStatus(verdict); got != flowLeaseOccupiedStatus {
+			t.Fatalf("repair ladder = %q, want %q", got, flowLeaseOccupiedStatus)
 		}
 	})
 

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -136,7 +137,7 @@ func (m Model) cachedRepairTarget(intent flowLaunchIntent) (flowstore.FlowRecord
 // their conjunction.
 func (m Model) previewRepairLaunch(intent flowLaunchIntent) (flowstore.FlowRecord, bool) {
 	record, ok := m.cachedRepairTarget(intent)
-	if !ok || m.flowLaunchAdmissionOccupied(record.FlowID) {
+	if !ok || m.repairOccupancy(record.FlowID, flowoccupancy.StagePreview).Occupied() {
 		return flowstore.FlowRecord{}, false
 	}
 	return record, true
@@ -154,15 +155,8 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	flowID := strings.TrimSpace(record.FlowID)
 	intent.FlowID = flowID
-	leaseOccupied, leaseErr := m.trackedFlowLeaseOccupied(flowID)
-	if leaseErr != nil {
-		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(leaseErr)), nil, false
-	}
-	if leaseOccupied {
-		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
-	}
-	if m.flowLaunchRuntimeOccupied(flowID) || m.flowHeadlessWritePending(flowID) {
-		return m.setStatus(statusOther, m.flowRepairOccupancyRefusal(flowID)), nil, false
+	if verdict := m.repairOccupancy(flowID, flowoccupancy.StageAdmission); verdict.Occupied() {
+		return m.setStatus(statusOther, flowRepairOccupancyStatus(verdict)), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
@@ -195,26 +189,32 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
-// flowRepairOccupancyRefusal names what is holding the Flow in this exact
-// order: repair attempt, phase-resume attempt, manual/auto phase attempt,
-// actual terminal or other-attempt fallback, then pending headless write.
-func (m Model) flowRepairOccupancyRefusal(flowID string) string {
-	switch m.flowLaunchAttemptKind(flowID) {
-	case flowLaunchKindRepair:
+func flowRepairOccupancyStatus(verdict flowoccupancy.Verdict) string {
+	switch verdict.Holder() {
+	case flowoccupancy.HolderLeaseUnreadable:
+		return flowLeaseSetupErrorStatus(verdict.Err())
+	case flowoccupancy.HolderPeerLease:
+		return flowLeaseOccupiedStatus
+	case flowoccupancy.HolderRepairAttempt:
 		return flowRepairPendingStatus
-	case flowLaunchKindPhaseResume:
+	case flowoccupancy.HolderPhaseResumeAttempt:
 		return flowRepairResumePendingStatus
-	case flowLaunchKindManualPhase, flowLaunchKindAutoPhase:
+	case flowoccupancy.HolderPhaseAttempt:
 		return flowRepairPhasePendingStatus
-	}
-	if m.hasFlowEmbeddedTerminalForFlow(flowID) ||
-		m.hasFlowRepairEmbeddedTerminalForFlow(flowID) ||
-		m.flowLaunchAttemptOccupied(flowID) {
+	case flowoccupancy.HolderOtherAttempt,
+		flowoccupancy.HolderFlowTerminal,
+		flowoccupancy.HolderRepairTerminal:
+		return flowRepairTerminalStatus
+	case flowoccupancy.HolderHeadlessWrite:
+		return flowHeadlessWritePendingStatus
+	case flowoccupancy.HolderNone:
+		if verdict.Err() != nil {
+			return flowLeaseSetupErrorStatus(verdict.Err())
+		}
+		return ""
+	default:
 		return flowRepairTerminalStatus
 	}
-	// Repair reads the persisted headless preference asynchronously, so it must
-	// wait for an in-flight toggle exactly as a phase launch does.
-	return flowHeadlessWritePendingStatus
 }
 
 // repairFlowLaunchReadCmd is the authoritative read for a repair. It does not

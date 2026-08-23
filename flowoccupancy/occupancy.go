@@ -188,8 +188,9 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	{Role: actions.RoleCreatePhase, Stage: StageAdmission}: {sources: readRuntime, runtime: readAdmissionRuntime, freshness: allowAuthoritative},
 	// Matrix section 2.1: phase-resume admission and its keypress probe.
 	{Role: actions.RolePhaseResume, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
-	// Matrix section 2.1: repair admission and its whole-Flow agent probe.
-	{Role: actions.RoleRepair, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
+	// Matrix section 2.1: repair admission. The whole-Flow tmux probe remains a
+	// separate keypress check because it shells out and is not part of admission.
+	{Role: actions.RoleRepair, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowAuthoritative},
 	// Matrix section 2.1: autofix admission and its whole-Flow agent probe.
 	{Role: actions.RoleAutofix, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: worktree-agent admission reads every source family.
