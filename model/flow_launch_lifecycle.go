@@ -1271,54 +1271,28 @@ func flowLaunchTmuxRepoPath(ctx actions.AgentLaunchContext, fallbackRepoPath str
 }
 
 // flowLaunchEmbeddedBackstop is the last occupancy check before a slot is
-// allocated, and it is deliberately per kind. Admission makes every branch here
-// unreachable, but dropping the backstop would be a regression against a future
-// unguarded source.
-//
-// Every kind refuses an open repair terminal. Repair alone also refuses a
-// non-repair Flow terminal, because repair is Flow-scoped rather than phase-
-// scoped: any terminal on the Flow is a competing owner of the same record.
-// That broad disjunct is where consumePendingFlowRepairLaunch's pre-allocation
-// recheck went, and keeping it here is what stops the migration from quietly
-// narrowing repair's last line of defense.
-//
-// It is a superset of that recheck, not a transcription of it: the old one
-// tested hasFlowEmbeddedTerminalForFlow alone, so a repair slot with no live
-// terminal got past it. The two predicates overlap rather than nest — one
-// requires a live terminal, the other a repair slot — so repair needs both, and
-// adding the second is a fix. The same tightening reaches the footer through
-// flowLaunchAdmissionOccupied, which now withdraws R for a terminal-less repair
-// slot that previously left it advertised.
+// allocated. Admission makes every branch here unreachable, but dropping the
+// backstop would be a regression against a future unguarded source. StageInstall
+// owns which terminal-slot sources each role reads; this function only renders
+// the occupied verdict in the attempt kind's established wording.
 //
 // The wording comes from the attempt's own kind, never from the prefill-failure
 // re-reservation, which labels every source manualPhase.
 func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (string, bool) {
-	if kind == flowLaunchKindCreatePhase {
-		if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
-			return "Flow creation launch canceled because a terminal is already open for this Flow", true
-		}
+	if !m.flowLaunchInstallOccupancy(kind, flowID).Occupied() {
 		return "", false
+	}
+	if kind == flowLaunchKindCreatePhase {
+		return "Flow creation launch canceled because a terminal is already open for this Flow", true
 	}
 	if kind == flowLaunchKindWorktreeAgent {
-		if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
-			return flowWorktreeAgentSlotStatus, true
-		}
-		return "", false
+		return flowWorktreeAgentSlotStatus, true
 	}
 	if kind == flowLaunchKindSavedSessionResume {
-		if m.hasFlowEmbeddedTerminalForFlow(flowID) {
-			return "Saved session resume canceled because an embedded terminal already occupies this Flow", true
-		}
-		return "", false
+		return "Saved session resume canceled because an embedded terminal already occupies this Flow", true
 	}
 	if kind == flowLaunchKindRepair {
-		if m.hasFlowRepairEmbeddedTerminalForFlow(flowID) || m.hasFlowEmbeddedTerminalForFlow(flowID) {
-			return flowRepairTerminalStatus, true
-		}
-		return "", false
-	}
-	if !m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
-		return "", false
+		return flowRepairTerminalStatus, true
 	}
 	if kind == flowLaunchKindPhaseResume {
 		return "Flow phase resume canceled because a repair terminal is already open for this Flow", true

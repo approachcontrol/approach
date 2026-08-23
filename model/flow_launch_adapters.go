@@ -172,6 +172,18 @@ func flowLaunchRole(kind flowLaunchKind) actions.FlowLaunchRole {
 	}
 }
 
+func (m Model) flowLaunchInstallOccupancy(kind flowLaunchKind, flowID string) flowownership.Verdict {
+	return flowownership.Evaluate(flowownership.Sources{
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role:  flowLaunchRole(kind),
+			Stage: flowownership.StageInstall,
+		},
+	})
+}
+
 func (m Model) createFlowAdmissionOccupancy(flowID string) flowownership.Verdict {
 	return flowownership.New(flowownership.Sources{
 		Runtime: flowOccupancyRuntime{model: m},
