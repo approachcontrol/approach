@@ -146,10 +146,9 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 // falls back to selectedFlow(), which is the selection semantics this predicate
 // has always had.
 //
-// The headless term stays outside the preview because admission's occupancy set
-// has no headless notion and flowLaunchAdmissionOccupied is shared with kinds
-// that must not inherit one. Dropping it here would re-advertise R during an
-// in-flight headless write, which admission still refuses.
+// The headless term stays outside StagePreview so other preview consumers do
+// not inherit repair's transient holder. StageAdmission includes it for repair,
+// and this explicit check keeps the footer aligned without changing preview.
 func (m Model) selectedFlowRepairReady() bool {
 	record, ok := m.previewRepairLaunch(m.repairFlowLaunchIntent(""))
 	return ok && !m.flowHeadlessWritePending(record.FlowID)

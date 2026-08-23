@@ -336,9 +336,8 @@ func TestPreviewPhaseResumeIsTrueForABlankFlowID(t *testing.T) {
 }
 
 // TestRepairFooterAddsTheHeadlessTermToThePreview is D4's second case: repair's
-// footer occupancy set is wider than its preview's, because admission's
-// occupancy set has no headless notion and the composite is shared with kinds
-// that must not inherit one.
+// footer occupancy set is wider than its preview's. Repair admission includes
+// the headless term, while StagePreview deliberately does not.
 func TestRepairFooterAddsTheHeadlessTermToThePreview(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -356,9 +355,17 @@ func TestRepairFooterAddsTheHeadlessTermToThePreview(t *testing.T) {
 			wantPreview: true,
 			wantStatus:  flowHeadlessWritePendingStatus,
 		},
+		{name: "unreadable lease", sources: []occupancySource{srcLeaseError}, wantStatus: flowLeaseSetupErrorStatus(occupancyLeaseErr())},
 		{name: "held lease", sources: []occupancySource{srcLeaseHeld}, wantStatus: flowLeaseOccupiedStatus},
+		{name: "phase resume attempt", sources: []occupancySource{srcAttemptPhaseResume}, wantStatus: flowRepairResumePendingStatus},
+		{name: "manual phase attempt", sources: []occupancySource{srcAttemptManualPhase}, wantStatus: flowRepairPhasePendingStatus},
+		{name: "auto phase attempt", sources: []occupancySource{srcAttemptAutoPhase}, wantStatus: flowRepairPhasePendingStatus},
+		{name: "other attempt", sources: []occupancySource{srcAttemptAutofix}, wantStatus: flowRepairTerminalStatus},
 		{name: "Flow terminal", sources: []occupancySource{srcFlowTerminal}, wantStatus: flowRepairTerminalStatus},
+		{name: "terminal-less repair slot", sources: []occupancySource{srcRepairSlot}, wantStatus: flowRepairTerminalStatus},
 		{name: "repair attempt", sources: []occupancySource{srcAttemptRepair}, wantStatus: flowRepairPendingStatus},
+		{name: "repair attempt wins all runtime sources", sources: []occupancySource{srcAttemptRepair, srcFlowTerminal, srcRepairSlot, srcHeadlessWrite}, wantStatus: flowRepairPendingStatus},
+		{name: "lease wins all runtime sources", sources: []occupancySource{srcLeaseHeld, srcAttemptRepair, srcFlowTerminal, srcRepairSlot, srcHeadlessWrite}, wantStatus: flowLeaseOccupiedStatus},
 	}
 	record := occupancyRepairFlowRecord()
 	for _, tc := range tests {
