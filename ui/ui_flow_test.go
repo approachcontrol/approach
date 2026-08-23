@@ -1206,6 +1206,26 @@ func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T)
 	}
 }
 
+func TestFlowControlsShowAutoMergeOverrideGlobalAndEffectiveValues(t *testing.T) {
+	off := false
+	for _, tc := range []struct {
+		name     string
+		override *bool
+		global   bool
+		want     string
+	}{
+		{name: "inherit", global: true, want: "G:i ctrl+g:on effective:on"},
+		{name: "explicit off", override: &off, global: true, want: "G:off ctrl+g:on effective:off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := flowAutoModeShortcutHint(false, tc.override, tc.global)
+			if !strings.Contains(hint.Label, tc.want) {
+				t.Fatalf("Flow mode label = %q, want %q", hint.Label, tc.want)
+			}
+		})
+	}
+}
+
 func TestStatusBar_ActiveFlowsModeShowsFlowIDCopyHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:                    240,
@@ -1255,6 +1275,24 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	}
 	if strings.Contains(bar, "f2: pane") {
 		t.Fatalf("full Flow footer should not duplicate f2 pane hint, got %q", bar)
+	}
+}
+
+func TestStatusBar_FlowsModeWideFooterShowsAutoMergeControls(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                    500,
+		Mode:                     ModeFlows,
+		ActivePane:               PaneBottom,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowAutoModeSelected:     false,
+		FlowAutoMergeSelected:    nil,
+		GlobalAutoMerge:          true,
+		FlowWorktreePathSelected: true,
+	})
+
+	if !strings.Contains(bar, "G:i ctrl+g:on effective:on") {
+		t.Fatalf("wide Flow footer missing auto-merge controls and state, got %q", bar)
 	}
 }
 

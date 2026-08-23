@@ -104,14 +104,15 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 
 	var cmds []tea.Cmd
 	var autoCmd tea.Cmd
-	m, autoCmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(previous, current, msg.Request)
+	var admittedAutoMerges []string
+	m, autoCmd, admittedAutoMerges = m.prepareAutoFlowPhaseLaunchForRequest(previous, current, msg.Request)
 	cmds = append(cmds, autoCmd)
 	var progressionCmd tea.Cmd
 	m, progressionCmd = m.prepareEpicProgressionAdvance(current, msg.Request)
 	cmds = append(cmds, progressionCmd)
 	m.autoAdvanceSnapshot = current
 
-	statuses := autoAdvanceStatusEvents(previous, current)
+	statuses := autoAdvanceStatusEventsWithAutoMerge(previous, current, admittedAutoMerges)
 	if len(statuses) > 0 {
 		var statusCmd tea.Cmd
 		m, statusCmd = m.setAutoAdvanceStatus(statuses[len(statuses)-1])
@@ -300,7 +301,15 @@ func autoAdvanceDisplayRecordRefreshesBaseline(previous, current flowstore.FlowR
 // announcement is not among them: it is emitted by the launch lifecycle's read
 // success branch, which is the hop that knows preflight passed.
 func autoAdvanceStatusEvents(previous, current []flowstore.FlowRecord) []string {
+	return autoAdvanceStatusEventsWithAutoMerge(previous, current, nil)
+}
+
+func autoAdvanceStatusEventsWithAutoMerge(previous, current []flowstore.FlowRecord, admittedAutoMerges []string) []string {
 	var events []string
+	admitted := make(map[string]struct{}, len(admittedAutoMerges))
+	for _, key := range admittedAutoMerges {
+		admitted[key] = struct{}{}
+	}
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previous))
 	for _, record := range previous {
 		if record.FlowID != "" {
@@ -331,7 +340,9 @@ func autoAdvanceStatusEvents(previous, current []flowstore.FlowRecord) []string 
 			case phase.Status == flowstore.PhaseNeedsAttention && previousPhase.Status != flowstore.PhaseNeedsAttention:
 				events = append(events, "Flow "+flowTitleForStatus(record)+": needs attention")
 			case flowstore.SemanticKind(phase) == flowstore.KindMerge && phase.Status == flowstore.PhaseReady && previousPhase.Status != flowstore.PhaseReady:
-				events = append(events, "Flow "+flowTitleForStatus(record)+": ready to merge")
+				if _, launched := admitted[autoMergeAdmissionKey(record.FlowID, phase.PhaseID)]; !launched {
+					events = append(events, "Flow "+flowTitleForStatus(record)+": ready to merge")
+				}
 			}
 		}
 	}

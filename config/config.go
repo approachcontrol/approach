@@ -101,8 +101,9 @@ type FlowPromptConfig struct {
 
 // FlowConfig stores Flow creation defaults and custom phase graph presets.
 type FlowConfig struct {
-	Preset  string             `toml:"preset"`
-	Presets []flowstore.Preset `toml:"presets"`
+	Preset    string             `toml:"preset"`
+	AutoMerge bool               `toml:"auto_merge"`
+	Presets   []flowstore.Preset `toml:"presets"`
 }
 
 // SessionsConfig controls agent-session capture storage.
@@ -408,6 +409,18 @@ func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
 // model is saved as "default".
 func SaveAgentModel(command, model string, options ...Option) error {
 	return saveAgentField(command, model, options, prepareAgentModel, saveAgentModelTo)
+}
+
+// SaveFlowAutoMerge persists the global automatic merge-phase launch policy.
+func SaveFlowAutoMerge(enabled bool, options ...Option) error {
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return saveAgentConfigTo(path, options, func(data []byte) []byte {
+		return patchSectionAssignment(data, "flow", "auto_merge", fmt.Sprintf("auto_merge = %t\n", enabled))
+	})
 }
 
 func saveAgentField(command, value string, options []Option, prepare func(string, string) (string, string, error), persist func(string, string, string, ...Option) error) error {

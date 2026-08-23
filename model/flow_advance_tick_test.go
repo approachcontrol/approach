@@ -1991,3 +1991,46 @@ func TestModel_AutoAdvanceStatusEventsExpireAndDoNotStompOtherStatus(t *testing.
 		t.Fatalf("status = %#v, want existing non-auto status preserved", m.status)
 	}
 }
+
+func TestModel_AutoMergeAdmissionDeferralKeepsReadyToMergeNotice(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", false, autoMergeReadyPredecessorStatuses())
+	mergeReady := previous
+	mergeReady.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
+	mergeReady.Phases[6].Status = flowstore.PhaseReady
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{FlowAutoMerge: true})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+	m.flowLaunchAttempts = map[string]flowLaunchAttempt{
+		mergeReady.FlowID: {Token: "occupied", Kind: flowLaunchKindManualPhase, FlowID: mergeReady.FlowID, State: flowLaunchStateReading},
+	}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{mergeReady})
+	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: ready to merge" {
+		t.Fatalf("status = %#v, want merge-ready notice after auto-merge admission deferral", m.status)
+	}
+}
+
+func TestModel_AutoMergeAdmissionSuppressesReadyToMergeNotice(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", false, autoMergeReadyPredecessorStatuses())
+	mergeReady := previous
+	mergeReady.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
+	mergeReady.Phases[6].Status = flowstore.PhaseReady
+	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{AgentCommand: "codex", FlowAutoMerge: true})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{mergeReady})
+	if m.status.Text != "" {
+		t.Fatalf("status = %#v, want admitted auto-merge to suppress manual-ready notice", m.status)
+	}
+}
+
+func autoMergeReadyPredecessorStatuses() map[string]flowstore.PhaseStatus {
+	return map[string]flowstore.PhaseStatus{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseCompleted,
+		"review-loop":    flowstore.PhaseCompleted,
+		"pr-creation":    flowstore.PhaseCompleted,
+		"autoreview":     flowstore.PhaseCompleted,
+		"merge":          flowstore.PhasePending,
+	}
+}

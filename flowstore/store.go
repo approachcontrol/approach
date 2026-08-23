@@ -575,6 +575,13 @@ type AutoModeUpdate struct {
 	Enabled bool
 }
 
+// AutoMergeUpdate sets a Flow override for automatic merge-phase launches.
+// A nil value inherits the global setting; false and true are explicit policy.
+type AutoMergeUpdate struct {
+	FlowID  string
+	Enabled *bool
+}
+
 // HeadlessUpdate changes the manual launch preference for one Flow.
 type HeadlessUpdate struct {
 	FlowID  string
@@ -602,6 +609,7 @@ type FlowRecord struct {
 	Merge         Merge       `json:"merge,omitempty"`
 	Closed        Closure     `json:"closed,omitzero"`
 	AutoMode      bool        `json:"auto_mode,omitempty"`
+	AutoMerge     *bool       `json:"auto_merge,omitempty"`
 	// Headless is the per-Flow manual-launch preference. Like AutoMode, it is
 	// forced on at creation and can only be changed afterwards through
 	// SetHeadless or CreateOptions.Headless — a value set on a record passed to
@@ -708,11 +716,13 @@ type StartMetadataUpdate struct {
 // status (completed, skipped) records the launch without reopening the phase,
 // while non-resume launches always mark the phase running.
 type PhaseLaunchUpdate struct {
-	FlowID     string
-	PhaseID    string
-	LaunchID   string
-	Resume     bool
-	AutoLaunch bool
+	FlowID          string
+	PhaseID         string
+	LaunchID        string
+	Resume          bool
+	AutoLaunch      bool
+	AutoMerge       bool
+	GlobalAutoMerge bool
 }
 
 // PhaseResetUpdate identifies one UI-owned phase recovery mutation.
@@ -1922,6 +1932,44 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 	})
 }
 
+// SetAutoMerge sets or clears one Flow's automatic merge-phase override.
+func (s *Store) SetAutoMerge(update AutoMergeUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) && update.Enabled != nil && *update.Enabled {
+			return FlowRecord{}, closedFlowMutationError(record, "enable auto-merge on")
+		}
+		if boolPointersEqual(record.AutoMerge, update.Enabled) {
+			return record, nil
+		}
+		record.AutoMerge = cloneBoolPointer(update.Enabled)
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// EffectiveAutoMerge resolves the per-Flow override against the global setting.
+func EffectiveAutoMerge(record FlowRecord, global bool) bool {
+	if record.AutoMerge != nil {
+		return *record.AutoMerge
+	}
+	return global
+}
+
+func boolPointersEqual(left, right *bool) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
+func cloneBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 // SetHeadless enables or disables headless manual launches for one Flow.
 func (s *Store) SetHeadless(update HeadlessUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
@@ -2143,7 +2191,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			}
 		}
 		if update.AutoLaunch {
-			if err := validateAutoPhaseLaunch(record, phaseIndex); err != nil {
+			if err := validateAutoPhaseLaunch(record, phaseIndex, update.AutoMerge, update.GlobalAutoMerge); err != nil {
 				return FlowRecord{}, err
 			}
 		}
@@ -2231,23 +2279,44 @@ func phaseDependsOnTarget(graph phaseGraph, phaseIndex, targetIndex int) bool {
 	return visit(phaseIndex)
 }
 
-func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
+func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int, autoMerge, globalAutoMerge bool) error {
 	var phase FlowPhase
 	if phaseIndex >= 0 && phaseIndex < len(record.Phases) {
 		phase = record.Phases[phaseIndex]
 	}
 	switch {
-	case !record.AutoMode:
+	case autoMerge && !EffectiveAutoMerge(record, globalAutoMerge):
+		return fmt.Errorf("auto-merge for flow %q is disabled: %w", record.FlowID, ErrAutoLaunchOutdated)
+	case !autoMerge && !record.AutoMode:
 		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, ErrAutoLaunchOutdated)
-	case artifacts.NormalizePhaseID(phase.PhaseID) == "" || SemanticKind(phase) == KindMerge:
+	case artifacts.NormalizePhaseID(phase.PhaseID) == "":
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
+	case autoMerge && SemanticKind(phase) != KindMerge:
+		return fmt.Errorf("auto-merge target %q is not a merge phase: %w", phase.PhaseID, ErrAutoLaunchOutdated)
+	case !autoMerge && SemanticKind(phase) == KindMerge:
 		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	case phase.Status != PhaseReady:
 		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, ErrAutoLaunchOutdated)
-	case !phaseLaunchEligibleAtIndex(record, phaseIndex):
+	case autoMerge && !mergeAutoLaunchEligibleAtIndex(record, phaseIndex):
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
+	case !autoMerge && !phaseLaunchEligibleAtIndex(record, phaseIndex):
 		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	default:
 		return nil
 	}
+}
+
+func mergeAutoLaunchEligibleAtIndex(record FlowRecord, phaseIndex int) bool {
+	if FlowClosed(record) || PreparationLaunchBlocked(record) || phaseIndex < 0 || phaseIndex >= len(record.Phases) {
+		return false
+	}
+	graph := buildPhaseGraph(record.Phases)
+	if !graph.released[phaseIndex] || graph.duplicateRows[phaseIndex] {
+		return false
+	}
+	phase := record.Phases[phaseIndex]
+	return phase.Status == PhaseReady && SemanticKind(phase) == KindMerge &&
+		allDependencyGatesSatisfied(record, graph, phaseIndex)
 }
 
 // ResetAwaitingSessionPhase removes an orphaned latest launch attempt from a

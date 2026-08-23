@@ -75,10 +75,13 @@ type flowLaunchAttempt struct {
 	// owns only its provider/session key during the authoritative session read.
 	// That state uses an internal non-persistable provisional ID, then transfers
 	// atomically to the refreshed Flow ID or releases into the non-Flow route.
-	FlowID              string
-	PhaseID             string
-	Origin              flowLaunchOrigin
-	Settings            flowLaunchAgentSettingsSnapshot
+	FlowID   string
+	PhaseID  string
+	Origin   flowLaunchOrigin
+	Settings flowLaunchAgentSettingsSnapshot
+	// AutoMerge keeps level-triggered merge launches out of AutoMode's
+	// completion-edge retry drain after the event that admitted them is gone.
+	AutoMerge           bool
 	AutoRetrySuppressed bool
 	SessionKey          flowLaunchSavedSessionKey
 	// MutatedPhase records that AddPhaseLaunchID succeeded, so a later failure

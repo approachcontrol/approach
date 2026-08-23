@@ -355,6 +355,7 @@ func (f fieldValueBytes) observeFlow(flow *Flow) {
 	f.observeText("Flow.presetName", record.PresetName)
 	f.observeText("Flow.planId", record.PlanID)
 	f.observe("Flow.autoMode", boolValueBytes)
+	f.observe("Flow.autoMerge", boolValueBytes)
 	f.observe("Flow.createdAt", dateTimeValueBytes)
 	f.observe("Flow.updatedAt", dateTimeValueBytes)
 

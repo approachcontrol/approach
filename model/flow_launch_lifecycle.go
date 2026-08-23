@@ -166,8 +166,11 @@ type flowLaunchEventMsg struct {
 	// Headless and AutoLaunch are resolved once in the read stage and carried,
 	// so prepare cannot re-derive headless from the record and launch an
 	// AutoMode phase interactively.
-	Headless   bool
-	AutoLaunch bool
+	Headless                  bool
+	AutoLaunch                bool
+	AutoMerge                 bool
+	GlobalAutoMerge           bool
+	AutoMergePolicyGeneration uint64
 	// Preflight-resolved paths threaded from read to prepare. RepoPath is not
 	// Record.RepoPath: it falls back to the current repo, and ActionFailedMsg
 	// gates its status on it.
@@ -365,6 +368,9 @@ func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, boo
 	if flowID == "" || m.flowLaunchAdmissionOccupied(flowID) {
 		return m, nil, false
 	}
+	if intent.AutoMerge && intent.GlobalAutoMerge {
+		_, intent.AutoMergePolicyGeneration = m.autoMergePolicy.snapshot()
+	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
 		return m, nil, false
@@ -373,12 +379,13 @@ func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, boo
 	// every auto launch fail Preflight with "Press A to choose …".
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
 	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
-		Token:    token,
-		Kind:     intent.Kind,
-		FlowID:   flowID,
-		PhaseID:  intent.PhaseID,
-		Origin:   intent.Origin,
-		Settings: settings,
+		Token:     token,
+		Kind:      intent.Kind,
+		FlowID:    flowID,
+		PhaseID:   intent.PhaseID,
+		Origin:    intent.Origin,
+		Settings:  settings,
+		AutoMerge: intent.AutoMerge,
 	}, flowLaunchStateReserved)
 	if !reserved {
 		return m, nil, false
@@ -530,6 +537,23 @@ func flowLaunchCandidatePhase(kind flowLaunchKind, record flowstore.FlowRecord, 
 	return flowstore.FlowPhase{}, false
 }
 
+func automaticFlowLaunchCandidate(record flowstore.FlowRecord, intent flowLaunchIntent) (flowstore.FlowPhase, bool) {
+	if !intent.AutoMerge {
+		return flowLaunchCandidatePhase(intent.Kind, record, intent.PhaseID)
+	}
+	want := artifacts.NormalizePhaseID(intent.PhaseID)
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if artifacts.NormalizePhaseID(phase.PhaseID) != want ||
+			flowstore.SemanticKind(phase) != flowstore.KindMerge ||
+			phase.Status != flowstore.PhaseReady ||
+			!flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			continue
+		}
+		return phase, true
+	}
+	return flowstore.FlowPhase{}, false
+}
+
 // flowLaunchLauncher borrows the preflight and prepare steps through the
 // lifecycle's own seams. NewLaunchID is pinned to the admission token: a second
 // generated ID would make every LaunchID-keyed fence miss and strand the
@@ -644,10 +668,13 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			Stage:   flowLaunchStageRead,
 			// Seeded so a failed read still renders "Flow <title>: <err>";
 			// overwritten from the fresh record the moment one exists.
-			FlowTitle:  intent.FlowTitle,
-			AutoLaunch: true,
-			Headless:   true,
-			Outcome:    flowLaunchOutcomeOK,
+			FlowTitle:                 intent.FlowTitle,
+			AutoLaunch:                true,
+			AutoMerge:                 intent.AutoMerge,
+			GlobalAutoMerge:           intent.GlobalAutoMerge,
+			AutoMergePolicyGeneration: intent.AutoMergePolicyGeneration,
+			Headless:                  true,
+			Outcome:                   flowLaunchOutcomeOK,
 		}
 		record, err := seams.ReadFlow(intent.FlowID)
 		if err != nil {
@@ -656,11 +683,16 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			return event
 		}
 		event.FlowTitle = flowTitleForStatus(record)
-		if !record.AutoMode {
+		if intent.AutoMerge {
+			if !flowstore.EffectiveAutoMerge(record, intent.GlobalAutoMerge) {
+				event.Outcome = flowLaunchOutcomeStale
+				return event
+			}
+		} else if !record.AutoMode {
 			event.Outcome = flowLaunchOutcomeStale
 			return event
 		}
-		phase, ok := flowLaunchCandidatePhase(intent.Kind, record, intent.PhaseID)
+		phase, ok := automaticFlowLaunchCandidate(record, intent)
 		if !ok {
 			event.Outcome = flowLaunchOutcomeStale
 			return event
@@ -676,10 +708,12 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			return event
 		}
 		prepared, err := launcher.preflight(flowPhaseLaunchRequest{
-			Record:     record,
-			Phase:      phase,
-			AutoLaunch: true,
-			Headless:   true,
+			Record:          record,
+			Phase:           phase,
+			AutoLaunch:      true,
+			AutoMerge:       intent.AutoMerge,
+			GlobalAutoMerge: intent.GlobalAutoMerge,
+			Headless:        true,
 		})
 		if err != nil {
 			event.Outcome = flowLaunchOutcomeFailed
@@ -694,6 +728,8 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 		// the spelling an earlier poll captured rather than the record's own.
 		event.PhaseID = phase.PhaseID
 		event.Record = prepared.Record
+		event.AutoMerge = intent.AutoMerge
+		event.GlobalAutoMerge = intent.GlobalAutoMerge
 		if err != nil {
 			// Permanent by default, so it classifies blocked rather than failed;
 			// the write itself is the handler's, behind the attempt fence. The
@@ -741,6 +777,12 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 		return m.worktreeAgentFlowLaunchPrepareCmd(msg, settings)
 	}
 	launcher := settings.apply(m.flowLaunchLauncher(msg.Token))
+	if msg.AutoMerge && msg.GlobalAutoMerge {
+		addPhaseLaunchID := launcher.AddFlowPhaseLaunchID
+		launcher.AddFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return m.autoMergePolicy.addGlobalSnapshotLaunch(msg.AutoMergePolicyGeneration, addPhaseLaunchID, update)
+		}
+	}
 	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
 	if !ok {
 		return func() tea.Msg {
@@ -758,8 +800,10 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			// Resolved once in the read stage. Re-deriving it from the record
 			// here would launch an AutoMode Flow with persisted headless=false
 			// as an interactive, focus-stealing terminal.
-			Headless:   msg.Headless,
-			AutoLaunch: msg.AutoLaunch,
+			Headless:        msg.Headless,
+			AutoLaunch:      msg.AutoLaunch,
+			AutoMerge:       msg.AutoMerge,
+			GlobalAutoMerge: msg.GlobalAutoMerge,
 		},
 		RepoPath:     msg.RepoPath,
 		WorktreePath: msg.WorktreePath,
@@ -886,7 +930,10 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			releaseFlowLaunchReservation(msg.Release)
 			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 			if attempt.Kind == flowLaunchKindAutoPhase {
-				return m.armAutoAdvanceDrain(attempt.FlowID), nil
+				if !msg.AutoMerge {
+					m = m.armAutoAdvanceDrain(attempt.FlowID)
+				}
+				return m, nil
 			}
 			return m.setStatus(statusOther, msg.Err), nil
 		}
@@ -963,17 +1010,24 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 		// attempt cannot re-arm a drain a newer one owns. The status is the
 		// 3 s transient today's synchronous preflight failure already sets;
 		// its expiry command has to be returned or it never fires. The re-arm
-		// is also what makes this failure repeat on the next poll, which is why
-		// it reports through the yielding setter: it will be back, and the
-		// transition it would otherwise overwrite will not.
-		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID)
+		// makes an AutoMode failure repeat on the next poll. Auto-merge is
+		// already level-triggered by every poll, so arming the completion-edge
+		// drain there could launch an unrelated ready phase first.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		if !msg.AutoMerge {
+			m = m.armAutoAdvanceDrain(attempt.FlowID)
+		}
 		return m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + msg.Err)
 	case flowLaunchOutcomeBlocked:
 		return m.blockAutoFlowLaunchPhase(attempt, msg)
 	case flowLaunchOutcomeRetry:
-		// The blocker clears on its own, so re-arming is what makes the launch
-		// resume without waiting for another completion edge.
-		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID), nil
+		// The blocker clears on its own. AutoMode needs the completion-edge
+		// drain re-armed; auto-merge is retried by its level-triggered poll.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		if !msg.AutoMerge {
+			m = m.armAutoAdvanceDrain(attempt.FlowID)
+		}
+		return m, nil
 	default:
 		// stale, and the inert zero value: drop the attempt and leave the drain
 		// disarmed. Whatever superseded the candidate produces its own edge.

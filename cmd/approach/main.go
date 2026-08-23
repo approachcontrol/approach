@@ -643,6 +643,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 			return actions.AgentLaunchWithOptions(ctx, launchOpts)
 		},
 		LaunchBackend: cfg.Launch.Backend,
+		FlowAutoMerge: cfg.Flow.AutoMerge,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			endedAt := time.Now().UTC()
 			// The launch is over, so its claim on a cached binary is too. Best
@@ -673,6 +674,9 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		},
 		SaveAgentModel: func(command, model string) error {
 			return config.SaveAgentModel(command, model)
+		},
+		SaveFlowAutoMerge: func(enabled bool) error {
+			return config.SaveFlowAutoMerge(enabled)
 		},
 		SavePromptTemplate: func(section, key, value string) error {
 			return config.SavePromptTemplate(section, key, value)

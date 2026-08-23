@@ -66,6 +66,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 
+	if !m.searchActive && m.listInputEligible() && key == "ctrl+g" {
+		return m.toggleGlobalAutoMerge()
+	}
+
 	m = m.clearAnyStatus()
 
 	if !m.searchActive && key == "ctrl+r" {
@@ -199,6 +203,10 @@ func isPaneBackKey(key string) bool {
 
 func (m Model) contentListInputEligible() bool {
 	return m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusList
+}
+
+func (m Model) listInputEligible() bool {
+	return m.activePane == ui.PaneRepos || m.contentListInputEligible()
 }
 
 func isWorktreeCreateInput(view modal.View) bool {
@@ -1161,6 +1169,168 @@ func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, m.setFlowAutoModeCmd(repoPath, record.FlowID, !record.AutoMode)
+}
+
+func (m Model) toggleGlobalAutoMerge() (Model, tea.Cmd) {
+	desired := !m.autoMerge
+	if m.globalAutoMergeWrite.inFlight {
+		desired = !m.globalAutoMergeWrite.desired
+	}
+	m.globalAutoMergeWrite.desired = desired
+	if m.globalAutoMergeWrite.inFlight {
+		return m, nil
+	}
+	return m.startGlobalAutoMergeWrite(desired)
+}
+
+func (m Model) startGlobalAutoMergeWrite(enabled bool) (Model, tea.Cmd) {
+	m.globalAutoMergeWriteSeq++
+	m.globalAutoMergeWrite = globalAutoMergeWrite{
+		inFlight: true,
+		value:    enabled,
+		desired:  enabled,
+		request:  m.globalAutoMergeWriteSeq,
+	}
+	return m, m.saveGlobalAutoMergeCmd(enabled, m.globalAutoMergeWrite.request)
+}
+
+func (m Model) saveGlobalAutoMergeCmd(enabled bool, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		// The config write and the launch-ID write share one gate. Whichever
+		// acquires it first completes before the other observes the policy, so
+		// the persisted setting and launch permission cannot disagree.
+		if err := m.autoMergePolicy.save(enabled, m.saveFlowAutoMerge); err != nil {
+			return GlobalAutoMergeSetFailedMsg{
+				Enabled: enabled,
+				Request: request,
+				Err:     fmt.Sprintf("failed to save global auto-merge setting: %v", err),
+			}
+		}
+		return GlobalAutoMergeSetMsg{Enabled: enabled, Request: request}
+	}
+}
+
+func (m Model) handleCycleFlowAutoMerge() (tea.Model, tea.Cmd) {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" || flowstore.FlowClosed(record) {
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return m, nil
+	}
+	if pending, ok := m.pendingFlowAutoMergeWrite(record.FlowID); ok {
+		return m.updatePendingFlowAutoMergeDesired(record.FlowID, nextAutoMergeOverride(pending.desired)), nil
+	}
+	next := nextAutoMergeOverride(record.AutoMerge)
+	m = m.markPendingFlowAutoMergeWrite(pendingFlowAutoMergeWrite{
+		flowID: record.FlowID, repoPath: repoPath, written: next, desired: next,
+	})
+	return m, m.setFlowAutoMergeCmd(repoPath, record.FlowID, next)
+}
+
+func autoMergeBoolPointer(value bool) *bool { return &value }
+
+func nextAutoMergeOverride(current *bool) *bool {
+	switch {
+	case current == nil:
+		return autoMergeBoolPointer(true)
+	case *current:
+		return autoMergeBoolPointer(false)
+	default:
+		return nil
+	}
+}
+
+type pendingFlowAutoMergeWrite struct {
+	flowID   string
+	repoPath string
+	written  *bool
+	desired  *bool
+}
+
+func (m Model) pendingFlowAutoMergeWrite(flowID string) (pendingFlowAutoMergeWrite, bool) {
+	index := slices.IndexFunc(m.pendingFlowAutoMergeWrites, func(pending pendingFlowAutoMergeWrite) bool {
+		return pending.flowID == flowID
+	})
+	if index < 0 {
+		return pendingFlowAutoMergeWrite{}, false
+	}
+	return m.pendingFlowAutoMergeWrites[index], true
+}
+
+func (m Model) markPendingFlowAutoMergeWrite(pending pendingFlowAutoMergeWrite) Model {
+	pending.written = cloneAutoMergeOverride(pending.written)
+	pending.desired = cloneAutoMergeOverride(pending.desired)
+	m.pendingFlowAutoMergeWrites = append(slices.Clone(m.pendingFlowAutoMergeWrites), pending)
+	return m
+}
+
+func (m Model) updatePendingFlowAutoMergeDesired(flowID string, desired *bool) Model {
+	pending, ok := m.pendingFlowAutoMergeWrite(flowID)
+	if !ok {
+		return m
+	}
+	for index := range m.pendingFlowAutoMergeWrites {
+		if m.pendingFlowAutoMergeWrites[index].flowID == flowID {
+			writes := slices.Clone(m.pendingFlowAutoMergeWrites)
+			writes[index] = pending
+			writes[index].desired = cloneAutoMergeOverride(desired)
+			m.pendingFlowAutoMergeWrites = writes
+			return m
+		}
+	}
+	return m
+}
+
+func (m Model) updatePendingFlowAutoMergeWritten(flowID string, written *bool) Model {
+	for index := range m.pendingFlowAutoMergeWrites {
+		if m.pendingFlowAutoMergeWrites[index].flowID == flowID {
+			writes := slices.Clone(m.pendingFlowAutoMergeWrites)
+			writes[index].written = cloneAutoMergeOverride(written)
+			m.pendingFlowAutoMergeWrites = writes
+			return m
+		}
+	}
+	return m
+}
+
+func (m Model) clearPendingFlowAutoMergeWrite(flowID string) Model {
+	index := slices.IndexFunc(m.pendingFlowAutoMergeWrites, func(pending pendingFlowAutoMergeWrite) bool {
+		return pending.flowID == flowID
+	})
+	if index >= 0 {
+		m.pendingFlowAutoMergeWrites = slices.Delete(slices.Clone(m.pendingFlowAutoMergeWrites), index, index+1)
+	}
+	return m
+}
+
+func cloneAutoMergeOverride(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func sameAutoMergeOverride(left, right *bool) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
+func (m Model) setFlowAutoMergeCmd(repoPath, flowID string, enabled *bool) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowAutoMerge(flowstore.AutoMergeUpdate{FlowID: flowID, Enabled: enabled})
+		if err != nil {
+			return FlowAutoMergeSetFailedMsg{RepoPath: repoPath, FlowID: flowID, Enabled: cloneAutoMergeOverride(enabled), Err: fmt.Sprintf("failed to set Flow auto-merge override: %v", err)}
+		}
+		return FlowAutoMergeSetMsg{RepoPath: repoPath, FlowID: flowID, Flow: flow, Enabled: cloneAutoMergeOverride(enabled)}
+	}
 }
 
 func (m Model) setFlowAutoModeCmd(repoPath, flowID string, enabled bool) tea.Cmd {

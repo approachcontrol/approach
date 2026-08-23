@@ -370,6 +370,31 @@ type FlowAutoModeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowAutoMergeSetMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+	Enabled  *bool
+}
+
+type FlowAutoMergeSetFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Enabled  *bool
+	Err      string
+}
+
+type GlobalAutoMergeSetMsg struct {
+	Enabled bool
+	Request uint64
+}
+
+type GlobalAutoMergeSetFailedMsg struct {
+	Enabled bool
+	Request uint64
+	Err     string
+}
+
 type FlowHeadlessSetMsg struct {
 	RepoPath        string
 	FlowID          string
@@ -1445,6 +1470,7 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	autoMergeRetry := false
 	if msg.AutoAdvanceLaunchID != "" {
 		attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing)
 		if !ok {
@@ -1454,12 +1480,14 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 		if msg.Err == "" || attempt.AutoRetrySuppressed {
 			return m, nil
 		}
+		autoMergeRetry = attempt.AutoMerge
 	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
-	if msg.AutoAdvanceRetryFlowID != "" {
+	if msg.AutoAdvanceRetryFlowID != "" && !autoMergeRetry {
 		// Token and stop-edge validation above keep a delayed failure from
-		// undoing newer drain state.
+		// undoing newer drain state. Auto-merge retries stay level-triggered;
+		// arming this completion-edge drain could launch another ready phase.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.takeoverVisible() || m.isCurrentRepo(msg.RepoPath) {
@@ -1474,9 +1502,9 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 		title = msg.AutoAdvanceRetryFlowID
 	}
 	// The prepare-stage sibling of the read-stage failure in
-	// handleAutoFlowLaunchRead, and ranked with it: this path re-armed the drain
-	// above, so the failure repeats on the next poll and must not displace a
-	// transition edge that will not.
+	// handleAutoFlowLaunchRead, and ranked with it: AutoMode's drain or
+	// auto-merge's level-triggered poll repeats the failure on the next tick, so
+	// it must not displace a transition edge that will not.
 	var statusCmd tea.Cmd
 	m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + title + ": " + msg.Err)
 	return m, statusCmd
@@ -1652,6 +1680,76 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 		errText = "failed to set Flow auto mode"
 	}
 	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowAutoMergeSet(msg FlowAutoMergeSetMsg) (Model, tea.Cmd) {
+	pending, ok := m.pendingFlowAutoMergeWrite(msg.FlowID)
+	if !ok || !sameAutoMergeOverride(pending.written, msg.Enabled) {
+		return m, nil
+	}
+	if msg.FlowID != "" && msg.Flow.FlowID == msg.FlowID &&
+		(m.takeoverVisible() || m.isCurrentRepo(msg.RepoPath)) &&
+		sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
+		m = m.replaceFlowRecord(msg.Flow, flowMutationAutoMerge, flowAutoMergeOverlay(msg.Enabled))
+	}
+	if !sameAutoMergeOverride(pending.desired, msg.Enabled) {
+		m = m.updatePendingFlowAutoMergeWritten(msg.FlowID, pending.desired)
+		return m, m.setFlowAutoMergeCmd(pending.repoPath, msg.FlowID, pending.desired)
+	}
+	return m.clearPendingFlowAutoMergeWrite(msg.FlowID), nil
+}
+
+func (m Model) handleFlowAutoMergeSetFailed(msg FlowAutoMergeSetFailedMsg) (Model, tea.Cmd) {
+	pending, ok := m.pendingFlowAutoMergeWrite(msg.FlowID)
+	if !ok || !sameAutoMergeOverride(pending.written, msg.Enabled) {
+		return m, nil
+	}
+	m = m.clearPendingFlowAutoMergeWrite(msg.FlowID)
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to set Flow auto-merge override"
+	}
+	return m.setStatus(statusOther, errText), nil
+}
+
+func (m Model) handleGlobalAutoMergeSet(msg GlobalAutoMergeSetMsg) (Model, tea.Cmd) {
+	if !m.globalAutoMergeWrite.inFlight || msg.Request != m.globalAutoMergeWrite.request ||
+		msg.Enabled != m.globalAutoMergeWrite.value {
+		return m, nil
+	}
+	m.autoMerge = msg.Enabled
+	m.globalAutoMergeWrite.inFlight = false
+	m = m.setStatus(statusOther, fmt.Sprintf("Global auto-merge: %s", onOff(msg.Enabled)))
+	if m.globalAutoMergeWrite.desired != msg.Enabled {
+		return m.startGlobalAutoMergeWrite(m.globalAutoMergeWrite.desired)
+	}
+	if msg.Enabled {
+		return m.startAutoAdvanceFetch()
+	}
+	return m, nil
+}
+
+func (m Model) handleGlobalAutoMergeSetFailed(msg GlobalAutoMergeSetFailedMsg) (Model, tea.Cmd) {
+	if !m.globalAutoMergeWrite.inFlight || msg.Request != m.globalAutoMergeWrite.request ||
+		msg.Enabled != m.globalAutoMergeWrite.value {
+		return m, nil
+	}
+	m.globalAutoMergeWrite = globalAutoMergeWrite{desired: m.autoMerge}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to save global auto-merge setting"
+	}
+	return m.setStatus(statusOther, errText), nil
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
@@ -1915,6 +2013,7 @@ const (
 	flowMutationWholeRecord              flowMutationField = "whole-record"
 	flowMutationHeadless                 flowMutationField = "headless"
 	flowMutationAutoMode                 flowMutationField = "auto-mode"
+	flowMutationAutoMerge                flowMutationField = "auto-merge"
 	flowMutationPhaseAgentSettingsPrefix                   = "phase-agent-settings:"
 )
 
@@ -1951,6 +2050,18 @@ func flowHeadlessOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.Flow
 func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
 	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
 		record.AutoMode = enabled
+		return record
+	}
+}
+
+func flowAutoMergeOverlay(enabled *bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
+	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		if enabled == nil {
+			record.AutoMerge = nil
+			return record
+		}
+		value := *enabled
+		record.AutoMerge = &value
 		return record
 	}
 }

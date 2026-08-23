@@ -15,7 +15,9 @@ of the Flow-scoped fields of `actions.AgentLaunchContext`
 ## 1. Construction sites
 
 There are eight kinds but only seven Flow-scoped construction sites: manual and
-automatic phase launches share one builder and differ only by `req.AutoLaunch`.
+automatic phase launches share one builder and differ by `req.AutoLaunch`.
+The `autoPhase` kind now carries either ordinary AutoMode policy or the distinct
+auto-merge policy; both resolve to the same tracked, headless launch variant.
 
 | Kind | Builder | Route decision |
 | --- | --- | --- |
@@ -54,6 +56,11 @@ marker" from "constructs a Flow launch".
 | any kind × tmux × headless | `tmuxRouteEligible` refuses `ctx.Headless` (`model/tmux_mode.go:64`). The route is decided *after* headless resolution (`model/flow_launch_context.go:286–309`), so this holds for every kind. |
 | `autoPhase` × interactive | Both AutoMode read commands hardcode `Headless: true` (`model/flow_launch_lifecycle.go:665`, `:692`), and the tracked-phase builder skips the reservation override when `target.AutoLaunch` (`model/flow_launch_context.go:286`). |
 | `autoPhase` × tmux | Follows from the previous two rows: auto ⇒ headless ⇒ embedded. |
+
+Within `autoPhase`, ordinary AutoMode accepts ready non-merge phases after a
+completion-edge drain. Auto-merge accepts only ready semantic merge phases
+when `FlowRecord.AutoMerge ?? globalAutoMerge` is true. The store repeats that
+kind and effective-policy check when it records the launch ID.
 | `repair` × tmux | Refused twice: `tmuxRouteEligible` rejects `ctx.FlowRepair` (`model/tmux_mode.go:64`), and prepare has no tmux call site (`model/flow_launch_repair.go:440`). |
 | `createPhase` × tmux | The builder returns a constant embedded route (`model/flow_launch_context.go:619`); creation has no tmux call site either. |
 | `worktreeAgent` × tmux | No call site (`model/flow_launch_generic_agent.go:299`). |

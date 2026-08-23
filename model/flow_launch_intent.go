@@ -98,7 +98,13 @@ type flowLaunchIntent struct {
 	// "Flow <title>: <err>"; admission has no other source, because AutoMode
 	// deliberately skips the display cache and the fresh record does not exist
 	// yet. Manual launch leaves it empty.
-	FlowTitle string
+	FlowTitle       string
+	AutoMerge       bool
+	GlobalAutoMerge bool
+	// AutoMergePolicyGeneration fences a true global snapshot against a
+	// successful global toggle while this launch is in flight. The final Flow
+	// override may have changed to inherit since the authoritative read.
+	AutoMergePolicyGeneration uint64
 	// Provider, ProviderSessionID, and ResumeCommand are phase-resume identity.
 	// Provider is the normalized session provider and ProviderSessionID the
 	// persisted ID verbatim — both stores key a session by its raw ID, so
