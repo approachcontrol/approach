@@ -367,7 +367,24 @@ func TestFlowLaunchEmbeddedBackstopPerKind(t *testing.T) {
 			t.Run(kind.name+"/"+state.name, func(t *testing.T) {
 				f := newOccupancyFixture(t, state.sources...)
 				want := kind.refusal(state.s6, state.s7)
+				direct := flowownership.Evaluate(flowownership.Sources{
+					Runtime: flowOccupancyRuntime{model: f.m},
+				}, flowownership.Query{
+					FlowID: f.flowID(),
+					Purpose: flowownership.Purpose{
+						Role:  flowLaunchRole(kind.kind),
+						Stage: flowownership.StageInstall,
+					},
+				})
+				install := f.m.flowLaunchInstallOccupancy(kind.kind, f.flowID())
+				if install.Occupied() != direct.Occupied() || install.Holder() != direct.Holder() || install.Err() != direct.Err() {
+					t.Fatalf("install verdict = (%v, %s, %v), direct StageInstall verdict = (%v, %s, %v)",
+						install.Occupied(), install.Holder(), install.Err(), direct.Occupied(), direct.Holder(), direct.Err())
+				}
 				status, refused := f.m.flowLaunchEmbeddedBackstop(kind.kind, f.flowID())
+				if refused != direct.Occupied() {
+					t.Fatalf("backstop refused = %v, direct StageInstall occupied = %v", refused, direct.Occupied())
+				}
 				if refused != (want != "") {
 					t.Fatalf("refused = %v, want %v", refused, want != "")
 				}
@@ -376,5 +393,24 @@ func TestFlowLaunchEmbeddedBackstopPerKind(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFlowLaunchEmbeddedBackstopFailsClosedForInvalidInstallQuery(t *testing.T) {
+	f := newOccupancyFixture(t)
+	tests := []struct {
+		name   string
+		kind   flowLaunchKind
+		flowID string
+	}{
+		{name: "unknown launch kind", kind: flowLaunchKind(255), flowID: f.flowID()},
+		{name: "blank Flow ID", kind: flowLaunchKindManualPhase},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, refused := f.m.flowLaunchEmbeddedBackstop(tc.kind, tc.flowID); !refused {
+				t.Fatal("invalid install query was not refused")
+			}
+		})
 	}
 }
