@@ -1067,8 +1067,8 @@ func build() AgentLaunchContext {
 			want: []string{"build.FlowSavedSessionResume"},
 		},
 		"unrelated package declaring its own launch context name": {
-			dir: "flowoccupancy", name: "occupancy.go",
-			source: `package flowoccupancy
+			dir: "flowownership", name: "occupancy.go",
+			source: `package flowownership
 type AgentLaunchContext struct {
 	FlowID string
 }

@@ -18,7 +18,7 @@ import (
 	"github.com/approachcontrol/approach/beadsmutate"
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/config"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
@@ -251,8 +251,7 @@ type Model struct {
 	// so closed ones re-enable the shortcut on their own, and the slice is
 	// bounded by how many times one Flow was launched in one TUI session.
 	flowAutofixTmuxLaunches  map[string][]string
-	flowLaunchAttempts       map[string]flowLaunchAttempt
-	flowLaunchSessionOwners  map[flowLaunchSavedSessionKey]flowLaunchSavedSessionOwner
+	flowOwnership            flowownership.Ownership[flowLaunchAttempt, flowLaunchSavedSessionKey]
 	quitAfterFlowLaunch      bool
 	interruptAfterFlowLaunch bool
 	launchSeams              flowLaunchSeams
@@ -2057,7 +2056,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
-		if modelNext.quitAfterFlowLaunch && len(modelNext.flowLaunchAttempts) == 0 {
+		if modelNext.quitAfterFlowLaunch && modelNext.flowLaunchOwnershipCount() == 0 {
 			shutdownCmd := tea.Quit
 			if modelNext.interruptAfterFlowLaunch {
 				shutdownCmd = func() tea.Msg { return tea.Interrupt() }
@@ -2755,7 +2754,7 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 	if !ok {
 		return false
 	}
-	return !m.trackedPhaseOccupancy(record.FlowID, flowoccupancy.StageFooter).Occupied()
+	return !m.trackedPhaseOccupancy(record.FlowID, flowownership.StageFooter).Occupied()
 }
 
 // withFlowAutofixTmuxLaunch appends an autofix tmux launch to the

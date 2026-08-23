@@ -137,8 +137,8 @@ func TestSavedSessionAttemptTransfersFlowOwnershipAtomically(t *testing.T) {
 	if attempt.State != flowLaunchStateReading || attempt.SessionKey != key {
 		t.Fatalf("transferred attempt = %#v", attempt)
 	}
-	owner, ok := next.flowLaunchSessionOwners[key]
-	if !ok || owner.Token != "token-1" || owner.FlowID != "flow-b" {
+	owner, ok := next.flowLaunchSessionOwner(key)
+	if !ok || owner.Token() != "token-1" || owner.FlowID() != "flow-b" {
 		t.Fatalf("session owner = %#v, %v", owner, ok)
 	}
 }
@@ -163,14 +163,14 @@ func TestSavedSessionAttemptTransferAndReleaseAreFenced(t *testing.T) {
 	if !stale.flowLaunchAttemptOccupied("flow-a") {
 		t.Fatal("stale release freed the Flow")
 	}
-	if _, ok := stale.flowLaunchSessionOwners[key]; !ok {
+	if _, ok := stale.flowLaunchSessionOwner(key); !ok {
 		t.Fatal("stale release freed the session index")
 	}
 	freed := m.releaseFlowLaunchAttempt("flow-a", "token-1")
 	if freed.flowLaunchAttemptOccupied("flow-a") {
 		t.Fatal("owning release did not free Flow")
 	}
-	if _, ok := freed.flowLaunchSessionOwners[key]; ok {
+	if _, ok := freed.flowLaunchSessionOwner(key); ok {
 		t.Fatal("owning release did not free session index")
 	}
 }

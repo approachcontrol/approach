@@ -84,7 +84,7 @@ func TestSavedSessionResumeIgnoresCachedFlowOccupancyBeforeAuthoritativeTransfer
 	}
 	m, flowRead := m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
 	if flowRead == nil || !m.flowLaunchAttemptOccupied("flow-a") || !m.flowLaunchAttemptOccupied("flow-b") {
-		t.Fatalf("authoritative transfer: flowRead=%v attempts=%#v", flowRead != nil, m.flowLaunchAttempts)
+		t.Fatalf("authoritative transfer: flowRead=%v attempts=%#v", flowRead != nil, m.flowLaunchOwnershipCount())
 	}
 }
 
@@ -172,8 +172,8 @@ func TestSavedSessionResumeTransfersAtoBAndInstallsUntrackedRetainedSlot(t *test
 		m.embeddedTerminals[0].DetachPolicy != embeddedTerminalDetachNever {
 		t.Fatalf("saved resume slot = %#v", m.embeddedTerminals)
 	}
-	if m.flowLaunchAttemptOccupied("flow-a") || m.flowLaunchAttemptOccupied("flow-b") || len(m.flowLaunchSessionOwners) != 0 {
-		t.Fatalf("lifecycle ownership remained after slot handoff: %#v %#v", m.flowLaunchAttempts, m.flowLaunchSessionOwners)
+	if m.flowLaunchAttemptOccupied("flow-a") || m.flowLaunchAttemptOccupied("flow-b") || m.flowLaunchSessionOwnerCount() != 0 {
+		t.Fatalf("lifecycle ownership remained after slot handoff: %#v %#v", m.flowLaunchOwnershipCount(), m.flowLaunchSessionOwnerCount())
 	}
 	if next := m.dismissExitedFlowEmbeddedTerminals(); len(next.embeddedTerminals) != 1 {
 		t.Fatal("exited saved resume terminal auto-closed")
@@ -192,13 +192,13 @@ func TestSavedSessionResumeRejectsDuplicateAndDestinationContention(t *testing.T
 	if first == nil {
 		t.Fatal("first resume not admitted")
 	}
-	if duplicate, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginEmbeddedSessionPicker); cmd != nil || len(duplicate.flowLaunchSessionOwners) != 1 {
+	if duplicate, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginEmbeddedSessionPicker); cmd != nil || duplicate.flowLaunchSessionOwnerCount() != 1 {
 		t.Fatal("duplicate source was admitted")
 	}
 	m, _ = m.reserveFlowLaunchAttempt(flowLaunchAttempt{Token: "other", Kind: flowLaunchKindManualPhase, FlowID: "flow-b"}, flowLaunchStateReading)
 	m, cmd := m.handleFlowLaunchEvent(first().(flowLaunchEventMsg))
-	if cmd != nil || m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
-		t.Fatalf("destination contention stranded ownership: attempts=%#v sessions=%#v", m.flowLaunchAttempts, m.flowLaunchSessionOwners)
+	if cmd != nil || m.flowLaunchAttemptOccupied("flow-a") || m.flowLaunchSessionOwnerCount() != 0 {
+		t.Fatalf("destination contention stranded ownership: attempts=%#v sessions=%#v", m.flowLaunchOwnershipCount(), m.flowLaunchSessionOwnerCount())
 	}
 }
 
@@ -225,7 +225,7 @@ func TestSavedSessionResumeRejectsTrackedFlowLeaseAfterAuthoritativeTransfer(t *
 	if cmd != nil || inspected != fresh.FlowID || m.status.Text != flowLeaseOccupiedStatus {
 		t.Fatalf("transfer lease refusal: cmd=%v inspected=%q status=%q", cmd != nil, inspected, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied(fresh.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied(fresh.FlowID) || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("transfer lease refusal retained lifecycle ownership")
 	}
 }
@@ -271,7 +271,7 @@ func TestSavedSessionResumeRechecksTrackedFlowLeaseUnderReservation(t *testing.T
 	if cmd != nil || inspections != 3 || started || !released || m.status.Text != flowLeaseOccupiedStatus {
 		t.Fatalf("protected lease refusal: cmd=%v inspections=%d started=%v released=%v status=%q", cmd != nil, inspections, started, released, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied(flow.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied(flow.FlowID) || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("protected lease refusal retained lifecycle ownership")
 	}
 }
@@ -301,7 +301,7 @@ func TestSavedSessionResumeAuthoritativeNonFlowUsesRefreshedEstablishedRoute(t *
 	if launched.WorktreePath != fresh.WorktreePath || launched.FlowID != "" || launched.ResumeSessionID != fresh.SessionID {
 		t.Fatalf("non-Flow refreshed launch = %#v", launched)
 	}
-	if m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied("flow-a") || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("authoritative non-Flow route retained lifecycle ownership")
 	}
 }
@@ -342,7 +342,7 @@ func TestSavedSessionResumeMissingFlowUsesEstablishedRouteForEveryOrigin(t *test
 			if started.ResumeSessionID != fresh.SessionID || started.WorkingDir != fresh.CWD || started.FlowID != "" {
 				t.Fatalf("missing-Flow launch = %#v", started)
 			}
-			if m.flowLaunchAttemptOccupied(fresh.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+			if m.flowLaunchAttemptOccupied(fresh.FlowID) || m.flowLaunchSessionOwnerCount() != 0 {
 				t.Fatal("missing-Flow delegation retained lifecycle ownership")
 			}
 		})
@@ -363,8 +363,8 @@ func TestSavedSessionResumeFailuresAreStatusOnlyAndReleaseOwnership(t *testing.T
 	m.launchSeams.NewLaunchID = func() string { return "token-1" }
 	m, cmd := m.routeSavedSessionResume(cached, flowLaunchOriginSessionsPane)
 	m, followup := m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
-	if followup != nil || m.status.Text != "read failed" || m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
-		t.Fatalf("failure result = status %q attempts %#v owners %#v", m.status.Text, m.flowLaunchAttempts, m.flowLaunchSessionOwners)
+	if followup != nil || m.status.Text != "read failed" || m.flowLaunchAttemptOccupied("flow-a") || m.flowLaunchSessionOwnerCount() != 0 {
+		t.Fatalf("failure result = status %q attempts %#v owners %#v", m.status.Text, m.flowLaunchOwnershipCount(), m.flowLaunchSessionOwnerCount())
 	}
 }
 
@@ -391,7 +391,7 @@ func TestSavedSessionResumeRejectsAuthoritativeLiveTmuxWindow(t *testing.T) {
 	if cmd != nil || m.status.Text != tmuxSessionLiveWindowRefusal {
 		t.Fatalf("live tmux refusal: cmd=%v status=%q", cmd != nil, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied("flow-a") || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied("flow-a") || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("live tmux refusal retained lifecycle ownership")
 	}
 }
@@ -542,7 +542,7 @@ func TestSavedSessionResumeRevalidatesUnderReservation(t *testing.T) {
 	if cmd != nil || started || !released || !strings.Contains(m.status.Text, "closed") {
 		t.Fatalf("revalidation result: cmd=%v started=%v released=%v status=%q", cmd != nil, started, released, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied("flow-1") || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("failed protected revalidation retained ownership")
 	}
 }
@@ -576,7 +576,7 @@ func TestSavedSessionResumeRefusesFreshOccupancyUnderReservation(t *testing.T) {
 	if cmd != nil || started || !released || m.status.Text != "a running phase already occupies this Flow" {
 		t.Fatalf("occupancy revalidation result: cmd=%v started=%v released=%v status=%q", cmd != nil, started, released, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied("flow-1") || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("occupied protected revalidation retained ownership")
 	}
 }
@@ -624,7 +624,7 @@ func TestSavedSessionResumeRevalidatesExactSessionUnderReservation(t *testing.T)
 	if cmd != nil || reads != 2 || started || !released || !strings.Contains(m.status.Text, "moved from Flow") {
 		t.Fatalf("session revalidation result: cmd=%v reads=%d started=%v released=%v status=%q", cmd != nil, reads, started, released, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied("flow-1") || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("failed exact-session revalidation retained ownership")
 	}
 }
@@ -678,7 +678,7 @@ func TestSavedSessionResumeRechecksFinalTmuxLaunchUnderReservation(t *testing.T)
 	if cmd != nil || reads != 2 || probes != 2 || started || !released || m.status.Text != tmuxSessionLiveWindowRefusal {
 		t.Fatalf("final tmux recheck: cmd=%v reads=%d probes=%d started=%v released=%v status=%q", cmd != nil, reads, probes, started, released, m.status.Text)
 	}
-	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied("flow-1") || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("final tmux refusal retained lifecycle ownership")
 	}
 }
@@ -733,7 +733,7 @@ func TestSavedSessionResumeRechecksFinalTmuxAutofixUnderReservation(t *testing.T
 	if len(probes) != 3 || len(probes[2]) != 1 || probes[2][0] != "autofix-live" {
 		t.Fatalf("tmux probes = %#v, want two session probes followed by final autofix probe", probes)
 	}
-	if m.flowLaunchAttemptOccupied(flow.FlowID) || len(m.flowLaunchSessionOwners) != 0 {
+	if m.flowLaunchAttemptOccupied(flow.FlowID) || m.flowLaunchSessionOwnerCount() != 0 {
 		t.Fatal("final autofix refusal retained lifecycle ownership")
 	}
 }

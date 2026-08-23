@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -63,7 +63,7 @@ func (m Model) admitSavedSessionFlowLaunch(intent flowLaunchIntent) (Model, tea.
 	flowID := savedSessionFlowLaunchProvisionalID(key)
 	intent.FlowID = flowID
 	intent.SessionKey = key
-	if _, occupied := m.flowLaunchSessionOwners[key]; occupied {
+	if m.flowOwnership.SessionOccupied(key) {
 		return m.setStatus(statusOther, savedSessionResumePendingStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -192,16 +192,16 @@ func validateSavedSessionResumeFlowRecord(flowID string, record flowstore.FlowRe
 	return nil
 }
 
-func savedSessionResumeAuthoritativeOccupancyStatus(verdict flowoccupancy.Verdict) string {
+func savedSessionResumeAuthoritativeOccupancyStatus(verdict flowownership.Verdict) string {
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
 	switch verdict.Holder() {
-	case flowoccupancy.HolderRunningPhase:
+	case flowownership.HolderRunningPhase:
 		return "a running phase already occupies this Flow"
-	case flowoccupancy.HolderPhaseSession:
+	case flowownership.HolderPhaseSession:
 		return "an active phase session already occupies this Flow"
-	case flowoccupancy.HolderFlowSession:
+	case flowownership.HolderFlowSession:
 		return "an active persisted session already occupies this Flow"
 	default:
 		return savedSessionResumeFlowOccupiedStatus

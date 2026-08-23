@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -87,7 +87,7 @@ func TestSimultaneousSourcesReportPerConsumerStatuses(t *testing.T) {
 		}
 		// The module owns the lease and runtime ordering together, so the named
 		// verdict reports the lease above repair's runtime ladder.
-		verdict := f.m.repairOccupancy(f.flowID(), flowoccupancy.StageAdmission)
+		verdict := f.m.repairOccupancy(f.flowID(), flowownership.StageAdmission)
 		if got := flowRepairOccupancyStatus(verdict); got != flowLeaseOccupiedStatus {
 			t.Fatalf("repair ladder = %q, want %q", got, flowLeaseOccupiedStatus)
 		}

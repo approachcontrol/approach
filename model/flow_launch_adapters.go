@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/approachcontrol/approach/actions"
-	"github.com/approachcontrol/approach/flowoccupancy"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
@@ -21,7 +21,7 @@ type flowOccupancyLeaseInspector struct {
 	inspect  func(root, flowID string) (flowlease.LeaseState, error)
 }
 
-var _ flowoccupancy.LeaseInspector = flowOccupancyLeaseInspector{}
+var _ flowownership.LeaseInspector = flowOccupancyLeaseInspector{}
 
 func (adapter flowOccupancyLeaseInspector) FlowLeaseOccupied(flowID string) (bool, error) {
 	if strings.TrimSpace(adapter.root) == "" && !adapter.injected {
@@ -50,7 +50,7 @@ type flowOccupancyRuntime struct {
 	model Model
 }
 
-var _ flowoccupancy.Runtime = flowOccupancyRuntime{}
+var _ flowownership.Runtime = flowOccupancyRuntime{}
 
 func (runtime flowOccupancyRuntime) AttemptHolder(flowID string) (actions.FlowLaunchRole, bool) {
 	attempt, ok := runtime.model.flowLaunchAttempt(flowID)
@@ -66,7 +66,7 @@ func (runtime flowOccupancyRuntime) HasFlowTerminal(flowID string) bool {
 
 func (runtime flowOccupancyRuntime) HasNonRepairFlowTerminal(flowID string) bool {
 	for _, slot := range runtime.model.embeddedTerminals {
-		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil && !slot.FlowRepair {
+		if flowOwnershipSlot(slot).HoldsNonRepairFlow(flowID) {
 			return true
 		}
 	}
@@ -89,7 +89,7 @@ type flowOccupancyFlowCache struct {
 	record flowstore.FlowRecord
 }
 
-var _ flowoccupancy.FlowCache = flowOccupancyFlowCache{}
+var _ flowownership.FlowCache = flowOccupancyFlowCache{}
 
 func (cache flowOccupancyFlowCache) CachedFlow(flowID string) (flowstore.FlowRecord, bool) {
 	flowID = strings.TrimSpace(flowID)
@@ -105,7 +105,7 @@ type flowOccupancyAuthoritativeFlow struct {
 	record flowstore.FlowRecord
 }
 
-var _ flowoccupancy.FlowReader = flowOccupancyAuthoritativeFlow{}
+var _ flowownership.FlowReader = flowOccupancyAuthoritativeFlow{}
 
 func (source flowOccupancyAuthoritativeFlow) ReadFlow(string) (flowstore.FlowRecord, error) {
 	return source.record, nil
@@ -124,7 +124,7 @@ func (lease flowOccupancyKnownLease) FlowLeaseOccupied(string) (bool, error) {
 	return lease.occupied, lease.err
 }
 
-var _ flowoccupancy.SessionStore = flowOccupancyAuthoritativeSessions{}
+var _ flowownership.SessionStore = flowOccupancyAuthoritativeSessions{}
 
 func (source flowOccupancyAuthoritativeSessions) ListFlowSessions(flowID string) ([]sessions.SessionRecord, error) {
 	if source.list == nil {
@@ -133,7 +133,7 @@ func (source flowOccupancyAuthoritativeSessions) ListFlowSessions(flowID string)
 	return source.list(flowID)
 }
 
-var _ flowoccupancy.SessionCache = flowOccupancySessionCache{}
+var _ flowownership.SessionCache = flowOccupancySessionCache{}
 
 func (cache flowOccupancySessionCache) ActiveFlowSessions(flowID string) []sessions.SessionRecord {
 	flowID = strings.TrimSpace(flowID)
@@ -172,32 +172,32 @@ func flowLaunchRole(kind flowLaunchKind) actions.FlowLaunchRole {
 	}
 }
 
-func (m Model) createFlowAdmissionOccupancy(flowID string) flowoccupancy.Verdict {
-	return flowoccupancy.New(flowoccupancy.Sources{
+func (m Model) createFlowAdmissionOccupancy(flowID string) flowownership.Verdict {
+	return flowownership.New(flowownership.Sources{
 		Runtime: flowOccupancyRuntime{model: m},
-	}).Query(flowoccupancy.Query{
+	}).Query(flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  actions.RoleCreatePhase,
-			Stage: flowoccupancy.StageAdmission,
+			Stage: flowownership.StageAdmission,
 		},
 	})
 }
 
-func (m Model) trackedPhaseOccupancy(flowID string, stage flowoccupancy.Stage) flowoccupancy.Verdict {
+func (m Model) trackedPhaseOccupancy(flowID string, stage flowownership.Stage) flowownership.Verdict {
 	if strings.TrimSpace(flowID) == "" {
-		return flowoccupancy.Free()
+		return flowownership.Free()
 	}
-	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+	return flowownership.Evaluate(flowownership.Sources{
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  actions.RoleTrackedPhase,
 			Stage: stage,
 		},
@@ -209,18 +209,18 @@ func trackedPhaseAuthoritativeOccupancy(
 	flowID string,
 	record flowstore.FlowRecord,
 	phaseID string,
-	stage flowoccupancy.Stage,
-) flowoccupancy.Verdict {
-	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+	stage flowownership.Stage,
+) flowownership.Verdict {
+	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  actions.RoleTrackedPhase,
 			Stage: stage,
 		},
-		Freshness: flowoccupancy.FreshnessAuthoritative,
+		Freshness: flowownership.FreshnessAuthoritative,
 		PhaseID:   phaseID,
 	})
 }
@@ -230,15 +230,15 @@ func flowAuthoritativeOccupancy(
 	flowID string,
 	record flowstore.FlowRecord,
 	role actions.FlowLaunchRole,
-) flowoccupancy.Verdict {
-	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+) flowownership.Verdict {
+	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  role,
-			Stage: flowoccupancy.StageAuthoritative,
+			Stage: flowownership.StageAuthoritative,
 		},
 	})
 }
@@ -248,8 +248,8 @@ func (m Model) flowReservedOccupancy(
 	flowID string,
 	record flowstore.FlowRecord,
 	role actions.FlowLaunchRole,
-) flowoccupancy.Verdict {
-	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+) flowownership.Verdict {
+	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
 		Lease: flowOccupancyLeaseInspector{
@@ -257,11 +257,11 @@ func (m Model) flowReservedOccupancy(
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  role,
-			Stage: flowoccupancy.StageReserved,
+			Stage: flowownership.StageReserved,
 		},
 	})
 }
@@ -271,42 +271,42 @@ func flowReservedOccupancyAfterFreeLease(
 	flowID string,
 	record flowstore.FlowRecord,
 	role actions.FlowLaunchRole,
-) flowoccupancy.Verdict {
-	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+) flowownership.Verdict {
+	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
 		Lease:    flowOccupancyKnownLease{},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  role,
-			Stage: flowoccupancy.StageReserved,
+			Stage: flowownership.StageReserved,
 		},
 	})
 }
 
-func (m Model) repairOccupancy(flowID string, stage flowoccupancy.Stage) flowoccupancy.Verdict {
+func (m Model) repairOccupancy(flowID string, stage flowownership.Stage) flowownership.Verdict {
 	if strings.TrimSpace(flowID) == "" {
-		return flowoccupancy.Free()
+		return flowownership.Free()
 	}
-	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+	return flowownership.Evaluate(flowownership.Sources{
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: flowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  actions.RoleRepair,
 			Stage: stage,
 		},
 	})
 }
 
-func (m Model) trackedPhaseDrainAdvice(record flowstore.FlowRecord, phaseID string) flowoccupancy.Advisory {
-	return flowoccupancy.EvaluateAdvisory(flowoccupancy.Sources{
+func (m Model) trackedPhaseDrainAdvice(record flowstore.FlowRecord, phaseID string) flowownership.Advisory {
+	return flowownership.EvaluateAdvisory(flowownership.Sources{
 		FlowCache: flowOccupancyFlowCache{record: record},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
@@ -314,18 +314,18 @@ func (m Model) trackedPhaseDrainAdvice(record flowstore.FlowRecord, phaseID stri
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: record.FlowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  actions.RoleTrackedPhase,
-			Stage: flowoccupancy.StageDrain,
+			Stage: flowownership.StageDrain,
 		},
 		PhaseID: phaseID,
 	})
 }
 
-func (m Model) worktreeAgentFooterAdvice(record flowstore.FlowRecord) flowoccupancy.Advisory {
-	return flowoccupancy.EvaluateAdvisory(flowoccupancy.Sources{
+func (m Model) worktreeAgentFooterAdvice(record flowstore.FlowRecord) flowownership.Advisory {
+	return flowownership.EvaluateAdvisory(flowownership.Sources{
 		FlowCache: flowOccupancyFlowCache{record: record},
 		Cache: flowOccupancySessionCache{
 			flowSessions:     m.sessions.Items(),
@@ -337,11 +337,11 @@ func (m Model) worktreeAgentFooterAdvice(record flowstore.FlowRecord) flowoccupa
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowoccupancy.Query{
+	}, flowownership.Query{
 		FlowID: record.FlowID,
-		Purpose: flowoccupancy.Purpose{
+		Purpose: flowownership.Purpose{
 			Role:  actions.RoleWorktreeAgent,
-			Stage: flowoccupancy.StageFooter,
+			Stage: flowownership.StageFooter,
 		},
 	})
 }

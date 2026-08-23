@@ -1999,9 +1999,9 @@ func TestModel_AutoMergeAdmissionDeferralKeepsReadyToMergeNotice(t *testing.T) {
 	mergeReady.Phases[6].Status = flowstore.PhaseReady
 	m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{FlowAutoMerge: true})
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
-	m.flowLaunchAttempts = map[string]flowLaunchAttempt{
-		mergeReady.FlowID: {Token: "occupied", Kind: flowLaunchKindManualPhase, FlowID: mergeReady.FlowID, State: flowLaunchStateReading},
-	}
+	m, _ = m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token: "occupied", Kind: flowLaunchKindManualPhase, FlowID: mergeReady.FlowID,
+	}, flowLaunchStateReading)
 
 	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{mergeReady})
 	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: ready to merge" {

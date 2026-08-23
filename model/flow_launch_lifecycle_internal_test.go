@@ -3117,6 +3117,34 @@ func TestStaleTmuxLifecycleResultCannotReleaseOrPersist(t *testing.T) {
 	}
 }
 
+func TestLateFailurePersistenceCannotMutateNewerOwnership(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m, ok := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token: "new-token", Kind: flowLaunchKindManualPhase, FlowID: record.FlowID,
+	}, flowLaunchStateReading)
+	if !ok {
+		t.Fatal("newer ownership reservation failed")
+	}
+	m.status = statusError{Source: statusOther, Text: "newer status"}
+	releases := 0
+	next, cmd := m.handleFlowLaunchFailurePersisted(flowLaunchFailurePersistedMsg{
+		LaunchContext: actions.AgentLaunchContext{FlowID: record.FlowID, LaunchID: "old-token"},
+		OriginalErr:   "old failure",
+		PersistErr:    errors.New("old persist failure"),
+		Release:       func() { releases++ },
+		TokenFenced:   true,
+	})
+	if cmd != nil || releases != 0 || next.status.Text != "newer status" {
+		t.Fatalf("late persistence changed state: cmd=%v releases=%d status=%q", cmd != nil, releases, next.status.Text)
+	}
+	attempt, ok := next.flowLaunchAttempt(record.FlowID)
+	if !ok || attempt.Token != "new-token" || next.flowLaunchOwnershipCount() != 1 {
+		t.Fatalf("newer ownership changed: attempt=%#v ok=%v count=%d", attempt, ok, next.flowLaunchOwnershipCount())
+	}
+}
+
 func TestTmuxFlowLaunchSurvivesQuitWithoutConfirmation(t *testing.T) {
 	h := newTmuxLaunchHarness(t, true)
 	m := h.launch(h.model())

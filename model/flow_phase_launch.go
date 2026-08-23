@@ -820,11 +820,8 @@ func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
 }
 
 func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
-	if strings.TrimSpace(flowID) == "" {
-		return false
-	}
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil {
+		if flowOwnershipSlot(slot).HoldsFlow(flowID) {
 			return true
 		}
 	}
@@ -832,12 +829,8 @@ func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
 }
 
 func (m Model) hasFlowRepairEmbeddedTerminalForFlow(flowID string) bool {
-	flowID = strings.TrimSpace(flowID)
-	if flowID == "" {
-		return false
-	}
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.FlowRepair {
+		if flowOwnershipSlot(slot).HoldsRepair(flowID) {
 			return true
 		}
 	}

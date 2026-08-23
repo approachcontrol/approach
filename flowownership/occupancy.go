@@ -1,4 +1,4 @@
-package flowoccupancy
+package flowownership
 
 import (
 	"errors"
@@ -517,22 +517,22 @@ func EvaluateAdvisory(sources Sources, query Query) Advisory {
 var (
 	// ErrInvalidQuery marks a programming error in a query. Query fails closed
 	// instead of panicking because it runs inside the TUI update loop.
-	ErrInvalidQuery = errors.New("flowoccupancy: invalid query")
+	ErrInvalidQuery = errors.New("flowownership: invalid query")
 	// ErrMissingRuntime marks a purpose that needs the in-process adapter but
 	// received none.
-	ErrMissingRuntime = errors.New("flowoccupancy: runtime source is required")
+	ErrMissingRuntime = errors.New("flowownership: runtime source is required")
 	// ErrMissingLease marks a purpose that needs the cross-process lease adapter
 	// but received none.
-	ErrMissingLease = errors.New("flowoccupancy: lease source is required")
+	ErrMissingLease = errors.New("flowownership: lease source is required")
 	// ErrMissingFlowCache marks a cached purpose without its Flow mirror.
-	ErrMissingFlowCache = errors.New("flowoccupancy: cached Flow source is required")
+	ErrMissingFlowCache = errors.New("flowownership: cached Flow source is required")
 	// ErrMissingSessionCache marks a cached purpose without its session panes.
-	ErrMissingSessionCache = errors.New("flowoccupancy: cached session source is required")
+	ErrMissingSessionCache = errors.New("flowownership: cached session source is required")
 	// ErrMissingFlowStore marks an authoritative purpose without its Flow reader.
-	ErrMissingFlowStore = errors.New("flowoccupancy: authoritative Flow source is required")
+	ErrMissingFlowStore = errors.New("flowownership: authoritative Flow source is required")
 	// ErrMissingSessionStore marks an authoritative purpose without its session reader.
-	ErrMissingSessionStore = errors.New("flowoccupancy: authoritative session source is required")
-	errPendingSourceFamily = errors.New("flowoccupancy: a required source family is not implemented yet")
+	ErrMissingSessionStore = errors.New("flowownership: authoritative session source is required")
+	errPendingSourceFamily = errors.New("flowownership: a required source family is not implemented yet")
 )
 
 // Advise answers a cached query that may only defer its caller.
