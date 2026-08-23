@@ -1037,12 +1037,13 @@ On a Flow row or an expanded phase row:
   `g`, so occupancy, the persisted `h` headless preference, tmux mode, and the
   current agent/model/effort all apply, and interactive embedded launches prefill
   the dock for you to send. Their dock tab/chip uses the display identity
-  `autofix pr <num>` without `#`, so PR 116 renders, for example,
-  `1 codex autofix pr 116 running`; the default agent prompt remains
+  `autofix`, so the provider-specific label renders as, for example,
+  `1 codex autofix running` or `1 claude autofix running`. The PR number stays
+  in the agent prompt, not the tab identity: the default prompt is
   `autofix pr #116` unless `[flow_prompts].autofix` overrides it. Headless and
   tmux launches send that rendered prompt on argv; interactive embedded launches
-  prefill the dock with it. Headless launches occupy a dock slot like
-  interactive ones and carry the same `autofix pr <num>` identity.
+  prefill the dock with it. Headless launches retain their existing
+  `autofix pr <num>` identity rather than using the interactive label.
 
   It is deliberately **phase-untracked**: it writes no phase state, marks no
   phase running, and attaches its session to no phase history, so an autofix run
