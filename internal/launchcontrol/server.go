@@ -353,6 +353,21 @@ func (c *Controller) authorize(req Request) (registration, error) {
 		artifacts.NormalizePhaseID(req.PhaseID) != entry.phaseID {
 		return registration{}, errIdentityMismatch
 	}
+	if entry.phaseID != "" && !IsRead(req.Verb) {
+		record, err := c.store.Read(entry.flowID)
+		if err != nil {
+			return registration{}, err
+		}
+		phase, ok := PhaseByID(record, entry.phaseID)
+		if !ok {
+			return registration{}, errIdentityMismatch
+		}
+		for _, launchID := range phase.RecoveredLaunchIDs {
+			if launchID == req.LaunchID {
+				return registration{}, fmt.Errorf("launch %q was recovered and can no longer write", req.LaunchID)
+			}
+		}
+	}
 	return entry, nil
 }
 

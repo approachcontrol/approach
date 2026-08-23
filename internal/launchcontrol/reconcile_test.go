@@ -47,10 +47,13 @@ func TestSweepDemotesOnExitJSONWithCodeInNotes(t *testing.T) {
 	if phase.Status != flowstore.PhaseNeedsAttention || phase.Outcome != ReasonPhaseResultMissing {
 		t.Fatalf("phase = %#v", phase)
 	}
+	if phase.Reconciliation == nil || phase.Reconciliation.Reason != ReasonPhaseResultMissing || phase.Reconciliation.LaunchID != "launch-1" {
+		t.Fatalf("reconciliation stamp = %#v", phase.Reconciliation)
+	}
 	for _, want := range []string{
 		"phase_result_missing: launch launch-1 exited (periodic_sweep, exit code 3) without a valid result for phase plan",
 		"observed running",
-		"Recover with: approach flow phase set --flow-id " + created.FlowID + ` --phase-id plan --status running --notes "phase_result_missing"`,
+		"Recover with: approach flow phase recover --flow-id " + created.FlowID + ` --phase-id plan`,
 	} {
 		if !strings.Contains(phase.Notes, want) {
 			t.Fatalf("notes = %q, missing %q", phase.Notes, want)
@@ -164,6 +167,13 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	phase := phaseOf(t, store, created.FlowID, "plan-review")
 	if phase.Status != flowstore.PhaseBlocked || phase.Outcome != flowstore.OutcomeBlocked || !strings.HasPrefix(phase.Notes, "phase_result_missing: launch launch-1 exited (terminal_exit, exit code 1)") {
 		t.Fatalf("plan-review = %#v", phase)
+	}
+	if phase.Reconciliation == nil || phase.Reconciliation.Reason != ReasonPhaseResultMissing || phase.Reconciliation.LaunchID != "launch-1" {
+		t.Fatalf("plan-review reconciliation stamp = %#v", phase.Reconciliation)
+	}
+	wantRecovery := "Recover with: approach flow phase recover --flow-id " + created.FlowID + " --phase-id plan-review"
+	if !strings.Contains(phase.Notes, wantRecovery) {
+		t.Fatalf("plan-review notes = %q, missing %q", phase.Notes, wantRecovery)
 	}
 	// session_end respects the lease veto even with a recent EndedAt.
 	other := createFlow(t, store, "Session End")

@@ -40,6 +40,7 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		"approach flow phase needs-attention --flow-id",
 		"approach flow phase restart --flow-id",
 		"approach flow phase reset --flow-id",
+		"approach flow phase recover --flow-id",
 		"approach flow phase set --flow-id",
 		"approach flow phase agent set --flow-id",
 		"approach flow issue set --flow-id",
@@ -62,13 +63,14 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|recover|add-child|agent> [flags]",
 		"approach flow phase set --flow-id",
 		"approach flow phase complete --flow-id",
 		"approach flow phase block --flow-id",
 		"approach flow phase needs-attention --flow-id",
 		"approach flow phase restart --flow-id",
 		"approach flow phase reset --flow-id",
+		"approach flow phase recover --flow-id",
 		"--status completed",
 		"approach flow phase add-child --flow-id",
 		"approach flow phase agent set --flow-id",
@@ -132,6 +134,32 @@ func TestRunFlowPhaseActionHelpPrintsExamplesWithoutLoadingConfig(t *testing.T) 
 			}
 			requireContainsAll(t, stdout.String(), tc.wants)
 		})
+	}
+}
+
+func TestRunFlowPhaseRecoverRejectsPositionalArgumentsBeforeOpeningTheStore(t *testing.T) {
+	err := run([]string{
+		"approach", "flow", "phase", "recover",
+		"oops", "--state-root", t.TempDir(),
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run before positional argument validation")
+			return config.Config{}, nil
+		},
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return "flow-id"
+			case "APPROACH_FLOW_PHASE_ID":
+				return "phase-id"
+			default:
+				return ""
+			}
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil || !strings.Contains(err.Error(), `unexpected argument "oops"`) {
+		t.Fatalf("flow phase recover error = %v, want the unexpected-argument refusal", err)
 	}
 }
 
@@ -268,6 +296,15 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "phase recover",
+			args: []string{"approach", "flow", "phase", "recover", "--help"},
+			wants: []string{
+				"Usage: approach flow phase recover [flags]",
+				"phase_result_missing and phase_result_stale",
+				"approach flow phase recover --flow-id",
+			},
+		},
+		{
 			name: "plan set",
 			args: []string{"approach", "flow", "plan", "set", "--help"},
 			wants: []string{
@@ -346,7 +383,7 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child|agent> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|recover|add-child|agent> [flags]",
 	})
 }
 
@@ -2163,6 +2200,83 @@ func TestRunFlowPhaseResetReturnsAwaitingSessionPhaseToReady(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseRecoverReadsSnapshotAndReturnsDemotedPhaseToReady(t *testing.T) {
+	root := t.TempDir()
+	record := mustRunFlowReadyForImplementation(t, root, "recover demoted", "flow/recover-demoted")
+	store := mustFlowStore(t, root)
+	var err error
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "implementation", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "implementation", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultStale, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultStale, LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{"approach", "flow", "phase", "recover", "--state-root", root}, noScanDeps(t, runDeps{
+		stdout: &stdout,
+		getenv: func(key string) string {
+			switch key {
+			case "APPROACH_FLOW_ID":
+				return record.FlowID
+			case "APPROACH_FLOW_PHASE_ID":
+				return "implementation"
+			default:
+				return ""
+			}
+		},
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 || len(result.UpdatedPhase.Sessions) != 0 {
+		t.Fatalf("updated phase = %#v", result.UpdatedPhase)
+	}
+}
+
+func TestRunFlowPhaseRecoverReturnsReconciliationBlockedPlanReviewToReady(t *testing.T) {
+	root := t.TempDir()
+	record := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "recover plan review", "--instructions", "review it", "--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root})
+	record = mustSetFlowPhase(t, root, record.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+	store := mustFlowStore(t, root)
+	var err error
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan-review", LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: flowstore.OutcomePhaseResultMissing + ": reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{"approach", "flow", "phase", "recover", "--flow-id", record.FlowID, "--phase-id", "plan-review", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || result.UpdatedPhase.Outcome != "" || len(result.UpdatedPhase.LaunchIDs) != 0 || len(result.UpdatedPhase.Sessions) != 0 {
+		t.Fatalf("updated plan-review phase = %#v", result.UpdatedPhase)
+	}
+}
+
 func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {
@@ -3268,7 +3382,7 @@ func TestTheCLIStoreOpenerRefusesAPredecessorSchemaRootForEveryRole(t *testing.T
 				if err == nil {
 					t.Fatalf("the CLI store opener migrated a predecessor-schema root as %s", role)
 				}
-				want := "flow database schema 4 needs migration to 6; run 'approach db migrate'" +
+				want := fmt.Sprintf("flow database schema 4 needs migration to %d; run 'approach db migrate'", flowstore.DatabaseSchemaVersion()) +
 					" (this process opened the store as " + role.String() + " and will not migrate)"
 				if err.Error() != want {
 					t.Fatalf("acknowledged=%v refusal = %q, want %q", acknowledged, err, want)

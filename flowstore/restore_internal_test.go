@@ -148,7 +148,7 @@ func TestRestoreRefusesAGenerationMismatchWithoutForce(t *testing.T) {
 	root, backup := migratedRootWithBackup(t)
 	// A second migration moves the generation on, so the backup's recorded one
 	// is no longer the live one.
-	stampUserVersion(t, root, databaseSchemaVersion-1)
+	downgradeCurrentDatabaseToV6ForTest(t, root)
 	store, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
 	if err != nil {
 		t.Fatal(err)
@@ -401,7 +401,7 @@ func TestRestoreAfterReconstructedHistoryUsesThePreservedGeneration(t *testing.T
 	}
 	olderBackup := *afterFirst.History[0].BackupPath
 
-	stampUserVersion(t, root, databaseSchemaVersion-1)
+	downgradeCurrentDatabaseToV6ForTest(t, root)
 	second, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
 	if err != nil {
 		t.Fatal(err)

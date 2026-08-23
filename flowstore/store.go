@@ -6,7 +6,8 @@
 //
 // SQLite schema versions: v3 adds prepared_at + receipt trigger; v4 requires
 // boolean `done` in epic progression JSON; v5 fences the progression-claim
-// marker; v6 adds the protected flows.preparation_nonce generation projection.
+// marker; v6 adds the protected flows.preparation_nonce generation projection;
+// v7 fences recovered-launch capabilities from older writers.
 package flowstore
 
 import (
@@ -250,19 +251,27 @@ type FlowPhase struct {
 	Kind          PhaseKind `json:"kind"`
 	// Agent, Model, and ReasoningEffort are optional launch overrides; see
 	// PhaseAgentSettings and ResolvePhaseAgentSettings.
-	Agent           string      `json:"agent,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
-	DependsOn       []string    `json:"depends_on"`
-	Status          PhaseStatus `json:"status"`
-	Order           int         `json:"order"`
-	Outcome         string      `json:"outcome,omitempty"`
-	Notes           string      `json:"notes,omitempty"`
-	Summary         string      `json:"summary,omitempty"`
-	LaunchIDs       []string    `json:"launch_ids,omitempty"`
-	Sessions        []Session   `json:"sessions,omitempty"`
-	CreatedAt       time.Time   `json:"created_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	Agent              string               `json:"agent,omitempty"`
+	Model              string               `json:"model,omitempty"`
+	ReasoningEffort    string               `json:"reasoning_effort,omitempty"`
+	DependsOn          []string             `json:"depends_on"`
+	Status             PhaseStatus          `json:"status"`
+	Order              int                  `json:"order"`
+	Outcome            string               `json:"outcome,omitempty"`
+	Notes              string               `json:"notes,omitempty"`
+	Summary            string               `json:"summary,omitempty"`
+	Reconciliation     *PhaseReconciliation `json:"reconciliation,omitempty"`
+	LaunchIDs          []string             `json:"launch_ids,omitempty"`
+	RecoveredLaunchIDs []string             `json:"recovered_launch_ids,omitempty"`
+	Sessions           []Session            `json:"sessions,omitempty"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
+}
+
+// PhaseReconciliation authenticates a demotion written by launch control.
+type PhaseReconciliation struct {
+	Reason   string `json:"reason"`
+	LaunchID string `json:"launch_id"`
 }
 
 // PhaseAgentSettings is the agent selection captured for a Flow phase.
@@ -465,6 +474,12 @@ type Issue struct {
 	URL      string `json:"url,omitempty"`
 }
 
+// PhaseLaunchFence revokes writes from a phase launch removed by recovery.
+// Store mutations check it inside the same transaction that persists the write.
+type PhaseLaunchFence struct {
+	LaunchID string
+}
+
 // PRUpdate records metadata for the pull request created by a Flow.
 type PRUpdate struct {
 	FlowID     string
@@ -474,6 +489,7 @@ type PRUpdate struct {
 	HeadBranch string
 	BaseBranch string
 	Status     string
+	Fence      PhaseLaunchFence
 }
 
 // IssueUpdate records metadata for the issue referenced by a Flow.
@@ -482,6 +498,7 @@ type IssueUpdate struct {
 	Provider string
 	Number   int
 	URL      string
+	Fence    PhaseLaunchFence
 }
 
 // MergeUpdate records metadata for the merge that completed or blocked a Flow.
@@ -490,6 +507,7 @@ type MergeUpdate struct {
 	Status   string
 	Commit   string
 	MergedAt time.Time
+	Fence    PhaseLaunchFence
 }
 
 // ManualMergeUpdate records metadata for a PR that was manually merged in GitHub.
@@ -628,6 +646,14 @@ type PhaseUpdate struct {
 	Outcome string
 	Notes   string
 	Summary string
+	Fence   PhaseLaunchFence
+}
+
+// ReconciliationDemotionUpdate is the launch-control-owned form of PhaseUpdate.
+type ReconciliationDemotionUpdate struct {
+	PhaseUpdate
+	Reason   string
+	LaunchID string
 }
 
 // PhaseAgentSettingsUpdate replaces one phase's complete persisted agent
@@ -636,6 +662,7 @@ type PhaseAgentSettingsUpdate struct {
 	FlowID   string
 	PhaseID  string
 	Settings PhaseAgentSettings
+	Fence    PhaseLaunchFence
 }
 
 // PhaseRestartUpdate restarts a blocked or needs-attention phase as running.
@@ -643,6 +670,7 @@ type PhaseRestartUpdate struct {
 	FlowID  string
 	PhaseID string
 	Notes   string
+	Fence   PhaseLaunchFence
 }
 
 // ChildPhaseUpdate creates or updates a stable child phase under Implementation.
@@ -652,6 +680,7 @@ type ChildPhaseUpdate struct {
 	PhaseID       string
 	Title         string
 	Order         int
+	Fence         PhaseLaunchFence
 }
 
 // PlanLinkUpdate links a saved approach plan artifact to an existing Flow.
@@ -659,6 +688,7 @@ type PlanLinkUpdate struct {
 	FlowID   string
 	PlanID   string
 	PlanPath string
+	Fence    PhaseLaunchFence
 }
 
 // StartMetadataUpdate adds launch-start metadata that is only known after a
@@ -689,6 +719,20 @@ type PhaseLaunchUpdate struct {
 type PhaseResetUpdate struct {
 	FlowID  string
 	PhaseID string
+	Fence   PhaseLaunchFence
+}
+
+// PhaseRecoveryUpdate identifies one reconciliation-demoted phase snapshot.
+// Recovery compares every field before removing the stale launch so a request
+// can never apply to phase state newer than the command observed.
+type PhaseRecoveryUpdate struct {
+	FlowID            string
+	PhaseID           string
+	ExpectedStatus    PhaseStatus
+	ExpectedOutcome   string
+	ExpectedLaunchID  string
+	ExpectedUpdatedAt time.Time
+	Fence             PhaseLaunchFence
 }
 
 // PhaseLaunchEndUpdate records that a tracked Flow launch has ended.
@@ -1007,6 +1051,17 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 //
 // See syncLinkedPlanPhase for the ordering and its accepted windows.
 func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
+	return s.setPhase(update, nil)
+}
+
+// DemoteReconciledPhase persists a launch-control reconciliation marker with
+// the phase transition. Agent-facing phase commands do not expose this method.
+func (s *Store) DemoteReconciledPhase(update ReconciliationDemotionUpdate) (FlowRecord, error) {
+	stamp := &PhaseReconciliation{Reason: update.Reason, LaunchID: update.LaunchID}
+	return s.setPhase(update.PhaseUpdate, stamp)
+}
+
+func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation) (FlowRecord, error) {
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
@@ -1024,6 +1079,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, update.Fence); err != nil {
+			return FlowRecord{}, err
+		}
 		if FlowClosed(record) && update.Status == PhaseRunning {
 			return FlowRecord{}, closedFlowMutationError(record, "set a phase running on")
 		}
@@ -1044,6 +1102,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		if err := validatePhaseUpdate(phase, update); err != nil {
 			return FlowRecord{}, err
 		}
+		if err := validatePhaseReconciliationUpdate(phase, update, reconciliation); err != nil {
+			return FlowRecord{}, err
+		}
 		phase.Status = update.Status
 		if clearsPhaseOutcome(string(update.Status)) {
 			phase.Outcome = ""
@@ -1056,6 +1117,11 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		}
 		if update.Summary != "" {
 			phase.Summary = update.Summary
+		}
+		phase.Reconciliation = nil
+		if reconciliation != nil {
+			stamp := *reconciliation
+			phase.Reconciliation = &stamp
 		}
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
@@ -1084,7 +1150,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		// This is the retry path the accepted post-commit windows recover through.
 		return record, nil
 	}
-	if _, compErr := s.compensatePhaseSyncFailure(update.FlowID, committed.stored, syncErr); compErr != nil {
+	if _, compErr := s.compensatePhaseSyncFailure(update.FlowID, committed.stored, syncErr, update.Fence); compErr != nil {
 		// One error carrying both. The %w stays on the SYNC error: that is the
 		// primary outcome and the substring callers assert on. A deliberate
 		// consequence is that a Flow deleted concurrently folds its
@@ -1093,6 +1159,28 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", syncErr, compErr)
 	}
 	return FlowRecord{}, syncErr
+}
+
+func validatePhaseReconciliationUpdate(phase FlowPhase, update PhaseUpdate, stamp *PhaseReconciliation) error {
+	if stamp == nil {
+		return nil
+	}
+	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {
+		return fmt.Errorf("unsupported phase reconciliation reason %q", stamp.Reason)
+	}
+	if stamp.LaunchID == "" || LatestPhaseLaunchID(phase) != stamp.LaunchID {
+		return errors.New("phase reconciliation requires the current latest launch")
+	}
+	if SemanticKind(phase) == KindPlanReview {
+		if update.Status != PhaseBlocked || update.Outcome != OutcomeBlocked {
+			return errors.New("plan-review reconciliation requires blocked status and outcome")
+		}
+		return nil
+	}
+	if update.Status != PhaseNeedsAttention || update.Outcome != stamp.Reason {
+		return errors.New("phase reconciliation requires needs_attention with the reconciliation reason as outcome")
+	}
+	return nil
 }
 
 // SetPhaseAgentSettings atomically replaces only one phase's agent settings.
@@ -1121,6 +1209,9 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, update.Fence); err != nil {
+			return FlowRecord{}, err
+		}
 		phaseIndex := -1
 		for i := range record.Phases {
 			if record.Phases[i].PhaseID == update.PhaseID {
@@ -1185,7 +1276,7 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 // still holds. It covers a concurrently blocked merge for the same reason: that
 // pairing is equally enforced, and StatusBlocked masks needs_attention just as
 // StatusMerged does.
-func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error) (FlowRecord, error) {
+func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error, fence PhaseLaunchFence) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -1195,6 +1286,9 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, fence); err != nil {
+			return FlowRecord{}, err
+		}
 		index := phaseIndexByID(record.Phases, committedPhase.PhaseID)
 		if index < 0 || !phaseStillHoldsCommittedCompletion(record.Phases[index], committedPhase) {
 			return record, nil
@@ -1365,7 +1459,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 	if strings.TrimSpace(update.Notes) == "" {
 		return FlowRecord{}, errors.New("phase restart requires notes")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "restart a phase on")
 		}
@@ -1388,6 +1482,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		phase.Status = PhaseRunning
 		phase.Outcome = ""
 		phase.Notes = update.Notes
+		phase.Reconciliation = nil
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
@@ -1406,7 +1501,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 	if err := validateChildPhaseUpdate(update); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		parentIndex := phaseIndexByID(record.Phases, update.ParentPhaseID)
 		if parentIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("parent phase %q not found in flow %q", update.ParentPhaseID, update.FlowID)
@@ -1574,7 +1669,7 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	if err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnlyGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if record.PlanID == planID && record.PlanPath == planPath {
 			return record, nil
 		}
@@ -1590,7 +1685,7 @@ func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		pr, err := validatePRUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -1610,7 +1705,7 @@ func (s *Store) SetIssue(update IssueUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnlyGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		issue, err := validateIssueUpdate(update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -1629,7 +1724,7 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnlyGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "set merge metadata on")
 		}
@@ -2083,6 +2178,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		if launchPhaseUpdate.Notes != "" {
 			phase.Notes = launchPhaseUpdate.Notes
 		}
+		phase.Reconciliation = nil
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
@@ -2173,7 +2269,7 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 	if update.PhaseID == "" {
 		return FlowRecord{}, errors.New("phase id is required")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "reset a phase on")
 		}
@@ -2225,6 +2321,118 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+const (
+	OutcomePhaseResultMissing = "phase_result_missing"
+	OutcomePhaseResultStale   = "phase_result_stale"
+)
+
+// RecoverReconciledPhase atomically removes the exact stale launch from a
+// reconciliation-demoted phase and derives that phase back to ready.
+func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
+		return FlowRecord{}, errors.New("phase id is required")
+	}
+	if update.ExpectedLaunchID == "" {
+		return FlowRecord{}, errors.New("phase recovery requires an expected latest launch id")
+	}
+	if update.ExpectedUpdatedAt.IsZero() {
+		return FlowRecord{}, errors.New("phase recovery requires an expected update timestamp")
+	}
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "recover a phase on")
+		}
+		phaseIndex := -1
+		matches := 0
+		for i, phase := range record.Phases {
+			if artifacts.NormalizePhaseID(phase.PhaseID) == update.PhaseID {
+				matches++
+				if phase.PhaseID == requestedPhaseID || phaseIndex < 0 {
+					phaseIndex = i
+				}
+			}
+		}
+		if matches == 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		if matches != 1 {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires an unambiguous phase; %q has %d rows", update.PhaseID, matches)
+		}
+		phase := record.Phases[phaseIndex]
+		if phase.Status != update.ExpectedStatus {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed status for %s: expected %s, found %s", phase.PhaseID, update.ExpectedStatus, phase.Status)
+		}
+		if phase.Outcome != update.ExpectedOutcome {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed outcome for %s: expected %q, found %q", phase.PhaseID, update.ExpectedOutcome, phase.Outcome)
+		}
+		if _, ok := reconciledPhaseRecoveryReason(phase); !ok {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires needs_attention with outcome %s or %s, or reconciliation-blocked plan review", OutcomePhaseResultMissing, OutcomePhaseResultStale)
+		}
+		if !phase.UpdatedAt.Equal(update.ExpectedUpdatedAt) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed update timestamp for %s", phase.PhaseID)
+		}
+		if latest := LatestPhaseLaunchID(phase); latest != update.ExpectedLaunchID {
+			return FlowRecord{}, fmt.Errorf("flow phase recover refused changed latest launch for %s: expected %q, found %q", phase.PhaseID, update.ExpectedLaunchID, latest)
+		}
+		if PhaseSessionLaunchMismatch(phase) {
+			return FlowRecord{}, errors.New("flow phase recover requires attached sessions to match phase launch ids")
+		}
+		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			return FlowRecord{}, fmt.Errorf("flow phase recover requires satisfied predecessors for %s", phase.PhaseID)
+		}
+		if _, ok := recoverablePhaseLaunchRemovalReason(phase, update.ExpectedLaunchID); !ok {
+			return FlowRecord{}, errors.New("flow phase recover requires the stale launch and all older sessions to be ended")
+		}
+		phase.LaunchIDs = removePhaseLaunchID(phase.LaunchIDs, update.ExpectedLaunchID)
+		phase.RecoveredLaunchIDs = appendUnique(phase.RecoveredLaunchIDs, update.ExpectedLaunchID)
+		phase.Sessions = removePhaseSessionsForLaunchID(phase.Sessions, update.ExpectedLaunchID)
+		phase.Status = PhasePending
+		phase.Outcome = ""
+		phase.Notes = ""
+		phase.Summary = ""
+		phase.Reconciliation = nil
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		recoveredIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if recoveredIndex < 0 || record.Phases[recoveredIndex].Status != PhaseReady {
+			return FlowRecord{}, fmt.Errorf("flow phase recover could not derive %s back to ready", update.PhaseID)
+		}
+		record.Status = DeriveStatus(record)
+		return record, nil
+	})
+}
+
+func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
+	stamp := phase.Reconciliation
+	if stamp == nil || stamp.LaunchID != LatestPhaseLaunchID(phase) {
+		return "", false
+	}
+	if stamp.Reason != OutcomePhaseResultMissing && stamp.Reason != OutcomePhaseResultStale {
+		return "", false
+	}
+	if phase.Status == PhaseNeedsAttention && phase.Outcome == stamp.Reason {
+		return stamp.Reason, true
+	}
+	if SemanticKind(phase) == KindPlanReview && phase.Status == PhaseBlocked && phase.Outcome == OutcomeBlocked {
+		return stamp.Reason, true
+	}
+	return "", false
+}
+
+func recoverablePhaseLaunchRemovalReason(phase FlowPhase, latestLaunchID string) (string, bool) {
+	running := phase
+	running.Status = PhaseRunning
+	return recoverableRunningPhaseResetReasonForLaunch(running, latestLaunchID)
 }
 
 func removePhaseSessionsForLaunchID(values []Session, target string) []Session {
@@ -2343,6 +2551,10 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		}
 		phase := record.Phases[phaseIndex]
 		session := update.Session
+		session.LaunchID = strings.TrimSpace(session.LaunchID)
+		if session.LaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, session.LaunchID) {
+			return record, nil
+		}
 		replaced := false
 		for i, existing := range phase.Sessions {
 			if sameSession(existing, session) {
@@ -2395,14 +2607,22 @@ func (s *Store) Delete(flowID string) error {
 }
 
 func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	return s.updateFlowWithReadiness(flowID, true, mutate)
+	return s.updateFlowWithReadiness(flowID, true, PhaseLaunchFence{}, mutate)
+}
+
+func (s *Store) updateFlowGuarded(flowID string, fence PhaseLaunchFence, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, true, fence, mutate)
 }
 
 func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	return s.updateFlowWithReadiness(flowID, false, mutate)
+	return s.updateFlowWithReadiness(flowID, false, PhaseLaunchFence{}, mutate)
 }
 
-func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+func (s *Store) updateFlowMetadataOnlyGuarded(flowID string, fence PhaseLaunchFence, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, false, fence, mutate)
+}
+
+func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, fence PhaseLaunchFence, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -2412,6 +2632,9 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, fence); err != nil {
+			return FlowRecord{}, err
+		}
 		if selfHealOnRead {
 			if err := validatePhaseGraphResolved(record); err != nil {
 				return FlowRecord{}, err
@@ -2428,6 +2651,19 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 		}
 		return record, nil
 	})
+}
+
+func validatePhaseLaunchFence(record FlowRecord, fence PhaseLaunchFence) error {
+	launchID := strings.TrimSpace(fence.LaunchID)
+	if launchID == "" {
+		return nil
+	}
+	for _, phase := range record.Phases {
+		if slices.Contains(phase.RecoveredLaunchIDs, launchID) {
+			return fmt.Errorf("launch %q was recovered and can no longer write", launchID)
+		}
+	}
+	return nil
 }
 
 // fencingPresetName returns the normalized preset name when a record's phase
@@ -3344,6 +3580,9 @@ func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 		}
 		for _, launchID := range phase.LaunchIDs {
 			survivor.LaunchIDs = appendUnique(survivor.LaunchIDs, launchID)
+		}
+		for _, launchID := range phase.RecoveredLaunchIDs {
+			survivor.RecoveredLaunchIDs = appendUnique(survivor.RecoveredLaunchIDs, launchID)
 		}
 		for _, session := range phase.Sessions {
 			survivor.Sessions = appendUniqueSession(survivor.Sessions, session)

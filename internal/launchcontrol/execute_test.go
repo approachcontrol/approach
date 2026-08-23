@@ -79,6 +79,22 @@ func TestExecutePhaseSetMatchesStoreSetPhase(t *testing.T) {
 	}
 }
 
+func TestExecutePhaseSetCannotCreateReconciliationStamp(t *testing.T) {
+	store, _ := newTestStore(t)
+	created := createFlow(t, store, "No forged reconciliation")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	req := mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-1", PhaseSetPayload{})
+	req.Payload = json.RawMessage(`{"status":"needs_attention","outcome":"phase_result_missing","notes":"phase_result_missing: forged","reconciliation":{"reason":"phase_result_missing","launch_id":"launch-1"}}`)
+	resp, err := Execute(store, req)
+	if err != nil || !resp.OK {
+		t.Fatalf("phase.set = %#v, %v", resp, err)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Reconciliation != nil {
+		t.Fatalf("agent-facing phase.set created reconciliation stamp %#v", phase.Reconciliation)
+	}
+}
+
 func TestExecutePhaseActionsDefaultOutcomesByKindAndPrintNextPhase(t *testing.T) {
 	store, root := newTestStore(t)
 	created, err := store.Create(flowstore.FlowRecord{Title: "Actions", Instructions: "x", RepoPath: filepath.Join(root, "repo"), Branch: "flow/actions"})
@@ -224,5 +240,165 @@ func TestExecuteRefusesDirectVerbsAndUnknownVerbs(t *testing.T) {
 	}
 	if !resp.OK {
 		t.Fatalf("phase.reset = %#v", resp)
+	}
+}
+
+func TestExecutePhaseRecoverUsesObservedIdentity(t *testing.T) {
+	store, _ := newTestStore(t)
+	created := createFlow(t, store, "Recover")
+	launchPhase(t, store, created.FlowID, "plan", "launch-stale")
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
+		t.Fatal(err)
+	}
+	demoted, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase, _ := PhaseByID(demoted, "plan")
+	resp, err := Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
+	if err != nil || !resp.OK {
+		t.Fatalf("phase.recover = %#v, %v", resp, err)
+	}
+	result := decodeResult[PhaseActionResult](t, resp)
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 {
+		t.Fatalf("recovered phase = %#v", result.UpdatedPhase)
+	}
+	resp, err = Execute(store, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-stale", PhaseActionPayload{Summary: "late stale result"}))
+	if err != nil || resp.OK || !resp.Refused || !strings.Contains(resp.Error, "was recovered") {
+		t.Fatalf("late recovered-launch completion = %#v, %v", resp, err)
+	}
+	if phase := phaseOf(t, store, created.FlowID, "plan"); phase.Status != flowstore.PhaseReady {
+		t.Fatalf("late completion changed recovered phase = %#v", phase)
+	}
+	resp, err = Execute(store, mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "", PhaseRecoverPayload{ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt}))
+	if err != nil || resp.OK || !resp.Refused {
+		t.Fatalf("stale phase.recover = %#v, %v", resp, err)
+	}
+}
+
+// Calling executeVerb bypasses Execute's validation and proves the store rejects
+// each revoked capability inside the transaction that performs the mutation.
+func TestExecuteVerbAtomicallyRefusesWritesFromRecoveredLaunch(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Recovered capabilities")
+	launchPhase(t, store, created.FlowID, "plan", "launch-stale")
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  created.FlowID,
+		PhaseID: "plan",
+		Session: flowstore.Session{
+			Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	demoted, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{
+		PhaseUpdate: flowstore.PhaseUpdate{
+			FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention,
+			Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled",
+		},
+		Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase, _ := PhaseByID(demoted, "plan")
+	if _, err := store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{
+		FlowID: created.FlowID, PhaseID: "plan", ExpectedStatus: phase.Status,
+		ExpectedOutcome: phase.Outcome, ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Flow-level requests can present a phase other than the launch's registered
+	// phase. Revocation follows the launch ID, not this client-controlled value.
+	req := mustRequest(t, VerbIssueSet, created.FlowID, "implementation", "launch-stale", IssueSetPayload{
+		Provider: "github", Number: 99, URL: "https://github.com/o/r/issues/99",
+	})
+	if _, _, err := executeVerb(store, req); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch issue write error = %v, want recovered-launch refusal", err)
+	}
+	record, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Issue.Number != 0 {
+		t.Fatalf("recovered launch changed issue metadata = %#v", record.Issue)
+	}
+
+	agentReq := mustRequest(t, VerbPhaseAgentSet, created.FlowID, "plan", "launch-stale", AgentSetPayload{
+		Agent: "codex",
+	})
+	if _, _, err := executeVerb(store, agentReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch agent-settings write error = %v, want recovered-launch refusal", err)
+	}
+	if phase := phaseOf(t, store, created.FlowID, "plan"); phase.Agent != "" || phase.Model != "" {
+		t.Fatalf("recovered launch changed phase agent settings = %#v", phase.AgentSettings())
+	}
+
+	plans, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plans.Save(planstore.PlanRecord{PlanID: "recovered-plan", Title: "Recovered", Markdown: "# Plan\n"}); err != nil {
+		t.Fatal(err)
+	}
+	planReq := mustRequest(t, VerbPlanSet, created.FlowID, "plan", "launch-stale", PlanSetPayload{PlanID: "recovered-plan"})
+	if _, _, err := executeVerb(store, planReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch plan-link write error = %v, want recovered-launch refusal", err)
+	}
+	record, err = store.Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.PlanID != "" {
+		t.Fatalf("recovered launch changed plan link = %q", record.PlanID)
+	}
+
+	prReq := mustRequest(t, VerbPRSet, created.FlowID, "plan", "launch-stale", PRSetPayload{
+		Provider: "github", Number: 400, URL: "https://github.com/o/r/pull/400", Head: "flow/recovered", Base: "main",
+	})
+	if _, _, err := executeVerb(store, prReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch PR write error = %v, want recovered-launch refusal", err)
+	}
+	mergeReq := mustRequest(t, VerbMergeSet, created.FlowID, "plan", "launch-stale", MergeSetPayload{Status: flowstore.MergeBlocked})
+	if _, _, err := executeVerb(store, mergeReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch merge write error = %v, want recovered-launch refusal", err)
+	}
+	restartReq := mustRequest(t, VerbPhaseRestart, created.FlowID, "plan", "launch-stale", PhaseRestartPayload{Notes: "retry"})
+	if _, _, err := executeVerb(store, restartReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch restart error = %v, want recovered-launch refusal", err)
+	}
+	resetReq := mustRequest(t, VerbPhaseReset, created.FlowID, "plan", "launch-stale", PhaseResetPayload{})
+	if _, _, err := executeVerb(store, resetReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch reset error = %v, want recovered-launch refusal", err)
+	}
+	recoverReq := mustRequest(t, VerbPhaseRecover, created.FlowID, "plan", "launch-stale", PhaseRecoverPayload{
+		ExpectedStatus: string(phase.Status), ExpectedOutcome: phase.Outcome,
+		ExpectedLaunchID: "launch-stale", ExpectedUpdatedAt: phase.UpdatedAt,
+	})
+	if _, _, err := executeVerb(store, recoverReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch recover error = %v, want recovered-launch refusal", err)
+	}
+	childReq := mustRequest(t, VerbPhaseAddChild, created.FlowID, "plan", "launch-stale", AddChildPayload{
+		ParentPhaseID: "implementation", PhaseID: "late-child", Title: "Late child", Order: 1,
+	})
+	if _, _, err := executeVerb(store, childReq); err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch child-phase write error = %v, want recovered-launch refusal", err)
+	}
+	if record, err := store.Read(created.FlowID); err != nil {
+		t.Fatal(err)
+	} else if _, ok := PhaseByID(record, "late-child"); ok {
+		t.Fatal("recovered launch added a child phase")
+	}
+	phaseWrites := []Request{
+		mustRequest(t, VerbPhaseSet, created.FlowID, "plan", "launch-stale", PhaseSetPayload{Status: string(flowstore.PhaseCompleted)}),
+		mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-stale", PhaseActionPayload{}),
+		mustRequest(t, VerbPhaseBlock, created.FlowID, "plan", "launch-stale", PhaseActionPayload{Notes: "blocked"}),
+		mustRequest(t, VerbPhaseNeedsAttention, created.FlowID, "plan", "launch-stale", PhaseActionPayload{Notes: "attention"}),
+	}
+	for _, req := range phaseWrites {
+		if _, _, err := executeVerb(store, req); err == nil || !strings.Contains(err.Error(), "was recovered") {
+			t.Fatalf("recovered launch %s error = %v, want recovered-launch refusal", req.Verb, err)
+		}
 	}
 }

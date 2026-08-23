@@ -138,6 +138,49 @@ func TestAgentExitWithoutResultLandsNeedsAttention(t *testing.T) {
 	}
 }
 
+func TestAdvertisedRecoverySurvivesAnotherPeriodicSweep(t *testing.T) {
+	root := newRoot(t)
+	store := openStore(t, root)
+	record, phase := seedLaunchWithBaseline(t, store, root, "launch-recover")
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: record.FlowID, PhaseID: phase.PhaseID, Session: flowstore.Session{Provider: "codex", SessionID: "session-recover", LaunchID: "launch-recover", Status: "ended", EndedAt: time.Now().UTC()}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := launchcontrol.RecordLaunchExit(root, record.FlowID, phase.PhaseID, "launch-recover", 2, false, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	controller, err := launchcontrol.New(launchcontrol.Options{Root: root, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	if report := controller.Sweep(); report.Reconciled != 1 {
+		t.Fatalf("demotion sweep = %#v", report)
+	}
+	demoted := phaseByID(t, store, record.FlowID, phase.PhaseID)
+	marker := "Recover with: "
+	at := strings.LastIndex(demoted.Notes, marker)
+	if at < 0 {
+		t.Fatalf("notes do not advertise recovery: %q", demoted.Notes)
+	}
+	command := strings.TrimSpace(demoted.Notes[at+len(marker):])
+	pathDir := filepath.Dir(approachBinary)
+	stdout, stderr, code := runShell(t, root, command, launchEnv(root, pathDir))
+	if code != 0 {
+		t.Fatalf("advertised recovery exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	recovered := phaseByID(t, store, record.FlowID, phase.PhaseID)
+	if recovered.Status != flowstore.PhaseReady || len(recovered.LaunchIDs) != 0 || len(recovered.Sessions) != 0 {
+		t.Fatalf("recovered phase = %#v", recovered)
+	}
+	if report := controller.Sweep(); report.Reconciled != 0 {
+		t.Fatalf("post-recovery sweep = %#v", report)
+	}
+	stable := phaseByID(t, store, record.FlowID, phase.PhaseID)
+	if stable.Status != flowstore.PhaseReady || len(stable.LaunchIDs) != 0 || len(stable.Sessions) != 0 {
+		t.Fatalf("post-sweep phase = %#v", stable)
+	}
+}
+
 // TestControllerCrashBetweenAcceptAndApplyAppliesExactlyOnce is the durability
 // claim the request log exists for. The assertion is on the applied SEQUENCE,
 // not the final status: a double-apply reaches the same status and would be

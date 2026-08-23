@@ -13,7 +13,7 @@ import (
 )
 
 // PhaseActionResult is what `flow phase complete|block|needs-attention|
-// restart|reset` print: the updated phase, the next actionable phase, and the
+// restart|reset|recover` print: the updated phase, the next actionable phase, and the
 // whole record. It lives here so the proxied and direct paths print one shape.
 type PhaseActionResult struct {
 	FlowID       string               `json:"flow_id"`
@@ -112,6 +112,18 @@ func Validate(req Request) error {
 	case VerbPhaseReset:
 		if strings.TrimSpace(req.PhaseID) == "" {
 			return fmt.Errorf("flow phase reset requires --phase-id")
+		}
+		return nil
+	case VerbPhaseRecover:
+		var payload PhaseRecoverPayload
+		if err := decodePayload(req, &payload); err != nil {
+			return err
+		}
+		if strings.TrimSpace(req.PhaseID) == "" {
+			return fmt.Errorf("flow phase recover requires --phase-id")
+		}
+		if payload.ExpectedStatus == "" || payload.ExpectedOutcome == "" || payload.ExpectedLaunchID == "" || payload.ExpectedUpdatedAt.IsZero() {
+			return errors.New("flow phase recover requires a complete observed phase snapshot")
 		}
 		return nil
 	case VerbPhaseAddChild:
@@ -224,6 +236,8 @@ func verbLabel(verb Verb) string {
 		return "flow phase restart"
 	case VerbPhaseReset:
 		return "flow phase reset"
+	case VerbPhaseRecover:
+		return "flow phase recover"
 	case VerbPhaseAddChild:
 		return "flow phase add-child"
 	case VerbPhaseAgentSet:
@@ -309,6 +323,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			Outcome: payload.Outcome,
 			Notes:   payload.Notes,
 			Summary: payload.Summary,
+			Fence:   flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		return record, "", err
 	case VerbPhaseComplete, VerbPhaseBlock, VerbPhaseNeedsAttention:
@@ -336,6 +351,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			Outcome: outcome,
 			Notes:   payload.Notes,
 			Summary: payload.Summary,
+			Fence:   flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		if err != nil {
 			return nil, "", err
@@ -350,13 +366,34 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		if note == "" {
 			note = fmt.Sprintf("Rerunning %s after addressing prior findings.", DefaultPhaseTitle(req.PhaseID))
 		}
-		record, err := store.RestartPhase(flowstore.PhaseRestartUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID, Notes: note})
+		record, err := store.RestartPhase(flowstore.PhaseRestartUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID, Notes: note,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		if err != nil {
 			return nil, "", err
 		}
 		return phaseActionResult(record, req.PhaseID)
 	case VerbPhaseReset:
-		record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID})
+		record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		return phaseActionResult(record, req.PhaseID)
+	case VerbPhaseRecover:
+		var payload PhaseRecoverPayload
+		if err := decodePayload(req, &payload); err != nil {
+			return nil, "", err
+		}
+		record, err := store.RecoverReconciledPhase(flowstore.PhaseRecoveryUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID,
+			ExpectedStatus: flowstore.PhaseStatus(payload.ExpectedStatus), ExpectedOutcome: payload.ExpectedOutcome,
+			ExpectedLaunchID: payload.ExpectedLaunchID, ExpectedUpdatedAt: payload.ExpectedUpdatedAt,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		if err != nil {
 			return nil, "", err
 		}
@@ -372,6 +409,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			PhaseID:       payload.PhaseID,
 			Title:         payload.Title,
 			Order:         payload.Order,
+			Fence:         flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		return record, "", err
 	case VerbPhaseAgentSet:
@@ -383,21 +421,30 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		if !payload.Clear {
 			settings = flowstore.PhaseAgentSettings{Agent: payload.Agent, Model: payload.Model, ReasoningEffort: payload.ReasoningEffort}
 		}
-		record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID, Settings: settings})
+		record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID, Settings: settings,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	case VerbPlanSet:
 		var payload PlanSetPayload
 		if err := decodePayload(req, &payload); err != nil {
 			return nil, "", err
 		}
-		record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: req.FlowID, PlanID: payload.PlanID, PlanPath: payload.PlanPath})
+		record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{
+			FlowID: req.FlowID, PlanID: payload.PlanID, PlanPath: payload.PlanPath,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	case VerbIssueSet:
 		var payload IssueSetPayload
 		if err := decodePayload(req, &payload); err != nil {
 			return nil, "", err
 		}
-		record, err := store.SetIssue(flowstore.IssueUpdate{FlowID: req.FlowID, Provider: payload.Provider, Number: payload.Number, URL: payload.URL})
+		record, err := store.SetIssue(flowstore.IssueUpdate{
+			FlowID: req.FlowID, Provider: payload.Provider, Number: payload.Number, URL: payload.URL,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	case VerbPRSet:
 		var payload PRSetPayload
@@ -412,6 +459,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			HeadBranch: payload.Head,
 			BaseBranch: payload.Base,
 			Status:     payload.Status,
+			Fence:      flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		return record, "", err
 	case VerbMergeSet:
@@ -427,7 +475,10 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			}
 			mergedAt = parsed
 		}
-		record, err := store.SetMerge(flowstore.MergeUpdate{FlowID: req.FlowID, Status: payload.Status, Commit: payload.Commit, MergedAt: mergedAt})
+		record, err := store.SetMerge(flowstore.MergeUpdate{
+			FlowID: req.FlowID, Status: payload.Status, Commit: payload.Commit, MergedAt: mergedAt,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	}
 	return nil, "", fmt.Errorf("%s: %w", req.Verb, errNotExecutable)

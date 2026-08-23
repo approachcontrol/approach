@@ -48,6 +48,14 @@
       "first_compatible_release": "v0.10.3",
       "migration_tested_predecessors": [0, 1, 2, 3, 4, 5],
       "release_notes": "Preparation nonce projection: flows.preparation_nonce and the guard_preparation_nonce_update trigger."
+    },
+    {
+      "physical_version": 7,
+      "min_reader_generation": 7,
+      "min_writer_generation": 7,
+      "first_compatible_release": "v0.10.7",
+      "migration_tested_predecessors": [0, 1, 2, 3, 4, 5, 6],
+      "release_notes": "Recovered-launch generation projection and compatibility trigger: already-open older writers cannot rewrite Flow JSON that persists recovered_launch_ids and reconciliation state."
     }
   ]
 }

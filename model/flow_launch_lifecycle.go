@@ -301,7 +301,13 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	// generic no-phase status; only in-process occupancy belongs in this second
 	// synchronous check. The launch reservation performs the next lease check.
 	record, phase, ok := m.cachedFlowLaunchTarget(intent)
-	if !ok || m.flowLaunchRuntimeOccupied(record.FlowID) {
+	if !ok {
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
+	}
+	if status, occupied := m.retainedFlowTerminalLaunchStatus(record.FlowID); occupied {
+		return m.setStatus(statusOther, status), nil, false
+	}
+	if m.flowLaunchRuntimeOccupied(record.FlowID) {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -329,6 +335,23 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	m = next
 	return m, m.flowLaunchReadCmd(intent, token, settings), true
+}
+
+func (m Model) retainedFlowTerminalLaunchStatus(flowID string) (string, bool) {
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowID != flowID || slot.Terminal == nil || slot.FlowRepair {
+			continue
+		}
+		identity := strings.TrimSpace(slot.Identity)
+		if identity == "" {
+			identity = strings.TrimSpace(slot.FlowPhaseID)
+		}
+		if identity == "" {
+			identity = "flow"
+		}
+		return fmt.Sprintf("Close, detach, or dismiss Flow terminal %q before launching this Flow", identity), true
+	}
+	return "", false
 }
 
 // admitAutoFlowLaunch refuses in silence, without exception. The advance poll

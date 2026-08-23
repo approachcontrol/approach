@@ -75,7 +75,7 @@ func TestNonMigratorRolesRefuseAPredecessorSchemaRoot(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected %s to refuse a schema-5 root", role)
 			}
-			want := "flow database schema 5 needs migration to 6; run 'approach db migrate'" +
+			want := "flow database schema 5 needs migration to " + itoaTest(int64(databaseSchemaVersion)) + "; run 'approach db migrate'" +
 				" (this process opened the store as " + role.String() + " and will not migrate)"
 			if err.Error() != want {
 				t.Fatalf("refusal = %q, want %q", err.Error(), want)
@@ -191,7 +191,7 @@ func TestTheCompatibilityRefusalNamesTheLaunchingBinary(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	if !strings.Contains(err.Error(), "but /pinned/bin/approach is build v0.13.0 (schema 6)") {
+	if !strings.Contains(err.Error(), "but /pinned/bin/approach is build v0.13.0 (schema "+itoaTest(int64(databaseSchemaVersion))+")") {
 		t.Fatalf("refusal %q does not name the launching binary", err)
 	}
 }

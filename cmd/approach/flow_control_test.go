@@ -205,6 +205,44 @@ func TestReplayableWriteFallsBackToLoggedDirectOpenWhenEndpointUnreachable(t *te
 	}
 }
 
+func TestPhaseRecoverFallsBackDirectlyWhenEndpointCannotBeReached(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Recover fallback", "--instructions", "x", "--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-stale")
+	store := mustFlowStore(t, root)
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-ended", LaunchID: "launch-stale", Status: "ended"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-stale"}); err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(t.TempDir(), "dead.sock")
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"approach", "flow", "phase", "recover", "--flow-id", created.FlowID, "--phase-id", "plan", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-stale", created.FlowID, "plan")}))
+	if err != nil {
+		t.Fatalf("recover fallback: %v (%s)", err, stderr.String())
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.UpdatedPhase.Status != flowstore.PhaseReady {
+		t.Fatalf("output = %s (%v)", stdout.String(), err)
+	}
+	stdout.Reset()
+	err = run([]string{"approach", "flow", "phase", "complete", "--flow-id", created.FlowID, "--phase-id", "plan", "--summary", "late", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, dead, "tok", "launch-stale", created.FlowID, "plan")}))
+	if err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("late direct-fallback completion = %v, want recovered-launch refusal", err)
+	}
+	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseReady {
+		t.Fatalf("late direct-fallback completion changed phase = %#v", phase)
+	}
+	err = run([]string{"approach", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "99", "--url", "https://github.com/o/r/issues/99", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, "", "tok", "launch-stale", created.FlowID, "plan")}))
+	if err == nil || !strings.Contains(err.Error(), "was recovered") {
+		t.Fatalf("recovered launch direct issue write = %v, want recovered-launch refusal", err)
+	}
+	if read := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}); read.Issue.Number != 0 {
+		t.Fatalf("recovered launch changed issue metadata = %#v", read.Issue)
+	}
+}
+
 func TestReplayableWriteSpoolsWhenEndpointUnreachableAndDatabaseIncompatible(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -443,6 +481,21 @@ func TestNonReplayableWriteIsNotRetriedAfterALostResponse(t *testing.T) {
 	}
 	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseRunning {
 		t.Fatalf("replayable write did not fall back: %#v", phase)
+	}
+	store := mustFlowStore(t, root)
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{FlowID: created.FlowID, PhaseID: "plan", Session: flowstore.Session{Provider: "codex", SessionID: "session-ended", LaunchID: "launch-1", Status: "ended"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DemoteReconciledPhase(flowstore.ReconciliationDemotionUpdate{PhaseUpdate: flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseNeedsAttention, Outcome: flowstore.OutcomePhaseResultMissing, Notes: "reconciled"}, Reason: flowstore.OutcomePhaseResultMissing, LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	err = run([]string{"approach", "flow", "phase", "recover", "--flow-id", created.FlowID, "--phase-id", "plan", "--state-root", root}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv}))
+	if err == nil || !strings.Contains(err.Error(), "may already have applied") {
+		t.Fatalf("recover after a lost response = %v, want an indeterminate-outcome error", err)
+	}
+	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseNeedsAttention || phase.Outcome != flowstore.OutcomePhaseResultMissing {
+		t.Fatalf("recover was executed on a guess: %#v", phase)
 	}
 }
 

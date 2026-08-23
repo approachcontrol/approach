@@ -50,7 +50,7 @@ func insertV5Flow(t *testing.T, db *sql.DB, record FlowRecord) []byte {
 	return blob
 }
 
-func TestSQLiteParentReleaseV5MigratesToV6AndInstallsNonceProjection(t *testing.T) {
+func TestSQLiteParentReleaseV5MigratesThroughV6AndInstallsNonceProjection(t *testing.T) {
 	root := t.TempDir()
 	db := createParentReleaseV5Database(t, root)
 	stamp := time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC)
@@ -95,7 +95,7 @@ func TestSQLiteParentReleaseV5MigratesToV6AndInstallsNonceProjection(t *testing.
 		t.Fatalf("user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	if err := validateSQLiteSchema(backend.db); err != nil {
-		t.Fatalf("migrated v6 schema validation failed: %v", err)
+		t.Fatalf("migrated current schema validation failed: %v", err)
 	}
 	var gotMarked []byte
 	var markedNonce string
@@ -114,14 +114,14 @@ func TestSQLiteParentReleaseV5MigratesToV6AndInstallsNonceProjection(t *testing.
 		t.Fatalf("parent-release v5 nonce Flow migration = blobEqual %t, nonce %q", bytes.Equal(gotNonce, nonceBlob), nonce)
 	}
 	if got, err := store.Read(marked.FlowID); err != nil || !got.ProgressionClaim || got.PreparationNonce != "" {
-		t.Fatalf("marked Flow after v6 migration = marker %t, nonce %q, err %v", got.ProgressionClaim, got.PreparationNonce, err)
+		t.Fatalf("marked Flow after migration = marker %t, nonce %q, err %v", got.ProgressionClaim, got.PreparationNonce, err)
 	}
 	if got, err := store.Read(withNonce.FlowID); err != nil || !got.ProgressionClaim || got.PreparationNonce != withNonce.PreparationNonce {
-		t.Fatalf("nonce Flow after v6 migration = marker %t, nonce %q, err %v", got.ProgressionClaim, got.PreparationNonce, err)
+		t.Fatalf("nonce Flow after migration = marker %t, nonce %q, err %v", got.ProgressionClaim, got.PreparationNonce, err)
 	}
 }
 
-func TestSQLiteInPlaceV5WithNonceStampsV6WithoutRewritingFlows(t *testing.T) {
+func TestSQLiteInPlaceV5WithNonceStampsCurrentSchemaWithoutRewritingFlows(t *testing.T) {
 	root := t.TempDir()
 	db := createParentReleaseV5Database(t, root)
 	if _, err := db.Exec("ALTER TABLE flows ADD COLUMN preparation_nonce TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -142,7 +142,7 @@ func TestSQLiteInPlaceV5WithNonceStampsV6WithoutRewritingFlows(t *testing.T) {
 		t.Fatal("in-place v5+nonce fixture unexpectedly validated as exact v5")
 	}
 	if err := validateSQLiteSchemaVersion(db, 6); err != nil {
-		t.Fatalf("in-place v5+nonce fixture is not current v6: %v", err)
+		t.Fatalf("in-place v5+nonce fixture is not exact v6: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -163,10 +163,10 @@ func TestSQLiteInPlaceV5WithNonceStampsV6WithoutRewritingFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(gotBlob, blob) {
-		t.Fatal("in-place v5 Flow blob changed while stamping v6")
+		t.Fatal("in-place v5 Flow blob changed while stamping the current schema")
 	}
 	if got, err := store.Read(record.FlowID); err != nil || !got.ProgressionClaim {
-		t.Fatalf("marked Flow after v6 stamp = marker %t, err %v", got.ProgressionClaim, err)
+		t.Fatalf("marked Flow after current schema stamp = marker %t, err %v", got.ProgressionClaim, err)
 	}
 }
 
@@ -206,6 +206,6 @@ func TestSQLiteParentReleaseV5InterruptedStagePromotesWithoutRebuild(t *testing.
 		t.Fatalf("promoted user_version = %d, err %v; want %d", version, err, databaseSchemaVersion)
 	}
 	if err := validateSQLiteSchema(backend.db); err != nil {
-		t.Fatalf("promoted v6 schema validation failed: %v", err)
+		t.Fatalf("promoted current schema validation failed: %v", err)
 	}
 }

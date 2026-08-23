@@ -189,7 +189,7 @@ func TestInspectSeesUncheckpointedWALContent(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 	backend := store.backend.(*sqliteBackend)
-	if _, err := backend.db.Exec("PRAGMA user_version = 6"); err != nil {
+	if _, err := backend.db.Exec("PRAGMA user_version = " + itoaTest(int64(databaseSchemaVersion))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Create(FlowRecord{
