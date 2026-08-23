@@ -73,6 +73,18 @@ func TestApproachFlowHasCanonicalInterfaceMetadata(t *testing.T) {
 	})
 }
 
+func TestApproachFlowActivePhaseDrainsTrackedWorkBeforeFinalResponse(t *testing.T) {
+	activePhase := readFile(t, filepath.Join(repoRoot(t), "agent-skills", "approach-flow", "references", "active-phase.md"))
+	requireContainsAll(t, "active phase pending-work contract", activePhase, []string{
+		"Before any final response",
+		"spawned background or delegated work",
+		"consume every result",
+		"stop",
+		"needs-attention",
+		"block",
+	})
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

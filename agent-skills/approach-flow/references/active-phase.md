@@ -42,6 +42,15 @@ If a plan is linked, read it using the launch default:
 Use the phase's persisted semantic kind rather than assuming its ID is one of
 the default names.
 
+## Settle tracked work before responding
+
+Before any final response, wait for all spawned background or delegated work
+to finish and consume every result. Do not record phase completion while such
+work is still running. If work cannot finish safely, stop it and persist an
+honest non-complete outcome with useful notes: use `needs-attention` for
+unfinished actionable work and `block` only for a genuine external blocker.
+Plan persistence remains separate from Flow phase completion.
+
 ## Record the outcome
 
 Commands default both IDs from the launch:

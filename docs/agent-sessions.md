@@ -225,6 +225,13 @@ socket path, reloads registrations from `launch.json`, replays every pending
 request exactly once — under the latest-launch gate, so a launch that no
 longer owns its phase never writes — and only then listens.
 
+The agent and launch controller cover different failure boundaries. The agent
+must wait for all spawned background or delegated work before its final
+response, consume every result, and persist the phase outcome last. If it
+cannot finish work safely, it stops that work and records `needs_attention` or
+`blocked` with useful notes. This keeps a normal headless turn alive until its
+tracked work settles.
+
 Reconciliation demotes a phase only on positive exit evidence: an embedded
 terminal's exit, an interactive launch handing the TTY back, the lease
 runner's `exit.json`, or a Claude session record the store says ended more
@@ -237,6 +244,9 @@ and Cursor records say `ended` after every turn, so they are never exit
 evidence either: a Codex or Cursor launch that exits without a result is
 demoted only by its embedded terminal's exit or the lease runner's
 `exit.json`.
+That exit record and the resulting `phase_result_missing` transition are
+diagnostic evidence when teardown still prevents a phase result or session
+capture. They are not a substitute for the agent awaiting its background work.
 The write is `needs_attention` with the reason as the outcome
 (`phase_result_missing` or `phase_result_stale`); on a plan-review kind it is
 `blocked`/`blocked` with the reason leading the notes, the convention that

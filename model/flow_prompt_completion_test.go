@@ -9,6 +9,90 @@ import (
 	"github.com/approachcontrol/approach/model"
 )
 
+const flowPendingWorkInstruction = "Before your final response, wait for every spawned background or delegated task to finish and consume its result; if any cannot finish safely, stop it and persist needs_attention or blocked with useful notes."
+
+func TestEveryFlowPromptEndsWithPendingWorkThenPhaseCompletion(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Instructions: "Do not leave similar background work running at turn end.",
+		PlanPath:     "/state/plans/plan-1/plan.md",
+		WorktreePath: "/dev/alpha-worktrees/flow-lifecycle",
+		Branch:       "flow/lifecycle",
+		Commit:       "abc123",
+	}
+	phases := []flowstore.FlowPhase{
+		{PhaseID: "plan", Kind: flowstore.KindPlan, Title: "Plan"},
+		{PhaseID: "plan-review", Kind: flowstore.KindPlanReview, Title: "Plan Review"},
+		{PhaseID: "implementation", Kind: flowstore.KindImplementation, Title: "Implementation"},
+		{PhaseID: "review-loop", Kind: flowstore.KindReviewLoop, Title: "Review Loop"},
+		{PhaseID: "pr-creation", Kind: flowstore.KindPRCreation, Title: "PR Creation"},
+		{PhaseID: "autoreview", Kind: flowstore.KindAutoreview, Title: "Autoreview"},
+		{PhaseID: "merge", Kind: flowstore.KindMerge, Title: "Merge"},
+		{PhaseID: "qa-check", Title: "QA Check"},
+	}
+
+	for _, phase := range phases {
+		t.Run(string(flowstore.SemanticKind(phase))+"/built-in", func(t *testing.T) {
+			var prompt string
+			if flowstore.SemanticKind(phase) == flowstore.KindPlan {
+				prompt = model.FlowPlanPromptForTest(record, model.FlowPromptTemplates{})
+			} else {
+				prompt = model.FlowPhasePromptForTest(record, phase, record.PlanPath, "The plan mentions waiting for child work.", model.FlowPromptTemplates{})
+			}
+			assertFlowLifecycleSuffix(t, prompt)
+		})
+
+		t.Run(string(flowstore.SemanticKind(phase))+"/configured", func(t *testing.T) {
+			template := "Custom {phase_id} workflow."
+			templates := flowPromptTemplateForKind(flowstore.SemanticKind(phase), template)
+			var prompt string
+			if flowstore.SemanticKind(phase) == flowstore.KindPlan {
+				prompt = model.FlowPlanPromptForTest(record, templates)
+			} else {
+				prompt = model.FlowPhasePromptForTest(record, phase, record.PlanPath, "", templates)
+			}
+			assertFlowLifecycleSuffix(t, prompt)
+		})
+	}
+}
+
+func flowPromptTemplateForKind(kind flowstore.PhaseKind, template string) model.FlowPromptTemplates {
+	switch kind {
+	case flowstore.KindPlan:
+		return model.FlowPromptTemplates{Plan: template}
+	case flowstore.KindPlanReview:
+		return model.FlowPromptTemplates{PlanReview: template}
+	case flowstore.KindImplementation:
+		return model.FlowPromptTemplates{Implementation: template}
+	case flowstore.KindReviewLoop:
+		return model.FlowPromptTemplates{ReviewLoop: template}
+	case flowstore.KindPRCreation:
+		return model.FlowPromptTemplates{PRCreation: template}
+	case flowstore.KindAutoreview:
+		return model.FlowPromptTemplates{Autoreview: template}
+	case flowstore.KindMerge:
+		return model.FlowPromptTemplates{Merge: template}
+	default:
+		return model.FlowPromptTemplates{Generic: template}
+	}
+}
+
+func assertFlowLifecycleSuffix(t *testing.T, prompt string) {
+	t.Helper()
+	if got := strings.Count(prompt, flowPendingWorkInstruction); got != 1 {
+		t.Fatalf("pending-work instruction count = %d, want 1\n%s", got, prompt)
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.TrimRight(prompt, " \t\r\n"), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) < 2 || lines[len(lines)-2] != flowPendingWorkInstruction || lines[len(lines)-1] != model.FlowPhaseDoneInstructionForTest() {
+		t.Fatalf("prompt must end with pending-work then completion instructions:\n%s", prompt)
+	}
+}
+
 func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
 	record := flowstore.FlowRecord{
 		Instructions: "Build the thing",
@@ -23,6 +107,7 @@ func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
 		"Create and persist the plan with \"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}\" plan save, link it back with \"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}\" flow plan set, then report Flow persistence failures explicitly before ending.",
 		"If the task references a GitHub issue, link it with \"${APPROACH_EXECUTABLE:-${APPROACH_BIN:-approach}}\" flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.",
 		"",
+		model.FlowPendingWorkInstructionForTest(),
 		model.FlowPhaseDoneInstructionForTest(),
 	}, "\n")
 	if got := model.FlowPlanPromptForTest(record, model.FlowPromptTemplates{}); got != want {
@@ -130,7 +215,7 @@ func TestFlowPromptTemplatesAppendPhaseDoneInstruction(t *testing.T) {
 			want = strings.ReplaceAll(want, "{issue_provider}", record.Issue.Provider)
 			want = strings.ReplaceAll(want, "{issue_number}", "123")
 			want = strings.ReplaceAll(want, "{issue_url}", record.Issue.URL)
-			want += "\n\n" + model.FlowPhaseDoneInstructionForTest()
+			want += "\n\n" + model.FlowPendingWorkInstructionForTest() + "\n" + model.FlowPhaseDoneInstructionForTest()
 			if got != want {
 				t.Fatalf("templated prompt = %q, want %q", got, want)
 			}
@@ -260,6 +345,36 @@ func TestFlowPromptPhaseDoneInstructionDuplicateGuard(t *testing.T) {
 			t.Fatalf("prompt should append completion instruction when only rendered placeholder ends with it:\n%s", got)
 		}
 		assertFinalFlowDoneInstruction(t, got)
+	})
+}
+
+func TestFlowPromptPendingWorkInstructionDuplicateGuard(t *testing.T) {
+	pending := model.FlowPendingWorkInstructionForTest()
+	done := model.FlowPhaseDoneInstructionForTest()
+	record := flowstore.FlowRecord{FlowID: "flow-1"}
+	phase := flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop"}
+
+	t.Run("exact lifecycle suffix remains singular", func(t *testing.T) {
+		template := "Review {flow_id}\n\n" + pending + "\n" + done + "\n"
+		got := model.FlowPhasePromptForTest(record, phase, "", "", model.FlowPromptTemplates{ReviewLoop: template})
+		assertFlowLifecycleSuffix(t, got)
+	})
+
+	t.Run("exact pending line gains completion only", func(t *testing.T) {
+		template := "Review {flow_id}\n\n" + pending + "\n"
+		got := model.FlowPhasePromptForTest(record, phase, "", "", model.FlowPromptTemplates{ReviewLoop: template})
+		assertFlowLifecycleSuffix(t, got)
+	})
+
+	t.Run("earlier occurrence still appends final pending line", func(t *testing.T) {
+		template := pending + "\n\nContinue {phase_id}."
+		got := model.FlowPhasePromptForTest(record, phase, "", "", model.FlowPromptTemplates{ReviewLoop: template})
+		if strings.Count(got, pending) != 2 {
+			t.Fatalf("prompt should append pending-work instruction after an earlier occurrence:\n%s", got)
+		}
+		if lastNonEmptyLine(got) != done {
+			t.Fatalf("completion instruction must remain last:\n%s", got)
+		}
 	})
 }
 
@@ -483,5 +598,5 @@ func lastNonEmptyLine(text string) string {
 }
 
 func appendFlowDoneInstructionForTest(prompt string) string {
-	return strings.TrimRight(prompt, " \t\r\n") + "\n\n" + model.FlowPhaseDoneInstructionForTest()
+	return strings.TrimRight(prompt, " \t\r\n") + "\n\n" + model.FlowPendingWorkInstructionForTest() + "\n" + model.FlowPhaseDoneInstructionForTest()
 }
