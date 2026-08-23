@@ -28,12 +28,19 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 		{name: "unreadable lease", sources: []occupancySource{srcLeaseError}, want: flowLeaseSetupErrorStatus(occupancyLeaseErr())},
 		{name: "competing attempt", sources: []occupancySource{srcAttemptRepair}, want: noLaunchableFlowPhaseStatus},
 		{name: "Flow terminal", sources: []occupancySource{srcFlowTerminal}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
+		{name: "Flow terminal over a competing attempt", sources: []occupancySource{srcAttemptManualPhase, srcFlowTerminal}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
+		{name: "Flow terminal over an attempt and repair slot", sources: []occupancySource{srcAttemptManualPhase, srcFlowTerminal, srcRepairSlot}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
 		{name: "terminal-less repair slot", sources: []occupancySource{srcRepairSlot}, want: noLaunchableFlowPhaseStatus},
 		{
 			// The headless rung is checked before the lease, so it wins even
 			// though the lease is the more durable obstacle.
 			name:    "headless write over a held lease",
 			sources: []occupancySource{srcHeadlessWrite, srcLeaseHeld},
+			want:    flowHeadlessWritePendingStatus,
+		},
+		{
+			name:    "headless write over an unreadable lease",
+			sources: []occupancySource{srcHeadlessWrite, srcLeaseError},
 			want:    flowHeadlessWritePendingStatus,
 		},
 		{
@@ -75,6 +82,29 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 				t.Fatalf("status = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestManualPhasePreviewAndFooterNeverProbeTmux(t *testing.T) {
+	f := newOccupancyFixture(t, srcTmuxAutofixWindow)
+	if !f.m.selectedFlowHasLaunchablePhase() {
+		t.Fatal("tmux-only source withdrew the manual phase footer")
+	}
+	if _, _, ok := f.m.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: f.flowID()}); !ok {
+		t.Fatal("tmux-only source refused the manual phase preview")
+	}
+	if len(f.h.tmuxWindowProbes) != 0 {
+		t.Fatalf("preview or footer invoked tmux probes: %#v", f.h.tmuxWindowProbes)
+	}
+}
+
+func TestManualPhaseFooterSkipsLeaseForUnlaunchableFlow(t *testing.T) {
+	f := newOccupancyFixtureFor(t, occupancyRepairFlowRecord())
+	if f.m.selectedFlowHasLaunchablePhase() {
+		t.Fatal("blocked Flow advertised a manual phase launch")
+	}
+	if f.h.leaseInspections != 0 {
+		t.Fatalf("lease inspections = %d, want 0", f.h.leaseInspections)
 	}
 }
 

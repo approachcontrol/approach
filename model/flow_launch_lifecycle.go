@@ -10,10 +10,10 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/internal/controlplane"
-	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -285,29 +285,27 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool)
 func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
-	if flowID != "" && m.flowHeadlessWritePending(flowID) {
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil, false
-	}
 	if flowID == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
-	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
-		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
-	} else if occupied {
+	occupancy := m.trackedPhaseOccupancy(flowID, flowoccupancy.StageFooter)
+	switch occupancy.Holder() {
+	case flowoccupancy.HolderHeadlessWrite:
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil, false
+	case flowoccupancy.HolderLeaseUnreadable:
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(occupancy.Err())), nil, false
+	case flowoccupancy.HolderPeerLease:
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
 	}
-	// The typed lease check above owns the actionable cross-process result.
-	// Repeating it through previewFlowLaunch would collapse a peer race into the
-	// generic no-phase status; only in-process occupancy belongs in this second
-	// synchronous check. The launch reservation performs the next lease check.
 	record, phase, ok := m.cachedFlowLaunchTarget(intent)
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
-	if status, occupied := m.retainedFlowTerminalLaunchStatus(record.FlowID); occupied {
+	if occupancy.Holder() == flowoccupancy.HolderFlowTerminal {
+		status, _ := m.retainedFlowTerminalLaunchStatus(record.FlowID)
 		return m.setStatus(statusOther, status), nil, false
 	}
-	if m.flowLaunchRuntimeOccupied(record.FlowID) {
+	if occupancy.Occupied() {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -429,8 +427,7 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	if flowID == "" {
 		return false
 	}
-	leaseOccupied, leaseErr := m.trackedFlowLeaseOccupied(flowID)
-	return leaseErr != nil || leaseOccupied || m.flowLaunchRuntimeOccupied(flowID)
+	return m.trackedPhaseOccupancy(flowID, flowoccupancy.StagePreview).Occupied()
 }
 
 // flowLaunchRuntimeOccupied is the in-process ownership half of admission.
@@ -458,28 +455,11 @@ func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
 	if flowID == "" {
 		return false, nil
 	}
-	// An injected inspector owns its own root contract; tests and embedders may
-	// deliberately provide a root-independent implementation. The production
-	// inspector never receives a blank root, so tracked admission fails before
-	// mutation when shared launch state is unavailable.
-	if strings.TrimSpace(m.sessionStateRoot) == "" && !m.leaseInspectInjected {
-		return false, fmt.Errorf("Flow lease artifact root is unavailable")
-	}
-	if m.inspectFlowLease == nil {
-		return false, fmt.Errorf("Flow lease inspector is unavailable")
-	}
-	state, err := m.inspectFlowLease(m.sessionStateRoot, flowID)
-	if err != nil {
-		return false, err
-	}
-	switch state {
-	case flowlease.Free:
-		return false, nil
-	case flowlease.Held:
-		return true, nil
-	default:
-		return false, fmt.Errorf("invalid Flow lease state %d", state)
-	}
+	return (flowOccupancyLeaseInspector{
+		root:     m.sessionStateRoot,
+		injected: m.leaseInspectInjected,
+		inspect:  m.inspectFlowLease,
+	}).FlowLeaseOccupied(flowID)
 }
 
 func (m Model) cachedFlowRecord(flowID string) (flowstore.FlowRecord, bool) {
