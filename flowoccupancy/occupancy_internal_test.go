@@ -95,6 +95,111 @@ type runtimeFixture struct {
 	repairDrains map[string]bool
 }
 
+type leaseFixture struct {
+	wantFlowID string
+	occupied   bool
+	err        error
+	calls      int
+	t          *testing.T
+}
+
+func (lease *leaseFixture) FlowLeaseOccupied(flowID string) (bool, error) {
+	lease.calls++
+	if lease.wantFlowID != "" && flowID != lease.wantFlowID {
+		lease.t.Fatalf("FlowLeaseOccupied() flow ID = %q, want %q", flowID, lease.wantFlowID)
+	}
+	return lease.occupied, lease.err
+}
+
+func TestQueryAnswersFromLeaseSource(t *testing.T) {
+	inspectErr := errors.New("unsafe flow-leases directory")
+	tests := []struct {
+		name       string
+		lease      *leaseFixture
+		wantHolder Holder
+		wantErr    error
+	}{
+		{name: "free", lease: &leaseFixture{}, wantHolder: HolderNone},
+		{name: "held", lease: &leaseFixture{occupied: true}, wantHolder: HolderPeerLease},
+		{name: "inspection error", lease: &leaseFixture{err: inspectErr}, wantHolder: HolderLeaseUnreadable, wantErr: inspectErr},
+		{name: "missing adapter", wantHolder: HolderLeaseUnreadable, wantErr: ErrMissingLease},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.lease != nil {
+				tc.lease.t = t
+				tc.lease.wantFlowID = "flow-exact"
+			}
+			sources := Sources{Runtime: runtimeFixture{}}
+			if tc.lease != nil {
+				sources.Lease = tc.lease
+			}
+			verdict := New(sources).Query(Query{
+				FlowID:  " flow-exact ",
+				Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StagePreview},
+			})
+			if verdict.Holder() != tc.wantHolder {
+				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.wantHolder)
+			}
+			if !errors.Is(verdict.Err(), tc.wantErr) {
+				t.Fatalf("Err() = %v, want errors.Is(_, %v)", verdict.Err(), tc.wantErr)
+			}
+			if tc.lease != nil && tc.lease.calls != 1 {
+				t.Fatalf("lease calls = %d, want 1", tc.lease.calls)
+			}
+		})
+	}
+}
+
+func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		stage      Stage
+		runtime    runtimeFixture
+		wantHolder Holder
+	}{
+		{
+			name:       "preview lease outranks attempt and terminal",
+			stage:      StagePreview,
+			runtime:    runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}},
+			wantHolder: HolderPeerLease,
+		},
+		{
+			name:       "footer headless write outranks lease",
+			stage:      StageFooter,
+			runtime:    runtimeFixture{headless: map[string]bool{"flow-1": true}},
+			wantHolder: HolderHeadlessWrite,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict := New(Sources{
+				Lease:   &leaseFixture{occupied: true, t: t, wantFlowID: "flow-1"},
+				Runtime: tc.runtime,
+			}).Query(Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: tc.stage},
+			})
+			if verdict.Holder() != tc.wantHolder {
+				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.wantHolder)
+			}
+		})
+	}
+
+	t.Run("footer headless write outranks unreadable lease", func(t *testing.T) {
+		verdict := New(Sources{
+			Lease:   &leaseFixture{err: errors.New("lease unreadable"), t: t, wantFlowID: "flow-1"},
+			Runtime: runtimeFixture{headless: map[string]bool{"flow-1": true}},
+		}).Query(Query{
+			FlowID:  "flow-1",
+			Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageFooter},
+		})
+		if verdict.Holder() != HolderHeadlessWrite || verdict.Err() != nil {
+			t.Fatalf("verdict = (%v, %v), want headless write with nil error", verdict.Holder(), verdict.Err())
+		}
+	})
+}
+
 func (runtime runtimeFixture) AttemptHolder(flowID string) (actions.FlowLaunchRole, bool) {
 	role, ok := runtime.attempts[flowID]
 	return role, ok

@@ -37,6 +37,11 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 			want:    flowHeadlessWritePendingStatus,
 		},
 		{
+			name:    "headless write over an unreadable lease",
+			sources: []occupancySource{srcHeadlessWrite, srcLeaseError},
+			want:    flowHeadlessWritePendingStatus,
+		},
+		{
 			name:    "held lease over a runtime holder",
 			sources: []occupancySource{srcLeaseHeld, srcFlowTerminal},
 			want:    flowLeaseOccupiedStatus,
@@ -75,6 +80,19 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 				t.Fatalf("status = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestManualPhasePreviewAndFooterNeverProbeTmux(t *testing.T) {
+	f := newOccupancyFixture(t, srcTmuxAutofixWindow)
+	if !f.m.selectedFlowHasLaunchablePhase() {
+		t.Fatal("tmux-only source withdrew the manual phase footer")
+	}
+	if _, _, ok := f.m.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: f.flowID()}); !ok {
+		t.Fatal("tmux-only source refused the manual phase preview")
+	}
+	if len(f.h.tmuxWindowProbes) != 0 {
+		t.Fatalf("preview or footer invoked tmux probes: %#v", f.h.tmuxWindowProbes)
 	}
 }
 

@@ -8,8 +8,41 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 )
+
+// flowOccupancyLeaseInspector adapts the model's preserved injection seam to
+// the occupancy module. Production inspection requires the shared artifact
+// root; injected inspectors own their own root contract.
+type flowOccupancyLeaseInspector struct {
+	root     string
+	injected bool
+	inspect  func(root, flowID string) (flowlease.LeaseState, error)
+}
+
+var _ flowoccupancy.LeaseInspector = flowOccupancyLeaseInspector{}
+
+func (adapter flowOccupancyLeaseInspector) FlowLeaseOccupied(flowID string) (bool, error) {
+	if strings.TrimSpace(adapter.root) == "" && !adapter.injected {
+		return false, fmt.Errorf("Flow lease artifact root is unavailable")
+	}
+	if adapter.inspect == nil {
+		return false, fmt.Errorf("Flow lease inspector is unavailable")
+	}
+	state, err := adapter.inspect(adapter.root, flowID)
+	if err != nil {
+		return false, err
+	}
+	switch state {
+	case flowlease.Free:
+		return false, nil
+	case flowlease.Held:
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid Flow lease state %d", state)
+	}
+}
 
 // flowOccupancyRuntime keeps the occupancy package on the lifecycle's existing
 // model-side seams without exposing the Model's maps or terminal slots.
@@ -72,6 +105,26 @@ func (m Model) createFlowAdmissionOccupancy(flowID string) flowoccupancy.Verdict
 		Purpose: flowoccupancy.Purpose{
 			Role:  actions.RoleCreatePhase,
 			Stage: flowoccupancy.StageAdmission,
+		},
+	})
+}
+
+func (m Model) trackedPhaseOccupancy(flowID string, stage flowoccupancy.Stage) flowoccupancy.Verdict {
+	if strings.TrimSpace(flowID) == "" {
+		return flowoccupancy.Free()
+	}
+	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: stage,
 		},
 	})
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/approachcontrol/approach/beadsmutate"
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
@@ -2707,12 +2708,10 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 	if !ok {
 		return false
 	}
-	// An in-flight headless write makes admission refuse, so the footer has to
-	// stop advertising for as long as it is outstanding.
-	if m.flowHeadlessWritePending(record.FlowID) {
+	if m.trackedPhaseOccupancy(record.FlowID, flowoccupancy.StageFooter).Occupied() {
 		return false
 	}
-	_, _, ok = m.previewFlowLaunch(flowLaunchIntent{
+	_, _, ok = m.cachedFlowLaunchTarget(flowLaunchIntent{
 		Kind:   flowLaunchKindManualPhase,
 		FlowID: record.FlowID,
 	})

@@ -123,6 +123,65 @@ func TestTrackedFlowLeaseOccupiedSources(t *testing.T) {
 	}
 }
 
+func TestFlowOccupancyLeaseInspectorPreservesRootContractAndFlowID(t *testing.T) {
+	tests := []struct {
+		name     string
+		adapter  flowOccupancyLeaseInspector
+		wantHeld bool
+		wantErr  string
+	}{
+		{
+			name: "production inspector receives the configured root and exact Flow ID",
+			adapter: flowOccupancyLeaseInspector{
+				root: "/state/root",
+				inspect: func(root, flowID string) (flowlease.LeaseState, error) {
+					if root != "/state/root" || flowID != "flow-1" {
+						t.Fatalf("inspect args = (%q, %q), want (%q, %q)", root, flowID, "/state/root", "flow-1")
+					}
+					return flowlease.Held, nil
+				},
+			},
+			wantHeld: true,
+		},
+		{
+			name: "blank production root fails closed before inspection",
+			adapter: flowOccupancyLeaseInspector{
+				inspect: func(string, string) (flowlease.LeaseState, error) {
+					t.Fatal("production inspector called with a blank root")
+					return flowlease.Free, nil
+				},
+			},
+			wantErr: "Flow lease artifact root is unavailable",
+		},
+		{
+			name: "injected inspector may ignore a blank root",
+			adapter: flowOccupancyLeaseInspector{
+				injected: true,
+				inspect: func(root, flowID string) (flowlease.LeaseState, error) {
+					if root != "" || flowID != "flow-1" {
+						t.Fatalf("inspect args = (%q, %q), want (%q, %q)", root, flowID, "", "flow-1")
+					}
+					return flowlease.Free, nil
+				},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			held, err := tc.adapter.FlowLeaseOccupied("flow-1")
+			if held != tc.wantHeld {
+				t.Fatalf("held = %v, want %v", held, tc.wantHeld)
+			}
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestFlowLeaseSetupErrorStatusWrapsTheInspectionError pins the one refusal
 // string that is not a constant: it is a prefix plus the wrapped error text.
 func TestFlowLeaseSetupErrorStatusWrapsTheInspectionError(t *testing.T) {

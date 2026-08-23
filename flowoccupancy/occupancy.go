@@ -383,10 +383,9 @@ func (verdict Verdict) Holder() Holder { return verdict.holder }
 // and the refusal names it. Blank otherwise.
 func (verdict Verdict) PhaseID() string { return verdict.phaseID }
 
-// Err reports a source failure that was not itself occupancy. A lease that
-// could not be read is HolderLeaseUnreadable rather than an error, because
-// fail-closed occupancy is the answer; a Flow store or session store read that
-// failed has no safe answer and surfaces here.
+// Err reports the source failure behind a fail-closed answer. Lease inspection
+// failures retain their original error so presentation code can explain the
+// refusal while HolderLeaseUnreadable remains the module decision.
 func (verdict Verdict) Err() error { return verdict.err }
 
 // FlowReader reads a Flow authoritatively.
@@ -478,13 +477,22 @@ func New(sources Sources) Occupancy {
 	return Occupancy{sources: sources}
 }
 
+// Evaluate answers one query against a short-lived source set. It is the
+// compact form for callers that do not retain an Occupancy between queries.
+func Evaluate(sources Sources, query Query) Verdict {
+	return New(sources).Query(query)
+}
+
 var (
 	// ErrInvalidQuery marks a programming error in a query. Query fails closed
 	// instead of panicking because it runs inside the TUI update loop.
 	ErrInvalidQuery = errors.New("flowoccupancy: invalid query")
 	// ErrMissingRuntime marks a purpose that needs the in-process adapter but
 	// received none.
-	ErrMissingRuntime      = errors.New("flowoccupancy: runtime source is required")
+	ErrMissingRuntime = errors.New("flowoccupancy: runtime source is required")
+	// ErrMissingLease marks a purpose that needs the cross-process lease adapter
+	// but received none.
+	ErrMissingLease        = errors.New("flowoccupancy: lease source is required")
 	errPendingSourceFamily = errors.New("flowoccupancy: a required source family is not implemented yet")
 )
 
@@ -503,16 +511,56 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 	if !ok || !policy.freshness.allows(freshness) {
 		return failedVerdict(fmt.Errorf("%w: freshness %d is unsupported for purpose (%s, %s)", ErrInvalidQuery, query.Freshness, query.Purpose.Role, query.Purpose.Stage))
 	}
-	if policy.sources&readRuntime == 0 {
+	if policy.sources&^(readRuntime|readLease) != 0 || policy.probe != probeNone {
 		return failedVerdict(errPendingSourceFamily)
 	}
-	if policy.sources&^readRuntime != 0 || policy.probe != probeNone {
-		return failedVerdict(errPendingSourceFamily)
+
+	runtimeVerdict := Free()
+	if policy.sources&readRuntime != 0 {
+		if occupancy.sources.Runtime == nil {
+			return failedVerdict(ErrMissingRuntime)
+		}
+		if query.Purpose.Role == actions.RoleTrackedPhase && query.Purpose.Stage == StageFooter &&
+			policy.runtime&readHeadlessWrite != 0 && occupancy.sources.Runtime.HeadlessWritePending(flowID) {
+			runtimeVerdict = Verdict{holder: HolderHeadlessWrite}
+		} else {
+			runtimeVerdict = queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+		}
 	}
-	if occupancy.sources.Runtime == nil {
-		return failedVerdict(ErrMissingRuntime)
+	leaseVerdict := Free()
+	if policy.sources&readLease != 0 {
+		leaseVerdict = queryLease(occupancy.sources.Lease, flowID)
 	}
-	return queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+	return chooseVerdict(query.Purpose, leaseVerdict, runtimeVerdict)
+}
+
+func queryLease(inspector LeaseInspector, flowID string) Verdict {
+	if inspector == nil {
+		return Verdict{holder: HolderLeaseUnreadable, err: ErrMissingLease}
+	}
+	occupied, err := inspector.FlowLeaseOccupied(flowID)
+	if err != nil {
+		return Verdict{holder: HolderLeaseUnreadable, err: err}
+	}
+	if occupied {
+		return Verdict{holder: HolderPeerLease}
+	}
+	return Free()
+}
+
+// chooseVerdict owns purpose ordering independently of adapter call order.
+// Tracked-phase footers include the transient headless write and rank it above
+// the lease. Preview excludes that source through its runtime permission. In
+// both cases a lease outranks attempts and terminal slots.
+func chooseVerdict(purpose Purpose, lease, runtime Verdict) Verdict {
+	if purpose.Role == actions.RoleTrackedPhase && purpose.Stage == StageFooter &&
+		runtime.Holder() == HolderHeadlessWrite {
+		return runtime
+	}
+	if lease.Occupied() {
+		return lease
+	}
+	return runtime
 }
 
 func queryRuntime(permission runtimePermission, runtime Runtime, flowID string) Verdict {
