@@ -128,6 +128,8 @@ func createPredecessorDatabase(t *testing.T, root string, version int64) *sql.DB
 		return createParentReleaseV4DatabaseAt(t, path)
 	case 5:
 		return createParentReleaseV5DatabaseAt(t, path)
+	case 6:
+		return createParentReleaseV6DatabaseAt(t, path)
 	}
 	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rwc"}}))
 	if err != nil {

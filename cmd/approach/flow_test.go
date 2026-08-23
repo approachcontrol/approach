@@ -3382,7 +3382,7 @@ func TestTheCLIStoreOpenerRefusesAPredecessorSchemaRootForEveryRole(t *testing.T
 				if err == nil {
 					t.Fatalf("the CLI store opener migrated a predecessor-schema root as %s", role)
 				}
-				want := "flow database schema 4 needs migration to 6; run 'approach db migrate'" +
+				want := fmt.Sprintf("flow database schema 4 needs migration to %d; run 'approach db migrate'", flowstore.DatabaseSchemaVersion()) +
 					" (this process opened the store as " + role.String() + " and will not migrate)"
 				if err.Error() != want {
 					t.Fatalf("acknowledged=%v refusal = %q, want %q", acknowledged, err, want)

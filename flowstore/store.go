@@ -6,7 +6,8 @@
 //
 // SQLite schema versions: v3 adds prepared_at + receipt trigger; v4 requires
 // boolean `done` in epic progression JSON; v5 fences the progression-claim
-// marker; v6 adds the protected flows.preparation_nonce generation projection.
+// marker; v6 adds the protected flows.preparation_nonce generation projection;
+// v7 fences recovered-launch capabilities from older writers.
 package flowstore
 
 import (
@@ -473,6 +474,12 @@ type Issue struct {
 	URL      string `json:"url,omitempty"`
 }
 
+// PhaseLaunchFence revokes writes from a phase launch removed by recovery.
+// Store mutations check it inside the same transaction that persists the write.
+type PhaseLaunchFence struct {
+	LaunchID string
+}
+
 // PRUpdate records metadata for the pull request created by a Flow.
 type PRUpdate struct {
 	FlowID     string
@@ -482,6 +489,7 @@ type PRUpdate struct {
 	HeadBranch string
 	BaseBranch string
 	Status     string
+	Fence      PhaseLaunchFence
 }
 
 // IssueUpdate records metadata for the issue referenced by a Flow.
@@ -490,6 +498,7 @@ type IssueUpdate struct {
 	Provider string
 	Number   int
 	URL      string
+	Fence    PhaseLaunchFence
 }
 
 // MergeUpdate records metadata for the merge that completed or blocked a Flow.
@@ -498,6 +507,7 @@ type MergeUpdate struct {
 	Status   string
 	Commit   string
 	MergedAt time.Time
+	Fence    PhaseLaunchFence
 }
 
 // ManualMergeUpdate records metadata for a PR that was manually merged in GitHub.
@@ -630,13 +640,13 @@ type FlowFilter struct {
 
 // PhaseUpdate describes one persisted phase status update.
 type PhaseUpdate struct {
-	FlowID          string
-	PhaseID         string
-	Status          PhaseStatus
-	Outcome         string
-	Notes           string
-	Summary         string
-	RequestLaunchID string
+	FlowID  string
+	PhaseID string
+	Status  PhaseStatus
+	Outcome string
+	Notes   string
+	Summary string
+	Fence   PhaseLaunchFence
 }
 
 // ReconciliationDemotionUpdate is the launch-control-owned form of PhaseUpdate.
@@ -652,6 +662,7 @@ type PhaseAgentSettingsUpdate struct {
 	FlowID   string
 	PhaseID  string
 	Settings PhaseAgentSettings
+	Fence    PhaseLaunchFence
 }
 
 // PhaseRestartUpdate restarts a blocked or needs-attention phase as running.
@@ -659,6 +670,7 @@ type PhaseRestartUpdate struct {
 	FlowID  string
 	PhaseID string
 	Notes   string
+	Fence   PhaseLaunchFence
 }
 
 // ChildPhaseUpdate creates or updates a stable child phase under Implementation.
@@ -668,6 +680,7 @@ type ChildPhaseUpdate struct {
 	PhaseID       string
 	Title         string
 	Order         int
+	Fence         PhaseLaunchFence
 }
 
 // PlanLinkUpdate links a saved approach plan artifact to an existing Flow.
@@ -675,6 +688,7 @@ type PlanLinkUpdate struct {
 	FlowID   string
 	PlanID   string
 	PlanPath string
+	Fence    PhaseLaunchFence
 }
 
 // StartMetadataUpdate adds launch-start metadata that is only known after a
@@ -705,6 +719,7 @@ type PhaseLaunchUpdate struct {
 type PhaseResetUpdate struct {
 	FlowID  string
 	PhaseID string
+	Fence   PhaseLaunchFence
 }
 
 // PhaseRecoveryUpdate identifies one reconciliation-demoted phase snapshot.
@@ -717,6 +732,7 @@ type PhaseRecoveryUpdate struct {
 	ExpectedOutcome   string
 	ExpectedLaunchID  string
 	ExpectedUpdatedAt time.Time
+	Fence             PhaseLaunchFence
 }
 
 // PhaseLaunchEndUpdate records that a tracked Flow launch has ended.
@@ -1063,6 +1079,9 @@ func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, update.Fence); err != nil {
+			return FlowRecord{}, err
+		}
 		if FlowClosed(record) && update.Status == PhaseRunning {
 			return FlowRecord{}, closedFlowMutationError(record, "set a phase running on")
 		}
@@ -1079,9 +1098,6 @@ func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation
 
 		now := flowMutationTime(record, s.now())
 		phase := record.Phases[phaseIndex]
-		if update.RequestLaunchID != "" && slices.Contains(phase.RecoveredLaunchIDs, update.RequestLaunchID) {
-			return FlowRecord{}, fmt.Errorf("phase write refused recovered launch %q for %s", update.RequestLaunchID, phase.PhaseID)
-		}
 		priorStatus := phase.Status
 		if err := validatePhaseUpdate(phase, update); err != nil {
 			return FlowRecord{}, err
@@ -1134,7 +1150,7 @@ func (s *Store) setPhase(update PhaseUpdate, reconciliation *PhaseReconciliation
 		// This is the retry path the accepted post-commit windows recover through.
 		return record, nil
 	}
-	if _, compErr := s.compensatePhaseSyncFailure(update.FlowID, committed.stored, syncErr); compErr != nil {
+	if _, compErr := s.compensatePhaseSyncFailure(update.FlowID, committed.stored, syncErr, update.Fence); compErr != nil {
 		// One error carrying both. The %w stays on the SYNC error: that is the
 		// primary outcome and the substring callers assert on. A deliberate
 		// consequence is that a Flow deleted concurrently folds its
@@ -1193,6 +1209,9 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, update.Fence); err != nil {
+			return FlowRecord{}, err
+		}
 		phaseIndex := -1
 		for i := range record.Phases {
 			if record.Phases[i].PhaseID == update.PhaseID {
@@ -1257,7 +1276,7 @@ func (s *Store) SetPhaseAgentSettings(update PhaseAgentSettingsUpdate) (FlowReco
 // still holds. It covers a concurrently blocked merge for the same reason: that
 // pairing is equally enforced, and StatusBlocked masks needs_attention just as
 // StatusMerged does.
-func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error) (FlowRecord, error) {
+func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error, fence PhaseLaunchFence) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -1267,6 +1286,9 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, fence); err != nil {
+			return FlowRecord{}, err
+		}
 		index := phaseIndexByID(record.Phases, committedPhase.PhaseID)
 		if index < 0 || !phaseStillHoldsCommittedCompletion(record.Phases[index], committedPhase) {
 			return record, nil
@@ -1437,7 +1459,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 	if strings.TrimSpace(update.Notes) == "" {
 		return FlowRecord{}, errors.New("phase restart requires notes")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "restart a phase on")
 		}
@@ -1479,7 +1501,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 	if err := validateChildPhaseUpdate(update); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		parentIndex := phaseIndexByID(record.Phases, update.ParentPhaseID)
 		if parentIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("parent phase %q not found in flow %q", update.ParentPhaseID, update.FlowID)
@@ -1647,7 +1669,7 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	if err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnlyGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if record.PlanID == planID && record.PlanPath == planPath {
 			return record, nil
 		}
@@ -1663,7 +1685,7 @@ func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		pr, err := validatePRUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -1683,7 +1705,7 @@ func (s *Store) SetIssue(update IssueUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnlyGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		issue, err := validateIssueUpdate(update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -1702,7 +1724,7 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnlyGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "set merge metadata on")
 		}
@@ -2247,7 +2269,7 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 	if update.PhaseID == "" {
 		return FlowRecord{}, errors.New("phase id is required")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "reset a phase on")
 		}
@@ -2323,7 +2345,7 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 	if update.ExpectedUpdatedAt.IsZero() {
 		return FlowRecord{}, errors.New("phase recovery requires an expected update timestamp")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowGuarded(update.FlowID, update.Fence, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, closedFlowMutationError(record, "recover a phase on")
 		}
@@ -2388,23 +2410,6 @@ func (s *Store) RecoverReconciledPhase(update PhaseRecoveryUpdate) (FlowRecord, 
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
-}
-
-// PhaseLaunchRecovered reports whether recovery revoked a launch for a phase.
-func (s *Store) PhaseLaunchRecovered(flowID, phaseID, launchID string) (bool, error) {
-	launchID = strings.TrimSpace(launchID)
-	if launchID == "" {
-		return false, nil
-	}
-	record, err := s.Read(flowID)
-	if err != nil {
-		return false, err
-	}
-	phaseIndex := phaseIndexByID(record.Phases, artifacts.NormalizePhaseID(phaseID))
-	if phaseIndex < 0 {
-		return false, fmt.Errorf("phase %q not found in flow %q", phaseID, flowID)
-	}
-	return slices.Contains(record.Phases[phaseIndex].RecoveredLaunchIDs, launchID), nil
 }
 
 func reconciledPhaseRecoveryReason(phase FlowPhase) (string, bool) {
@@ -2602,14 +2607,22 @@ func (s *Store) Delete(flowID string) error {
 }
 
 func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	return s.updateFlowWithReadiness(flowID, true, mutate)
+	return s.updateFlowWithReadiness(flowID, true, PhaseLaunchFence{}, mutate)
+}
+
+func (s *Store) updateFlowGuarded(flowID string, fence PhaseLaunchFence, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, true, fence, mutate)
 }
 
 func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	return s.updateFlowWithReadiness(flowID, false, mutate)
+	return s.updateFlowWithReadiness(flowID, false, PhaseLaunchFence{}, mutate)
 }
 
-func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+func (s *Store) updateFlowMetadataOnlyGuarded(flowID string, fence PhaseLaunchFence, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, false, fence, mutate)
+}
+
+func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, fence PhaseLaunchFence, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
 		if err != nil {
@@ -2619,6 +2632,9 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
 		record := stored.record
+		if err := validatePhaseLaunchFence(record, fence); err != nil {
+			return FlowRecord{}, err
+		}
 		if selfHealOnRead {
 			if err := validatePhaseGraphResolved(record); err != nil {
 				return FlowRecord{}, err
@@ -2635,6 +2651,19 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 		}
 		return record, nil
 	})
+}
+
+func validatePhaseLaunchFence(record FlowRecord, fence PhaseLaunchFence) error {
+	launchID := strings.TrimSpace(fence.LaunchID)
+	if launchID == "" {
+		return nil
+	}
+	for _, phase := range record.Phases {
+		if slices.Contains(phase.RecoveredLaunchIDs, launchID) {
+			return fmt.Errorf("launch %q was recovered and can no longer write", launchID)
+		}
+	}
+	return nil
 }
 
 // fencingPresetName returns the normalized preset name when a record's phase

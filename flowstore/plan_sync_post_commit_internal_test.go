@@ -202,6 +202,52 @@ func TestSetPhaseCompensatesAfterAPostCommitSyncFailure(t *testing.T) {
 	assertPhaseNeedsAttention(t, store, linked.FlowID, "plan")
 }
 
+func TestSetPhaseCompensationRefusesARecoveredLaunch(t *testing.T) {
+	syncer := &fakePlanSyncer{writeErr: errors.New("plan write exploded")}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{})
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		record, err := store.SetPhase(PhaseUpdate{
+			FlowID: linked.FlowID, PhaseID: "plan", Status: PhaseCompleted,
+			Fence: PhaseLaunchFence{LaunchID: "launch-stale"},
+		})
+		results <- syncOutcome{record: record, err: err}
+	}()
+	block.waitReached(t)
+
+	// Recovery records launch identity on its registered phase, which need not
+	// be the phase named by a Flow-level request. Simulate that durable write
+	// while SetPhase is outside the Flow transaction doing linked-plan I/O.
+	if _, err := store.updateFlow(linked.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		index := phaseIndexByID(record.Phases, "implementation")
+		if index < 0 {
+			return FlowRecord{}, errors.New("implementation phase missing")
+		}
+		record.Phases[index].RecoveredLaunchIDs = append(record.Phases[index].RecoveredLaunchIDs, "launch-stale")
+		record.Phases[index].UpdatedAt = now
+		record.UpdatedAt = now
+		return record, nil
+	}); err != nil {
+		t.Fatalf("persist recovered launch: %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "launch \"launch-stale\" was recovered") {
+		t.Fatalf("SetPhase() error = %v, want recovered-launch compensation refusal", got.err)
+	}
+	if status := phaseFromStore(t, store, linked.FlowID, "plan").Status; status != PhaseCompleted {
+		t.Fatalf("plan status after revoked compensation = %q, want %q", status, PhaseCompleted)
+	}
+}
+
 // TestMarkManualMergeCommitsBeforeTheLinkedPlanSyncRuns is the merge-side twin
 // of the SetPhase test above: merged state is readable while the sync is parked,
 // and a released failure rolls the merge back through the second update.

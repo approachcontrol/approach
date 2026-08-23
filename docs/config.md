@@ -593,6 +593,9 @@ The database and its records have separate compatibility gates:
   marker compatibility trigger. Version 6 adds
   `flows.preparation_nonce TEXT NOT NULL DEFAULT ''` plus a compatibility
   trigger that keeps the projection and storage-only JSON field identical.
+  Version 7 adds `flows.recovery_generation INTEGER NOT NULL DEFAULT 0` and a
+  compatibility trigger for persisted phase reconciliation and
+  recovered-launch capability fields.
   Under the bootstrap
   lease, existing version 0
   (unstamped v1 layout) and version 1 databases are validated against the exact
@@ -600,13 +603,14 @@ The database and its records have separate compatibility gates:
   exact columns, indexes, and Bead trigger; version 3 is validated against its
   full schema before any record changes; version 4 is validated against the
   parent-release contract (done triggers, no claim or nonce trigger); version 5
-  is validated against the claim-marker trigger without a nonce projection. All
-  upgrade transactionally in place
-  to version 6. The v3→v4 step strictly decodes
+  is validated against the claim-marker trigger without a nonce projection;
+  version 6 is validated against the nonce projection and trigger. All upgrade
+  transactionally in place to version 7. The v3→v4 step strictly decodes
   every legacy progression blob and rewrites it with `done:false`, preserving
   identity, enabled/halt state, timestamps, and SQL projections exactly. The
   v4→v5 step installs only the claim-marker trigger. The v5→v6 step adds the
-  nonce projection and trigger. Historical disabled rows
+  nonce projection and trigger. The v6→v7 step adds the recovery-generation
+  projection and trigger without rewriting Flow blobs. Historical disabled rows
   are conservative normal-off rows because their cause cannot be recovered.
   Existing Flow JSON blobs, earlier projections, and retained `flows/` files
   are not rewritten or removed. A malformed predecessor progression aborts and
@@ -623,7 +627,11 @@ The database and its records have separate compatibility gates:
   trigger likewise rejects an older rewrite that removes a persisted
   progression-claim marker. Version 6's nonce trigger also rejects a
   predecessor process that was already open when migration ran and then tries
-  to erase a receipt-less preparation's exact generation token. A value newer than this build
+  to erase a receipt-less preparation's exact generation token. Version 7's
+  trigger rejects an already-open version 6 writer that attempts to rewrite a
+  Flow containing reconciliation or recovered-launch state without advancing
+  the new generation projection. It also makes every version 6 build refuse
+  the database on a fresh open. A value newer than this build
   supports prevents the store from opening and reports that Approach must be
   upgraded. This is not corruption and is never downgraded to a partial result.
 - Each JSON record carries its own `schema_version`. A malformed record or a

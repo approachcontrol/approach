@@ -486,7 +486,7 @@ func (o migrationOutcome) backupPathOrNil() *string {
 // it — and without an executing migration test for it — fails the build's own
 // gate rather than shipping an untested upgrade path. Version 0 is the
 // unstamped original, whose shape is v1's.
-var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5}
+var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5, 6}
 
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
 // It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
@@ -668,6 +668,12 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 				flowPreparationNonceCompatibilityTrigger,
 			)
 		}
+	}
+	if predecessor <= 6 {
+		statements = append(statements,
+			"ALTER TABLE flows ADD COLUMN recovery_generation INTEGER NOT NULL DEFAULT 0",
+			flowRecoveryGenerationCompatibilityTrigger,
+		)
 	}
 	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))
 	for _, statement := range statements {

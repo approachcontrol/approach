@@ -273,15 +273,6 @@ func Execute(store *flowstore.Store, req Request) (Response, error) {
 	if store == nil {
 		return Response{}, errors.New("launch control executor requires a store")
 	}
-	if req.LaunchID != "" && req.PhaseID != "" && !IsRead(req.Verb) {
-		recovered, err := store.PhaseLaunchRecovered(req.FlowID, req.PhaseID, req.LaunchID)
-		if err != nil {
-			return refuse(err), nil
-		}
-		if recovered {
-			return refuse(fmt.Errorf("launch %q was recovered and can no longer write", req.LaunchID)), nil
-		}
-	}
 	result, warning, err := executeVerb(store, req)
 	if err != nil {
 		return refuse(err), nil
@@ -326,13 +317,13 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			return nil, "", err
 		}
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
-			FlowID:          req.FlowID,
-			PhaseID:         req.PhaseID,
-			Status:          flowstore.PhaseStatus(payload.Status),
-			Outcome:         payload.Outcome,
-			Notes:           payload.Notes,
-			Summary:         payload.Summary,
-			RequestLaunchID: req.LaunchID,
+			FlowID:  req.FlowID,
+			PhaseID: req.PhaseID,
+			Status:  flowstore.PhaseStatus(payload.Status),
+			Outcome: payload.Outcome,
+			Notes:   payload.Notes,
+			Summary: payload.Summary,
+			Fence:   flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		return record, "", err
 	case VerbPhaseComplete, VerbPhaseBlock, VerbPhaseNeedsAttention:
@@ -354,13 +345,13 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			outcome = defaultPhaseActionOutcome(string(flowstore.SemanticKind(phase)), action)
 		}
 		record, err := store.SetPhase(flowstore.PhaseUpdate{
-			FlowID:          req.FlowID,
-			PhaseID:         req.PhaseID,
-			Status:          flowstore.PhaseStatus(action.status),
-			Outcome:         outcome,
-			Notes:           payload.Notes,
-			Summary:         payload.Summary,
-			RequestLaunchID: req.LaunchID,
+			FlowID:  req.FlowID,
+			PhaseID: req.PhaseID,
+			Status:  flowstore.PhaseStatus(action.status),
+			Outcome: outcome,
+			Notes:   payload.Notes,
+			Summary: payload.Summary,
+			Fence:   flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		if err != nil {
 			return nil, "", err
@@ -375,13 +366,19 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		if note == "" {
 			note = fmt.Sprintf("Rerunning %s after addressing prior findings.", DefaultPhaseTitle(req.PhaseID))
 		}
-		record, err := store.RestartPhase(flowstore.PhaseRestartUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID, Notes: note})
+		record, err := store.RestartPhase(flowstore.PhaseRestartUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID, Notes: note,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		if err != nil {
 			return nil, "", err
 		}
 		return phaseActionResult(record, req.PhaseID)
 	case VerbPhaseReset:
-		record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID})
+		record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		if err != nil {
 			return nil, "", err
 		}
@@ -395,6 +392,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			FlowID: req.FlowID, PhaseID: req.PhaseID,
 			ExpectedStatus: flowstore.PhaseStatus(payload.ExpectedStatus), ExpectedOutcome: payload.ExpectedOutcome,
 			ExpectedLaunchID: payload.ExpectedLaunchID, ExpectedUpdatedAt: payload.ExpectedUpdatedAt,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		if err != nil {
 			return nil, "", err
@@ -411,6 +409,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			PhaseID:       payload.PhaseID,
 			Title:         payload.Title,
 			Order:         payload.Order,
+			Fence:         flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		return record, "", err
 	case VerbPhaseAgentSet:
@@ -422,21 +421,30 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		if !payload.Clear {
 			settings = flowstore.PhaseAgentSettings{Agent: payload.Agent, Model: payload.Model, ReasoningEffort: payload.ReasoningEffort}
 		}
-		record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{FlowID: req.FlowID, PhaseID: req.PhaseID, Settings: settings})
+		record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{
+			FlowID: req.FlowID, PhaseID: req.PhaseID, Settings: settings,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	case VerbPlanSet:
 		var payload PlanSetPayload
 		if err := decodePayload(req, &payload); err != nil {
 			return nil, "", err
 		}
-		record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: req.FlowID, PlanID: payload.PlanID, PlanPath: payload.PlanPath})
+		record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{
+			FlowID: req.FlowID, PlanID: payload.PlanID, PlanPath: payload.PlanPath,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	case VerbIssueSet:
 		var payload IssueSetPayload
 		if err := decodePayload(req, &payload); err != nil {
 			return nil, "", err
 		}
-		record, err := store.SetIssue(flowstore.IssueUpdate{FlowID: req.FlowID, Provider: payload.Provider, Number: payload.Number, URL: payload.URL})
+		record, err := store.SetIssue(flowstore.IssueUpdate{
+			FlowID: req.FlowID, Provider: payload.Provider, Number: payload.Number, URL: payload.URL,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	case VerbPRSet:
 		var payload PRSetPayload
@@ -451,6 +459,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			HeadBranch: payload.Head,
 			BaseBranch: payload.Base,
 			Status:     payload.Status,
+			Fence:      flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
 		})
 		return record, "", err
 	case VerbMergeSet:
@@ -466,7 +475,10 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			}
 			mergedAt = parsed
 		}
-		record, err := store.SetMerge(flowstore.MergeUpdate{FlowID: req.FlowID, Status: payload.Status, Commit: payload.Commit, MergedAt: mergedAt})
+		record, err := store.SetMerge(flowstore.MergeUpdate{
+			FlowID: req.FlowID, Status: payload.Status, Commit: payload.Commit, MergedAt: mergedAt,
+			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+		})
 		return record, "", err
 	}
 	return nil, "", fmt.Errorf("%s: %w", req.Verb, errNotExecutable)

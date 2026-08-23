@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,7 @@ func TestRunDBInspectEmitsTheDocumentedJSON(t *testing.T) {
 func TestRunDBInspectReportsAFutureSchemaWhileFlowListRefusesIt(t *testing.T) {
 	root := t.TempDir()
 	seedCurrentRoot(t, root)
-	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), 99)
+	setTestDatabaseVersion(t, filepath.Join(root, "approach.db"), 99)
 
 	var stdout, stderr bytes.Buffer
 	if err := run([]string{"approach", "db", "inspect", "--json", "--state-root", root},
@@ -107,10 +108,7 @@ func TestRunDBInspectPrintsAHumanReportWithoutJSON(t *testing.T) {
 func TestRunDBMigrateAdvancesTheSchemaAndWritesABackupAndSidecar(t *testing.T) {
 	root := t.TempDir()
 	seedCurrentRoot(t, root)
-	// A current-shaped database stamped back to the previous generation: the
-	// migrator re-stamps it, which is a real migration with a real backup and
-	// needs no hand-authored predecessor schema in this package.
-	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
+	setTestDatabaseVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
 
 	var stdout, stderr bytes.Buffer
 	backupDir := filepath.Join(t.TempDir(), "backups")
@@ -118,7 +116,7 @@ func TestRunDBMigrateAdvancesTheSchemaAndWritesABackupAndSidecar(t *testing.T) {
 		dbDeps(t, &stdout, &stderr, nil)); err != nil {
 		t.Fatalf("db migrate returned error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "is at schema 6") {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("is at schema %d", flowstore.DatabaseSchemaVersion())) {
 		t.Fatalf("db migrate output = %q", stdout.String())
 	}
 
@@ -129,7 +127,7 @@ func TestRunDBMigrateAdvancesTheSchemaAndWritesABackupAndSidecar(t *testing.T) {
 	// The source-root fingerprint that keeps a shared --backup-dir's roots apart
 	// sits between the migrated file and its schema, so this is not one prefix.
 	if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "approach.db-") ||
-		!strings.Contains(entries[0].Name(), "-v5-") {
+		!strings.Contains(entries[0].Name(), fmt.Sprintf("-v%d-", flowstore.DatabaseSchemaVersion()-1)) {
 		names := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			names = append(names, entry.Name())
@@ -244,13 +242,23 @@ func TestDBIsRegisteredInTheDispatchAndHelp(t *testing.T) {
 	}
 }
 
-func stampFutureUserVersion(t *testing.T, path string, version int) {
+func setTestDatabaseVersion(t *testing.T, path string, version int) {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=rw")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
+	if version == flowstore.DatabaseSchemaVersion()-1 {
+		// Reconstruct the exact v6 parent-release shape. Stamping a v7 database
+		// down while retaining its column and trigger must fail strict
+		// predecessor validation.
+		if _, err := db.Exec(`
+DROP TRIGGER guard_recovered_launch_state_update;
+ALTER TABLE flows DROP COLUMN recovery_generation;`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := db.Exec("PRAGMA user_version = " + itoa(version)); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +283,7 @@ func itoa(value int) string {
 func TestRunSessionHookWarnsOnStderrAndStillExitsZero(t *testing.T) {
 	root := t.TempDir()
 	seedCurrentRoot(t, root)
-	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), 99)
+	setTestDatabaseVersion(t, filepath.Join(root, "approach.db"), 99)
 
 	var stdout, stderr bytes.Buffer
 	deps := dbDeps(t, &stdout, &stderr, map[string]string{
@@ -300,7 +308,7 @@ func TestRunSessionHookWarnsOnStderrAndStillExitsZero(t *testing.T) {
 func TestRunDBMigrateRefusesWhileLiveOwnersHoldTheDatabase(t *testing.T) {
 	root := t.TempDir()
 	seedCurrentRoot(t, root)
-	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
+	setTestDatabaseVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
 
 	first := holdOwnerLease(t, root, flowstore.DatabaseSchemaVersion()-1, "v0.10.2")
 	second := holdOwnerLease(t, root, flowstore.DatabaseSchemaVersion()-1, "v0.10.1")
@@ -365,7 +373,7 @@ func inspectReport(t *testing.T, root string) map[string]any {
 func TestRunDBRestorePutsABackupBackAndReportsIt(t *testing.T) {
 	root := t.TempDir()
 	seedCurrentRoot(t, root)
-	stampFutureUserVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
+	setTestDatabaseVersion(t, filepath.Join(root, "approach.db"), flowstore.DatabaseSchemaVersion()-1)
 	backupDir := filepath.Join(root, "backups")
 
 	var stdout, stderr bytes.Buffer

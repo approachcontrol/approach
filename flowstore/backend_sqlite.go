@@ -30,8 +30,10 @@ const (
 //
 // Current sequence: v3 prepared_at + receipt trigger; v4 epic-progression
 // `done` JSON + compatibility triggers; v5 progression-claim marker trigger;
-// v6 flows.preparation_nonce projection, backfill, and nonce-protection trigger.
-const databaseSchemaVersion = 6
+// v6 flows.preparation_nonce projection, backfill, and nonce-protection trigger;
+// v7 recovery-generation projection and predecessor-writer compatibility
+// trigger.
+const databaseSchemaVersion = 7
 
 // DatabaseSchemaVersion is the physical flow database schema this build writes.
 // It is exported so launch and diagnostic surfaces can report the schema an
@@ -95,6 +97,20 @@ CREATE TABLE IF NOT EXISTS flows (
     epic_id TEXT NOT NULL DEFAULT '',
     prepared_at TEXT NOT NULL DEFAULT '',
     preparation_nonce TEXT NOT NULL DEFAULT ''
+ )`
+
+const flowTableSchemaV7 = `
+CREATE TABLE IF NOT EXISTS flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL,
+    bead_id TEXT NOT NULL DEFAULT '',
+    epic_id TEXT NOT NULL DEFAULT '',
+    prepared_at TEXT NOT NULL DEFAULT '',
+    preparation_nonce TEXT NOT NULL DEFAULT '',
+    recovery_generation INTEGER NOT NULL DEFAULT 0
  )`
 
 const epicProgressionTableSchema = `
@@ -164,7 +180,24 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove persisted preparation nonce');
 END`
 
-const flowSchemaSQL = flowTableSchemaV6 + `;
+const flowRecoveryGenerationCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_recovered_launch_state_update
+BEFORE UPDATE OF record ON flows
+WHEN NEW.recovery_generation <= OLD.recovery_generation
+    AND EXISTS (
+        SELECT 1
+        FROM json_each(CAST(OLD.record AS TEXT), '$.phases') AS phase
+        WHERE json_type(phase.value, '$.reconciliation') = 'object'
+            OR (
+                json_type(phase.value, '$.recovered_launch_ids') = 'array'
+                AND json_array_length(phase.value, '$.recovered_launch_ids') > 0
+            )
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted recovered launch state');
+END`
+
+const flowSchemaSQL = flowTableSchemaV7 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
@@ -177,7 +210,8 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
 ` + flowProgressionClaimCompatibilityTrigger + `;
 ` + epicProgressionDoneInsertCompatibilityTrigger + `;
 ` + epicProgressionDoneUpdateCompatibilityTrigger + `;
-` + flowPreparationNonceCompatibilityTrigger + `;`
+` + flowPreparationNonceCompatibilityTrigger + `;
+` + flowRecoveryGenerationCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -530,7 +564,7 @@ func validateSQLiteSchema(db *sql.DB) error {
 
 // validateSQLiteSchemaVersion checks one exact physical generation. The
 // bootstrap migrator uses v1 to reject corrupt or arbitrary v0/v1 layouts
-// before any ALTER TABLE statement runs; normal readers validate only v6.
+// before any ALTER TABLE statement runs; normal readers validate only v7.
 func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 	// An empty file reads as version 0 with no tables, so the version check above
 	// cannot catch it and the column comparison below would report it as a diff
@@ -585,6 +619,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0"}
 	case 6:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0"}
+	case 7:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0", "recovery_generation:INTEGER:1:0:0:0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
@@ -614,7 +650,13 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 				}
 			}
 			if version >= 6 {
-				return validateSQLitePreparationNonceCompatibilityTrigger(db)
+				if err := validateSQLitePreparationNonceCompatibilityTrigger(db); err != nil {
+					return err
+				}
+				if version >= 7 {
+					return validateSQLiteRecoveryGenerationCompatibilityTrigger(db)
+				}
+				return nil
 			}
 			return nil
 		}
@@ -641,6 +683,8 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV5
 	case 6:
 		want = flowTableSchemaV6
+	case 7:
+		want = flowTableSchemaV7
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
 	}
@@ -707,6 +751,9 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 			}
 			if version >= 6 {
 				want = append(want, "trigger:guard_preparation_nonce_update:flows")
+				if version >= 7 {
+					want = append(want, "trigger:guard_recovered_launch_state_update:flows")
+				}
 			}
 		}
 		sort.Strings(want)
@@ -721,7 +768,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 {
+	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string
@@ -784,6 +831,17 @@ func validateSQLitePreparationNonceCompatibilityTrigger(db *sql.DB) error {
 	}
 	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowPreparationNonceCompatibilityTrigger) {
 		return fmt.Errorf("flow database has incompatible preparation nonce compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowPreparationNonceCompatibilityTrigger))
+	}
+	return nil
+}
+
+func validateSQLiteRecoveryGenerationCompatibilityTrigger(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_recovered_launch_state_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database recovery generation compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowRecoveryGenerationCompatibilityTrigger) {
+		return fmt.Errorf("flow database has incompatible recovery generation compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowRecoveryGenerationCompatibilityTrigger))
 	}
 	return nil
 }
@@ -1132,6 +1190,7 @@ ON CONFLICT(flow_id) DO UPDATE SET
 	epic_id=excluded.epic_id,
 	prepared_at=excluded.prepared_at,
 	preparation_nonce=excluded.preparation_nonce,
+	recovery_generation=flows.recovery_generation+1,
     record=excluded.record`,
 		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, data)
 	if err != nil {
@@ -1156,7 +1215,7 @@ func (s sqliteSession) savePhaseAgentSettings(update phaseAgentSettingsSave) err
 	if err != nil {
 		return fmt.Errorf("save flow %q agent settings: %w", s.flowID, err)
 	}
-	result, err := s.tx.Exec("UPDATE flows SET updated_at = ?, record = ? WHERE flow_id = ?", updatedAt, patched, s.flowID)
+	result, err := s.tx.Exec("UPDATE flows SET updated_at = ?, recovery_generation = recovery_generation + 1, record = ? WHERE flow_id = ?", updatedAt, patched, s.flowID)
 	if err != nil {
 		return fmt.Errorf("save flow %q agent settings: %w", s.flowID, err)
 	}

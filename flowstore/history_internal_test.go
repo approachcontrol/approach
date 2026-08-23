@@ -66,8 +66,9 @@ func TestTwoMigrationsAppendInOrder(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// Stamp back and migrate again: a second real migration of the same root.
-	stampUserVersion(t, root, databaseSchemaVersion-1)
+	// Reconstruct the parent-release shape and migrate again: a second real
+	// migration of the same root.
+	downgradeCurrentDatabaseToV6ForTest(t, root)
 	second, err := NewStore(StoreOptions{Root: root, Role: RoleMigrator})
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +291,7 @@ func TestPostCommitValidationFailureLeavesTheAdvertisedRestoreUsable(t *testing.
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	stampUserVersion(t, root, databaseSchemaVersion-1)
+	downgradeCurrentDatabaseToV6ForTest(t, root)
 	original := postMigrationValidation
 	t.Cleanup(func() { postMigrationValidation = original })
 	postMigrationValidation = func(*sql.DB, int64, map[string]bool) error {
