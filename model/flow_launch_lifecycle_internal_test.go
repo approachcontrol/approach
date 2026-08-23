@@ -3117,7 +3117,7 @@ func TestStaleTmuxLifecycleResultCannotReleaseOrPersist(t *testing.T) {
 	}
 }
 
-func TestLateFailurePersistenceCannotMutateNewerOwnership(t *testing.T) {
+func TestLateFailurePersistenceReleasesReservationWithoutMutatingNewerOwnership(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	m := h.model()
@@ -3136,8 +3136,8 @@ func TestLateFailurePersistenceCannotMutateNewerOwnership(t *testing.T) {
 		Release:       func() { releases++ },
 		TokenFenced:   true,
 	})
-	if cmd != nil || releases != 0 || next.status.Text != "newer status" {
-		t.Fatalf("late persistence changed state: cmd=%v releases=%d status=%q", cmd != nil, releases, next.status.Text)
+	if cmd != nil || releases != 1 || next.status.Text != "newer status" {
+		t.Fatalf("late persistence result: cmd=%v releases=%d status=%q, want reservation release only", cmd != nil, releases, next.status.Text)
 	}
 	attempt, ok := next.flowLaunchAttempt(record.FlowID)
 	if !ok || attempt.Token != "new-token" || next.flowLaunchOwnershipCount() != 1 {

@@ -3207,6 +3207,7 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 		Status:  status,
 		Outcome: outcome,
 		Notes:   notes,
+		Fence:   flowstore.PhaseLaunchFence{LaunchID: ctx.LaunchID},
 	}, true
 }
 
@@ -3253,10 +3254,13 @@ func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMs
 		0,
 		flowLaunchStateFailurePersisting,
 	)
+	// The launch/close reservation belongs to the completed command, not to
+	// current in-process ownership. Always release that command's callback;
+	// only Model mutation is token-fenced below.
+	releaseFlowLaunchReservation(msg.Release)
 	if msg.TokenFenced && !ownsFailure {
 		return m, nil
 	}
-	releaseFlowLaunchReservation(msg.Release)
 	ctx := msg.LaunchContext
 	presentCreate := true
 	create := msg.Create
