@@ -101,6 +101,26 @@ type flowOccupancySessionCache struct {
 	worktreeSessions []sessions.SessionRecord
 }
 
+type flowOccupancyAuthoritativeFlow struct {
+	record flowstore.FlowRecord
+}
+
+var _ flowoccupancy.FlowReader = flowOccupancyAuthoritativeFlow{}
+
+func (source flowOccupancyAuthoritativeFlow) ReadFlow(string) (flowstore.FlowRecord, error) {
+	return source.record, nil
+}
+
+type flowOccupancyAuthoritativeSessions struct {
+	list func(string) ([]sessions.SessionRecord, error)
+}
+
+var _ flowoccupancy.SessionStore = flowOccupancyAuthoritativeSessions{}
+
+func (source flowOccupancyAuthoritativeSessions) ListFlowSessions(flowID string) ([]sessions.SessionRecord, error) {
+	return source.list(flowID)
+}
+
 var _ flowoccupancy.SessionCache = flowOccupancySessionCache{}
 
 func (cache flowOccupancySessionCache) ActiveFlowSessions(flowID string) []sessions.SessionRecord {
@@ -169,6 +189,27 @@ func (m Model) trackedPhaseOccupancy(flowID string, stage flowoccupancy.Stage) f
 			Role:  actions.RoleTrackedPhase,
 			Stage: stage,
 		},
+	})
+}
+
+func trackedPhaseAuthoritativeOccupancy(
+	seams flowLaunchSeams,
+	flowID string,
+	record flowstore.FlowRecord,
+	phaseID string,
+	stage flowoccupancy.Stage,
+) flowoccupancy.Verdict {
+	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+		Flows:    flowOccupancyAuthoritativeFlow{record: record},
+		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
+	}, flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: stage,
+		},
+		Freshness: flowoccupancy.FreshnessAuthoritative,
+		PhaseID:   phaseID,
 	})
 }
 
@@ -278,7 +319,6 @@ func newFlowLaunchSeams(
 		ReadFlow:    readFlow,
 		ReadSession: readSession,
 		ListFlowSessions: func(flowID string) ([]sessions.SessionRecord, error) {
-			flowID = strings.TrimSpace(flowID)
 			if flowID == "" || listSessions == nil {
 				return nil, nil
 			}
@@ -288,7 +328,7 @@ func newFlowLaunchSeams(
 			}
 			var out []sessions.SessionRecord
 			for _, record := range all {
-				if strings.TrimSpace(record.FlowID) == flowID {
+				if record.FlowID == flowID {
 					out = append(out, record)
 				}
 			}

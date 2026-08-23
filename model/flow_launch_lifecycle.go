@@ -530,23 +530,6 @@ func flowLaunchCandidatePhase(kind flowLaunchKind, record flowstore.FlowRecord, 
 	return flowstore.FlowPhase{}, false
 }
 
-// flowRecordHasOtherRunningPhase is flowAutoAdvanceOccupied's running-phase
-// signal applied to the fresh record, minus the candidate itself. A running
-// candidate means another source took it, which is staleness rather than
-// occupancy, and the candidate check classifies that first.
-func flowRecordHasOtherRunningPhase(record flowstore.FlowRecord, phaseID string) bool {
-	candidate := artifacts.NormalizePhaseID(phaseID)
-	for _, phase := range record.Phases {
-		if phase.Status != flowstore.PhaseRunning {
-			continue
-		}
-		if artifacts.NormalizePhaseID(phase.PhaseID) != candidate {
-			return true
-		}
-	}
-	return false
-}
-
 // flowLaunchLauncher borrows the preflight and prepare steps through the
 // lifecycle's own seams. NewLaunchID is pinned to the admission token: a second
 // generated ID would make every LaunchID-keyed fence miss and strand the
@@ -605,16 +588,16 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			event.Err = noLaunchableFlowPhaseStatus
 			return event
 		}
-		records, err := seams.ListFlowSessions(intent.FlowID)
-		if err != nil {
-			event.Err = err.Error()
+		occupancy := trackedPhaseAuthoritativeOccupancy(seams, intent.FlowID, record, phase.PhaseID, flowoccupancy.StageAuthoritative)
+		if occupancy.Err() != nil {
+			event.Err = occupancy.Err().Error()
 			return event
 		}
-		if flowLaunchPhaseSessionOccupied(phase, records) {
+		if occupancy.Holder() == flowoccupancy.HolderPhaseSession {
 			// The phase itself is launchable — admission and the candidate
 			// lookup both passed — so the refusal has to name the session, not
 			// the phase, and say how to clear it.
-			event.Err = flowLaunchPhaseSessionLiveStatus(phase.PhaseID)
+			event.Err = flowLaunchPhaseSessionLiveStatus(occupancy.PhaseID())
 			return event
 		}
 		prepared, err := launcher.preflight(flowPhaseLaunchRequest{
@@ -649,9 +632,7 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 }
 
 // autoFlowLaunchReadCmd is the authoritative read for AutoMode. The check order
-// is normative: two checks can both hold and they yield different outcomes, and
-// Preflight runs before the session list because it is in-memory while
-// ListFlowSessions scans the whole session store once per poll.
+// is normative: two checks can both hold and they yield different outcomes.
 func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation, intent flowLaunchIntent, token string) tea.Cmd {
 	return func() tea.Msg {
 		event := flowLaunchEventMsg{
@@ -684,7 +665,13 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			event.Outcome = flowLaunchOutcomeStale
 			return event
 		}
-		if flowRecordHasOtherRunningPhase(record, phase.PhaseID) {
+		occupancy := trackedPhaseAuthoritativeOccupancy(seams, intent.FlowID, record, phase.PhaseID, flowoccupancy.StageAutoAdvance)
+		if occupancy.Err() != nil {
+			event.Outcome = flowLaunchOutcomeFailed
+			event.Err = occupancy.Err().Error()
+			return event
+		}
+		if occupancy.Holder() == flowoccupancy.HolderRunningPhase || occupancy.Holder() == flowoccupancy.HolderPhaseSession {
 			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}
@@ -697,18 +684,6 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 		if err != nil {
 			event.Outcome = flowLaunchOutcomeFailed
 			event.Err = err.Error()
-			return event
-		}
-		records, err := seams.ListFlowSessions(intent.FlowID)
-		if err != nil {
-			event.Outcome = flowLaunchOutcomeFailed
-			event.Err = err.Error()
-			return event
-		}
-		if flowLaunchPhaseSessionOccupied(phase, records) {
-			// The previous run of this phase is still alive. It clears on its
-			// own, so this re-arms rather than dropping the launch.
-			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}
 		// Last, and behind the session check, so a phase a live session already

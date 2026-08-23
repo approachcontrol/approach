@@ -7,6 +7,7 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/sessions"
 )
 
@@ -517,6 +518,10 @@ var (
 	ErrMissingFlowCache = errors.New("flowoccupancy: cached Flow source is required")
 	// ErrMissingSessionCache marks a cached purpose without its session panes.
 	ErrMissingSessionCache = errors.New("flowoccupancy: cached session source is required")
+	// ErrMissingFlowStore marks an authoritative purpose without its Flow reader.
+	ErrMissingFlowStore = errors.New("flowoccupancy: authoritative Flow source is required")
+	// ErrMissingSessionStore marks an authoritative purpose without its session reader.
+	ErrMissingSessionStore = errors.New("flowoccupancy: authoritative session source is required")
 	errPendingSourceFamily = errors.New("flowoccupancy: a required source family is not implemented yet")
 )
 
@@ -660,6 +665,9 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 	if !ok || !policy.freshness.allows(freshness) {
 		return failedVerdict(fmt.Errorf("%w: freshness %d is unsupported for purpose (%s, %s)", ErrInvalidQuery, query.Freshness, query.Purpose.Role, query.Purpose.Stage))
 	}
+	if freshness == FreshnessAuthoritative && policy.sources&(readFlowStore|readSessionStore) != 0 {
+		return occupancy.queryAuthoritative(query, policy, flowID)
+	}
 	if policy.sources&^(readRuntime|readLease) != 0 || policy.probe != probeNone {
 		return failedVerdict(errPendingSourceFamily)
 	}
@@ -684,6 +692,73 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 		leaseVerdict = queryLease(occupancy.sources.Lease, flowID)
 	}
 	return chooseVerdict(query.Purpose, leaseVerdict, runtimeVerdict)
+}
+
+func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy, flowID string) Verdict {
+	if query.Purpose.Role != actions.RoleTrackedPhase ||
+		(query.Purpose.Stage != StageAuthoritative && query.Purpose.Stage != StageAutoAdvance) {
+		return failedVerdict(errPendingSourceFamily)
+	}
+	if policy.sources&readFlowStore == 0 {
+		return failedVerdict(errPendingSourceFamily)
+	}
+	if occupancy.sources.Flows == nil {
+		return failedVerdict(ErrMissingFlowStore)
+	}
+	record, err := occupancy.sources.Flows.ReadFlow(flowID)
+	if err != nil {
+		return failedVerdict(err)
+	}
+	if record.FlowID != flowID {
+		return failedVerdict(fmt.Errorf("%w: authoritative Flow identity %q does not match %q", ErrInvalidQuery, record.FlowID, flowID))
+	}
+	if query.Purpose.Stage == StageAutoAdvance {
+		candidate := artifacts.NormalizePhaseID(query.PhaseID)
+		for _, phase := range record.Phases {
+			if phase.Status == flowstore.PhaseRunning && artifacts.NormalizePhaseID(phase.PhaseID) != candidate {
+				return Verdict{holder: HolderRunningPhase, phaseID: phase.PhaseID}
+			}
+		}
+	}
+	if occupancy.sources.Sessions == nil {
+		return failedVerdict(ErrMissingSessionStore)
+	}
+	records, err := occupancy.sources.Sessions.ListFlowSessions(flowID)
+	if err != nil {
+		return failedVerdict(err)
+	}
+	phaseID := query.PhaseID
+	for _, phase := range record.Phases {
+		if phase.PhaseID != phaseID {
+			continue
+		}
+		if phaseHasLiveSession(phase) || phaseHasLiveStoredSession(flowID, phase, records) {
+			return Verdict{holder: HolderPhaseSession, phaseID: phase.PhaseID}
+		}
+		break
+	}
+	return Free()
+}
+
+func phaseHasLiveStoredSession(flowID string, phase flowstore.FlowPhase, records []sessions.SessionRecord) bool {
+	launches := make(map[string]struct{}, len(phase.LaunchIDs))
+	for _, launchID := range phase.LaunchIDs {
+		if launchID = strings.TrimSpace(launchID); launchID != "" {
+			launches[launchID] = struct{}{}
+		}
+	}
+	for _, record := range records {
+		if record.FlowID != flowID || strings.TrimSpace(record.SessionID) == "" {
+			continue
+		}
+		if _, ok := launches[strings.TrimSpace(record.LaunchID)]; !ok {
+			continue
+		}
+		if sessions.IsActive(record.Status, record.EndedAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func queryLease(inspector LeaseInspector, flowID string) Verdict {

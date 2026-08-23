@@ -2237,6 +2237,11 @@ func TestFlowLaunchLiveSessionScope(t *testing.T) {
 			wantLaunch: true,
 		},
 		{
+			name:       "noncanonical Flow identity does not block",
+			stored:     []sessions.SessionRecord{{SessionID: "s-2", LaunchID: "launch-1", FlowID: " flow-1 ", Status: "running"}},
+			wantLaunch: true,
+		},
+		{
 			name:       "ended session does not block",
 			mirrored:   []flowstore.Session{{SessionID: "s-1", LaunchID: "launch-1", Status: "ended", EndedAt: time.Now()}},
 			stored:     []sessions.SessionRecord{{SessionID: "s-1", LaunchID: "launch-1", FlowID: "flow-1", Status: "ended", EndedAt: time.Now()}},
