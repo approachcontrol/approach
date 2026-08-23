@@ -879,6 +879,30 @@ func TestAutofixPrepareRechecksLeaseUnderReservation(t *testing.T) {
 	}
 }
 
+func TestAutofixPrepareRechecksLivePhaseSessionsUnderReservation(t *testing.T) {
+	record := autofixFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m, prepareCmd := h.stageAutofixLaunch(h.model())
+	h.record.Phases[len(h.record.Phases)-1].LaunchIDs = []string{"late-launch"}
+	h.sessionRecords = []sessions.SessionRecord{liveFlowSession(record.FlowID, "late-launch", "late-session")}
+
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("prepare did not settle")
+	}
+	m = h.drainMsg(m, preparedMsg, 0)
+
+	if len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatalf("late phase session started autofix: embedded=%d tmux=%d", len(h.launchContexts), len(h.tmuxContexts))
+	}
+	if m.status.Text != flowAutofixLiveSessionStatus {
+		t.Fatalf("status = %q, want %q", m.status.Text, flowAutofixLiveSessionStatus)
+	}
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservations=%d releases=%d, want protected refusal and release", h.launchReservations, h.launchReleases)
+	}
+}
+
 // TestAutofixPrepareResolvesHeadlessFromTheReservation pins the reason
 // prepare uses the reservation's record rather than the read stage's: this kind
 // writes no phase, so that record is its only fresh read of the Flow before the

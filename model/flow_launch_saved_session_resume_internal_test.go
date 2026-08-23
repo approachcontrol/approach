@@ -443,6 +443,24 @@ func originName(origin flowLaunchOrigin) string {
 	}
 }
 
+func testValidateSavedSessionResumeFlow(flowID string, record flowstore.FlowRecord, stored []sessions.SessionRecord) error {
+	if err := validateSavedSessionResumeFlowRecord(flowID, record); err != nil {
+		return err
+	}
+	for i := range stored {
+		if stored[i].FlowID == "" {
+			stored[i].FlowID = flowID
+		}
+	}
+	verdict := flowAuthoritativeOccupancy(flowLaunchSeams{
+		ListFlowSessions: func(string) ([]sessions.SessionRecord, error) { return stored, nil },
+	}, flowID, record, actions.RoleSavedSessionResume)
+	if verdict.Occupied() {
+		return errors.New(savedSessionResumeAuthoritativeOccupancyStatus(verdict))
+	}
+	return nil
+}
+
 func TestValidateSavedSessionResumeFlowOccupancy(t *testing.T) {
 	ended := sessions.SessionRecord{SessionID: "ended", Status: "ended"}
 	closedAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -462,7 +480,7 @@ func TestValidateSavedSessionResumeFlowOccupancy(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateSavedSessionResumeFlow("flow-1", tc.record, tc.stored)
+			err := testValidateSavedSessionResumeFlow("flow-1", tc.record, tc.stored)
 			if (err == nil) != tc.wantOK {
 				t.Fatalf("validate error = %v, wantOK %v", err, tc.wantOK)
 			}
@@ -526,6 +544,40 @@ func TestSavedSessionResumeRevalidatesUnderReservation(t *testing.T) {
 	}
 	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
 		t.Fatal("failed protected revalidation retained ownership")
+	}
+}
+
+func TestSavedSessionResumeRefusesFreshOccupancyUnderReservation(t *testing.T) {
+	session := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1", WorktreePath: "/repo/worktree"}
+	open := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}
+	occupied := open
+	occupied.Phases = []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseRunning}}
+	started := false
+	released := false
+	m := savedSessionLifecycleModel(Options{
+		ReadSession: func(sessions.Provider, string) (sessions.SessionRecord, error) { return session, nil },
+		ReadFlow:    func(string) (flowstore.FlowRecord, error) { return open, nil },
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		ReserveFlowLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return occupied, func() { released = true }, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m.launchSeams.NewLaunchID = func() string { return "token" }
+	m, cmd := m.routeSavedSessionResume(session, flowLaunchOriginSessionsPane)
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	m, cmd = m.handleFlowLaunchEvent(cmd().(flowLaunchEventMsg))
+	if cmd != nil || started || !released || m.status.Text != "a running phase already occupies this Flow" {
+		t.Fatalf("occupancy revalidation result: cmd=%v started=%v released=%v status=%q", cmd != nil, started, released, m.status.Text)
+	}
+	if m.flowLaunchAttemptOccupied("flow-1") || len(m.flowLaunchSessionOwners) != 0 {
+		t.Fatal("occupied protected revalidation retained ownership")
 	}
 }
 

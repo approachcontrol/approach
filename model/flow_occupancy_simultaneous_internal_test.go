@@ -52,7 +52,7 @@ func TestEverySourceHoldingAtOnceIsSeenByEveryComposite(t *testing.T) {
 	if !flowLaunchPhaseSessionOccupied(f.phase(), f.stored) {
 		t.Fatal("the phase-session union must hold")
 	}
-	if reason := genericFlowRuntimeOccupancyReason(f.record); reason == "" {
+	if reason := worktreeAgentRecordOccupancyReason(f.record); reason == "" {
 		t.Fatal("the worktree agent's persisted rung must hold")
 	}
 }

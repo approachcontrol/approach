@@ -115,9 +115,21 @@ type flowOccupancyAuthoritativeSessions struct {
 	list func(string) ([]sessions.SessionRecord, error)
 }
 
+type flowOccupancyKnownLease struct {
+	occupied bool
+	err      error
+}
+
+func (lease flowOccupancyKnownLease) FlowLeaseOccupied(string) (bool, error) {
+	return lease.occupied, lease.err
+}
+
 var _ flowoccupancy.SessionStore = flowOccupancyAuthoritativeSessions{}
 
 func (source flowOccupancyAuthoritativeSessions) ListFlowSessions(flowID string) ([]sessions.SessionRecord, error) {
+	if source.list == nil {
+		return nil, fmt.Errorf("Flow session reader is unavailable")
+	}
 	return source.list(flowID)
 }
 
@@ -210,6 +222,66 @@ func trackedPhaseAuthoritativeOccupancy(
 		},
 		Freshness: flowoccupancy.FreshnessAuthoritative,
 		PhaseID:   phaseID,
+	})
+}
+
+func flowAuthoritativeOccupancy(
+	seams flowLaunchSeams,
+	flowID string,
+	record flowstore.FlowRecord,
+	role actions.FlowLaunchRole,
+) flowoccupancy.Verdict {
+	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+		Flows:    flowOccupancyAuthoritativeFlow{record: record},
+		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
+	}, flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  role,
+			Stage: flowoccupancy.StageAuthoritative,
+		},
+	})
+}
+
+func (m Model) flowReservedOccupancy(
+	seams flowLaunchSeams,
+	flowID string,
+	record flowstore.FlowRecord,
+	role actions.FlowLaunchRole,
+) flowoccupancy.Verdict {
+	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+		Flows:    flowOccupancyAuthoritativeFlow{record: record},
+		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+	}, flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  role,
+			Stage: flowoccupancy.StageReserved,
+		},
+	})
+}
+
+func flowReservedOccupancyAfterFreeLease(
+	seams flowLaunchSeams,
+	flowID string,
+	record flowstore.FlowRecord,
+	role actions.FlowLaunchRole,
+) flowoccupancy.Verdict {
+	return flowoccupancy.Evaluate(flowoccupancy.Sources{
+		Flows:    flowOccupancyAuthoritativeFlow{record: record},
+		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
+		Lease:    flowOccupancyKnownLease{},
+	}, flowoccupancy.Query{
+		FlowID: flowID,
+		Purpose: flowoccupancy.Purpose{
+			Role:  role,
+			Stage: flowoccupancy.StageReserved,
+		},
 	})
 }
 

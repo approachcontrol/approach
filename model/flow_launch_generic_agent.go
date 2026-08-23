@@ -6,7 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -111,8 +113,13 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	if m.hasKnownActiveFlowSession(intent.FlowID) {
 		return m.setStatus(statusOther, flowWorktreeAgentSessionStatus), nil, false
 	}
-	if reason := genericFlowRuntimeOccupancyReason(record); reason != "" {
-		return m.setStatus(statusOther, reason), nil, false
+	if advice := m.worktreeAgentFooterAdvice(record); advice.Defer() {
+		switch advice.Holder() {
+		case flowoccupancy.HolderPhaseSession:
+			return m.setStatus(statusOther, fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", advice.PhaseID())), nil, false
+		case flowoccupancy.HolderRunningPhase:
+			return m.setStatus(statusOther, fmt.Sprintf("a running phase %s already occupies this Flow", advice.PhaseID())), nil, false
+		}
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
@@ -148,25 +155,23 @@ func genericWorktreeAgentFlowEligible(record flowstore.FlowRecord) bool {
 		!flowstore.PreparationLaunchBlocked(record)
 }
 
-func genericFlowRuntimeOccupancyReason(record flowstore.FlowRecord) string {
-	for _, phase := range record.Phases {
-		if phaseHasMatchingLiveSession(phase) {
-			return fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", phase.PhaseID)
-		}
-		if phase.Status == flowstore.PhaseRunning {
-			return fmt.Sprintf("a running phase %s already occupies this Flow", phase.PhaseID)
-		}
+func worktreeAgentAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRecord, verdict flowoccupancy.Verdict) string {
+	if strings.TrimSpace(record.FlowID) != flowID {
+		return flowWorktreeAgentStaleStatus
 	}
-	return ""
-}
-
-func activeFlowSession(records []sessions.SessionRecord) bool {
-	for _, record := range records {
-		if sessions.IsActive(record.Status, record.EndedAt) {
-			return true
-		}
+	if verdict.Err() != nil {
+		return verdict.Err().Error()
 	}
-	return false
+	switch verdict.Holder() {
+	case flowoccupancy.HolderFlowSession:
+		return flowWorktreeAgentSessionStatus
+	case flowoccupancy.HolderPhaseSession:
+		return fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", verdict.PhaseID())
+	case flowoccupancy.HolderRunningPhase:
+		return fmt.Sprintf("a running phase %s already occupies this Flow", verdict.PhaseID())
+	default:
+		return flowWorktreeAgentStaleStatus
+	}
 }
 
 func worktreeAgentFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchIntent, token string) tea.Cmd {
@@ -185,17 +190,8 @@ func worktreeAgentFlowLaunchReadCmd(seams flowLaunchSeams, intent flowLaunchInte
 			event.Err = flowWorktreeAgentPathStatus
 			return event
 		}
-		recordSessions, err := seams.ListFlowSessions(intent.FlowID)
-		if err != nil {
-			event.Err = err.Error()
-			return event
-		}
-		if activeFlowSession(recordSessions) {
-			event.Err = flowWorktreeAgentSessionStatus
-			return event
-		}
-		if reason := genericFlowRuntimeOccupancyReason(record); reason != "" {
-			event.Err = reason
+		if verdict := flowAuthoritativeOccupancy(seams, intent.FlowID, record, actions.RoleWorktreeAgent); verdict.Occupied() {
+			event.Err = worktreeAgentAuthoritativeOccupancyStatus(intent.FlowID, record, verdict)
 			return event
 		}
 		planPath := strings.TrimSpace(record.PlanPath)
@@ -238,31 +234,22 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 			return event
 		}
 		event.Release = release
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+		verdict := m.flowReservedOccupancy(seams, msg.FlowID, record, actions.RoleWorktreeAgent)
+		if verdict.Holder() == flowoccupancy.HolderLeaseUnreadable {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
-			event.Err = flowLeaseSetupErrorStatus(inspectErr)
+			event.Err = flowLeaseSetupErrorStatus(verdict.Err())
 			return event
-		} else if occupied {
+		} else if verdict.Holder() == flowoccupancy.HolderPeerLease {
 			event.LeaseDeferred = true
 			event.Err = flowLeaseOccupiedStatus
+			return event
+		} else if verdict.Occupied() {
+			event.Err = worktreeAgentAuthoritativeOccupancyStatus(msg.FlowID, record, verdict)
 			return event
 		}
 		if record.FlowID != msg.FlowID || !genericWorktreeAgentFlowEligible(record) {
 			event.Err = flowWorktreeAgentStaleStatus
-			return event
-		}
-		recordSessions, err := seams.ListFlowSessions(msg.FlowID)
-		if err != nil {
-			event.Err = err.Error()
-			return event
-		}
-		if activeFlowSession(recordSessions) {
-			event.Err = flowWorktreeAgentSessionStatus
-			return event
-		}
-		if reason := genericFlowRuntimeOccupancyReason(record); reason != "" {
-			event.Err = reason
 			return event
 		}
 		if err := seams.inspectWorktreeDirectory(record.WorktreePath); err != nil {

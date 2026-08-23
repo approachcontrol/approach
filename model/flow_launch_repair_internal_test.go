@@ -99,6 +99,42 @@ func TestFlowRepairPrepareRechecksLeaseUnderReservation(t *testing.T) {
 	}
 }
 
+func TestFlowRepairPrepareRechecksLivePhaseSessionsUnderReservation(t *testing.T) {
+	record := repairLaunchFlowRecord(t)
+	h := newManualLaunchHarness(t, record)
+	m := h.repairModel()
+	next, readCmd := m.handleRepairSelectedFlow()
+	m = next.(Model)
+	readMsg, ok := runCommandWithoutWaiting(readCmd)
+	if !ok {
+		t.Fatal("repair read did not settle")
+	}
+	next, prepareCmd := m.Update(readMsg)
+	m = next.(Model)
+
+	reserved := record
+	reserved.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	reserved.Phases[0].LaunchIDs = []string{"late-launch"}
+	h.repairReserved, h.repairReservedOK = reserved, true
+	h.sessionRecords = []sessions.SessionRecord{liveRepairSessionRecord(record.FlowID, "late-launch")}
+
+	preparedMsg, ok := runCommandWithoutWaiting(prepareCmd)
+	if !ok {
+		t.Fatal("repair prepare did not settle")
+	}
+	m = h.drainMsg(m, preparedMsg, 0)
+
+	if len(h.launchContexts) != 0 {
+		t.Fatalf("late phase session started repair: %#v", h.launchContexts)
+	}
+	if want := flowRepairLiveSessionStatus(record.FlowID, reserved.Phases[0]); m.status.Text != want {
+		t.Fatalf("status = %q, want %q", m.status.Text, want)
+	}
+	if h.repairReservations != 1 || h.repairReleases != 1 {
+		t.Fatalf("repair reservations=%d releases=%d, want protected refusal and release", h.repairReservations, h.repairReleases)
+	}
+}
+
 func TestFlowRepairAdmissionReportsHeldLease(t *testing.T) {
 	record := repairLaunchFlowRecord(t)
 	h := newManualLaunchHarness(t, record)

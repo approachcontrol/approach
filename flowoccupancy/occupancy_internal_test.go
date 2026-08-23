@@ -239,6 +239,280 @@ func TestAuthoritativePhaseSessionEvaluation(t *testing.T) {
 	}
 }
 
+func TestRepairAuthoritativeOccupancy(t *testing.T) {
+	tests := []struct {
+		name       string
+		running    bool
+		live       bool
+		wantHolder Holder
+		wantPhase  string
+	}{
+		{name: "running phase is not occupancy"},
+		{name: "live phase session", live: true, wantHolder: HolderPhaseSession, wantPhase: "review"},
+		{name: "live phase session wins over running status", running: true, live: true, wantHolder: HolderPhaseSession, wantPhase: "review"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runningStatus := flowstore.PhaseReady
+			if tc.running {
+				runningStatus = flowstore.PhaseRunning
+			}
+			review := flowstore.FlowPhase{
+				PhaseID:   "review",
+				Status:    flowstore.PhaseReady,
+				LaunchIDs: []string{"launch-review"},
+			}
+			if tc.live {
+				review.Sessions = []flowstore.Session{{
+					SessionID: "session-review", LaunchID: "launch-review", Status: "running",
+				}}
+			}
+			record := flowstore.FlowRecord{
+				FlowID: "flow-1",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Status: runningStatus},
+					review,
+				},
+			}
+			verdict := Evaluate(Sources{
+				Flows:    &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record},
+				Sessions: &sessionStoreFixture{t: t, wantFlowID: "flow-1"},
+			}, Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: actions.RoleRepair, Stage: StageAuthoritative},
+			})
+			if verdict.Holder() != tc.wantHolder || verdict.PhaseID() != tc.wantPhase || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %q, %v), want (%v, %q, nil)", verdict.Holder(), verdict.PhaseID(), verdict.Err(), tc.wantHolder, tc.wantPhase)
+			}
+		})
+	}
+}
+
+func TestAutofixAuthoritativeOccupancy(t *testing.T) {
+	tests := []struct {
+		name       string
+		running    bool
+		live       bool
+		terminal   bool
+		wantHolder Holder
+		wantPhase  string
+	}{
+		{name: "running phase is not occupancy"},
+		{name: "live phase session", live: true, wantHolder: HolderPhaseSession, wantPhase: "review"},
+		{name: "live phase session wins over running status", running: true, live: true, wantHolder: HolderPhaseSession, wantPhase: "review"},
+		{name: "terminal phase session is not occupancy", live: true, terminal: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runningStatus := flowstore.PhaseReady
+			if tc.running {
+				runningStatus = flowstore.PhaseRunning
+			}
+			reviewStatus := flowstore.PhaseReady
+			if tc.terminal {
+				reviewStatus = flowstore.PhaseCompleted
+			}
+			review := flowstore.FlowPhase{
+				PhaseID:   "review",
+				Status:    reviewStatus,
+				LaunchIDs: []string{"launch-review"},
+			}
+			if tc.live {
+				review.Sessions = []flowstore.Session{{
+					SessionID: "session-review", LaunchID: "launch-review", Status: "running",
+				}}
+			}
+			record := flowstore.FlowRecord{
+				FlowID: "flow-1",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Status: runningStatus},
+					review,
+				},
+			}
+			verdict := Evaluate(Sources{
+				Flows:    &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record},
+				Sessions: &sessionStoreFixture{t: t, wantFlowID: "flow-1"},
+			}, Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: actions.RoleAutofix, Stage: StageAuthoritative},
+			})
+			if verdict.Holder() != tc.wantHolder || verdict.PhaseID() != tc.wantPhase || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %q, %v), want (%v, %q, nil)", verdict.Holder(), verdict.PhaseID(), verdict.Err(), tc.wantHolder, tc.wantPhase)
+			}
+		})
+	}
+}
+
+func TestWorktreeAgentAuthoritativeOccupancy(t *testing.T) {
+	tests := []struct {
+		name        string
+		phaseStatus flowstore.PhaseStatus
+		phaseLive   bool
+		stored      []sessions.SessionRecord
+		wantHolder  Holder
+		wantPhase   string
+	}{
+		{name: "running phase", phaseStatus: flowstore.PhaseRunning, wantHolder: HolderRunningPhase, wantPhase: "implementation"},
+		{name: "live phase session", phaseStatus: flowstore.PhaseReady, phaseLive: true, wantHolder: HolderPhaseSession, wantPhase: "implementation"},
+		{name: "live phase session wins within running phase", phaseStatus: flowstore.PhaseRunning, phaseLive: true, wantHolder: HolderPhaseSession, wantPhase: "implementation"},
+		{
+			name: "exact Flow stored session wins",
+			stored: []sessions.SessionRecord{
+				{FlowID: "flow-10", SessionID: "prefix", Status: "running"},
+				{FlowID: "flow-1", SessionID: "exact", Status: "running"},
+			},
+			phaseStatus: flowstore.PhaseRunning,
+			phaseLive:   true,
+			wantHolder:  HolderFlowSession,
+		},
+		{name: "terminal phase session remains occupancy", phaseStatus: flowstore.PhaseCompleted, phaseLive: true, wantHolder: HolderPhaseSession, wantPhase: "implementation"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			phase := flowstore.FlowPhase{
+				PhaseID:   "implementation",
+				Status:    tc.phaseStatus,
+				LaunchIDs: []string{"launch-1"},
+			}
+			if tc.phaseLive {
+				phase.Sessions = []flowstore.Session{{SessionID: "phase-session", LaunchID: "launch-1", Status: "running"}}
+			}
+			record := flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{phase}}
+			verdict := Evaluate(Sources{
+				Flows:    &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record},
+				Sessions: &sessionStoreFixture{t: t, wantFlowID: "flow-1", records: tc.stored},
+			}, Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: actions.RoleWorktreeAgent, Stage: StageAuthoritative},
+			})
+			if verdict.Holder() != tc.wantHolder || verdict.PhaseID() != tc.wantPhase || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %q, %v), want (%v, %q, nil)", verdict.Holder(), verdict.PhaseID(), verdict.Err(), tc.wantHolder, tc.wantPhase)
+			}
+		})
+	}
+}
+
+func TestSavedSessionResumeAuthoritativeOccupancy(t *testing.T) {
+	tests := []struct {
+		name        string
+		phaseStatus flowstore.PhaseStatus
+		phaseLive   bool
+		stored      []sessions.SessionRecord
+		wantHolder  Holder
+		wantPhase   string
+	}{
+		{name: "running phase", phaseStatus: flowstore.PhaseRunning, wantHolder: HolderRunningPhase, wantPhase: "implementation"},
+		{name: "live phase session", phaseStatus: flowstore.PhaseReady, phaseLive: true, wantHolder: HolderPhaseSession, wantPhase: "implementation"},
+		{name: "running status wins within live phase", phaseStatus: flowstore.PhaseRunning, phaseLive: true, wantHolder: HolderRunningPhase, wantPhase: "implementation"},
+		{
+			name:        "active exact Flow stored session",
+			phaseStatus: flowstore.PhaseReady,
+			stored: []sessions.SessionRecord{
+				{FlowID: "flow-10", SessionID: "prefix", Status: "running"},
+				{FlowID: "flow-1", SessionID: "exact", Status: "running"},
+			},
+			wantHolder: HolderFlowSession,
+		},
+		{
+			name:        "phase occupancy precedes Flow stored session",
+			phaseStatus: flowstore.PhaseRunning,
+			stored:      []sessions.SessionRecord{{FlowID: "flow-1", SessionID: "exact", Status: "running"}},
+			wantHolder:  HolderRunningPhase,
+			wantPhase:   "implementation",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			phase := flowstore.FlowPhase{
+				PhaseID:   "implementation",
+				Status:    tc.phaseStatus,
+				LaunchIDs: []string{"launch-1"},
+			}
+			if tc.phaseLive {
+				phase.Sessions = []flowstore.Session{{SessionID: "phase-session", LaunchID: "launch-1", Status: "running"}}
+			}
+			record := flowstore.FlowRecord{FlowID: "flow-1", Phases: []flowstore.FlowPhase{phase}}
+			verdict := Evaluate(Sources{
+				Flows:    &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record},
+				Sessions: &sessionStoreFixture{t: t, wantFlowID: "flow-1", records: tc.stored},
+			}, Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: actions.RoleSavedSessionResume, Stage: StageAuthoritative},
+			})
+			if verdict.Holder() != tc.wantHolder || verdict.PhaseID() != tc.wantPhase || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %q, %v), want (%v, %q, nil)", verdict.Holder(), verdict.PhaseID(), verdict.Err(), tc.wantHolder, tc.wantPhase)
+			}
+		})
+	}
+}
+
+func TestPhaseResumeAuthoritativeOccupancyRemainsPhaseScopedWithSessionExemption(t *testing.T) {
+	target := flowstore.Session{
+		Provider: "Codex", SessionID: "target", LaunchID: "launch-implementation", Status: "running",
+	}
+	record := flowstore.FlowRecord{
+		FlowID: "flow-1",
+		Phases: []flowstore.FlowPhase{
+			{
+				PhaseID:   "implementation",
+				LaunchIDs: []string{"launch-implementation"},
+				Sessions:  []flowstore.Session{target},
+			},
+			{
+				PhaseID:   "review",
+				LaunchIDs: []string{"launch-review"},
+				Sessions: []flowstore.Session{{
+					Provider: "claude", SessionID: "other-phase", LaunchID: "launch-review", Status: "running",
+				}},
+			},
+		},
+	}
+	query := Query{
+		FlowID:      "flow-1",
+		Purpose:     Purpose{Role: actions.RolePhaseResume, Stage: StageAuthoritative},
+		PhaseID:     "implementation",
+		SkipSession: SessionIdentity{Provider: "codex", SessionID: "target"},
+	}
+	evaluate := func(record flowstore.FlowRecord) Verdict {
+		return Evaluate(Sources{
+			Flows:    &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record},
+			Sessions: &sessionStoreFixture{t: t, wantFlowID: "flow-1"},
+		}, query)
+	}
+	if verdict := evaluate(record); verdict.Occupied() || verdict.Err() != nil {
+		t.Fatalf("exempt target plus other-phase session verdict = (%v, %q, %v), want free", verdict.Holder(), verdict.PhaseID(), verdict.Err())
+	}
+	record.Phases[0].Sessions = append(record.Phases[0].Sessions, flowstore.Session{
+		Provider: "claude", SessionID: "competitor", LaunchID: "launch-implementation", Status: "running",
+	})
+	if verdict := evaluate(record); verdict.Holder() != HolderPhaseSession || verdict.PhaseID() != "implementation" || verdict.Err() != nil {
+		t.Fatalf("same-phase competitor verdict = (%v, %q, %v), want phase session on implementation", verdict.Holder(), verdict.PhaseID(), verdict.Err())
+	}
+}
+
+func TestReservedAuthoritativePurposesCheckLeaseBeforeStores(t *testing.T) {
+	for _, role := range []actions.FlowLaunchRole{
+		actions.RoleRepair,
+		actions.RoleAutofix,
+		actions.RoleWorktreeAgent,
+		actions.RoleSavedSessionResume,
+	} {
+		t.Run(role.String(), func(t *testing.T) {
+			verdict := Evaluate(Sources{
+				Lease:    &leaseFixture{t: t, wantFlowID: "flow-1", occupied: true},
+				Flows:    panicFlowReader{},
+				Sessions: panicSessionStore{},
+			}, Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: role, Stage: StageReserved},
+			})
+			if verdict.Holder() != HolderPeerLease || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %v), want peer lease", verdict.Holder(), verdict.Err())
+			}
+		})
+	}
+}
+
 func TestAutoAdvanceAuthoritativeRunningPhasePrecedesSession(t *testing.T) {
 	record := flowstore.FlowRecord{
 		FlowID: "flow-1",

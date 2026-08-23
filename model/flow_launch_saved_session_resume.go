@@ -6,6 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowoccupancy"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -167,13 +169,12 @@ func savedSessionFlowLaunchFlowReadCmd(seams flowLaunchSeams, token string, key 
 			event.Err = err.Error()
 			return event
 		}
-		recordSessions, err := seams.ListFlowSessions(flowID)
-		if err != nil {
+		if err := validateSavedSessionResumeFlowRecord(flowID, record); err != nil {
 			event.Err = err.Error()
 			return event
 		}
-		if err := validateSavedSessionResumeFlow(flowID, record, recordSessions); err != nil {
-			event.Err = err.Error()
+		if verdict := flowAuthoritativeOccupancy(seams, flowID, record, actions.RoleSavedSessionResume); verdict.Occupied() {
+			event.Err = savedSessionResumeAuthoritativeOccupancyStatus(verdict)
 			return event
 		}
 		event.Record = record
@@ -181,27 +182,30 @@ func savedSessionFlowLaunchFlowReadCmd(seams flowLaunchSeams, token string, key 
 	}
 }
 
-func validateSavedSessionResumeFlow(flowID string, record flowstore.FlowRecord, stored []sessions.SessionRecord) error {
+func validateSavedSessionResumeFlowRecord(flowID string, record flowstore.FlowRecord) error {
 	if record.FlowID != flowID {
 		return fmt.Errorf("saved session resume expected Flow %q but read %q", flowID, record.FlowID)
 	}
 	if flowstore.FlowClosed(record) {
 		return fmt.Errorf("Flow is closed; reopen it to resume this session")
 	}
-	for _, phase := range record.Phases {
-		if phase.Status == flowstore.PhaseRunning {
-			return fmt.Errorf("a running phase already occupies this Flow")
-		}
-		if phaseHasMatchingLiveSession(phase) {
-			return fmt.Errorf("an active phase session already occupies this Flow")
-		}
-	}
-	for _, saved := range stored {
-		if strings.TrimSpace(saved.SessionID) != "" && sessions.IsActive(saved.Status, saved.EndedAt) {
-			return fmt.Errorf("an active persisted session already occupies this Flow")
-		}
-	}
 	return nil
+}
+
+func savedSessionResumeAuthoritativeOccupancyStatus(verdict flowoccupancy.Verdict) string {
+	if verdict.Err() != nil {
+		return verdict.Err().Error()
+	}
+	switch verdict.Holder() {
+	case flowoccupancy.HolderRunningPhase:
+		return "a running phase already occupies this Flow"
+	case flowoccupancy.HolderPhaseSession:
+		return "an active phase session already occupies this Flow"
+	case flowoccupancy.HolderFlowSession:
+		return "an active persisted session already occupies this Flow"
+	default:
+		return savedSessionResumeFlowOccupiedStatus
+	}
 }
 
 func (m Model) savedSessionFlowLaunchPrepareCmd(
@@ -280,13 +284,12 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(
 			event.Err = tmuxFlowLiveWindowRefusal
 			return event
 		}
-		stored, err := seams.ListFlowSessions(msg.FlowID)
-		if err != nil {
+		if err := validateSavedSessionResumeFlowRecord(msg.FlowID, record); err != nil {
 			event.Err = err.Error()
 			return event
 		}
-		if err := validateSavedSessionResumeFlow(msg.FlowID, record, stored); err != nil {
-			event.Err = err.Error()
+		if verdict := flowReservedOccupancyAfterFreeLease(seams, msg.FlowID, record, actions.RoleSavedSessionResume); verdict.Occupied() {
+			event.Err = savedSessionResumeAuthoritativeOccupancyStatus(verdict)
 			return event
 		}
 		event.Record = record

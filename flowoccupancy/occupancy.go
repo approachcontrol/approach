@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/sessions"
@@ -211,10 +212,10 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	// Matrix section 2.2: prepare stages recheck under the reservation.
 	{Role: actions.RoleTrackedPhase, Stage: StageReserved}:       {sources: readLease, freshness: allowAuthoritative},
 	{Role: actions.RolePhaseResume, Stage: StageReserved}:        {sources: readLease, freshness: allowAuthoritative},
-	{Role: actions.RoleRepair, Stage: StageReserved}:             {sources: readLease, freshness: allowAuthoritative},
-	{Role: actions.RoleAutofix, Stage: StageReserved}:            {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RoleRepair, Stage: StageReserved}:             {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleAutofix, Stage: StageReserved}:            {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
 	{Role: actions.RoleWorktreeAgent, Stage: StageReserved}:      {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
-	{Role: actions.RoleSavedSessionResume, Stage: StageReserved}: {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RoleSavedSessionResume, Stage: StageReserved}: {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
 
 	// Matrix section 2.2 and section 4.2: every installed launch kind has a
 	// terminal-slot backstop.
@@ -399,6 +400,15 @@ type Advisory struct {
 
 // Defer reports whether cached evidence says the caller should wait.
 func (advisory Advisory) Defer() bool { return advisory.verdict.Occupied() }
+
+// Holder names the cached holder that caused the deferral.
+func (advisory Advisory) Holder() Holder { return advisory.verdict.Holder() }
+
+// PhaseID names the cached phase holder, when one was found.
+func (advisory Advisory) PhaseID() string { return advisory.verdict.PhaseID() }
+
+// Err reports a fail-closed cached-source failure.
+func (advisory Advisory) Err() error { return advisory.verdict.Err() }
 
 // FlowReader reads a Flow authoritatively.
 type FlowReader interface {
@@ -598,6 +608,10 @@ func queryFlowCache(cache FlowCache, flowID, phaseID string, purpose Purpose) Ve
 }
 
 func phaseHasLiveSession(phase flowstore.FlowPhase) bool {
+	return phaseHasLiveSessionExcept(phase, SessionIdentity{})
+}
+
+func phaseHasLiveSessionExcept(phase flowstore.FlowPhase, skip SessionIdentity) bool {
 	launches := make(map[string]struct{}, len(phase.LaunchIDs))
 	for _, launchID := range phase.LaunchIDs {
 		if launchID = strings.TrimSpace(launchID); launchID != "" {
@@ -605,7 +619,7 @@ func phaseHasLiveSession(phase flowstore.FlowPhase) bool {
 		}
 	}
 	for _, session := range phase.Sessions {
-		if strings.TrimSpace(session.SessionID) == "" {
+		if strings.TrimSpace(session.SessionID) == "" || skip.matches(session.Provider, session.SessionID) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {
@@ -695,9 +709,13 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 }
 
 func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy, flowID string) Verdict {
-	if query.Purpose.Role != actions.RoleTrackedPhase ||
-		(query.Purpose.Stage != StageAuthoritative && query.Purpose.Stage != StageAutoAdvance) {
+	if query.Purpose.Stage != StageAuthoritative && query.Purpose.Stage != StageAutoAdvance && query.Purpose.Stage != StageReserved {
 		return failedVerdict(errPendingSourceFamily)
+	}
+	if query.Purpose.Stage == StageReserved && policy.sources&readLease != 0 {
+		if verdict := queryLease(occupancy.sources.Lease, flowID); verdict.Occupied() {
+			return verdict
+		}
 	}
 	if policy.sources&readFlowStore == 0 {
 		return failedVerdict(errPendingSourceFamily)
@@ -727,6 +745,72 @@ func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy,
 	if err != nil {
 		return failedVerdict(err)
 	}
+	if query.Purpose.Role == actions.RoleRepair {
+		for _, phase := range flowstore.OrderedPhases(record.Phases) {
+			if phaseHasLiveSession(phase) || phaseHasLiveStoredSession(flowID, phase, records) {
+				return Verdict{holder: HolderPhaseSession, phaseID: phase.PhaseID}
+			}
+		}
+		return Free()
+	}
+	if query.Purpose.Role == actions.RoleAutofix {
+		for _, phase := range record.Phases {
+			if flowstore.PhaseStatusTerminal(string(phase.Status)) {
+				continue
+			}
+			if phaseHasLiveSession(phase) || phaseHasLiveStoredSession(flowID, phase, records) {
+				return Verdict{holder: HolderPhaseSession, phaseID: phase.PhaseID}
+			}
+		}
+		return Free()
+	}
+	if query.Purpose.Role == actions.RoleWorktreeAgent {
+		for _, stored := range records {
+			if strings.TrimSpace(stored.FlowID) == flowID && sessions.IsActive(stored.Status, stored.EndedAt) {
+				return Verdict{holder: HolderFlowSession}
+			}
+		}
+		for _, phase := range record.Phases {
+			if phaseHasLiveSession(phase) || phaseHasLiveStoredSession(flowID, phase, records) {
+				return Verdict{holder: HolderPhaseSession, phaseID: phase.PhaseID}
+			}
+			if phase.Status == flowstore.PhaseRunning {
+				return Verdict{holder: HolderRunningPhase, phaseID: phase.PhaseID}
+			}
+		}
+		return Free()
+	}
+	if query.Purpose.Role == actions.RoleSavedSessionResume {
+		for _, phase := range record.Phases {
+			if phase.Status == flowstore.PhaseRunning {
+				return Verdict{holder: HolderRunningPhase, phaseID: phase.PhaseID}
+			}
+			if phaseHasLiveSession(phase) || phaseHasLiveStoredSession(flowID, phase, records) {
+				return Verdict{holder: HolderPhaseSession, phaseID: phase.PhaseID}
+			}
+		}
+		for _, stored := range records {
+			if strings.TrimSpace(stored.FlowID) == flowID && strings.TrimSpace(stored.SessionID) != "" && sessions.IsActive(stored.Status, stored.EndedAt) {
+				return Verdict{holder: HolderFlowSession}
+			}
+		}
+		return Free()
+	}
+	if query.Purpose.Role == actions.RolePhaseResume {
+		for _, phase := range record.Phases {
+			if phase.PhaseID != query.PhaseID {
+				continue
+			}
+			if phaseHasLiveSessionExcept(phase, query.SkipSession) || phaseHasLiveStoredSessionExcept(flowID, phase, records, query.SkipSession) {
+				return Verdict{holder: HolderPhaseSession, phaseID: phase.PhaseID}
+			}
+			break
+		}
+		return Free()
+	}
+	if query.Purpose.Role != actions.RoleTrackedPhase {
+		return failedVerdict(errPendingSourceFamily)
+	}
 	phaseID := query.PhaseID
 	for _, phase := range record.Phases {
 		if phase.PhaseID != phaseID {
@@ -741,6 +825,10 @@ func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy,
 }
 
 func phaseHasLiveStoredSession(flowID string, phase flowstore.FlowPhase, records []sessions.SessionRecord) bool {
+	return phaseHasLiveStoredSessionExcept(flowID, phase, records, SessionIdentity{})
+}
+
+func phaseHasLiveStoredSessionExcept(flowID string, phase flowstore.FlowPhase, records []sessions.SessionRecord, skip SessionIdentity) bool {
 	launches := make(map[string]struct{}, len(phase.LaunchIDs))
 	for _, launchID := range phase.LaunchIDs {
 		if launchID = strings.TrimSpace(launchID); launchID != "" {
@@ -748,7 +836,7 @@ func phaseHasLiveStoredSession(flowID string, phase flowstore.FlowPhase, records
 		}
 	}
 	for _, record := range records {
-		if record.FlowID != flowID || strings.TrimSpace(record.SessionID) == "" {
+		if record.FlowID != flowID || strings.TrimSpace(record.SessionID) == "" || skip.matches(string(record.Provider), record.SessionID) {
 			continue
 		}
 		if _, ok := launches[strings.TrimSpace(record.LaunchID)]; !ok {
@@ -759,6 +847,12 @@ func phaseHasLiveStoredSession(flowID string, phase flowstore.FlowPhase, records
 		}
 	}
 	return false
+}
+
+func (identity SessionIdentity) matches(provider, sessionID string) bool {
+	return strings.TrimSpace(identity.SessionID) != "" &&
+		agent.Normalize(provider) == agent.Normalize(identity.Provider) &&
+		sessionID == identity.SessionID
 }
 
 func queryLease(inspector LeaseInspector, flowID string) Verdict {
