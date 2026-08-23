@@ -1398,6 +1398,68 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 	}
 }
 
+func TestModel_AutoMergeLaunchesReadyMergeIndependentOfAutoMode(t *testing.T) {
+	record := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
+		"autoreview": flowstore.PhaseCompleted,
+		"merge":      flowstore.PhaseReady,
+	})
+	record.AutoMode = false
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand:  "codex",
+		FlowAutoMerge: true,
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			launched := record
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+				}
+			}
+			return launched, nil
+		},
+	})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{record})
+	launches := flowEmbeddedLaunchesFromCommand(t, m, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("auto-merge produced %d launches, want 1", len(launches))
+	}
+	if !launchUpdate.AutoLaunch || !launchUpdate.AutoMerge || !launchUpdate.GlobalAutoMerge || launchUpdate.PhaseID != "merge" {
+		t.Fatalf("auto-merge launch update = %#v", launchUpdate)
+	}
+	if !launches[0].LaunchContext.Headless || !launches[0].LaunchContext.FlowAutoLaunch {
+		t.Fatalf("auto-merge context = %#v, want headless tracked auto launch", launches[0].LaunchContext)
+	}
+}
+
+func TestModel_AutoMergeOverridePrecedence(t *testing.T) {
+	base := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{"merge": flowstore.PhaseReady})
+	base.AutoMode = false
+	for _, tc := range []struct {
+		name       string
+		global     bool
+		override   *bool
+		wantLaunch bool
+	}{
+		{name: "inherit global off", global: false},
+		{name: "inherit global on", global: true, wantLaunch: true},
+		{name: "override on", global: false, override: testBoolPointer(true), wantLaunch: true},
+		{name: "override off", global: true, override: testBoolPointer(false)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := base
+			record.AutoMerge = tc.override
+			m := newTestModel(testRepos(), model.Options{AgentCommand: "codex", FlowAutoMerge: tc.global})
+			m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{record})
+			if got := cmd != nil; got != tc.wantLaunch {
+				t.Fatalf("launch command = %v, want %v", got, tc.wantLaunch)
+			}
+		})
+	}
+}
+
+func testBoolPointer(value bool) *bool { return &value }
+
 func TestModel_FlowAutoLaunchUsesStampedCrossProviderSettings(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]flowstore.PhaseStatus{
 		"plan": flowstore.PhaseCompleted, "plan-review": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,

@@ -1206,6 +1206,26 @@ func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T)
 	}
 }
 
+func TestFlowControlsShowAutoMergeOverrideGlobalAndEffectiveValues(t *testing.T) {
+	off := false
+	for _, tc := range []struct {
+		name     string
+		override *bool
+		global   bool
+		want     string
+	}{
+		{name: "inherit", global: true, want: "G:i ctrl+g:on effective:on"},
+		{name: "explicit off", override: &off, global: true, want: "G:off ctrl+g:on effective:off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := flowAutoModeShortcutHint(false, tc.override, tc.global)
+			if !strings.Contains(hint.Label, tc.want) {
+				t.Fatalf("Flow mode label = %q, want %q", hint.Label, tc.want)
+			}
+		})
+	}
+}
+
 func TestStatusBar_ActiveFlowsModeShowsFlowIDCopyHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:                    240,

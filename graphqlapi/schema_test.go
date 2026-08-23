@@ -55,6 +55,7 @@ func fixtureTime(offset time.Duration) time.Time {
 func fixtureSnapshot() *snapshot {
 	created := fixtureTime(0)
 	updated := fixtureTime(time.Hour)
+	autoMerge := false
 	return buildSnapshot(
 		staticRepos(
 			scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha"},
@@ -74,6 +75,7 @@ func fixtureSnapshot() *snapshot {
 				PresetName:   "default",
 				PlanID:       "plan-1",
 				AutoMode:     true,
+				AutoMerge:    &autoMerge,
 				Issue:        flowstore.Issue{Provider: "github", Number: 12, URL: "https://example.test/issues/12"},
 				PR:           flowstore.PullRequest{Provider: "github", Number: 34, URL: "https://example.test/pull/34", HeadBranch: "flow/api", BaseBranch: "main", Status: "open"},
 				Merge:        flowstore.Merge{Status: flowstore.MergePending},
@@ -276,6 +278,7 @@ func TestSchemaCurrentPhase(t *testing.T) {
 
 func TestSchemaNullabilityMatrix(t *testing.T) {
 	mergedAt := fixtureTime(2 * time.Hour)
+	autoMerge := false
 	snap := buildSnapshot(staticRepos(), staticFlows(
 		flowstore.FlowRecord{
 			FlowID:   "empty",
@@ -284,12 +287,13 @@ func TestSchemaNullabilityMatrix(t *testing.T) {
 			Phases:   []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}},
 		},
 		flowstore.FlowRecord{
-			FlowID:   "populated",
-			RepoPath: "/repos/alpha",
-			Issue:    flowstore.Issue{Provider: "github", Number: 7, URL: "https://example.test/i/7"},
-			PR:       flowstore.PullRequest{Provider: "github", Number: 9, URL: "https://example.test/p/9", HeadBranch: "head", BaseBranch: "base", Status: "merged"},
-			Merge:    flowstore.Merge{Status: flowstore.MergeMerged, Commit: "deadbeef", MergedAt: &mergedAt},
-			Phases:   []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseCompleted}},
+			FlowID:    "populated",
+			RepoPath:  "/repos/alpha",
+			AutoMerge: &autoMerge,
+			Issue:     flowstore.Issue{Provider: "github", Number: 7, URL: "https://example.test/i/7"},
+			PR:        flowstore.PullRequest{Provider: "github", Number: 9, URL: "https://example.test/p/9", HeadBranch: "head", BaseBranch: "base", Status: "merged"},
+			Merge:     flowstore.Merge{Status: flowstore.MergeMerged, Commit: "deadbeef", MergedAt: &mergedAt},
+			Phases:    []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseCompleted}},
 		},
 		flowstore.FlowRecord{
 			FlowID:   "merge-commit-only",
@@ -304,11 +308,12 @@ func TestSchemaNullabilityMatrix(t *testing.T) {
 
 	result := executeQuery(t, snap, `{
 		empty: flow(id: "empty") {
-			instructions worktreePath branch baseRef commit presetName planId
+			instructions worktreePath branch baseRef commit presetName planId autoMerge
 			issue { provider } pullRequest { provider } merge { status }
 			phases { dependsOn outcome }
 		}
 		populated: flow(id: "populated") {
+			autoMerge
 			issue { provider number url }
 			pullRequest { provider number url headBranch baseBranch status }
 			merge { status commit mergedAt }
@@ -317,13 +322,13 @@ func TestSchemaNullabilityMatrix(t *testing.T) {
 	}`)
 	data := mustSucceed(t, result)
 
-	wantEmpty := `{"baseRef":null,"branch":null,"commit":null,"instructions":null,"issue":null,"merge":null,` +
+	wantEmpty := `{"autoMerge":null,"baseRef":null,"branch":null,"commit":null,"instructions":null,"issue":null,"merge":null,` +
 		`"phases":[{"dependsOn":[],"outcome":null}],"planId":null,"presetName":null,"pullRequest":null,"worktreePath":null}`
 	if got := jsonOf(t, data["empty"]); got != wantEmpty {
 		t.Errorf("empty flow = %s\nwant %s", got, wantEmpty)
 	}
 
-	wantPopulated := `{"issue":{"number":7,"provider":"github","url":"https://example.test/i/7"},` +
+	wantPopulated := `{"autoMerge":false,"issue":{"number":7,"provider":"github","url":"https://example.test/i/7"},` +
 		`"merge":{"commit":"deadbeef","mergedAt":"2026-08-11T14:00:00Z","status":"merged"},` +
 		`"pullRequest":{"baseBranch":"base","headBranch":"head","number":9,"provider":"github","status":"merged","url":"https://example.test/p/9"}}`
 	if got := jsonOf(t, data["populated"]); got != wantPopulated {

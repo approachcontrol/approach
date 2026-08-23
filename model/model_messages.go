@@ -370,6 +370,23 @@ type FlowAutoModeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowAutoMergeSetMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+	Enabled  *bool
+}
+
+type FlowAutoMergeSetFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Err      string
+}
+
+type GlobalAutoMergeSetMsg struct{ Enabled bool }
+
+type GlobalAutoMergeSetFailedMsg struct{ Err string }
+
 type FlowHeadlessSetMsg struct {
 	RepoPath        string
 	FlowID          string
@@ -1654,6 +1671,50 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 	return m.setStatus(statusOther, errText)
 }
 
+func (m Model) handleFlowAutoMergeSet(msg FlowAutoMergeSetMsg) Model {
+	if msg.FlowID == "" || msg.Flow.FlowID != msg.FlowID ||
+		(!m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath)) ||
+		!sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
+		return m
+	}
+	return m.replaceFlowRecord(msg.Flow, flowMutationAutoMerge, flowAutoMergeOverlay(msg.Enabled))
+}
+
+func (m Model) handleFlowAutoMergeSetFailed(msg FlowAutoMergeSetFailedMsg) Model {
+	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to set Flow auto-merge override"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleGlobalAutoMergeSet(msg GlobalAutoMergeSetMsg) (Model, tea.Cmd) {
+	m.autoMerge = msg.Enabled
+	m = m.setStatus(statusOther, fmt.Sprintf("Global auto-merge: %s", onOff(msg.Enabled)))
+	if msg.Enabled {
+		return m.startAutoAdvanceFetch()
+	}
+	return m, nil
+}
+
+func (m Model) handleGlobalAutoMergeSetFailed(msg GlobalAutoMergeSetFailedMsg) Model {
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to save global auto-merge setting"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
+}
+
 func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
 	// Toggles queued behind this write may have been entered from a different
 	// surface. Honour the latest intent's scope so a result that satisfies it is
@@ -1915,6 +1976,7 @@ const (
 	flowMutationWholeRecord              flowMutationField = "whole-record"
 	flowMutationHeadless                 flowMutationField = "headless"
 	flowMutationAutoMode                 flowMutationField = "auto-mode"
+	flowMutationAutoMerge                flowMutationField = "auto-merge"
 	flowMutationPhaseAgentSettingsPrefix                   = "phase-agent-settings:"
 )
 
@@ -1951,6 +2013,18 @@ func flowHeadlessOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.Flow
 func flowAutoModeOverlay(enabled bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
 	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
 		record.AutoMode = enabled
+		return record
+	}
+}
+
+func flowAutoMergeOverlay(enabled *bool) func(flowstore.FlowRecord) flowstore.FlowRecord {
+	return func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		if enabled == nil {
+			record.AutoMerge = nil
+			return record
+		}
+		value := *enabled
+		record.AutoMerge = &value
 		return record
 	}
 }

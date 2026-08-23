@@ -111,7 +111,7 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	cmds = append(cmds, progressionCmd)
 	m.autoAdvanceSnapshot = current
 
-	statuses := autoAdvanceStatusEvents(previous, current)
+	statuses := autoAdvanceStatusEventsWithAutoMerge(previous, current, m.autoMerge)
 	if len(statuses) > 0 {
 		var statusCmd tea.Cmd
 		m, statusCmd = m.setAutoAdvanceStatus(statuses[len(statuses)-1])
@@ -300,6 +300,10 @@ func autoAdvanceDisplayRecordRefreshesBaseline(previous, current flowstore.FlowR
 // announcement is not among them: it is emitted by the launch lifecycle's read
 // success branch, which is the hop that knows preflight passed.
 func autoAdvanceStatusEvents(previous, current []flowstore.FlowRecord) []string {
+	return autoAdvanceStatusEventsWithAutoMerge(previous, current, false)
+}
+
+func autoAdvanceStatusEventsWithAutoMerge(previous, current []flowstore.FlowRecord, globalAutoMerge bool) []string {
 	var events []string
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previous))
 	for _, record := range previous {
@@ -330,7 +334,7 @@ func autoAdvanceStatusEvents(previous, current []flowstore.FlowRecord) []string 
 			switch {
 			case phase.Status == flowstore.PhaseNeedsAttention && previousPhase.Status != flowstore.PhaseNeedsAttention:
 				events = append(events, "Flow "+flowTitleForStatus(record)+": needs attention")
-			case flowstore.SemanticKind(phase) == flowstore.KindMerge && phase.Status == flowstore.PhaseReady && previousPhase.Status != flowstore.PhaseReady:
+			case flowstore.SemanticKind(phase) == flowstore.KindMerge && phase.Status == flowstore.PhaseReady && previousPhase.Status != flowstore.PhaseReady && !flowstore.EffectiveAutoMerge(record, globalAutoMerge):
 				events = append(events, "Flow "+flowTitleForStatus(record)+": ready to merge")
 			}
 		}

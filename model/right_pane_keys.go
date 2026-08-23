@@ -155,6 +155,9 @@ func (m Model) handleFlowSurfacePaneKey(key string) (tea.Model, tea.Cmd, bool) {
 	case "a":
 		next, cmd := m.handleToggleFlowAutoMode()
 		return next, cmd, true
+	case "G":
+		next, cmd := m.handleCycleFlowAutoMerge()
+		return next, cmd, true
 	case "c":
 		next, cmd := m.handleCopyFlowID()
 		return next, cmd, true
@@ -251,6 +254,10 @@ func (m Model) handleRightPaneSharedKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleToggleEpicProgression()
 		}
 		return m.handleOpenAgent()
+	case "G":
+		if m.flowSurfaceVisible() {
+			return m.handleCycleFlowAutoMerge()
+		}
 	case "d":
 		return m.handleDelete()
 	case "u":

@@ -66,6 +66,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 
+	if !m.searchActive && m.listInputEligible() && key == "ctrl+g" {
+		return m, m.saveGlobalAutoMergeCmd(!m.autoMerge)
+	}
+
 	m = m.clearAnyStatus()
 
 	if !m.searchActive && key == "ctrl+r" {
@@ -199,6 +203,10 @@ func isPaneBackKey(key string) bool {
 
 func (m Model) contentListInputEligible() bool {
 	return m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusList
+}
+
+func (m Model) listInputEligible() bool {
+	return m.activePane == ui.PaneRepos || m.contentListInputEligible()
 }
 
 func isWorktreeCreateInput(view modal.View) bool {
@@ -1161,6 +1169,54 @@ func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, m.setFlowAutoModeCmd(repoPath, record.FlowID, !record.AutoMode)
+}
+
+func (m Model) saveGlobalAutoMergeCmd(enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.saveFlowAutoMerge(enabled); err != nil {
+			return GlobalAutoMergeSetFailedMsg{Err: fmt.Sprintf("failed to save global auto-merge setting: %v", err)}
+		}
+		return GlobalAutoMergeSetMsg{Enabled: enabled}
+	}
+}
+
+func (m Model) handleCycleFlowAutoMerge() (tea.Model, tea.Cmd) {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" || flowstore.FlowClosed(record) {
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return m, nil
+	}
+	var next *bool
+	switch {
+	case record.AutoMerge == nil:
+		next = autoMergeBoolPointer(true)
+	case *record.AutoMerge:
+		next = autoMergeBoolPointer(false)
+	default:
+		next = nil
+	}
+	return m, m.setFlowAutoMergeCmd(repoPath, record.FlowID, next)
+}
+
+func autoMergeBoolPointer(value bool) *bool { return &value }
+
+func (m Model) setFlowAutoMergeCmd(repoPath, flowID string, enabled *bool) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowAutoMerge(flowstore.AutoMergeUpdate{FlowID: flowID, Enabled: enabled})
+		if err != nil {
+			return FlowAutoMergeSetFailedMsg{RepoPath: repoPath, FlowID: flowID, Err: fmt.Sprintf("failed to set Flow auto-merge override: %v", err)}
+		}
+		return FlowAutoMergeSetMsg{RepoPath: repoPath, FlowID: flowID, Flow: flow, Enabled: enabled}
+	}
 }
 
 func (m Model) setFlowAutoModeCmd(repoPath, flowID string, enabled bool) tea.Cmd {

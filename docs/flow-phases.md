@@ -263,6 +263,18 @@ phase back to `ready` also does not arm the drain. Completing an
 `autoreview`-kind phase may launch a custom non-merge successor; in the default
 preset it still stops because the only successor is merge-kind.
 
+Auto-merge is level-triggered and independent of AutoMode. On every successful
+unscoped poll, Approach considers each ready semantic merge phase whose Flow's
+effective policy is on. The effective policy is the nullable Flow override
+when present and `[flow].auto_merge` otherwise, with global default off. This
+also admits merge phases that were ready before startup or before a toggle.
+The tracked launch remains headless and uses the same preparation, dependency,
+lease, attempt, running-phase, terminal, and live-session fences. The final
+launch-ID write combines the caller's global snapshot with the current stored
+override, so changing `G` while a request is in flight can make that request
+outdated without recording it. Ordinary AutoMode continues to exclude every
+merge-kind phase.
+
 ## Derived Flow status
 
 The Flow-level `status` field is always derived, in priority order: closed

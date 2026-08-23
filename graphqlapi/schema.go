@@ -359,6 +359,15 @@ func newSchema() (graphql.Schema, error) {
 					Type:    graphql.NewNonNull(graphql.Boolean),
 					Resolve: flowResolver(func(flow *Flow) (any, error) { return flow.Record.AutoMode, nil }),
 				},
+				"autoMerge": &graphql.Field{
+					Type: graphql.Boolean,
+					Resolve: flowResolver(func(flow *Flow) (any, error) {
+						if flow.Record.AutoMerge == nil {
+							return nil, nil
+						}
+						return *flow.Record.AutoMerge, nil
+					}),
+				},
 				"bead": &graphql.Field{
 					Type:        beadLinkType,
 					Description: "The Flow's persisted Beads linkage; null when no Bead is linked.",

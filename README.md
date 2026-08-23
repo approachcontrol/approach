@@ -77,6 +77,7 @@ right. The essentials:
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |
 | `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane |
 | `ctrl+a` | Toggle Active Flows (all repos) |
+| `ctrl+g` | Toggle the persisted global auto-merge policy after the config write succeeds |
 | `ctrl+p` | Toggle PR Babysitter for live mergeability and checks across PRs awaiting merge |
 | `/` | Fuzzy filter the active pane |
 | `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
@@ -85,6 +86,7 @@ right. The essentials:
 | `f5` | Rescan repositories and refresh both stored content panes; the visible takeover refreshes independently too |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent; on a selected epic, toggle its auto-progression; on a Flow, toggle phase auto mode |
+| `G` | On any Flow surface, cycle that Flow's auto-merge override through inherit, on, and off |
 | `n` | Create a worktree, branch, Flow, or repo (context-dependent) |
 | `N` | Create a worktree and launch the agent in it |
 | `enter` | Page a diff, transcript, or selected bead detail, or expand phases |
@@ -221,6 +223,8 @@ sessions, and tracks longer tasks as Flows: persisted phase graphs
 agents in embedded terminals. Each Flow persists its own default-on
 headless/interactive preference for manual phase and repair launches; automatic
 phase launches remain always headless.
+Automatic merge launch is a separate, default-off policy. `[flow].auto_merge`
+sets the global value, and each Flow can inherit or override it with `G`.
 
 Agents run in Approach's embedded terminal by default. Setting
 `[launch].backend = "tmux"` opts into tmux mode, where each repo gets one tmux

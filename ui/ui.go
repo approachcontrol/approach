@@ -436,6 +436,8 @@ type FlowParams struct {
 	SelectedFlowPhaseID            string
 	FlowHeadless                   bool
 	FlowAutoModeSelected           bool
+	FlowAutoMergeSelected          *bool
+	GlobalAutoMerge                bool
 	FlowIssueTargetSelected        bool
 	FlowPRTargetSelected           bool
 	FlowAgentLabel                 string
@@ -738,12 +740,14 @@ func renderApplication(p RenderParams) string {
 	flowPlanLinked := false
 	flowWorktreePathSelected := false
 	flowAutoModeSelected := false
+	var flowAutoMergeSelected *bool
 	flowIssueTargetSelected := false
 	flowPRTargetSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
 		flowWorktreePathSelected = strings.TrimSpace(p.Flows[p.FlowSelected].WorktreePath) != ""
 		flowAutoModeSelected = p.FlowAutoModeSelected
+		flowAutoMergeSelected = p.FlowAutoMergeSelected
 		flowIssueTargetSelected = p.FlowIssueTargetSelected
 		flowPRTargetSelected = p.FlowPRTargetSelected
 	}
@@ -757,6 +761,7 @@ func renderApplication(p RenderParams) string {
 		flowDeletableSelected = false
 		flowWorktreePathSelected = false
 		flowAutoModeSelected = false
+		flowAutoMergeSelected = nil
 		flowIssueTargetSelected = false
 		flowPRTargetSelected = false
 	}
@@ -811,6 +816,8 @@ func renderApplication(p RenderParams) string {
 		FlowPRTargetSelected:         flowPRTargetSelected,
 		FlowHeadless:                 p.FlowHeadless,
 		FlowAutoModeSelected:         flowAutoModeSelected,
+		FlowAutoMergeSelected:        flowAutoMergeSelected,
+		GlobalAutoMerge:              p.GlobalAutoMerge,
 		FlowAgentLabel:               p.FlowAgentLabel,
 		FlowModel:                    p.FlowModel,
 		FlowReasoningEffort:          p.FlowReasoningEffort,
@@ -1646,6 +1653,8 @@ type statusBarParams struct {
 	FlowPRTargetSelected         bool
 	FlowHeadless                 bool
 	FlowAutoModeSelected         bool
+	FlowAutoMergeSelected        *bool
+	GlobalAutoMerge              bool
 	FlowAgentLabel               string
 	FlowModel                    string
 	FlowReasoningEffort          string
@@ -2180,11 +2189,27 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	return sections
 }
 
-func flowAutoModeShortcutHint(enabled bool) shortcutHint {
-	if enabled {
-		return shortcutHint{Key: "a", Label: "auto: on", SuccessSuffix: "on"}
+func flowAutoModeShortcutHint(enabled bool, autoMerge *bool, globalAutoMerge bool) shortcutHint {
+	override := "i"
+	if autoMerge != nil {
+		override = onOffLabel(*autoMerge)
 	}
-	return shortcutHint{Key: "a", Label: "auto: off"}
+	effective := globalAutoMerge
+	if autoMerge != nil {
+		effective = *autoMerge
+	}
+	suffix := " G:" + override + " ctrl+g:" + onOffLabel(globalAutoMerge) + " effective:" + onOffLabel(effective)
+	if enabled {
+		return shortcutHint{Key: "a", Label: "auto: on" + suffix, SuccessSuffix: "on"}
+	}
+	return shortcutHint{Key: "a", Label: "auto: off" + suffix}
+}
+
+func onOffLabel(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func flowShortcutSections(sp statusBarParams, actions, navigation, global []shortcutHint) []shortcutSection {
@@ -2258,7 +2283,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			// It lives in flowModeControls, so suppressing it leaves h behind
 			// and the section survives.
 			if sp.FlowCloseActionSelected != FlowCloseActionReopen {
-				flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
+				flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected, sp.FlowAutoMergeSelected, sp.GlobalAutoMerge))
 			}
 		}
 	}
@@ -2508,6 +2533,7 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	if sp.EmbeddedTerminalActive {
 		return renderGenericFooterShortcuts(sp, sections)
 	}
+	sections = compactFlowAutoMergeFooter(sections)
 	full := "  " + renderFooterHintList(flowFooterSectionOrder(sections))
 	if lipgloss.Width(full) <= sp.Width {
 		return full
@@ -2577,6 +2603,25 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	}
 	candidate := "  " + strings.Join(appendParts(arrow, coreActions), " ")
 	return ansi.Truncate(candidate, sp.Width, "")
+}
+
+func compactFlowAutoMergeFooter(sections []shortcutSection) []shortcutSection {
+	sections = slices.Clone(sections)
+	for sectionIndex := range sections {
+		sections[sectionIndex].Hints = slices.Clone(sections[sectionIndex].Hints)
+		for hintIndex := range sections[sectionIndex].Hints {
+			hint := &sections[sectionIndex].Hints[hintIndex]
+			if hint.Key != "a" {
+				continue
+			}
+			if strings.HasPrefix(hint.Label, "auto: on") {
+				hint.Label = "auto: on"
+			} else if strings.HasPrefix(hint.Label, "auto: off") {
+				hint.Label = "auto: off"
+			}
+		}
+	}
+	return sections
 }
 
 func renderBranchFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {

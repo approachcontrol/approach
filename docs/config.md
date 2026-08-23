@@ -33,6 +33,7 @@ exist:
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | Flow phase graph preset | `approach flow create --preset` | `[flow].preset` | `default` |
+| Automatic merge-phase launch | none | `[flow].auto_merge` | `false` |
 | TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1`; a development build substitutes `approach-dev` (see [`[sessions]`](#sessions)) |
 | Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
@@ -82,6 +83,7 @@ autoreview = "Autoreview {pr_url}; use ship when fixes require commits or pushes
 
 [flow]
 preset = "research"
+auto_merge = false
 
 [[flow.presets]]
 name = "research"
@@ -354,11 +356,12 @@ either way.
 
 ### `[flow]`
 
-Configures the default phase graph for newly created Flows.
+Configures Flow defaults and the global automatic merge-phase policy.
 
 | Key | Type | Description |
 |-----|------|-------------|
 | `preset` | string | Optional preset name used by TUI Flow creation and `approach flow create` when `--preset` is omitted. Empty or `default` uses the built-in graph. |
+| `auto_merge` | boolean | Launch a ready semantic merge phase headlessly when the Flow has no explicit override. Missing values are `false`. `ctrl+g` persists this value before changing the running policy. |
 | `presets` | array of tables | Custom phase graph presets. User presets cannot be named `default`, and duplicate normalized names are startup-fatal. |
 
 Each `[[flow.presets]]` table requires `name` and one or more

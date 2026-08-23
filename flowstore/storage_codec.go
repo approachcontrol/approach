@@ -49,6 +49,7 @@ type storedFlowDTO struct {
 	// default_seed golden is marshalled from.
 	Closed                Closure               `json:"closed,omitzero"`
 	AutoMode              bool                  `json:"auto_mode,omitempty"`
+	AutoMerge             *bool                 `json:"auto_merge,omitempty"`
 	Headless              bool                  `json:"headless"`
 	Phases                []FlowPhase           `json:"phases"`
 	ProgressionClaim      bool                  `json:"progression_claim,omitempty"`
@@ -95,6 +96,7 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 		Merge:                 record.Merge,
 		Closed:                record.Closed,
 		AutoMode:              record.AutoMode,
+		AutoMerge:             cloneBoolPointer(record.AutoMerge),
 		Headless:              record.Headless,
 		Phases:                record.Phases,
 		ProgressionClaim:      record.ProgressionClaim,
@@ -133,6 +135,7 @@ func (dto storedFlowDTO) record() FlowRecord {
 		Merge:                 dto.Merge,
 		Closed:                dto.Closed,
 		AutoMode:              dto.AutoMode,
+		AutoMerge:             cloneBoolPointer(dto.AutoMerge),
 		Headless:              dto.Headless,
 		Phases:                dto.Phases,
 		ProgressionClaim:      dto.ProgressionClaim,

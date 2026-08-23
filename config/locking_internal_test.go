@@ -56,22 +56,23 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	})
 
 	previousAcquire := acquireConfigFileLock
-	attempts := make(chan configLockAttempt, 5)
+	attempts := make(chan configLockAttempt, 6)
 	acquireConfigFileLock = func(path, label string, timeout time.Duration) (func(), error) {
 		attempts <- configLockAttempt{path: path, label: label}
 		return artifacts.AcquireFileLock(path, label, timeout)
 	}
 	t.Cleanup(func() { acquireConfigFileLock = previousAcquire })
-	results := make(chan error, 5)
+	results := make(chan error, 6)
 	go func() { results <- SaveAgentCommand("codex", options...) }()
 	go func() { results <- SaveAgentModel("codex", "gpt-5.5", options...) }()
 	go func() { results <- SaveAgentReasoningEffort("claude", "max", options...) }()
+	go func() { results <- SaveFlowAutoMerge(true, options...) }()
 	go func() {
 		results <- SavePromptTemplate("flow_prompts", "implementation", "new implementation prompt", options...)
 	}()
 	go func() { results <- ResetPromptTemplate("agent", "plan_prompt", options...) }()
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		select {
 		case attempt := <-attempts:
 			if attempt.path != lockPath || attempt.label != wantLabel {
@@ -87,7 +88,7 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	}
 	release()
 	released = true
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		select {
 		case err := <-results:
 			if err != nil {

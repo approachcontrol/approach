@@ -16,10 +16,12 @@ import (
 )
 
 type flowPhaseLaunchRequest struct {
-	Record     flowstore.FlowRecord
-	Phase      flowstore.FlowPhase
-	AutoLaunch bool
-	Headless   bool
+	Record          flowstore.FlowRecord
+	Phase           flowstore.FlowPhase
+	AutoLaunch      bool
+	AutoMerge       bool
+	GlobalAutoMerge bool
+	Headless        bool
 }
 
 type flowPhaseLaunchPreparedRequest struct {
@@ -334,10 +336,12 @@ func (l flowLaunchPreparation) prepare(req flowPhaseLaunchPreparedRequest) (flow
 		planBody = body
 	}
 	updated, err := l.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-		FlowID:     req.Record.FlowID,
-		PhaseID:    req.Phase.PhaseID,
-		LaunchID:   req.LaunchID,
-		AutoLaunch: req.AutoLaunch,
+		FlowID:          req.Record.FlowID,
+		PhaseID:         req.Phase.PhaseID,
+		LaunchID:        req.LaunchID,
+		AutoLaunch:      req.AutoLaunch,
+		AutoMerge:       req.AutoMerge,
+		GlobalAutoMerge: req.GlobalAutoMerge,
 	})
 	if err != nil {
 		if req.AutoLaunch && flowstore.IsAutoLaunchOutdated(err) {
@@ -493,7 +497,49 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 		m = m.consumeRepairAutoDrainMarkers(currentFlows, request)
 	}
 	m, cmd := m.prepareAutoAdvanceDrainLaunches(currentFlows)
-	return m, cmd, nil
+	m, mergeCmd := m.prepareAutoMergeLaunches(currentFlows)
+	return m, batchNonNil(cmd, mergeCmd), nil
+}
+
+func (m Model) prepareAutoMergeLaunches(records []flowstore.FlowRecord) (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	for _, record := range records {
+		if !flowstore.EffectiveAutoMerge(record, m.autoMerge) || flowstore.FlowClosed(record) ||
+			flowstore.PreparationLaunchBlocked(record) || m.flowAutoAdvanceOccupied(record) {
+			continue
+		}
+		phase, ok := readyMergePhase(record)
+		if !ok || phaseHasMatchingLiveSession(phase) {
+			continue
+		}
+		next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
+			Kind:            flowLaunchKindAutoPhase,
+			FlowID:          record.FlowID,
+			PhaseID:         phase.PhaseID,
+			FlowTitle:       flowTitleForStatus(record),
+			Origin:          flowLaunchOriginAutoMode,
+			AutoMerge:       true,
+			GlobalAutoMerge: m.autoMerge,
+		})
+		m = next
+		if admitted {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return m, batchNonNil(cmds...)
+}
+
+func readyMergePhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
+	if flowstore.FlowClosed(record) || flowstore.PreparationLaunchBlocked(record) {
+		return flowstore.FlowPhase{}, false
+	}
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if flowstore.SemanticKind(phase) == flowstore.KindMerge && phase.Status == flowstore.PhaseReady &&
+			flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
 }
 
 func (m Model) armRepairAutoDrain(flowID string) Model {

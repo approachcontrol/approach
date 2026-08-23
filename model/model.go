@@ -170,7 +170,10 @@ type Model struct {
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	setFlowAutoMerge          func(flowstore.AutoMergeUpdate) (flowstore.FlowRecord, error)
 	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
+	autoMerge                 bool
+	saveFlowAutoMerge         func(bool) error
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
 	lookupPRStatus            func(context.Context, int, string) (actions.PullRequestStatus, error)
 	markFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
@@ -371,6 +374,7 @@ type Options struct {
 	SetFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	SetFlowAutoMerge          func(flowstore.AutoMergeUpdate) (flowstore.FlowRecord, error)
 	SetFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	LookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
 	LookupPRStatus            func(context.Context, int, string) (actions.PullRequestStatus, error)
@@ -392,6 +396,8 @@ type Options struct {
 	SaveAgentCommand          func(string) error
 	SaveAgentModel            func(string, string) error
 	SaveAgentReasoningEffort  func(string, string) error
+	FlowAutoMerge             bool
+	SaveFlowAutoMerge         func(bool) error
 	SavePromptTemplate        func(section, key, value string) error
 	ResetPromptTemplate       func(section, key string) error
 	LaunchTerminal            func(path string) (actions.TerminalLaunchSpec, error)
@@ -528,6 +534,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgentModel := opts.SaveAgentModel
 	if saveAgentModel == nil {
 		saveAgentModel = func(string, string) error { return nil }
+	}
+	saveFlowAutoMerge := opts.SaveFlowAutoMerge
+	if saveFlowAutoMerge == nil {
+		saveFlowAutoMerge = func(bool) error { return nil }
 	}
 	savePromptTemplate := opts.SavePromptTemplate
 	if savePromptTemplate == nil {
@@ -703,6 +713,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.SetAutoMode(update)
+		}
+	}
+	setFlowAutoMerge := opts.SetFlowAutoMerge
+	if setFlowAutoMerge == nil {
+		setFlowAutoMerge = func(update flowstore.AutoMergeUpdate) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetAutoMerge(update)
 		}
 	}
 	setFlowHeadless := opts.SetFlowHeadless
@@ -1064,7 +1084,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		setFlowPhaseAgentSettings: setFlowPhaseAgentSettings,
 		launchSeams:               launchSeams,
 		setFlowAutoMode:           setFlowAutoMode,
+		setFlowAutoMerge:          setFlowAutoMerge,
 		setFlowHeadless:           setFlowHeadless,
+		autoMerge:                 opts.FlowAutoMerge,
+		saveFlowAutoMerge:         saveFlowAutoMerge,
 		lookupPRStatus:            lookupPRStatus,
 		lookupPRMerge:             lookupPRMerge,
 		markFlowManualMerge:       markFlowManualMerge,
@@ -1486,8 +1509,10 @@ func (m Model) View() string {
 		flows, flowSelected, flowScroll = m.prBabysitterFlows.View()
 	}
 	flowAutoModeSelected := false
+	var flowAutoMergeSelected *bool
 	if flowSelected >= 0 && flowSelected < len(flows) {
 		flowAutoModeSelected = flows[flowSelected].AutoMode
+		flowAutoMergeSelected = flows[flowSelected].AutoMerge
 	}
 	_, flowIssueTargetSelected := m.selectedFlowIssue()
 	_, flowPRTargetSelected := m.selectedFlowPR()
@@ -1635,6 +1660,8 @@ func (m Model) View() string {
 			SelectedFlowPhaseID:            m.currentSelectedFlowPhaseID(),
 			FlowHeadless:                   m.selectedFlowHeadless(),
 			FlowAutoModeSelected:           flowAutoModeSelected,
+			FlowAutoMergeSelected:          flowAutoMergeSelected,
+			GlobalAutoMerge:                m.autoMerge,
 			FlowIssueTargetSelected:        flowIssueTargetSelected,
 			FlowPRTargetSelected:           flowPRTargetSelected,
 			FlowAgentLabel:                 m.flowAgentShortcutLabel(),
@@ -2266,6 +2293,14 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:
 		return m.handleFlowAutoModeSetFailed(msg), nil
+	case FlowAutoMergeSetMsg:
+		return m.handleFlowAutoMergeSet(msg), nil
+	case FlowAutoMergeSetFailedMsg:
+		return m.handleFlowAutoMergeSetFailed(msg), nil
+	case GlobalAutoMergeSetMsg:
+		return m.handleGlobalAutoMergeSet(msg)
+	case GlobalAutoMergeSetFailedMsg:
+		return m.handleGlobalAutoMergeSetFailed(msg), nil
 	case FlowHeadlessSetMsg:
 		return m.handleFlowHeadlessSet(msg)
 	case FlowHeadlessSetFailedMsg:

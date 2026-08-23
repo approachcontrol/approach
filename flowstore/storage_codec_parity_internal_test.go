@@ -15,6 +15,7 @@ func populatedFlowRecord() FlowRecord {
 	mergedAt := updated.Add(time.Minute)
 	closedAt := updated.Add(2 * time.Minute)
 	preparedAt := created.Add(30 * time.Minute)
+	autoMerge := true
 	return FlowRecord{
 		SchemaVersion: schemaVersion,
 		FlowID:        "20240304-050607-parity",
@@ -35,6 +36,7 @@ func populatedFlowRecord() FlowRecord {
 		Merge:         Merge{Status: MergeMerged, Commit: "def456", MergedAt: &mergedAt},
 		Closed:        Closure{Reason: "superseded", ClosedAt: &closedAt},
 		AutoMode:      true,
+		AutoMerge:     &autoMerge,
 		Headless:      true,
 		Phases: []FlowPhase{{
 			PhaseID: "implementation", ParentPhaseID: "plan", Title: "Implementation",

@@ -454,6 +454,7 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 			CodexReasoningEffort:  "high",
 			ClaudeReasoningEffort: "max",
 		},
+		Flow: config.FlowConfig{AutoMerge: true},
 	}, nil, sessionStore, planStore, flowStore)
 
 	if opts.CodexReasoningEffort != "high" || opts.ClaudeReasoningEffort != "max" {
@@ -467,6 +468,9 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 	}
 	if opts.SaveAgentModel == nil {
 		t.Fatal("SaveAgentModel should be wired")
+	}
+	if !opts.FlowAutoMerge || opts.SaveFlowAutoMerge == nil {
+		t.Fatalf("auto-merge options = enabled %v saver nil %v, want enabled and wired", opts.FlowAutoMerge, opts.SaveFlowAutoMerge == nil)
 	}
 }
 

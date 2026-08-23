@@ -83,6 +83,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | Top `1` / `2` | Switch the top pane to Git / Beads at its last-used subview; Beads defaults to Ready before first use |
 | Bottom `1` / `2` / `3` | Switch the bottom pane to Sessions / Plans / Flows |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
+| `ctrl+g` | Toggle global auto-merge when list input owns the keyboard. The new value takes effect only after the locked config write succeeds; search, dialogs, and embedded-terminal input retain the key. |
 | `ctrl+p` | Toggle PR Babysitter; pressing it again from PR Babysitter returns to the previous view. In tmux sessions configured with `ctrl+p` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
@@ -92,6 +93,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `E` | Choose the global CLI effort on a Flow row, or the selected expanded phase's effort override/fallback in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
+| `G` | Cycle the selected Flow's persisted auto-merge override through inherit, on, and off on every Flow surface |
 | `s` | Start the selected CLI agent in the selected Flow's exact existing worktree on any Flow surface; page the selected summary in Sessions |
 | `R` | Launch an embedded repair agent for a genuinely stalled selected Flow on any Flow surface |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
@@ -1016,6 +1018,10 @@ On a Flow row or an expanded phase row:
 - `a` toggles per-Flow auto mode, which is on by default for new Flows and
   persisted on that Flow record. Flows created before this field existed
   remain manual until toggled on.
+- `G` cycles the separate merge policy through inherit, on, and off. The Flow
+  controls show the override, global value, and effective value so explicit off
+  is distinguishable from inheriting a global off. `ctrl+g` writes the global
+  value to `[flow].auto_merge`; a write failure leaves the running value alone.
 - `h` toggles the selected Flow's persisted manual-launch preference. It works
   from the Flow row or an expanded phase row and is hidden when no Flow is
   selected; changing one Flow does not affect another. Launches read the
@@ -1180,6 +1186,18 @@ It also waits while a manual phase resume or a repair on that Flow is still in
 flight — both hold a launch attempt from their key press onward — and while a
 session recorded against the phase it would launch has not ended. Each of those
 defers the launch silently and it resumes on a later poll.
+
+Auto-merge uses the same poll and tracked launch lifecycle but is a separate
+policy. Its effective value is the Flow override when present and
+`[flow].auto_merge` otherwise. When enabled, a ready semantic `merge` phase is
+submitted headlessly even if AutoMode is off, including when it was already
+ready at startup or when the setting was enabled. Explicit per-Flow off wins
+over global on; explicit on wins over global off. Closed Flows, preparation,
+dependencies, leases, launch attempts, running phases, retained terminals, and
+live phase sessions still defer or refuse the launch. The store rechecks the
+persisted override when recording the launch ID, so a stale request cannot
+write after `G` removes permission. With effective auto-merge off, the existing
+"ready to merge" status and manual `g` path remain unchanged.
 
 That last one is what `x` recovers. A session is treated as live until it is
 recorded as ended, and only an orderly exit records that, so an agent whose

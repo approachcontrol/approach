@@ -111,6 +111,7 @@ values.
 | Drain arm/disarm | `model/flow_phase_launch.go:502` | S7, S16 | A removed-but-unconsumed repair outcome disarms the drain |
 | Drain gate | `model/flow_phase_launch.go:755` `flowAutoAdvanceOccupied` (`:794`) | S1/S2 (`:795`), S3 (`:800`), S10 (`:804`), S6 (`:808`) | Deliberately *not* S7 and not S15: "AutoMode never reaches this function … a poll on a timer must not shell out" (`model/tmux_mode.go:425-427`) |
 | Drain session pre-filter | `model/flow_phase_launch.go:773` | S11 only | "the snapshot half of the lifecycle's session check, and the reason a stalled phase does not cost a session-store walk every second … the mirrored sessions the poll already carries answer the common case for free" (`:765-772`) |
+| Auto-merge level gate | `model/flow_phase_launch.go` `prepareAutoMergeLaunches` | S1/S2, S3, S10, S6, then S11 | Reuses the drain's cheap occupancy and session mirrors but is armed by effective merge policy and ready state rather than a completion edge; contention retries on a later poll. |
 
 ### 2.5 Non-launch consumers
 

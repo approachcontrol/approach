@@ -166,8 +166,10 @@ type flowLaunchEventMsg struct {
 	// Headless and AutoLaunch are resolved once in the read stage and carried,
 	// so prepare cannot re-derive headless from the record and launch an
 	// AutoMode phase interactively.
-	Headless   bool
-	AutoLaunch bool
+	Headless        bool
+	AutoLaunch      bool
+	AutoMerge       bool
+	GlobalAutoMerge bool
 	// Preflight-resolved paths threaded from read to prepare. RepoPath is not
 	// Record.RepoPath: it falls back to the current repo, and ActionFailedMsg
 	// gates its status on it.
@@ -530,6 +532,23 @@ func flowLaunchCandidatePhase(kind flowLaunchKind, record flowstore.FlowRecord, 
 	return flowstore.FlowPhase{}, false
 }
 
+func automaticFlowLaunchCandidate(record flowstore.FlowRecord, intent flowLaunchIntent) (flowstore.FlowPhase, bool) {
+	if !intent.AutoMerge {
+		return flowLaunchCandidatePhase(intent.Kind, record, intent.PhaseID)
+	}
+	want := artifacts.NormalizePhaseID(intent.PhaseID)
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if artifacts.NormalizePhaseID(phase.PhaseID) != want ||
+			flowstore.SemanticKind(phase) != flowstore.KindMerge ||
+			phase.Status != flowstore.PhaseReady ||
+			!flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			continue
+		}
+		return phase, true
+	}
+	return flowstore.FlowPhase{}, false
+}
+
 // flowLaunchLauncher borrows the preflight and prepare steps through the
 // lifecycle's own seams. NewLaunchID is pinned to the admission token: a second
 // generated ID would make every LaunchID-keyed fence miss and strand the
@@ -644,10 +663,12 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			Stage:   flowLaunchStageRead,
 			// Seeded so a failed read still renders "Flow <title>: <err>";
 			// overwritten from the fresh record the moment one exists.
-			FlowTitle:  intent.FlowTitle,
-			AutoLaunch: true,
-			Headless:   true,
-			Outcome:    flowLaunchOutcomeOK,
+			FlowTitle:       intent.FlowTitle,
+			AutoLaunch:      true,
+			AutoMerge:       intent.AutoMerge,
+			GlobalAutoMerge: intent.GlobalAutoMerge,
+			Headless:        true,
+			Outcome:         flowLaunchOutcomeOK,
 		}
 		record, err := seams.ReadFlow(intent.FlowID)
 		if err != nil {
@@ -656,11 +677,16 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			return event
 		}
 		event.FlowTitle = flowTitleForStatus(record)
-		if !record.AutoMode {
+		if intent.AutoMerge {
+			if !flowstore.EffectiveAutoMerge(record, intent.GlobalAutoMerge) {
+				event.Outcome = flowLaunchOutcomeStale
+				return event
+			}
+		} else if !record.AutoMode {
 			event.Outcome = flowLaunchOutcomeStale
 			return event
 		}
-		phase, ok := flowLaunchCandidatePhase(intent.Kind, record, intent.PhaseID)
+		phase, ok := automaticFlowLaunchCandidate(record, intent)
 		if !ok {
 			event.Outcome = flowLaunchOutcomeStale
 			return event
@@ -676,10 +702,12 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			return event
 		}
 		prepared, err := launcher.preflight(flowPhaseLaunchRequest{
-			Record:     record,
-			Phase:      phase,
-			AutoLaunch: true,
-			Headless:   true,
+			Record:          record,
+			Phase:           phase,
+			AutoLaunch:      true,
+			AutoMerge:       intent.AutoMerge,
+			GlobalAutoMerge: intent.GlobalAutoMerge,
+			Headless:        true,
 		})
 		if err != nil {
 			event.Outcome = flowLaunchOutcomeFailed
@@ -694,6 +722,8 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 		// the spelling an earlier poll captured rather than the record's own.
 		event.PhaseID = phase.PhaseID
 		event.Record = prepared.Record
+		event.AutoMerge = intent.AutoMerge
+		event.GlobalAutoMerge = intent.GlobalAutoMerge
 		if err != nil {
 			// Permanent by default, so it classifies blocked rather than failed;
 			// the write itself is the handler's, behind the attempt fence. The
@@ -758,8 +788,10 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			// Resolved once in the read stage. Re-deriving it from the record
 			// here would launch an AutoMode Flow with persisted headless=false
 			// as an interactive, focus-stealing terminal.
-			Headless:   msg.Headless,
-			AutoLaunch: msg.AutoLaunch,
+			Headless:        msg.Headless,
+			AutoLaunch:      msg.AutoLaunch,
+			AutoMerge:       msg.AutoMerge,
+			GlobalAutoMerge: msg.GlobalAutoMerge,
 		},
 		RepoPath:     msg.RepoPath,
 		WorktreePath: msg.WorktreePath,
