@@ -64,6 +64,15 @@ func (runtime flowOccupancyRuntime) HasFlowTerminal(flowID string) bool {
 	return runtime.model.hasFlowEmbeddedTerminalForFlow(flowID)
 }
 
+func (runtime flowOccupancyRuntime) HasNonRepairFlowTerminal(flowID string) bool {
+	for _, slot := range runtime.model.embeddedTerminals {
+		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil && !slot.FlowRepair {
+			return true
+		}
+	}
+	return false
+}
+
 func (runtime flowOccupancyRuntime) HasRepairTerminal(flowID string) bool {
 	return runtime.model.hasFlowRepairEmbeddedTerminalForFlow(flowID)
 }

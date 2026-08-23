@@ -424,6 +424,9 @@ type Runtime interface {
 	// HasFlowTerminal reports a retained Flow terminal slot with a live
 	// terminal.
 	HasFlowTerminal(flowID string) bool
+	// HasNonRepairFlowTerminal reports a retained live Flow terminal that is
+	// not itself a repair slot.
+	HasNonRepairFlowTerminal(flowID string) bool
 	// HasRepairTerminal reports a retained repair slot. It overlaps
 	// HasFlowTerminal rather than nesting inside it: one requires a live
 	// terminal, the other a repair slot.
@@ -523,6 +526,9 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 		if query.Purpose.Role == actions.RoleTrackedPhase && query.Purpose.Stage == StageFooter &&
 			policy.runtime&readHeadlessWrite != 0 && occupancy.sources.Runtime.HeadlessWritePending(flowID) {
 			runtimeVerdict = Verdict{holder: HolderHeadlessWrite}
+		} else if query.Purpose.Role == actions.RoleTrackedPhase && query.Purpose.Stage == StageFooter &&
+			policy.runtime&readFlowTerminal != 0 && occupancy.sources.Runtime.HasNonRepairFlowTerminal(flowID) {
+			runtimeVerdict = Verdict{holder: HolderFlowTerminal}
 		} else {
 			runtimeVerdict = queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
 		}

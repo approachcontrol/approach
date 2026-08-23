@@ -88,11 +88,12 @@ func TestQueryRejectsInvalidInputsAndMissingRuntime(t *testing.T) {
 }
 
 type runtimeFixture struct {
-	attempts     map[string]actions.FlowLaunchRole
-	flows        map[string]bool
-	repairs      map[string]bool
-	headless     map[string]bool
-	repairDrains map[string]bool
+	attempts       map[string]actions.FlowLaunchRole
+	flows          map[string]bool
+	nonRepairFlows map[string]bool
+	repairs        map[string]bool
+	headless       map[string]bool
+	repairDrains   map[string]bool
 }
 
 type leaseFixture struct {
@@ -153,28 +154,43 @@ func TestQueryAnswersFromLeaseSource(t *testing.T) {
 
 func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
 	tests := []struct {
-		name       string
-		stage      Stage
-		runtime    runtimeFixture
-		wantHolder Holder
+		name          string
+		stage         Stage
+		leaseOccupied bool
+		runtime       runtimeFixture
+		wantHolder    Holder
 	}{
 		{
-			name:       "preview lease outranks attempt and terminal",
-			stage:      StagePreview,
-			runtime:    runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}},
-			wantHolder: HolderPeerLease,
+			name:          "preview lease outranks attempt and terminal",
+			stage:         StagePreview,
+			leaseOccupied: true,
+			runtime:       runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}},
+			wantHolder:    HolderPeerLease,
 		},
 		{
-			name:       "footer headless write outranks lease",
+			name:          "footer headless write outranks lease",
+			stage:         StageFooter,
+			leaseOccupied: true,
+			runtime:       runtimeFixture{headless: map[string]bool{"flow-1": true}},
+			wantHolder:    HolderHeadlessWrite,
+		},
+		{
+			name:       "footer Flow terminal outranks attempt",
 			stage:      StageFooter,
-			runtime:    runtimeFixture{headless: map[string]bool{"flow-1": true}},
-			wantHolder: HolderHeadlessWrite,
+			runtime:    runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleRepair}, flows: map[string]bool{"flow-1": true}},
+			wantHolder: HolderFlowTerminal,
+		},
+		{
+			name:       "footer non-repair Flow terminal outranks attempt and repair slot",
+			stage:      StageFooter,
+			runtime:    runtimeFixture{attempts: map[string]actions.FlowLaunchRole{"flow-1": actions.RoleTrackedPhase}, flows: map[string]bool{"flow-1": true}, nonRepairFlows: map[string]bool{"flow-1": true}, repairs: map[string]bool{"flow-1": true}},
+			wantHolder: HolderFlowTerminal,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			verdict := New(Sources{
-				Lease:   &leaseFixture{occupied: true, t: t, wantFlowID: "flow-1"},
+				Lease:   &leaseFixture{occupied: tc.leaseOccupied, t: t, wantFlowID: "flow-1"},
 				Runtime: tc.runtime,
 			}).Query(Query{
 				FlowID:  "flow-1",
@@ -205,7 +221,13 @@ func (runtime runtimeFixture) AttemptHolder(flowID string) (actions.FlowLaunchRo
 	return role, ok
 }
 
-func (runtime runtimeFixture) HasFlowTerminal(flowID string) bool   { return runtime.flows[flowID] }
+func (runtime runtimeFixture) HasFlowTerminal(flowID string) bool { return runtime.flows[flowID] }
+func (runtime runtimeFixture) HasNonRepairFlowTerminal(flowID string) bool {
+	if runtime.nonRepairFlows != nil {
+		return runtime.nonRepairFlows[flowID]
+	}
+	return runtime.flows[flowID] && !runtime.repairs[flowID]
+}
 func (runtime runtimeFixture) HasRepairTerminal(flowID string) bool { return runtime.repairs[flowID] }
 func (runtime runtimeFixture) HeadlessWritePending(flowID string) bool {
 	return runtime.headless[flowID]

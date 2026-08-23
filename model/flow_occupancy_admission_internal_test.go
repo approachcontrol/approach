@@ -28,6 +28,8 @@ func TestManualPhaseAdmissionAndFooterAgree(t *testing.T) {
 		{name: "unreadable lease", sources: []occupancySource{srcLeaseError}, want: flowLeaseSetupErrorStatus(occupancyLeaseErr())},
 		{name: "competing attempt", sources: []occupancySource{srcAttemptRepair}, want: noLaunchableFlowPhaseStatus},
 		{name: "Flow terminal", sources: []occupancySource{srcFlowTerminal}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
+		{name: "Flow terminal over a competing attempt", sources: []occupancySource{srcAttemptManualPhase, srcFlowTerminal}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
+		{name: "Flow terminal over an attempt and repair slot", sources: []occupancySource{srcAttemptManualPhase, srcFlowTerminal, srcRepairSlot}, want: `Close, detach, or dismiss Flow terminal "flow" before launching this Flow`},
 		{name: "terminal-less repair slot", sources: []occupancySource{srcRepairSlot}, want: noLaunchableFlowPhaseStatus},
 		{
 			// The headless rung is checked before the lease, so it wins even
