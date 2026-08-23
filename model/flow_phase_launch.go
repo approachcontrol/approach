@@ -497,12 +497,13 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 		m = m.consumeRepairAutoDrainMarkers(currentFlows, request)
 	}
 	m, cmd := m.prepareAutoAdvanceDrainLaunches(currentFlows)
-	m, mergeCmd := m.prepareAutoMergeLaunches(currentFlows)
-	return m, batchNonNil(cmd, mergeCmd), nil
+	m, mergeCmd, admittedAutoMerges := m.prepareAutoMergeLaunches(currentFlows)
+	return m, batchNonNil(cmd, mergeCmd), admittedAutoMerges
 }
 
-func (m Model) prepareAutoMergeLaunches(records []flowstore.FlowRecord) (Model, tea.Cmd) {
+func (m Model) prepareAutoMergeLaunches(records []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
 	var cmds []tea.Cmd
+	var admittedKeys []string
 	for _, record := range records {
 		if !flowstore.EffectiveAutoMerge(record, m.autoMerge) || flowstore.FlowClosed(record) ||
 			flowstore.PreparationLaunchBlocked(record) || m.flowAutoAdvanceOccupied(record) {
@@ -524,9 +525,14 @@ func (m Model) prepareAutoMergeLaunches(records []flowstore.FlowRecord) (Model, 
 		m = next
 		if admitted {
 			cmds = append(cmds, cmd)
+			admittedKeys = append(admittedKeys, autoMergeAdmissionKey(record.FlowID, phase.PhaseID))
 		}
 	}
-	return m, batchNonNil(cmds...)
+	return m, batchNonNil(cmds...), admittedKeys
+}
+
+func autoMergeAdmissionKey(flowID, phaseID string) string {
+	return strings.TrimSpace(flowID) + "\x00" + artifacts.NormalizePhaseID(phaseID)
 }
 
 func readyMergePhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {

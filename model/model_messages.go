@@ -380,6 +380,7 @@ type FlowAutoMergeSetMsg struct {
 type FlowAutoMergeSetFailedMsg struct {
 	RepoPath string
 	FlowID   string
+	Enabled  *bool
 	Err      string
 }
 
@@ -1678,24 +1679,37 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 	return m.setStatus(statusOther, errText)
 }
 
-func (m Model) handleFlowAutoMergeSet(msg FlowAutoMergeSetMsg) Model {
-	if msg.FlowID == "" || msg.Flow.FlowID != msg.FlowID ||
-		(!m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath)) ||
-		!sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
-		return m
+func (m Model) handleFlowAutoMergeSet(msg FlowAutoMergeSetMsg) (Model, tea.Cmd) {
+	pending, ok := m.pendingFlowAutoMergeWrite(msg.FlowID)
+	if !ok || !sameAutoMergeOverride(pending.written, msg.Enabled) {
+		return m, nil
 	}
-	return m.replaceFlowRecord(msg.Flow, flowMutationAutoMerge, flowAutoMergeOverlay(msg.Enabled))
+	if msg.FlowID != "" && msg.Flow.FlowID == msg.FlowID &&
+		(m.takeoverVisible() || m.isCurrentRepo(msg.RepoPath)) &&
+		sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
+		m = m.replaceFlowRecord(msg.Flow, flowMutationAutoMerge, flowAutoMergeOverlay(msg.Enabled))
+	}
+	if !sameAutoMergeOverride(pending.desired, msg.Enabled) {
+		m = m.updatePendingFlowAutoMergeWritten(msg.FlowID, pending.desired)
+		return m, m.setFlowAutoMergeCmd(pending.repoPath, msg.FlowID, pending.desired)
+	}
+	return m.clearPendingFlowAutoMergeWrite(msg.FlowID), nil
 }
 
-func (m Model) handleFlowAutoMergeSetFailed(msg FlowAutoMergeSetFailedMsg) Model {
+func (m Model) handleFlowAutoMergeSetFailed(msg FlowAutoMergeSetFailedMsg) (Model, tea.Cmd) {
+	pending, ok := m.pendingFlowAutoMergeWrite(msg.FlowID)
+	if !ok || !sameAutoMergeOverride(pending.written, msg.Enabled) {
+		return m, nil
+	}
+	m = m.clearPendingFlowAutoMergeWrite(msg.FlowID)
 	if !m.takeoverVisible() && !m.isCurrentRepo(msg.RepoPath) {
-		return m
+		return m, nil
 	}
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "failed to set Flow auto-merge override"
 	}
-	return m.setStatus(statusOther, errText)
+	return m.setStatus(statusOther, errText), nil
 }
 
 func (m Model) handleGlobalAutoMergeSet(msg GlobalAutoMergeSetMsg) (Model, tea.Cmd) {

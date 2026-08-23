@@ -118,6 +118,42 @@ func TestModel_GCyclesFlowAutoMergeOverride(t *testing.T) {
 	}
 }
 
+func TestModel_GCoalescesOverlappingOverrideCycles(t *testing.T) {
+	record := flowWithPhaseDetails()
+	current := record
+	var writes []*bool
+	m := newTestModel(testRepos(), model.Options{
+		SetFlowAutoMerge: func(update flowstore.AutoMergeUpdate) (flowstore.FlowRecord, error) {
+			writes = append(writes, cloneTestBoolPointer(update.Enabled))
+			current.AutoMerge = cloneTestBoolPointer(update.Enabled)
+			return current, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	if first == nil || second != nil {
+		t.Fatalf("overlapping G commands = first %v second %v, want one serialized write", first != nil, second != nil)
+	}
+	m, followup := update(m, first())
+	if followup == nil {
+		t.Fatal("first override completion did not start coalesced off write")
+	}
+	m, _ = update(m, followup())
+	if len(writes) != 2 || writes[0] == nil || !*writes[0] || writes[1] == nil || *writes[1] {
+		t.Fatalf("override writes = %v, want on then off", formatBoolPointers(writes))
+	}
+}
+
+func cloneTestBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
 func formatBoolPointers(values []*bool) []string {
 	formatted := make([]string, len(values))
 	for i, value := range values {

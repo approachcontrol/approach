@@ -102,6 +102,7 @@ type Model struct {
 	activeFlowRecords           []flowstore.FlowRecord
 	latestFlowMutations         []cachedFlowMutation
 	pendingFlowHeadlessWrites   []pendingFlowHeadlessWrite
+	pendingFlowAutoMergeWrites  []pendingFlowAutoMergeWrite
 	activeFlows                 pane.Pane[flowstore.FlowRecord]
 	prBabysitterRecords         []flowstore.FlowRecord
 	prBabysitterFlows           pane.Pane[flowstore.FlowRecord]
@@ -2298,9 +2299,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case FlowAutoModeSetFailedMsg:
 		return m.handleFlowAutoModeSetFailed(msg), nil
 	case FlowAutoMergeSetMsg:
-		return m.handleFlowAutoMergeSet(msg), nil
+		return m.handleFlowAutoMergeSet(msg)
 	case FlowAutoMergeSetFailedMsg:
-		return m.handleFlowAutoMergeSetFailed(msg), nil
+		return m.handleFlowAutoMergeSetFailed(msg)
 	case GlobalAutoMergeSetMsg:
 		return m.handleGlobalAutoMergeSet(msg)
 	case GlobalAutoMergeSetFailedMsg:

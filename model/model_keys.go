@@ -1225,27 +1225,111 @@ func (m Model) handleCycleFlowAutoMerge() (tea.Model, tea.Cmd) {
 	if repoPath == "" {
 		return m, nil
 	}
-	var next *bool
-	switch {
-	case record.AutoMerge == nil:
-		next = autoMergeBoolPointer(true)
-	case *record.AutoMerge:
-		next = autoMergeBoolPointer(false)
-	default:
-		next = nil
+	if pending, ok := m.pendingFlowAutoMergeWrite(record.FlowID); ok {
+		return m.updatePendingFlowAutoMergeDesired(record.FlowID, nextAutoMergeOverride(pending.desired)), nil
 	}
+	next := nextAutoMergeOverride(record.AutoMerge)
+	m = m.markPendingFlowAutoMergeWrite(pendingFlowAutoMergeWrite{
+		flowID: record.FlowID, repoPath: repoPath, written: next, desired: next,
+	})
 	return m, m.setFlowAutoMergeCmd(repoPath, record.FlowID, next)
 }
 
 func autoMergeBoolPointer(value bool) *bool { return &value }
 
+func nextAutoMergeOverride(current *bool) *bool {
+	switch {
+	case current == nil:
+		return autoMergeBoolPointer(true)
+	case *current:
+		return autoMergeBoolPointer(false)
+	default:
+		return nil
+	}
+}
+
+type pendingFlowAutoMergeWrite struct {
+	flowID   string
+	repoPath string
+	written  *bool
+	desired  *bool
+}
+
+func (m Model) pendingFlowAutoMergeWrite(flowID string) (pendingFlowAutoMergeWrite, bool) {
+	index := slices.IndexFunc(m.pendingFlowAutoMergeWrites, func(pending pendingFlowAutoMergeWrite) bool {
+		return pending.flowID == flowID
+	})
+	if index < 0 {
+		return pendingFlowAutoMergeWrite{}, false
+	}
+	return m.pendingFlowAutoMergeWrites[index], true
+}
+
+func (m Model) markPendingFlowAutoMergeWrite(pending pendingFlowAutoMergeWrite) Model {
+	pending.written = cloneAutoMergeOverride(pending.written)
+	pending.desired = cloneAutoMergeOverride(pending.desired)
+	m.pendingFlowAutoMergeWrites = append(slices.Clone(m.pendingFlowAutoMergeWrites), pending)
+	return m
+}
+
+func (m Model) updatePendingFlowAutoMergeDesired(flowID string, desired *bool) Model {
+	pending, ok := m.pendingFlowAutoMergeWrite(flowID)
+	if !ok {
+		return m
+	}
+	for index := range m.pendingFlowAutoMergeWrites {
+		if m.pendingFlowAutoMergeWrites[index].flowID == flowID {
+			writes := slices.Clone(m.pendingFlowAutoMergeWrites)
+			writes[index] = pending
+			writes[index].desired = cloneAutoMergeOverride(desired)
+			m.pendingFlowAutoMergeWrites = writes
+			return m
+		}
+	}
+	return m
+}
+
+func (m Model) updatePendingFlowAutoMergeWritten(flowID string, written *bool) Model {
+	for index := range m.pendingFlowAutoMergeWrites {
+		if m.pendingFlowAutoMergeWrites[index].flowID == flowID {
+			writes := slices.Clone(m.pendingFlowAutoMergeWrites)
+			writes[index].written = cloneAutoMergeOverride(written)
+			m.pendingFlowAutoMergeWrites = writes
+			return m
+		}
+	}
+	return m
+}
+
+func (m Model) clearPendingFlowAutoMergeWrite(flowID string) Model {
+	index := slices.IndexFunc(m.pendingFlowAutoMergeWrites, func(pending pendingFlowAutoMergeWrite) bool {
+		return pending.flowID == flowID
+	})
+	if index >= 0 {
+		m.pendingFlowAutoMergeWrites = slices.Delete(slices.Clone(m.pendingFlowAutoMergeWrites), index, index+1)
+	}
+	return m
+}
+
+func cloneAutoMergeOverride(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func sameAutoMergeOverride(left, right *bool) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
 func (m Model) setFlowAutoMergeCmd(repoPath, flowID string, enabled *bool) tea.Cmd {
 	return func() tea.Msg {
 		flow, err := m.setFlowAutoMerge(flowstore.AutoMergeUpdate{FlowID: flowID, Enabled: enabled})
 		if err != nil {
-			return FlowAutoMergeSetFailedMsg{RepoPath: repoPath, FlowID: flowID, Err: fmt.Sprintf("failed to set Flow auto-merge override: %v", err)}
+			return FlowAutoMergeSetFailedMsg{RepoPath: repoPath, FlowID: flowID, Enabled: cloneAutoMergeOverride(enabled), Err: fmt.Sprintf("failed to set Flow auto-merge override: %v", err)}
 		}
-		return FlowAutoMergeSetMsg{RepoPath: repoPath, FlowID: flowID, Flow: flow, Enabled: enabled}
+		return FlowAutoMergeSetMsg{RepoPath: repoPath, FlowID: flowID, Flow: flow, Enabled: cloneAutoMergeOverride(enabled)}
 	}
 }
 
