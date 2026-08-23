@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -528,40 +527,5 @@ func TestFlowLaunchAdmissionOccupiedTruthTable(t *testing.T) {
 				t.Fatal("a blank Flow ID is not admission occupancy")
 			}
 		})
-	}
-}
-
-// TestFlowRecordHasOtherRunningPhaseExcludesTheCandidate is S10 minus the
-// candidate: a running candidate is staleness, which the caller classifies
-// first, so only some other running phase counts.
-func TestFlowRecordHasOtherRunningPhaseExcludesTheCandidate(t *testing.T) {
-	record := occupancyFlowRecord()
-	record.Phases = []flowstore.FlowPhase{
-		{PhaseID: "plan", Status: flowstore.PhaseCompleted, Order: 1},
-		{PhaseID: "implementation", Status: flowstore.PhaseRunning, Order: 2},
-		{PhaseID: "review-loop", Status: flowstore.PhaseReady, Order: 3},
-	}
-	tests := []struct {
-		name      string
-		candidate string
-		want      bool
-	}{
-		{name: "the running phase is the candidate", candidate: "implementation"},
-		{name: "a different phase is the candidate", candidate: "review-loop", want: true},
-		{name: "no candidate at all", candidate: "", want: true},
-		// Phase IDs are normalized on both sides before comparison.
-		{name: "the candidate is spelled differently", candidate: "  Implementation  "},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := flowRecordHasOtherRunningPhase(record, tc.candidate); got != tc.want {
-				t.Fatalf("flowRecordHasOtherRunningPhase(%q) = %v, want %v", tc.candidate, got, tc.want)
-			}
-		})
-	}
-
-	none := occupancyFlowRecord()
-	if flowRecordHasOtherRunningPhase(none, "implementation") {
-		t.Fatal("a record with no running phase never has another one")
 	}
 }

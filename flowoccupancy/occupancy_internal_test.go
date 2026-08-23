@@ -83,6 +83,293 @@ func (panicSessionStore) ListFlowSessions(string) ([]sessions.SessionRecord, err
 	panic("advisory query reached session store")
 }
 
+type flowReaderFixture struct {
+	t          *testing.T
+	wantFlowID string
+	record     flowstore.FlowRecord
+	err        error
+	calls      int
+}
+
+func (reader *flowReaderFixture) ReadFlow(flowID string) (flowstore.FlowRecord, error) {
+	reader.calls++
+	if reader.wantFlowID != "" && flowID != reader.wantFlowID {
+		reader.t.Fatalf("ReadFlow() flow ID = %q, want %q", flowID, reader.wantFlowID)
+	}
+	return reader.record, reader.err
+}
+
+type sessionStoreFixture struct {
+	t          *testing.T
+	wantFlowID string
+	records    []sessions.SessionRecord
+	err        error
+	calls      int
+}
+
+func (store *sessionStoreFixture) ListFlowSessions(flowID string) ([]sessions.SessionRecord, error) {
+	store.calls++
+	if store.wantFlowID != "" && flowID != store.wantFlowID {
+		store.t.Fatalf("ListFlowSessions() flow ID = %q, want %q", flowID, store.wantFlowID)
+	}
+	return store.records, store.err
+}
+
+func TestTrackedPhaseAuthoritativeQueryFindsMirroredPhaseSession(t *testing.T) {
+	flows := &flowReaderFixture{
+		t:          t,
+		wantFlowID: "flow-exact",
+		record: flowstore.FlowRecord{
+			FlowID: "flow-exact",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				LaunchIDs: []string{"launch-1"},
+				Sessions: []flowstore.Session{{
+					SessionID: "session-1",
+					LaunchID:  "launch-1",
+					Status:    "running",
+				}},
+			}},
+		},
+	}
+	store := &sessionStoreFixture{t: t, wantFlowID: "flow-exact"}
+
+	verdict := New(Sources{Flows: flows, Sessions: store}).Query(Query{
+		FlowID: " flow-exact ",
+		Purpose: Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: StageAuthoritative,
+		},
+		PhaseID: "implementation",
+	})
+
+	if verdict.Holder() != HolderPhaseSession || verdict.PhaseID() != "implementation" || verdict.Err() != nil {
+		t.Fatalf("verdict = (%v, %q, %v), want phase session on implementation", verdict.Holder(), verdict.PhaseID(), verdict.Err())
+	}
+	if flows.calls != 1 || store.calls != 1 {
+		t.Fatalf("source calls = (Flow %d, sessions %d), want (1, 1)", flows.calls, store.calls)
+	}
+}
+
+func TestAuthoritativePhaseSessionEvaluation(t *testing.T) {
+	ended := time.Now()
+	base := flowstore.FlowRecord{
+		FlowID: "flow-1",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Status:    flowstore.PhaseReady,
+			LaunchIDs: []string{" launch-1 "},
+		}},
+	}
+	tests := []struct {
+		name       string
+		mutateFlow func(*flowstore.FlowRecord)
+		records    []sessions.SessionRecord
+		wantHolder Holder
+	}{
+		{
+			name: "store-only live session",
+			records: []sessions.SessionRecord{{
+				FlowID: "flow-1", SessionID: "session-1", LaunchID: "launch-1", Status: "last_seen",
+			}},
+			wantHolder: HolderPhaseSession,
+		},
+		{
+			name: "prefix-like Flow ID does not match",
+			records: []sessions.SessionRecord{{
+				FlowID: "flow-10", SessionID: "session-1", LaunchID: "launch-1", Status: "running",
+			}},
+		},
+		{
+			name: "another launch does not match",
+			records: []sessions.SessionRecord{{
+				FlowID: "flow-1", SessionID: "session-1", LaunchID: "launch-other", Status: "running",
+			}},
+		},
+		{
+			name: "ended session does not match",
+			records: []sessions.SessionRecord{{
+				FlowID: "flow-1", SessionID: "session-1", LaunchID: "launch-1", Status: "ended", EndedAt: ended,
+			}},
+		},
+		{
+			name: "mirror and store union",
+			mutateFlow: func(record *flowstore.FlowRecord) {
+				record.Phases[0].Sessions = []flowstore.Session{{
+					SessionID: "session-1", LaunchID: "launch-1", Status: "running",
+				}}
+			},
+			records: []sessions.SessionRecord{{
+				FlowID: "flow-1", SessionID: "session-2", LaunchID: "launch-other", Status: "running",
+			}},
+			wantHolder: HolderPhaseSession,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := base
+			record.Phases = append([]flowstore.FlowPhase(nil), base.Phases...)
+			if tc.mutateFlow != nil {
+				tc.mutateFlow(&record)
+			}
+			flows := &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record}
+			store := &sessionStoreFixture{t: t, wantFlowID: "flow-1", records: tc.records}
+			verdict := Evaluate(Sources{Flows: flows, Sessions: store}, Query{
+				FlowID: " flow-1 ",
+				Purpose: Purpose{
+					Role:  actions.RoleTrackedPhase,
+					Stage: StageAuthoritative,
+				},
+				PhaseID: "implementation",
+			})
+			if verdict.Holder() != tc.wantHolder {
+				t.Fatalf("Holder() = %v, want %v", verdict.Holder(), tc.wantHolder)
+			}
+			wantPhase := ""
+			if tc.wantHolder == HolderPhaseSession {
+				wantPhase = "implementation"
+			}
+			if verdict.PhaseID() != wantPhase || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %q, %v)", verdict.Holder(), verdict.PhaseID(), verdict.Err())
+			}
+			if flows.calls != 1 || store.calls != 1 {
+				t.Fatalf("source calls = (Flow %d, sessions %d), want (1, 1)", flows.calls, store.calls)
+			}
+		})
+	}
+}
+
+func TestAutoAdvanceAuthoritativeRunningPhasePrecedesSession(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID: "flow-1",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Status: flowstore.PhaseReady, LaunchIDs: []string{"launch-1"}},
+			{PhaseID: "review-loop", Status: flowstore.PhaseRunning},
+		},
+	}
+	flows := &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record}
+	store := &sessionStoreFixture{
+		t: t, wantFlowID: "flow-1",
+		records: []sessions.SessionRecord{{
+			FlowID: "flow-1", SessionID: "session-1", LaunchID: "launch-1", Status: "running",
+		}},
+	}
+	verdict := Evaluate(Sources{Flows: flows, Sessions: store}, Query{
+		FlowID: "flow-1",
+		Purpose: Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: StageAutoAdvance,
+		},
+		Freshness: FreshnessAuthoritative,
+		PhaseID:   "implementation",
+	})
+	if verdict.Holder() != HolderRunningPhase || verdict.PhaseID() != "review-loop" || verdict.Err() != nil {
+		t.Fatalf("verdict = (%v, %q, %v), want running review-loop", verdict.Holder(), verdict.PhaseID(), verdict.Err())
+	}
+	if flows.calls != 1 || store.calls != 0 {
+		t.Fatalf("source calls = (Flow %d, sessions %d), want (1, 0)", flows.calls, store.calls)
+	}
+}
+
+func TestAutoAdvanceAuthoritativeExcludesNormalizedCandidatePhase(t *testing.T) {
+	flows := &flowReaderFixture{
+		t: t, wantFlowID: "flow-1",
+		record: flowstore.FlowRecord{
+			FlowID: "flow-1",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation", Status: flowstore.PhaseRunning,
+			}},
+		},
+	}
+	store := &sessionStoreFixture{t: t, wantFlowID: "flow-1"}
+	verdict := Evaluate(Sources{Flows: flows, Sessions: store}, Query{
+		FlowID: "flow-1",
+		Purpose: Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: StageAutoAdvance,
+		},
+		Freshness: FreshnessAuthoritative,
+		PhaseID:   "  Implementation  ",
+	})
+	if verdict.Occupied() || verdict.Err() != nil {
+		t.Fatalf("verdict = (%v, %q, %v), want the normalized candidate excluded", verdict.Holder(), verdict.PhaseID(), verdict.Err())
+	}
+	if flows.calls != 1 || store.calls != 1 {
+		t.Fatalf("source calls = (Flow %d, sessions %d), want (1, 1)", flows.calls, store.calls)
+	}
+}
+
+func TestAuthoritativeQueriesFailClosedAtSourceBoundary(t *testing.T) {
+	flowErr := errors.New("read Flow failed")
+	sessionErr := errors.New("list sessions failed")
+	baseRecord := flowstore.FlowRecord{FlowID: "flow-1"}
+	tests := []struct {
+		name       string
+		sources    func(*testing.T) (Sources, *flowReaderFixture, *sessionStoreFixture)
+		wantErr    error
+		wantFlows  int
+		wantStores int
+	}{
+		{
+			name: "missing Flow reader", wantErr: ErrMissingFlowStore,
+			sources: func(t *testing.T) (Sources, *flowReaderFixture, *sessionStoreFixture) {
+				store := &sessionStoreFixture{t: t}
+				return Sources{Sessions: store}, nil, store
+			},
+		},
+		{
+			name: "Flow read error", wantErr: flowErr, wantFlows: 1,
+			sources: func(t *testing.T) (Sources, *flowReaderFixture, *sessionStoreFixture) {
+				flows := &flowReaderFixture{t: t, err: flowErr}
+				store := &sessionStoreFixture{t: t}
+				return Sources{Flows: flows, Sessions: store}, flows, store
+			},
+		},
+		{
+			name: "wrong Flow identity", wantErr: ErrInvalidQuery, wantFlows: 1,
+			sources: func(t *testing.T) (Sources, *flowReaderFixture, *sessionStoreFixture) {
+				flows := &flowReaderFixture{t: t, record: flowstore.FlowRecord{FlowID: "flow-10"}}
+				store := &sessionStoreFixture{t: t}
+				return Sources{Flows: flows, Sessions: store}, flows, store
+			},
+		},
+		{
+			name: "missing session reader", wantErr: ErrMissingSessionStore, wantFlows: 1,
+			sources: func(t *testing.T) (Sources, *flowReaderFixture, *sessionStoreFixture) {
+				flows := &flowReaderFixture{t: t, record: baseRecord}
+				return Sources{Flows: flows}, flows, nil
+			},
+		},
+		{
+			name: "session read error", wantErr: sessionErr, wantFlows: 1, wantStores: 1,
+			sources: func(t *testing.T) (Sources, *flowReaderFixture, *sessionStoreFixture) {
+				flows := &flowReaderFixture{t: t, record: baseRecord}
+				store := &sessionStoreFixture{t: t, err: sessionErr}
+				return Sources{Flows: flows, Sessions: store}, flows, store
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sources, flows, store := tc.sources(t)
+			verdict := Evaluate(sources, Query{
+				FlowID:  "flow-1",
+				Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageAuthoritative},
+				PhaseID: "implementation",
+			})
+			if !verdict.Occupied() || !errors.Is(verdict.Err(), tc.wantErr) {
+				t.Fatalf("verdict = (%v, %v), want fail-closed errors.Is(_, %v)", verdict.Holder(), verdict.Err(), tc.wantErr)
+			}
+			if flows != nil && flows.calls != tc.wantFlows {
+				t.Fatalf("Flow calls = %d, want %d", flows.calls, tc.wantFlows)
+			}
+			if store != nil && store.calls != tc.wantStores {
+				t.Fatalf("session calls = %d, want %d", store.calls, tc.wantStores)
+			}
+		})
+	}
+}
+
 type panicAgentProbe struct{}
 
 func (panicAgentProbe) FlowAgentRunning(flowstore.FlowRecord, string) bool {
