@@ -96,6 +96,16 @@ func TestManualPhasePreviewAndFooterNeverProbeTmux(t *testing.T) {
 	}
 }
 
+func TestManualPhaseFooterSkipsLeaseForUnlaunchableFlow(t *testing.T) {
+	f := newOccupancyFixtureFor(t, occupancyRepairFlowRecord())
+	if f.m.selectedFlowHasLaunchablePhase() {
+		t.Fatal("blocked Flow advertised a manual phase launch")
+	}
+	if f.h.leaseInspections != 0 {
+		t.Fatalf("lease inspections = %d, want 0", f.h.leaseInspections)
+	}
+}
+
 func TestManualPhaseAdmissionNamesRetainedTerminalAndAdmitsAfterRelease(t *testing.T) {
 	f := newOccupancyFixture(t, srcFlowTerminal)
 	f.m.embeddedTerminals[0].Identity = "implementation"

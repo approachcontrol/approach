@@ -2708,14 +2708,14 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 	if !ok {
 		return false
 	}
-	if m.trackedPhaseOccupancy(record.FlowID, flowoccupancy.StageFooter).Occupied() {
-		return false
-	}
 	_, _, ok = m.cachedFlowLaunchTarget(flowLaunchIntent{
 		Kind:   flowLaunchKindManualPhase,
 		FlowID: record.FlowID,
 	})
-	return ok
+	if !ok {
+		return false
+	}
+	return !m.trackedPhaseOccupancy(record.FlowID, flowoccupancy.StageFooter).Occupied()
 }
 
 // withFlowAutofixTmuxLaunch appends an autofix tmux launch to the
