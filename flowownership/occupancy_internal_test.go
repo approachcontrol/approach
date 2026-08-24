@@ -770,10 +770,10 @@ func TestAdvisoryFailsClosedForInvalidQueriesAndMissingCaches(t *testing.T) {
 
 func TestPurposeValidRegistry(t *testing.T) {
 	validStages := map[actions.FlowLaunchRole][]Stage{
-		actions.RoleNone:               {StageFooter, StageSessionRelease},
+		actions.RoleNone:               {StagePreview, StageFooter, StageSessionRelease},
 		actions.RoleTrackedPhase:       {StagePreview, StageFooter, StageAdmission, StageAutoAdvance, StageAuthoritative, StageReserved, StageInstall, StageDrain, StageDrainControl},
 		actions.RoleCreatePhase:        {StageAdmission, StageAuthoritative, StageInstall},
-		actions.RolePhaseResume:        {StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
+		actions.RolePhaseResume:        {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 		actions.RoleRepair:             {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 		actions.RoleAutofix:            {StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 		actions.RoleWorktreeAgent:      {StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},

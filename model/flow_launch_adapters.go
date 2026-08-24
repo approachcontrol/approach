@@ -317,6 +317,64 @@ func (m Model) repairOccupancy(flowID string, stage flowownership.Stage) flowown
 	})
 }
 
+func (m Model) autofixFooterAdvice(flowID string) flowownership.Advisory {
+	return flowownership.EvaluateAdvisory(flowownership.Sources{
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role:  actions.RoleAutofix,
+			Stage: flowownership.StageFooter,
+		},
+	})
+}
+
+func (m Model) phaseResumeAdvice(flowID string, stage flowownership.Stage) flowownership.Advisory {
+	return flowownership.EvaluateAdvisory(flowownership.Sources{
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role:  actions.RolePhaseResume,
+			Stage: stage,
+		},
+	})
+}
+
+func (m Model) sessionReleaseRuntimeAdvice(flowID string) flowownership.Advisory {
+	return flowownership.EvaluateAdvisory(flowownership.Sources{
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role:  actions.RoleNone,
+			Stage: flowownership.StagePreview,
+		},
+	})
+}
+
+func (m Model) repairDrainControlAdvice(flowID string) flowownership.Advisory {
+	return flowownership.EvaluateAdvisory(flowownership.Sources{
+		Runtime: flowOccupancyRuntime{model: m},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: flowownership.StageDrainControl,
+		},
+	})
+}
+
 func (m Model) trackedPhaseDrainAdvice(record flowstore.FlowRecord, phaseID string) flowownership.Advisory {
 	return flowownership.EvaluateAdvisory(flowownership.Sources{
 		FlowCache: flowOccupancyFlowCache{record: record},

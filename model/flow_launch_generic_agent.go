@@ -96,30 +96,30 @@ func (m Model) admitWorktreeAgentFlowLaunch(intent flowLaunchIntent) (Model, tea
 	if err := m.launchSeams.inspectWorktreeDirectory(record.WorktreePath); err != nil {
 		return m.setStatus(statusOther, flowWorktreeAgentPathStatus), nil, false
 	}
-	if occupied, err := m.trackedFlowLeaseOccupied(intent.FlowID); err != nil {
-		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
-	} else if occupied {
+	advice := m.worktreeAgentFooterAdvice(record)
+	switch advice.Holder() {
+	case flowownership.HolderLeaseUnreadable:
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(advice.Err())), nil, false
+	case flowownership.HolderPeerLease:
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
-	}
-	if m.flowLaunchAttemptOccupied(intent.FlowID) {
+	case flowownership.HolderRepairAttempt,
+		flowownership.HolderPhaseResumeAttempt,
+		flowownership.HolderPhaseAttempt,
+		flowownership.HolderOtherAttempt:
 		return m.setStatus(statusOther, flowWorktreeAgentPendingStatus), nil, false
 	}
 	if m.tmuxAutofixAgentStillRunning(record, record.WorktreePath) {
 		return m.setStatus(statusOther, flowWorktreeAgentPendingStatus), nil, false
 	}
-	if m.hasFlowEmbeddedTerminalForFlow(intent.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(intent.FlowID) {
+	switch advice.Holder() {
+	case flowownership.HolderFlowTerminal, flowownership.HolderRepairTerminal:
 		return m.setStatus(statusOther, flowWorktreeAgentSlotStatus), nil, false
-	}
-	if m.hasKnownActiveFlowSession(intent.FlowID) {
+	case flowownership.HolderFlowSession:
 		return m.setStatus(statusOther, flowWorktreeAgentSessionStatus), nil, false
-	}
-	if advice := m.worktreeAgentFooterAdvice(record); advice.Defer() {
-		switch advice.Holder() {
-		case flowownership.HolderPhaseSession:
-			return m.setStatus(statusOther, fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", advice.PhaseID())), nil, false
-		case flowownership.HolderRunningPhase:
-			return m.setStatus(statusOther, fmt.Sprintf("a running phase %s already occupies this Flow", advice.PhaseID())), nil, false
-		}
+	case flowownership.HolderPhaseSession:
+		return m.setStatus(statusOther, fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", advice.PhaseID())), nil, false
+	case flowownership.HolderRunningPhase:
+		return m.setStatus(statusOther, fmt.Sprintf("a running phase %s already occupies this Flow", advice.PhaseID())), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {

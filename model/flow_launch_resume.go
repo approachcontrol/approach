@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -121,23 +122,16 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	if flowID == "" {
 		return m, nil, false
 	}
-	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
-		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
-	} else if occupied {
+	advice := m.phaseResumeAdvice(flowID, flowownership.StagePreview)
+	switch advice.Holder() {
+	case flowownership.HolderLeaseUnreadable:
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(advice.Err())), nil, false
+	case flowownership.HolderPeerLease:
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
+	case flowownership.HolderFlowTerminal:
+		return m.setStatus(statusOther, flowPhaseResumeTerminalStatus), nil, false
 	}
-	// The typed lease check above owns the occupied/setup diagnostic. Repeating
-	// it through flowLaunchAdmissionOccupied could turn a peer race into a silent
-	// refusal before the reservation-protected recheck reports the real cause.
-	if m.flowLaunchRuntimeOccupied(flowID) {
-		// The two predicates overlap rather than nest: the broad one requires a
-		// non-nil Terminal and ignores FlowRepair, the repair one requires
-		// FlowRepair and ignores Terminal. A repair terminal satisfies both
-		// disjuncts of admission occupancy and refuses silently today, so the
-		// status is scoped to the non-repair case with the conjunction below.
-		if m.hasFlowEmbeddedTerminalForFlow(flowID) && !m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
-			return m.setStatus(statusOther, flowPhaseResumeTerminalStatus), nil, false
-		}
+	if advice.Defer() {
 		return m, nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -180,10 +174,7 @@ func (m Model) previewPhaseResume(flowID string) bool {
 	if flowID == "" {
 		return true
 	}
-	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil || occupied {
-		return false
-	}
-	return !m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
+	return !m.phaseResumeAdvice(flowID, flowownership.StageFooter).Defer()
 }
 
 // phaseResumeFlowLaunchReadCmd is the authoritative read for a phase resume. It

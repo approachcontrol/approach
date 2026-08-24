@@ -269,6 +269,15 @@ func flowOccupancyRepresentation(call *ast.CallExpr, assignments map[*ast.Object
 		case "HeadlessWritePending", "RepairDrainPending":
 			return flowOccupancyRuntimeState
 		}
+	case flowOccupancyModel:
+		switch selector.Sel.Name {
+		case "flowLaunchAttemptOccupied":
+			return flowOccupancyLaunchOwners
+		case "hasFlowEmbeddedTerminalForFlow", "hasFlowRepairEmbeddedTerminalForFlow":
+			return flowOccupancyTerminalSlots
+		case "flowHeadlessWritePending", "hasPendingRepairAutoDrainMarker":
+			return flowOccupancyRuntimeState
+		}
 	}
 	return ""
 }
@@ -596,6 +605,41 @@ func forbidden(runtime flowOccupancyRuntime) bool { return runtime.HeadlessWrite
 			representation: "model-side occupancy runtime",
 			source: `package model
 func forbidden(runtime flowOccupancyRuntime) bool { return runtime.RepairDrainPending("flow") }
+`,
+		},
+		{
+			name:           "Model launch occupancy wrapper",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool { return m.flowLaunchAttemptOccupied("flow") }
+`,
+		},
+		{
+			name:           "Model terminal occupancy wrapper",
+			representation: "retained embedded terminal slots",
+			source: `package model
+func forbidden(m Model) bool { return m.hasFlowEmbeddedTerminalForFlow("flow") }
+`,
+		},
+		{
+			name:           "Model repair terminal occupancy wrapper",
+			representation: "retained embedded terminal slots",
+			source: `package model
+func forbidden(m Model) bool { return m.hasFlowRepairEmbeddedTerminalForFlow("flow") }
+`,
+		},
+		{
+			name:           "Model headless occupancy wrapper",
+			representation: "model-side occupancy runtime",
+			source: `package model
+func forbidden(m Model) bool { return m.flowHeadlessWritePending("flow") }
+`,
+		},
+		{
+			name:           "Model repair drain occupancy wrapper",
+			representation: "model-side occupancy runtime",
+			source: `package model
+func forbidden(m Model) bool { return m.hasPendingRepairAutoDrainMarker("flow") }
 `,
 		},
 	}

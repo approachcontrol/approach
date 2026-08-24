@@ -437,20 +437,6 @@ func (m Model) flowLaunchAdmissionOccupied(flowID string) bool {
 	return m.trackedPhaseOccupancy(flowID, flowownership.StagePreview).Occupied()
 }
 
-// flowLaunchRuntimeOccupied is the in-process ownership half of admission.
-// Creation-time Plan Now allocates a brand-new Flow and remains embedded and
-// unleased, so it uses this narrower check while all existing-Flow routes use
-// flowLaunchAdmissionOccupied and therefore respect a tracked tmux lease.
-func (m Model) flowLaunchRuntimeOccupied(flowID string) bool {
-	flowID = strings.TrimSpace(flowID)
-	if flowID == "" {
-		return false
-	}
-	return m.flowLaunchAttemptOccupied(flowID) ||
-		m.hasFlowEmbeddedTerminalForFlow(flowID) ||
-		m.hasFlowRepairEmbeddedTerminalForFlow(flowID)
-}
-
 const flowLeaseOccupiedStatus = "Flow phase launch deferred because a tracked tmux phase agent still occupies this Flow"
 
 func flowLeaseSetupErrorStatus(err error) string {
@@ -913,7 +899,8 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if msg.Kind == flowLaunchKindSavedSessionResume && m.hasFlowEmbeddedTerminalForFlow(attempt.FlowID) {
+		if msg.Kind == flowLaunchKindSavedSessionResume &&
+			m.flowLaunchInstallOccupancy(flowLaunchKindSavedSessionResume, attempt.FlowID).Occupied() {
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
 				setStatus(statusOther, savedSessionResumeFlowOccupiedStatus), nil
 		}
