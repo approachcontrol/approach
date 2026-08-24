@@ -125,14 +125,18 @@ func flowOccupancyTypeKind(expr ast.Expr, scope flowOccupancyFileScope) flowOccu
 	return flowOccupancyUnknown
 }
 
-func flowOccupancyExprType(expr ast.Expr, vars map[string]flowOccupancyExprKind, scope flowOccupancyFileScope) flowOccupancyExprKind {
+func flowOccupancyExprType(expr ast.Expr, assignments map[*ast.Object]flowOccupancyExprKind, scope flowOccupancyFileScope) flowOccupancyExprKind {
+	return flowOccupancyExprTypeSeen(expr, assignments, scope, make(map[*ast.Object]bool))
+}
+
+func flowOccupancyExprTypeSeen(expr ast.Expr, assignments map[*ast.Object]flowOccupancyExprKind, scope flowOccupancyFileScope, seen map[*ast.Object]bool) flowOccupancyExprKind {
 	switch expr := expr.(type) {
 	case *ast.ParenExpr:
-		return flowOccupancyExprType(expr.X, vars, scope)
+		return flowOccupancyExprTypeSeen(expr.X, assignments, scope, seen)
 	case *ast.UnaryExpr:
-		return flowOccupancyExprType(expr.X, vars, scope)
+		return flowOccupancyExprTypeSeen(expr.X, assignments, scope, seen)
 	case *ast.Ident:
-		return vars[expr.Name]
+		return flowOccupancyObjectType(expr.Obj, assignments, scope, seen)
 	case *ast.CompositeLit:
 		return flowOccupancyTypeKind(expr.Type, scope)
 	case *ast.CallExpr:
@@ -141,8 +145,29 @@ func flowOccupancyExprType(expr ast.Expr, vars map[string]flowOccupancyExprKind,
 		}
 		return flowOccupancyTypeKind(expr.Fun, scope)
 	case *ast.SelectorExpr:
-		if expr.Sel.Name == "flowOwnership" && flowOccupancyExprType(expr.X, vars, scope) == flowOccupancyModel {
+		if expr.Sel.Name == "flowOwnership" && flowOccupancyExprTypeSeen(expr.X, assignments, scope, seen) == flowOccupancyModel {
 			return flowOccupancyOwnership
+		}
+	}
+	return flowOccupancyUnknown
+}
+
+func flowOccupancyObjectType(object *ast.Object, assignments map[*ast.Object]flowOccupancyExprKind, scope flowOccupancyFileScope, seen map[*ast.Object]bool) flowOccupancyExprKind {
+	if object == nil || seen[object] {
+		return flowOccupancyUnknown
+	}
+	if kind, assigned := assignments[object]; assigned {
+		return kind
+	}
+	seen[object] = true
+	defer delete(seen, object)
+
+	switch declaration := object.Decl.(type) {
+	case *ast.Field:
+		return flowOccupancyTypeKind(declaration.Type, scope)
+	case *ast.ValueSpec:
+		if declaration.Type != nil {
+			return flowOccupancyTypeKind(declaration.Type, scope)
 		}
 	}
 	return flowOccupancyUnknown
@@ -177,24 +202,12 @@ func flowOccupancyFunctionName(function *ast.FuncDecl) string {
 	return receiver + "." + function.Name.Name
 }
 
-func flowOccupancyDeclareFields(fields *ast.FieldList, vars map[string]flowOccupancyExprKind, scope flowOccupancyFileScope) {
-	if fields == nil {
-		return
-	}
-	for _, field := range fields.List {
-		kind := flowOccupancyTypeKind(field.Type, scope)
-		for _, name := range field.Names {
-			vars[name.Name] = kind
-		}
-	}
-}
-
-func flowOccupancyRepresentation(call *ast.CallExpr, vars map[string]flowOccupancyExprKind, scope flowOccupancyFileScope) string {
+func flowOccupancyRepresentation(call *ast.CallExpr, assignments map[*ast.Object]flowOccupancyExprKind, scope flowOccupancyFileScope) string {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return ""
 	}
-	kind := flowOccupancyExprType(selector.X, vars, scope)
+	kind := flowOccupancyExprType(selector.X, assignments, scope)
 	switch kind {
 	case flowOccupancyOwnership:
 		switch selector.Sel.Name {
@@ -220,12 +233,20 @@ func flowOccupancyRepresentation(call *ast.CallExpr, vars map[string]flowOccupan
 	return ""
 }
 
+type flowOccupancyScanEvent struct {
+	position    token.Pos
+	assignment  *ast.AssignStmt
+	call        *ast.CallExpr
+	declaration *ast.ValueSpec
+	selector    *ast.SelectorExpr
+}
+
 func scanFlowOccupancySource(name string, source []byte, allowances map[flowOccupancyAllowanceKey]string) ([]flowOccupancyViolation, error) {
 	if strings.HasSuffix(name, "_test.go") {
 		return nil, nil
 	}
 	files := token.NewFileSet()
-	file, err := parser.ParseFile(files, name, source, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(files, name, source, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -237,65 +258,84 @@ func scanFlowOccupancySource(name string, source []byte, allowances map[flowOccu
 			continue
 		}
 		functionName := flowOccupancyFunctionName(function)
-		vars := make(map[string]flowOccupancyExprKind)
-		if function.Recv != nil {
-			flowOccupancyDeclareFields(function.Recv, vars, scope)
-		}
-		flowOccupancyDeclareFields(function.Type.Params, vars, scope)
+		assignments := make(map[*ast.Object]flowOccupancyExprKind)
+		var events []flowOccupancyScanEvent
 		ast.Inspect(function.Body, func(node ast.Node) bool {
 			switch node := node.(type) {
-			case *ast.DeclStmt:
-				declaration, ok := node.Decl.(*ast.GenDecl)
-				if !ok {
-					break
-				}
-				for _, raw := range declaration.Specs {
-					spec, ok := raw.(*ast.ValueSpec)
-					if !ok || spec.Type == nil {
-						continue
-					}
-					kind := flowOccupancyTypeKind(spec.Type, scope)
-					for _, ident := range spec.Names {
-						vars[ident.Name] = kind
-					}
-				}
 			case *ast.AssignStmt:
-				for index, left := range node.Lhs {
-					if index >= len(node.Rhs) {
-						continue
-					}
-					ident, ok := left.(*ast.Ident)
-					if ok {
-						if kind := flowOccupancyExprType(node.Rhs[index], vars, scope); kind != flowOccupancyUnknown {
-							vars[ident.Name] = kind
-						}
-					}
-				}
+				events = append(events, flowOccupancyScanEvent{position: node.End(), assignment: node})
 			case *ast.CallExpr:
-				representation := flowOccupancyRepresentation(node, vars, scope)
-				if representation == "" {
-					break
-				}
-				key := flowOccupancyAllowanceKey{representation, functionName}
-				if _, allowed := allowances[key]; allowed {
-					break
-				}
-				violations = append(violations, flowOccupancyViolation{
-					File: name, Function: functionName, Representation: representation, Line: files.Position(node.Pos()).Line,
-				})
+				events = append(events, flowOccupancyScanEvent{position: node.Pos(), call: node})
+			case *ast.ValueSpec:
+				events = append(events, flowOccupancyScanEvent{position: node.End(), declaration: node})
 			case *ast.SelectorExpr:
-				if node.Sel.Name != "record" || flowOccupancyExprType(node.X, vars, scope) != flowOccupancyFlowAdapter {
-					break
-				}
-				key := flowOccupancyAllowanceKey{flowOccupancyFlowSource, functionName}
-				if _, allowed := allowances[key]; !allowed {
-					violations = append(violations, flowOccupancyViolation{
-						File: name, Function: functionName, Representation: flowOccupancyFlowSource, Line: files.Position(node.Pos()).Line,
-					})
+				if node.Sel.Name == "record" {
+					events = append(events, flowOccupancyScanEvent{position: node.Pos(), selector: node})
 				}
 			}
 			return true
 		})
+		sort.SliceStable(events, func(i, j int) bool { return events[i].position < events[j].position })
+		for _, event := range events {
+			switch {
+			case event.declaration != nil:
+				for index, name := range event.declaration.Names {
+					if name.Obj == nil || index >= len(event.declaration.Values) {
+						continue
+					}
+					kind := flowOccupancyExprType(event.declaration.Values[index], assignments, scope)
+					if kind != flowOccupancyUnknown {
+						assignments[name.Obj] = kind
+					}
+				}
+			case event.assignment != nil:
+				type update struct {
+					object *ast.Object
+					kind   flowOccupancyExprKind
+				}
+				var updates []update
+				for index, left := range event.assignment.Lhs {
+					if index >= len(event.assignment.Rhs) {
+						continue
+					}
+					name, ok := left.(*ast.Ident)
+					if !ok || name.Obj == nil {
+						continue
+					}
+					updates = append(updates, update{
+						object: name.Obj,
+						kind:   flowOccupancyExprType(event.assignment.Rhs[index], assignments, scope),
+					})
+				}
+				for _, update := range updates {
+					if update.kind != flowOccupancyUnknown {
+						assignments[update.object] = update.kind
+					}
+				}
+			case event.call != nil:
+				representation := flowOccupancyRepresentation(event.call, assignments, scope)
+				if representation == "" {
+					continue
+				}
+				key := flowOccupancyAllowanceKey{representation, functionName}
+				if _, allowed := allowances[key]; allowed {
+					continue
+				}
+				violations = append(violations, flowOccupancyViolation{
+					File: name, Function: functionName, Representation: representation, Line: files.Position(event.call.Pos()).Line,
+				})
+			case event.selector != nil:
+				if flowOccupancyExprType(event.selector.X, assignments, scope) != flowOccupancyFlowAdapter {
+					continue
+				}
+				key := flowOccupancyAllowanceKey{flowOccupancyFlowSource, functionName}
+				if _, allowed := allowances[key]; !allowed {
+					violations = append(violations, flowOccupancyViolation{
+						File: name, Function: functionName, Representation: flowOccupancyFlowSource, Line: files.Position(event.selector.Pos()).Line,
+					})
+				}
+			}
+		}
 	}
 	sort.Slice(violations, func(i, j int) bool {
 		if violations[i].File != violations[j].File {
@@ -325,6 +365,85 @@ func forbidden(ownership own.Ownership[int, string]) bool { return ownership.Occ
 			representation: "saved-session owner index",
 			source: `package model
 func forbidden(m Model, key flowLaunchSavedSessionKey) bool { return m.flowOwnership.SessionOccupied(key) }
+`,
+		},
+		{
+			name:           "inferred launch ownership variable",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool {
+	var ownership = m.flowOwnership
+	return ownership.Occupied("flow")
+}
+`,
+		},
+		{
+			name:           "assigned launch ownership variable",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool {
+	var ownership interface { Occupied(string) bool }
+	ownership = m.flowOwnership
+	return ownership.Occupied("flow")
+}
+`,
+		},
+		{
+			name:           "explicit interface launch ownership initializer",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool {
+	var ownership interface { Occupied(string) bool } = m.flowOwnership
+	return ownership.Occupied("flow")
+}
+`,
+		},
+		{
+			name:           "simultaneous assignment reads prior launch ownership",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool {
+	var occupied bool
+	ownership := m.flowOwnership
+	ownership, occupied = nil, ownership.Occupied("flow")
+	return occupied
+}
+`,
+		},
+		{
+			name:           "unresolved reassignment retains possible launch ownership",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool {
+	ownership := m.flowOwnership
+	ownership = getOwnership()
+	return ownership.Occupied("flow")
+}
+`,
+		},
+		{
+			name:           "conditional reassignment retains possible launch ownership",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model, condition bool) bool {
+	ownership := m.flowOwnership
+	if condition {
+		ownership = unrelatedOwnership{}
+	}
+	return ownership.Occupied("flow")
+}
+`,
+		},
+		{
+			name:           "initializer alias retains copied launch ownership",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(m Model) bool {
+	ownership := m.flowOwnership
+	var alias = ownership
+	ownership = unrelatedOwnership{}
+	return alias.Occupied("flow")
+}
 `,
 		},
 		{
@@ -408,6 +527,22 @@ func caller(value Ownership) bool { return value.Occupied("flow") }
 			file: "fixture.go",
 			source: `package model
 func caller() { /* m.flowOwnership.SessionOccupied(key) */ }
+`,
+		},
+		{
+			name: "unrelated value shadows protected parameter",
+			file: "fixture.go",
+			source: `package model
+import own "github.com/approachcontrol/approach/flowownership"
+type unrelatedOwnership struct{}
+func (unrelatedOwnership) Occupied(string) bool { return false }
+func caller(ownership own.Ownership[int, string]) bool {
+	if true {
+		ownership := unrelatedOwnership{}
+		return ownership.Occupied("flow")
+	}
+	return false
+}
 `,
 		},
 		{
