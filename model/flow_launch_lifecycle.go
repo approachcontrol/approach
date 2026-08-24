@@ -462,11 +462,23 @@ func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
 	if flowID == "" {
 		return false, nil
 	}
-	return (flowOccupancyLeaseInspector{
-		root:     m.sessionStateRoot,
-		injected: m.leaseInspectInjected,
-		inspect:  m.inspectFlowLease,
-	}).FlowLeaseOccupied(flowID)
+	verdict := flowownership.Evaluate(flowownership.Sources{
+		Lease: flowOccupancyLeaseInspector{
+			root:     m.sessionStateRoot,
+			injected: m.leaseInspectInjected,
+			inspect:  m.inspectFlowLease,
+		},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role:  actions.RoleTrackedPhase,
+			Stage: flowownership.StageReserved,
+		},
+	})
+	if err := verdict.Err(); err != nil {
+		return false, err
+	}
+	return verdict.Occupied(), nil
 }
 
 func (m Model) cachedFlowRecord(flowID string) (flowstore.FlowRecord, bool) {

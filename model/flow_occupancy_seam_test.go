@@ -14,12 +14,15 @@ import (
 )
 
 const (
-	flowOccupancyLaunchOwners  = "launch ownership map"
-	flowOccupancySessionOwners = "saved-session owner index"
-	flowOccupancyTerminalSlots = "retained embedded terminal slots"
-	flowOccupancyLease         = "Flow lease inspector"
-	flowOccupancyFlowSource    = "authoritative Flow read"
-	flowOccupancySessionSource = "authoritative session reads"
+	flowOccupancyLaunchOwners       = "launch ownership map"
+	flowOccupancySessionOwners      = "saved-session owner index"
+	flowOccupancyTerminalSlots      = "retained embedded terminal slots"
+	flowOccupancyLease              = "Flow lease inspector"
+	flowOccupancyFlowSource         = "authoritative Flow read"
+	flowOccupancySessionSource      = "authoritative session reads"
+	flowOccupancyFlowCacheSource    = "cached Flow read"
+	flowOccupancySessionCacheSource = "cached session reads"
+	flowOccupancyRuntimeState       = "model-side occupancy runtime"
 )
 
 type flowOccupancyAllowanceKey struct {
@@ -64,6 +67,10 @@ const (
 	flowOccupancyLeaseAdapter
 	flowOccupancyFlowAdapter
 	flowOccupancySessionsAdapter
+	flowOccupancyKnownLeaseAdapter
+	flowOccupancyFlowCacheAdapter
+	flowOccupancySessionCacheAdapter
+	flowOccupancyRuntimeAdapter
 	flowOccupancyModel
 )
 
@@ -107,6 +114,14 @@ func flowOccupancyTypeKind(expr ast.Expr, scope flowOccupancyFileScope) flowOccu
 			return flowOccupancyFlowAdapter
 		case "flowOccupancyAuthoritativeSessions":
 			return flowOccupancySessionsAdapter
+		case "flowOccupancyKnownLease":
+			return flowOccupancyKnownLeaseAdapter
+		case "flowOccupancyFlowCache":
+			return flowOccupancyFlowCacheAdapter
+		case "flowOccupancySessionCache":
+			return flowOccupancySessionCacheAdapter
+		case "flowOccupancyRuntime":
+			return flowOccupancyRuntimeAdapter
 		case "Model":
 			return flowOccupancyModel
 		}
@@ -222,12 +237,37 @@ func flowOccupancyRepresentation(call *ast.CallExpr, assignments map[*ast.Object
 			return flowOccupancyTerminalSlots
 		}
 	case flowOccupancyLeaseAdapter:
-		if selector.Sel.Name == "inspect" {
+		if selector.Sel.Name == "inspect" || selector.Sel.Name == "FlowLeaseOccupied" {
 			return flowOccupancyLease
 		}
+	case flowOccupancyKnownLeaseAdapter:
+		if selector.Sel.Name == "FlowLeaseOccupied" {
+			return flowOccupancyLease
+		}
+	case flowOccupancyFlowAdapter:
+		if selector.Sel.Name == "ReadFlow" {
+			return flowOccupancyFlowSource
+		}
 	case flowOccupancySessionsAdapter:
-		if selector.Sel.Name == "list" {
+		if selector.Sel.Name == "list" || selector.Sel.Name == "ListFlowSessions" {
 			return flowOccupancySessionSource
+		}
+	case flowOccupancyFlowCacheAdapter:
+		if selector.Sel.Name == "CachedFlow" {
+			return flowOccupancyFlowCacheSource
+		}
+	case flowOccupancySessionCacheAdapter:
+		if selector.Sel.Name == "ActiveFlowSessions" {
+			return flowOccupancySessionCacheSource
+		}
+	case flowOccupancyRuntimeAdapter:
+		switch selector.Sel.Name {
+		case "AttemptHolder":
+			return flowOccupancyLaunchOwners
+		case "HasFlowTerminal", "HasNonRepairFlowTerminal", "HasRepairTerminal":
+			return flowOccupancyTerminalSlots
+		case "HeadlessWritePending", "RepairDrainPending":
+			return flowOccupancyRuntimeState
 		}
 	}
 	return ""
@@ -461,6 +501,20 @@ func forbidden(adapter flowOccupancyLeaseInspector) { _, _ = adapter.inspect("ro
 `,
 		},
 		{
+			name:           "Flow lease adapter method",
+			representation: "Flow lease inspector",
+			source: `package model
+func forbidden(adapter flowOccupancyLeaseInspector) { _, _ = adapter.FlowLeaseOccupied("flow") }
+`,
+		},
+		{
+			name:           "known Flow lease adapter method",
+			representation: "Flow lease inspector",
+			source: `package model
+func forbidden(adapter flowOccupancyKnownLease) { _, _ = adapter.FlowLeaseOccupied("flow") }
+`,
+		},
+		{
 			name:           "authoritative Flow",
 			representation: "authoritative Flow read",
 			source: `package model
@@ -468,10 +522,80 @@ func forbidden(source flowOccupancyAuthoritativeFlow) flowstore.FlowRecord { ret
 `,
 		},
 		{
+			name:           "authoritative Flow adapter method",
+			representation: "authoritative Flow read",
+			source: `package model
+func forbidden(source flowOccupancyAuthoritativeFlow) { _, _ = source.ReadFlow("flow") }
+`,
+		},
+		{
 			name:           "authoritative sessions",
 			representation: "authoritative session reads",
 			source: `package model
 func forbidden(source flowOccupancyAuthoritativeSessions) { _, _ = source.list("flow") }
+`,
+		},
+		{
+			name:           "authoritative sessions adapter method",
+			representation: "authoritative session reads",
+			source: `package model
+func forbidden(source flowOccupancyAuthoritativeSessions) { _, _ = source.ListFlowSessions("flow") }
+`,
+		},
+		{
+			name:           "cached Flow adapter method",
+			representation: "cached Flow read",
+			source: `package model
+func forbidden(cache flowOccupancyFlowCache) { _, _ = cache.CachedFlow("flow") }
+`,
+		},
+		{
+			name:           "cached sessions adapter method",
+			representation: "cached session reads",
+			source: `package model
+func forbidden(cache flowOccupancySessionCache) { _ = cache.ActiveFlowSessions("flow") }
+`,
+		},
+		{
+			name:           "runtime attempt holder",
+			representation: "launch ownership map",
+			source: `package model
+func forbidden(runtime flowOccupancyRuntime) { _, _ = runtime.AttemptHolder("flow") }
+`,
+		},
+		{
+			name:           "runtime Flow terminal",
+			representation: "retained embedded terminal slots",
+			source: `package model
+func forbidden(runtime flowOccupancyRuntime) bool { return runtime.HasFlowTerminal("flow") }
+`,
+		},
+		{
+			name:           "runtime non-repair Flow terminal",
+			representation: "retained embedded terminal slots",
+			source: `package model
+func forbidden(runtime flowOccupancyRuntime) bool { return runtime.HasNonRepairFlowTerminal("flow") }
+`,
+		},
+		{
+			name:           "runtime repair terminal",
+			representation: "retained embedded terminal slots",
+			source: `package model
+func forbidden(runtime flowOccupancyRuntime) bool { return runtime.HasRepairTerminal("flow") }
+`,
+		},
+		{
+			name:           "runtime pending headless write",
+			representation: "model-side occupancy runtime",
+			source: `package model
+func forbidden(runtime flowOccupancyRuntime) bool { return runtime.HeadlessWritePending("flow") }
+`,
+		},
+		{
+			name:           "runtime pending repair drain",
+			representation: "model-side occupancy runtime",
+			source: `package model
+func forbidden(runtime flowOccupancyRuntime) bool { return runtime.RepairDrainPending("flow") }
 `,
 		},
 	}
