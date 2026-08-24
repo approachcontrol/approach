@@ -141,14 +141,13 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 	return false
 }
 
-// selectedFlowRepairReady is the footer's answer. It composes preview
-// eligibility with repair's StageFooter policy, which adds the transient
-// headless-write holder without widening StagePreview for other consumers. The
-// intent has a blank Flow ID because ui.FlowRepairReady takes no arguments:
-// cachedFlowRecord("") falls back to selectedFlow(), preserving selection
-// semantics.
+// selectedFlowRepairReady is the footer's answer. StageFooter is the preview
+// policy plus the transient headless-write holder, so evaluating it once avoids
+// a second filesystem-backed lease inspection per render. The intent has a
+// blank Flow ID because ui.FlowRepairReady takes no arguments: cachedFlowRecord
+// falls back to selectedFlow(), preserving selection semantics.
 func (m Model) selectedFlowRepairReady() bool {
-	record, ok := m.previewRepairLaunch(m.repairFlowLaunchIntent(""))
+	record, ok := m.cachedRepairTarget(m.repairFlowLaunchIntent(""))
 	return ok && !m.repairOccupancy(record.FlowID, flowownership.StageFooter).Occupied()
 }
 
