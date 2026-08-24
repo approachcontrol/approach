@@ -112,7 +112,7 @@ func (m Model) flowPhaseSessionReleaseRefusal(record flowstore.FlowRecord, phase
 	// A release must not act while the launch lifecycle holds this Flow, or
 	// while a headless write is in flight: both can be about to persist a
 	// launch ID the probe has not seen.
-	case m.flowLaunchAttemptOccupied(record.FlowID), m.flowHeadlessWritePending(record.FlowID):
+	case m.sessionReleaseRuntimeAdvice(record.FlowID).Defer():
 		return flowPhaseSessionReleaseBusyStatus
 	}
 	return ""

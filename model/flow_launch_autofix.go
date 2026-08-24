@@ -90,9 +90,7 @@ func (m Model) selectedFlowAutofixTarget() (flowstore.FlowRecord, string, bool) 
 // than a hint that silently disappears.
 func (m Model) selectedFlowAutofixReady() bool {
 	record, _, ok := m.selectedFlowAutofixTarget()
-	return ok &&
-		!m.flowLaunchAdmissionOccupied(record.FlowID) &&
-		!m.flowHeadlessWritePending(record.FlowID)
+	return ok && !m.autofixFooterAdvice(record.FlowID).Defer()
 }
 
 // handleAutofixSelectedFlowPR binds U. The tmux probe runs here rather than in
@@ -142,30 +140,21 @@ func (m Model) admitAutofixFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, 
 	if !ok || !autofixFlowEligible(record) {
 		return m, nil, false
 	}
-	if occupied, err := m.trackedFlowLeaseOccupied(flowID); err != nil {
-		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(err)), nil, false
-	} else if occupied {
+	advice := m.autofixFooterAdvice(flowID)
+	switch advice.Holder() {
+	case flowownership.HolderLeaseUnreadable:
+		return m.setStatus(statusOther, flowLeaseSetupErrorStatus(advice.Err())), nil, false
+	case flowownership.HolderPeerLease:
 		return m.setStatus(statusOther, flowLeaseOccupiedStatus), nil, false
-	}
-	// Repair and phase resume are named before the generic in-flight refusal so
-	// the durable obstacle is the one reported. Both are lifecycle attempts now,
-	// so the kind is what tells them apart from any other attempt. The typed
-	// lease check above owns the occupied/setup diagnostic: repeating it through
-	// flowLaunchAdmissionOccupied would collapse a held or unreadable lease into
-	// the generic in-flight status.
-	if m.flowLaunchAttemptKind(flowID) == flowLaunchKindRepair {
+	case flowownership.HolderRepairAttempt:
 		return m.setStatus(statusOther, flowRepairPendingStatus), nil, false
-	}
-	if m.flowLaunchAttemptKind(flowID) == flowLaunchKindPhaseResume {
+	case flowownership.HolderPhaseResumeAttempt:
 		return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), nil, false
-	}
-	if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasFlowRepairEmbeddedTerminalForFlow(flowID) {
+	case flowownership.HolderFlowTerminal, flowownership.HolderRepairTerminal:
 		return m.setStatus(statusOther, flowAutofixTerminalStatus), nil, false
-	}
-	if m.flowLaunchRuntimeOccupied(flowID) {
+	case flowownership.HolderPhaseAttempt, flowownership.HolderOtherAttempt:
 		return m.setStatus(statusOther, flowAutofixInFlightStatus), nil, false
-	}
-	if m.flowHeadlessWritePending(flowID) {
+	case flowownership.HolderHeadlessWrite:
 		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil, false
 	}
 	command, _, _ := m.flowLaunchAgentSettings()

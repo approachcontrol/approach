@@ -475,7 +475,7 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 			m = m.disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
-		if m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) || m.hasPendingRepairAutoDrainMarker(record.FlowID) {
+		if m.repairDrainControlAdvice(record.FlowID).Defer() {
 			m = m.disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}

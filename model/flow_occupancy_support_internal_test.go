@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,6 +165,13 @@ func occupancyRepairFlowRecord() flowstore.FlowRecord {
 func newOccupancyFixture(t *testing.T, sources ...occupancySource) occupancyFixture {
 	t.Helper()
 	return newOccupancyFixtureFor(t, occupancyFlowRecord(), sources...)
+}
+
+func (m Model) flowLaunchRuntimeOccupied(flowID string) bool {
+	if strings.TrimSpace(flowID) == "" {
+		return false
+	}
+	return m.createFlowAdmissionOccupancy(flowID).Occupied()
 }
 
 // newOccupancyFixtureFor installs every named source against one record. The

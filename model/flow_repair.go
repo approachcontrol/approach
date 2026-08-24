@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -140,18 +141,14 @@ func phaseHasMatchingLiveSessionExcept(phase flowstore.FlowPhase, skip flowSessi
 	return false
 }
 
-// selectedFlowRepairReady is the footer's answer, and it is the preview
-// boundary plus the one term that boundary cannot carry. The intent has a blank
-// Flow ID because ui.FlowRepairReady takes no arguments: cachedFlowRecord("")
-// falls back to selectedFlow(), which is the selection semantics this predicate
-// has always had.
-//
-// The headless term stays outside StagePreview so other preview consumers do
-// not inherit repair's transient holder. StageAdmission includes it for repair,
-// and this explicit check keeps the footer aligned without changing preview.
+// selectedFlowRepairReady is the footer's answer. StageFooter is the preview
+// policy plus the transient headless-write holder, so evaluating it once avoids
+// a second filesystem-backed lease inspection per render. The intent has a
+// blank Flow ID because ui.FlowRepairReady takes no arguments: cachedFlowRecord
+// falls back to selectedFlow(), preserving selection semantics.
 func (m Model) selectedFlowRepairReady() bool {
-	record, ok := m.previewRepairLaunch(m.repairFlowLaunchIntent(""))
-	return ok && !m.flowHeadlessWritePending(record.FlowID)
+	record, ok := m.cachedRepairTarget(m.repairFlowLaunchIntent(""))
+	return ok && !m.repairOccupancy(record.FlowID, flowownership.StageFooter).Occupied()
 }
 
 // handleRepairSelectedFlow is submit-only. Every refusal, path resolution, and

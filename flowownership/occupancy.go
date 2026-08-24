@@ -228,8 +228,14 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	{Role: actions.RoleSavedSessionResume, Stage: StageInstall}: {sources: readRuntime, runtime: readFlowTerminal, freshness: allowAuthoritative},
 
 	// Matrix section 2.3: launch previews omit footer-only occupancy terms.
+	// Phase resume reuses its preview purpose as the no-I/O admission advisory;
+	// the source handler retains the separate tmux probe.
 	{Role: actions.RoleTrackedPhase, Stage: StagePreview}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
+	{Role: actions.RolePhaseResume, Stage: StagePreview}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
 	{Role: actions.RoleRepair, Stage: StagePreview}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
+	// Session release uses the RoleNone preview to fence its local checks before
+	// the authoritative session-store probe.
+	{Role: actions.RoleNone, Stage: StagePreview}: {sources: readRuntime, runtime: readAttempt | readHeadlessWrite, freshness: allowCached},
 	// Matrix section 2.3: rendered affordances use mirrors only. Tracked phase
 	// and repair add the headless-write term their launch previews omit.
 	{Role: actions.RoleTrackedPhase, Stage: StageFooter}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
@@ -562,7 +568,14 @@ func (occupancy Occupancy) Advise(query Query) Advisory {
 		if occupancy.sources.Runtime == nil {
 			return Advisory{verdict: failedVerdict(ErrMissingRuntime)}
 		}
-		runtime = queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+		if query.Purpose.Role == actions.RoleAutofix && query.Purpose.Stage == StageFooter {
+			runtime = queryAutofixRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+		} else if query.Purpose.Role == actions.RolePhaseResume && query.Purpose.Stage == StagePreview &&
+			occupancy.sources.Runtime.HasFlowTerminal(flowID) && !occupancy.sources.Runtime.HasRepairTerminal(flowID) {
+			runtime = Verdict{holder: HolderFlowTerminal}
+		} else {
+			runtime = queryRuntime(policy.runtime, occupancy.sources.Runtime, flowID)
+		}
 	}
 	flowCache := Free()
 	if policy.sources&readFlowCache != 0 {
@@ -904,6 +917,31 @@ func queryRuntime(permission runtimePermission, runtime Runtime, flowID string) 
 	}
 	if permission&readRepairDrain != 0 && runtime.RepairDrainPending(flowID) {
 		return Verdict{holder: HolderRepairDrain}
+	}
+	if permission&readHeadlessWrite != 0 && runtime.HeadlessWritePending(flowID) {
+		return Verdict{holder: HolderHeadlessWrite}
+	}
+	return Free()
+}
+
+// queryAutofixRuntime preserves autofix's deliberate ladder: repair and resume
+// attempts, terminal slots, other attempts, then the transient headless write.
+func queryAutofixRuntime(permission runtimePermission, runtime Runtime, flowID string) Verdict {
+	role, occupied := runtime.AttemptHolder(flowID)
+	if occupied {
+		holder := attemptHolder(role)
+		if holder == HolderRepairAttempt || holder == HolderPhaseResumeAttempt {
+			return Verdict{holder: holder}
+		}
+	}
+	if permission&readRepairTerminal != 0 && runtime.HasRepairTerminal(flowID) {
+		return Verdict{holder: HolderRepairTerminal}
+	}
+	if permission&readFlowTerminal != 0 && runtime.HasFlowTerminal(flowID) {
+		return Verdict{holder: HolderFlowTerminal}
+	}
+	if occupied {
+		return Verdict{holder: attemptHolder(role)}
 	}
 	if permission&readHeadlessWrite != 0 && runtime.HeadlessWritePending(flowID) {
 		return Verdict{holder: HolderHeadlessWrite}
