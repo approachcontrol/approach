@@ -265,9 +265,10 @@ Controls desktop notifications emitted by the TUI.
 The terminal hosting Approach must support OSC 9 and allow desktop
 notifications. Unsupported terminals ignore the sequence. Approach reports
 only changes observed while the TUI is running, so startup does not replay old
-outcomes. In tmux launch mode, Approach checks watched windows on its periodic
-launch sweep. A notification may therefore arrive up to 30 seconds after the
-agent exits.
+outcomes. When Approach itself runs inside tmux, it emits tmux's passthrough
+form; configure tmux with `set -g allow-passthrough on`. In tmux launch mode,
+Approach checks watched windows on its periodic launch sweep. A notification
+may therefore arrive up to 30 seconds after the agent exits.
 
 ### `[provider]`
 

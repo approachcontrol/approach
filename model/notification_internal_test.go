@@ -34,6 +34,21 @@ func TestNotificationCmdUsesOSC9ThroughRenderer(t *testing.T) {
 	}
 }
 
+func TestNotificationCmdUsesTmuxPassthrough(t *testing.T) {
+	event := flowPhaseNotification("Plan", "OSC 9 desktop notifications", "completed")
+	m := Model{notificationsEnabled: true, insideTmux: func() bool { return true }}
+
+	msg, ok := m.notificationCmd(event)().(tea.RawMsg)
+	if !ok {
+		t.Fatalf("notification command returned unexpected message")
+	}
+	const inner = "\x1b]9;Approach: Plan completed for OSC 9 desktop notifications\x07"
+	want := "\x1bPtmux;" + strings.ReplaceAll(inner, "\x1b", "\x1b\x1b") + "\x1b\\"
+	if msg.Msg != want {
+		t.Fatalf("tmux notification = %#v, want %#v", msg.Msg, want)
+	}
+}
+
 type notificationTestTerminal struct {
 	state string
 	err   error

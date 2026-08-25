@@ -214,6 +214,7 @@ type Model struct {
 	repoTmuxLaunchStatus      func(string, ...string) (bool, error)
 	repoTmuxSessionAttached   func(string) bool
 	insideMultiplexer         func() bool
+	insideTmux                func() bool
 	// repoTmuxTerminalPending holds the repos whose first tmux-mode terminal
 	// window has been dispatched but has not reported back. It debounces two
 	// launches into one repo seconds apart, where the second would probe
@@ -431,6 +432,9 @@ type Options struct {
 	// InsideMultiplexer reports whether approach itself runs inside tmux or
 	// Zellij, where tmux mode opens no terminal window of its own.
 	InsideMultiplexer func() bool
+	// InsideTmux reports whether renderer control sequences need tmux DCS
+	// passthrough.
+	InsideTmux func() bool
 	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
 	// manual admission, and AutoMode. It must never invoke tmux or fork.
 	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
@@ -939,6 +943,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if insideMultiplexer == nil {
 		insideMultiplexer = actions.InsideMultiplexer
 	}
+	insideTmux := opts.InsideTmux
+	if insideTmux == nil {
+		insideTmux = actions.InsideTmux
+	}
 	leaseInspectInjected := opts.InspectFlowLease != nil
 	inspectFlowLease := opts.InspectFlowLease
 	if inspectFlowLease == nil {
@@ -1138,6 +1146,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		repoTmuxLaunchStatus:      repoTmuxLaunchStatus,
 		repoTmuxSessionAttached:   repoTmuxSessionAttached,
 		insideMultiplexer:         insideMultiplexer,
+		insideTmux:                insideTmux,
 		inspectFlowLease:          inspectFlowLease,
 		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),

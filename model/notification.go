@@ -133,6 +133,9 @@ func (m Model) notificationCmd(event notificationEvent) tea.Cmd {
 	if sequence == "" {
 		return nil
 	}
+	if m.insideTmux != nil && m.insideTmux() {
+		sequence = tmuxPassthroughSequence(sequence)
+	}
 	return tea.Raw(sequence)
 }
 
@@ -222,6 +225,11 @@ func osc9NotificationSequence(message string) string {
 		return ""
 	}
 	return "\x1b]9;" + message + "\x07"
+}
+
+func tmuxPassthroughSequence(sequence string) string {
+	sequence = strings.ReplaceAll(sequence, "\x1b", "\x1b\x1b")
+	return "\x1bPtmux;" + sequence + "\x1b\\"
 }
 
 func sanitizeNotificationText(text string) string {

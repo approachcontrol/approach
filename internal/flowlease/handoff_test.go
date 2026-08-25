@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -241,6 +242,22 @@ func TestTmuxCreateTimeoutDoesNotRetrySameWindowName(t *testing.T) {
 				t.Fatalf("tmux command runs = %d, want %d without a duplicate mutation", runs, tc.wantRuns)
 			}
 		})
+	}
+}
+
+func TestTmuxCreateMarksWindowWithImmutableLaunchID(t *testing.T) {
+	spec := testPrivateSpec(t)
+	var calls [][]string
+	err := runTmuxWindowCreate(spec, func(args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runTmuxWindowCreate() error = %v", err)
+	}
+	want := []string{"set-option", "-w", "-t", "=" + spec.SessionName + ":=" + spec.WindowName, "@approach_launch_id", spec.LaunchID}
+	if len(calls) != 3 || !slices.Equal(calls[2], want) {
+		t.Fatalf("tmux calls = %#v, want marker call %#v", calls, want)
 	}
 }
 
@@ -879,6 +896,7 @@ case "$1" in
     fi
     exit 0
     ;;
+  set-option) exit 0 ;;
   kill-window) exit 0 ;;
 esac
 exit 2
