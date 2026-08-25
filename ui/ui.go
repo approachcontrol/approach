@@ -2993,7 +2993,7 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	for i := 0; i < height; i++ {
 		idx := scroll + i
 		if idx < len(repos) {
-			name := repos[idx].DisplayName
+			name := terminalSafeSingleLine(repos[idx].DisplayName)
 			activeRepo := repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path)
 			activityMarker := ""
 			if showActivityColumn {
@@ -3029,7 +3029,7 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRes
 	lines = append(lines, restoreHint)
 	if selected >= 0 && selected < len(repos) {
 		target := fileHyperlinkTarget(repos[selected].Path)
-		for _, r := range repos[selected].DisplayName {
+		for _, r := range terminalSafeSingleLine(repos[selected].DisplayName) {
 			if len(lines) >= height {
 				break
 			}
@@ -3129,10 +3129,11 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 		var locationLabel string
 		if row.WorktreePath != "" {
+			worktreePath := terminalSafeSingleLine(row.WorktreePath)
 			if repoPath != "" && row.WorktreePath == repoPath {
 				locationLabel = " " + hyperlink(rootStyle.Render("[root]"), fileHyperlinkTarget(row.WorktreePath))
 			} else {
-				locationLabel = " " + hyperlink(commitStyle.Render(fmt.Sprintf("[%s]", row.WorktreePath)), fileHyperlinkTarget(row.WorktreePath))
+				locationLabel = " " + hyperlink(commitStyle.Render(fmt.Sprintf("[%s]", worktreePath)), fileHyperlinkTarget(row.WorktreePath))
 			}
 		}
 
@@ -3188,7 +3189,8 @@ func renderSelectedBranchRow(row gitquery.BranchRow, repoPath string, width int)
 		if repoPath != "" && row.WorktreePath == repoPath {
 			line += hyperlink(selectedSegment(rootStyle, "[root]"), fileHyperlinkTarget(row.WorktreePath))
 		} else {
-			line += hyperlink(selectedSegment(commitStyle, fmt.Sprintf("[%s]", row.WorktreePath)), fileHyperlinkTarget(row.WorktreePath))
+			worktreePath := terminalSafeSingleLine(row.WorktreePath)
+			line += hyperlink(selectedSegment(commitStyle, fmt.Sprintf("[%s]", worktreePath)), fileHyperlinkTarget(row.WorktreePath))
 		}
 	}
 	return renderSelectedRow(line, width)
@@ -3330,6 +3332,7 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		if worktree == "." || worktree == string(filepath.Separator) {
 			worktree = ""
 		}
+		worktree = terminalSafeSingleLine(worktree)
 		summary := sessionSummaryDisplayText(record.Summary)
 		line := formatSessionColumns("   ",
 			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
@@ -3779,7 +3782,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		updated := flowUpdatedLabel(record)
 		repo := ""
 		if showRepo {
-			repo = flowRepoLabel(record, repoDisplayNames)
+			repo = terminalSafeSingleLine(flowRepoLabel(record, repoDisplayNames))
 		}
 		branch := record.Branch
 		if branch == "" {
@@ -3789,6 +3792,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				branch = "missing-worktree"
 			}
 		}
+		branch = terminalSafeSingleLine(branch)
 		rowSelected := i == selected && selectedPhaseID == ""
 		statusCell := statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
 		targets := flowRowHyperlinkTargets{
@@ -4265,7 +4269,7 @@ func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scr
 			rootLabel = " " + rootStyle.Render("[root]")
 		}
 
-		path := " " + hyperlink(commitStyle.Render(wt.Path), fileHyperlinkTarget(wt.Path))
+		path := " " + hyperlink(commitStyle.Render(terminalSafeSingleLine(wt.Path)), fileHyperlinkTarget(wt.Path))
 
 		line := "   " + name + indicators + rootLabel + path
 		if i == selected {
@@ -4360,7 +4364,7 @@ func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
 		line += selectedSegment(rootStyle, "[root]")
 	}
 	line += selectedStyle.Render(" ")
-	line += hyperlink(selectedSegment(commitStyle, wt.Path), fileHyperlinkTarget(wt.Path))
+	line += hyperlink(selectedSegment(commitStyle, terminalSafeSingleLine(wt.Path)), fileHyperlinkTarget(wt.Path))
 	return renderSelectedRow(line, width)
 }
 

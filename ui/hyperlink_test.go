@@ -44,8 +44,10 @@ func TestHyperlinkTargets(t *testing.T) {
 		{name: "reject non-HTTP PR", got: prHyperlinkTarget("javascript:alert(1)")},
 		{name: "reject relative PR", got: prHyperlinkTarget("github.com/approach/pull/8")},
 		{name: "absolute file", got: fileHyperlinkTarget("/tmp/space # percent%/界"), want: "file:///tmp/space%20%23%20percent%25/%E7%95%8C"},
+		{name: "file preserves trailing space", got: fileHyperlinkTarget("/tmp/repo "), want: "file:///tmp/repo%20"},
 		{name: "reject relative file", got: fileHyperlinkTarget("relative/path")},
 		{name: "repo-qualified Bead", got: beadHyperlinkTarget("/tmp/repo #1", "approach-5e7/child"), want: "bead://open?id=approach-5e7%2Fchild&repo=%2Ftmp%2Frepo+%231"},
+		{name: "Bead repo preserves trailing space", got: beadHyperlinkTarget("/tmp/repo ", "approach-5e7"), want: "bead://open?id=approach-5e7&repo=%2Ftmp%2Frepo+"},
 		{name: "missing Bead repo", got: beadHyperlinkTarget("", "approach-5e7")},
 		{name: "missing Bead ID", got: beadHyperlinkTarget("/tmp/repo", "")},
 	}
@@ -162,6 +164,35 @@ func TestRenderAuthoritativePathAndBeadTargets(t *testing.T) {
 	narrowBead := renderBeadsPane([]beadsquery.Bead{{ID: "approach-epic", Title: "Epic"}}, -1, 0, 10, 1, BeadExpansion{}, repoPath)[0]
 	if !strings.Contains(narrowBead, ansi.ResetHyperlink()) || ansi.StringWidth(narrowBead) > 10 {
 		t.Fatalf("truncated Bead link is not closed within width: %q", narrowBead)
+	}
+}
+
+func TestFilesystemHyperlinkLabelsAreTerminalSafe(t *testing.T) {
+	const evilTarget = "https://attacker.invalid"
+	injected := ansi.SetHyperlink(evilTarget) + "owned" + ansi.ResetHyperlink()
+	unsafeLabel := "repo" + injected + "\nnext"
+	unsafePath := "/tmp/work" + injected + "\nnext"
+
+	flow := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Flow", Status: flowstore.StatusInProgress,
+		RepoPath: "/tmp/repo", WorktreePath: unsafePath,
+	}
+	rows := map[string]string{
+		"repo":     renderRepoList([]scanner.Repo{{Path: "/tmp/repo", DisplayName: unsafeLabel}}, 0, 0, 120, 1, "", nil)[0],
+		"worktree": renderWorktreePane([]gitquery.Worktree{{Path: unsafePath, BranchName: "feature"}}, 0, 0, 240, 1)[0],
+		"branch":   renderBranchPaneSelected([]gitquery.BranchRow{{Branch: gitquery.Branch{Name: "feature", IsWorktree: true}, WorktreePath: unsafePath}}, 0, 0, 240, 1, "/tmp/repo")[0],
+		"session":  renderSessionPane([]sessions.SessionRecord{{Provider: sessions.ProviderCodex, WorktreePath: unsafePath, Status: "ended"}}, 0, 0, 240, 2)[1],
+		"flow":     renderFlowPane([]flowstore.FlowRecord{flow}, 0, 0, 240, 2, "", "", nil, true, map[string]string{flow.RepoPath: unsafeLabel})[1],
+	}
+	for name, row := range rows {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(row, ansi.SetHyperlink(evilTarget)) {
+				t.Fatalf("row contains injected hyperlink: %q", row)
+			}
+			if strings.ContainsAny(ansi.Strip(row), "\n\r\a\x1b") {
+				t.Fatalf("row contains an unsafe line or control character: %q", row)
+			}
+		})
 	}
 }
 

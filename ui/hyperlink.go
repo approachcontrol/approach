@@ -18,6 +18,7 @@ func hyperlink(label, target string) string {
 }
 
 func hyperlinkColumn(label, target string, width int, style lipgloss.Style) string {
+	label = terminalSafeSingleLine(label)
 	label = truncateToWidth(label, width)
 	cell := hyperlink(style.Render(label), target)
 	if padding := width - ansi.StringWidth(label); padding > 0 {
@@ -36,7 +37,6 @@ func prHyperlinkTarget(raw string) string {
 }
 
 func fileHyperlinkTarget(path string) string {
-	path = strings.TrimSpace(path)
 	if path == "" || !filepath.IsAbs(path) {
 		return ""
 	}
@@ -47,7 +47,6 @@ func fileHyperlinkTarget(path string) string {
 // The custom URI is intended for terminal handlers that know how to open a
 // Bead in its repository.
 func beadHyperlinkTarget(repoPath, beadID string) string {
-	repoPath = strings.TrimSpace(repoPath)
 	beadID = strings.TrimSpace(beadID)
 	if repoPath == "" || beadID == "" || !filepath.IsAbs(repoPath) {
 		return ""
