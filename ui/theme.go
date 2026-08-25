@@ -1,22 +1,26 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 type themePalette struct {
-	bg            lipgloss.Color
-	fg            lipgloss.Color
-	fgStrong      lipgloss.Color
-	muted         lipgloss.Color
-	borderMuted   lipgloss.Color
-	focus         lipgloss.Color
-	info          lipgloss.Color
-	success       lipgloss.Color
-	successBright lipgloss.Color
-	warning       lipgloss.Color
-	danger        lipgloss.Color
-	special       lipgloss.Color
-	selectionBg   lipgloss.Color
-	selectionFg   lipgloss.Color
+	bg            color.Color
+	fg            color.Color
+	fgStrong      color.Color
+	muted         color.Color
+	borderMuted   color.Color
+	focus         color.Color
+	info          color.Color
+	success       color.Color
+	successBright color.Color
+	warning       color.Color
+	danger        color.Color
+	special       color.Color
+	selectionBg   color.Color
+	selectionFg   color.Color
 }
 
 type themeStyles struct {
@@ -50,9 +54,9 @@ type themeStyles struct {
 	diffDel           lipgloss.Style
 	diffHeader        lipgloss.Style
 	flowTerminal      lipgloss.Style
-	activeBorder      lipgloss.Color
-	inactiveBorder    lipgloss.Color
-	destructiveBorder lipgloss.Color
+	activeBorder      color.Color
+	inactiveBorder    color.Color
+	destructiveBorder color.Color
 }
 
 var clearDarkPalette = themePalette{

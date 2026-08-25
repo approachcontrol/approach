@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/model/modal"
 )
@@ -76,7 +76,7 @@ func TestEditorEnterInsertsNewlineAndNeverSubmits(t *testing.T) {
 		return nil
 	})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Consumed {
 		t.Fatalf("outcome = %v, want Consumed", out)
@@ -106,7 +106,7 @@ func TestEditorCtrlSSubmitsRawValue(t *testing.T) {
 		return nil
 	})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	if out != modal.Accepted {
 		t.Fatalf("outcome = %v, want Accepted", out)
@@ -128,7 +128,7 @@ func TestEditorCtrlSValidationFailureKeepsModalOpen(t *testing.T) {
 		return errors.New("nope")
 	}, func(string) tea.Cmd { return nil }).AsEditor(modal.EditorSpec{Original: "bad"})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	if out != modal.Consumed {
 		t.Fatalf("outcome = %v, want Consumed", out)
@@ -146,16 +146,16 @@ func TestEditorCtrlSValidationFailureKeepsModalOpen(t *testing.T) {
 
 func TestEditorHomeAndEndAreLineAware(t *testing.T) {
 	const value = "alpha\nbeta\ngamma"
-	for _, key := range []tea.KeyType{tea.KeyHome, tea.KeyCtrlA} {
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyHome}, {Code: 'a', Mod: tea.ModCtrl}} {
 		m := newEditor(value, modal.EditorSpec{Original: value, Cursor: 8}, nil) // inside "beta"
-		next, _, _ := m.Update(tea.KeyMsg{Type: key})
+		next, _, _ := m.Update(key)
 		if got := next.View().InputCursor; got != 6 {
 			t.Fatalf("%v cursor = %d, want line start 6", key, got)
 		}
 	}
-	for _, key := range []tea.KeyType{tea.KeyEnd, tea.KeyCtrlE} {
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyEnd}, {Code: 'e', Mod: tea.ModCtrl}} {
 		m := newEditor(value, modal.EditorSpec{Original: value, Cursor: 8}, nil)
-		next, _, _ := m.Update(tea.KeyMsg{Type: key})
+		next, _, _ := m.Update(key)
 		if got := next.View().InputCursor; got != 10 {
 			t.Fatalf("%v cursor = %d, want line end 10", key, got)
 		}
@@ -164,7 +164,7 @@ func TestEditorHomeAndEndAreLineAware(t *testing.T) {
 
 func TestEditorAltEnterStillInsertsNewline(t *testing.T) {
 	m := newEditor("ab", modal.EditorSpec{Original: "ab", Cursor: 2}, nil)
-	next, out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	next, out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
 	if out != modal.Consumed {
 		t.Fatalf("outcome = %v, want Consumed", out)
 	}
@@ -177,23 +177,23 @@ func TestEditorEditingKeysAndUnicodeRemainRuneCorrect(t *testing.T) {
 	const value = "héllo wörld"
 	m := newEditor(value, modal.EditorSpec{Original: value, Cursor: 11}, nil)
 
-	next, _, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	next, _, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	if got := next.View().InputCursor; got != 10 {
 		t.Fatalf("left cursor = %d, want 10", got)
 	}
 
-	next, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	next, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if got := next.View().Input; got != "héllo wörl" {
 		t.Fatalf("backspace input = %q", got)
 	}
 
-	next, _, _ = newEditor(value, modal.EditorSpec{Original: value, Cursor: 1}, nil).Update(tea.KeyMsg{Type: tea.KeyDelete})
+	next, _, _ = newEditor(value, modal.EditorSpec{Original: value, Cursor: 1}, nil).Update(tea.KeyPressMsg{Code: tea.KeyDelete})
 	if got := next.View().Input; got != "hllo wörld" {
 		t.Fatalf("delete input = %q", got)
 	}
 
 	next, _, _ = newEditor(value, modal.EditorSpec{Original: value, Cursor: 5}, nil).
-		Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("日本\nテキスト")})
+		Update(tea.KeyPressMsg{Text: string([]rune("日本\nテキスト"))})
 	if got := next.View().Input; got != "héllo日本\nテキスト wörld" {
 		t.Fatalf("paste input = %q", got)
 	}
@@ -205,7 +205,7 @@ func TestEditorEditingKeysAndUnicodeRemainRuneCorrect(t *testing.T) {
 func TestEditorCtrlUClearsBufferAndRaisesEmptyWarning(t *testing.T) {
 	m := newEditor("custom", modal.EditorSpec{Original: "custom", Note: "boom", NoteKind: modal.NoteError}, nil)
 
-	next, _, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	next, _, _ := m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 
 	view := next.View()
 	if view.Input != "" {
@@ -252,7 +252,7 @@ func TestEditorDirtyTracksValueAgainstOriginal(t *testing.T) {
 		t.Fatal("expected dirty after typing")
 	}
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if m.View().Editor.Dirty {
 		t.Fatal("expected clean again once the value matches the original")
 	}
@@ -279,7 +279,7 @@ func TestEditorNoteIsClearedByOrdinaryTypingButWarningSurvives(t *testing.T) {
 		t.Fatal("expected empty warning while buffer is blank")
 	}
 
-	next, _, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	next, _, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	if got := next.View().Editor.Note; got != "" {
 		t.Fatalf("note after space = %q, want cleared", got)
 	}
@@ -303,7 +303,7 @@ func TestPlainRawMultiLineInputStillSubmitsOnEnter(t *testing.T) {
 		return nil
 	})
 
-	_, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Accepted {
 		t.Fatalf("outcome = %v, want Accepted", out)
@@ -322,7 +322,7 @@ func TestNonEditorInputIgnoresCtrlSAndKeepsBufferHomeEnd(t *testing.T) {
 		return func() tea.Msg { return sentinelMsg("submitted") }
 	})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if out != modal.Consumed {
 		t.Fatalf("ctrl+s outcome = %v, want Consumed", out)
 	}
@@ -333,7 +333,7 @@ func TestNonEditorInputIgnoresCtrlSAndKeepsBufferHomeEnd(t *testing.T) {
 		t.Fatalf("ctrl+s mutated the buffer: %q", got)
 	}
 
-	next, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	next, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	if got := next.View().InputCursor; got != 0 {
 		t.Fatalf("non-editor home cursor = %d, want buffer start 0", got)
 	}
@@ -349,7 +349,7 @@ func TestWithCancelReceivesPreCancelViewForEachKind(t *testing.T) {
 			})
 		m, _, _ = m.Update(keyRunes("d"))
 
-		next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 		if out != modal.Cancelled {
 			t.Fatalf("outcome = %v, want Cancelled", out)
 		}
@@ -383,7 +383,7 @@ func TestWithCancelReceivesPreCancelViewForEachKind(t *testing.T) {
 				got = view
 				return nil
 			})
-		_, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		_, out, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 		if out != modal.Cancelled {
 			t.Fatalf("outcome = %v, want Cancelled", out)
 		}
@@ -587,18 +587,18 @@ func TestNonEditorViewsAreUnchangedByTheEditorFields(t *testing.T) {
 	}
 }
 
-func keyOf(key string) tea.KeyMsg {
+func keyOf(key string) tea.KeyPressMsg {
 	switch key {
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
+		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
+		return tea.KeyPressMsg{Code: tea.KeyDown}
 	default:
 		return keyRunes(key)
 	}

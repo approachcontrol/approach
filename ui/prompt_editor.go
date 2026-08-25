@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // The prompt-template editor's ideal geometry. Unlike the picker's constants
@@ -26,7 +26,7 @@ const (
 // Hint copy, widest first. The renderer picks the widest variant that fits the
 // panel's content column so all three keys survive a clamped panel.
 var promptEditorHints = []string{
-	"ctrl+s: save   enter: newline   esc: cancel",
+	"ctrl+s/ctrl+enter: save   enter: newline   esc: cancel",
 	"ctrl+s save esc cancel enter nl",
 	"^s save ^[ cancel",
 }
@@ -35,7 +35,7 @@ var promptEditorHints = []string{
 // Dropping the hint row is a height decision and truncation is a width
 // decision, so the two cannot share one string.
 const (
-	promptEditorStatusCompact  = "  ctrl+s save  esc cancel  enter nl"
+	promptEditorStatusCompact  = "  ctrl+s/ctrl+enter save  esc cancel  enter nl"
 	promptEditorStatusFallback = "  ^s save ^[ cancel"
 )
 

@@ -12,7 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
@@ -833,19 +833,22 @@ func (m Model) cycleEmbeddedTerminal(direction int) Model {
 	return m.switchEmbeddedTerminal(numbers[nextIndex])
 }
 
-func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handleEmbeddedTerminalKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal() {
 		return m.handleFocusedEmbeddedTerminalKey(msg)
 	}
 	return m, nil, false
 }
 
-func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, _ embeddedTerminalScope) (Model, tea.Cmd, bool) {
+func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyPressMsg, _ embeddedTerminalScope) (Model, tea.Cmd, bool) {
 	return m.handleFocusedEmbeddedTerminalKey(msg)
 }
 
-func (m Model) handleFocusedEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handleFocusedEmbeddedTerminalKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	key := msg.String()
+	if !m.terminalPrefixActive && msg.Keystroke() == "ctrl+shift+]" {
+		return m.writeToActiveTerminal([]byte{terminalCommandLiteralByte}), nil, true
+	}
 	if m.terminalPrefixActive {
 		switch key {
 		case "tab":
@@ -1321,22 +1324,74 @@ func (m Model) writeToActiveTerminal(p []byte) Model {
 	return m
 }
 
-func keyBytes(msg tea.KeyMsg) []byte {
+func keyBytes(msg tea.KeyPressMsg) []byte {
 	p := baseKeyBytes(msg)
-	if len(p) == 0 || !msg.Alt {
+	if len(p) == 0 || !msg.Mod.Contains(tea.ModAlt) {
 		return p
 	}
 	return append([]byte{0x1b}, p...)
 }
 
-func baseKeyBytes(msg tea.KeyMsg) []byte {
-	if msg.Type == tea.KeyRunes {
-		return []byte(string(msg.Runes))
+func baseKeyBytes(msg tea.KeyPressMsg) []byte {
+	if msg.Text != "" {
+		return []byte(msg.Text)
 	}
-	switch msg.Type {
+	code := msg.Code
+	mod := msg.Mod
+	switch {
+	case code == tea.KeySpace && mod.Contains(tea.ModCtrl):
+		return []byte{0x00}
+	case code == tea.KeyBackspace && mod.Contains(tea.ModCtrl):
+		return []byte{0x08}
+	case code == 'h' && mod.Contains(tea.ModCtrl):
+		return []byte{0x7f}
+	case code == tea.KeyUp && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;6A")
+	case code == tea.KeyDown && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;6B")
+	case code == tea.KeyRight && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;6C")
+	case code == tea.KeyLeft && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;6D")
+	case code == tea.KeyHome && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;6H")
+	case code == tea.KeyEnd && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;6F")
+	case code == tea.KeyUp && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[1;5A")
+	case code == tea.KeyDown && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[1;5B")
+	case code == tea.KeyRight && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[1;5C")
+	case code == tea.KeyLeft && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[1;5D")
+	case code == tea.KeyHome && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[1;5H")
+	case code == tea.KeyEnd && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[1;5F")
+	case code == tea.KeyPgUp && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[5;5~")
+	case code == tea.KeyPgDown && mod.Contains(tea.ModCtrl):
+		return []byte("\x1b[6;5~")
+	case code == tea.KeyUp && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;2A")
+	case code == tea.KeyDown && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;2B")
+	case code == tea.KeyRight && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;2C")
+	case code == tea.KeyLeft && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;2D")
+	case code == tea.KeyHome && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;2H")
+	case code == tea.KeyEnd && mod.Contains(tea.ModShift):
+		return []byte("\x1b[1;2F")
+	case code == tea.KeyTab && mod.Contains(tea.ModShift):
+		return []byte("\x1b[Z")
+	}
+	switch code {
 	case tea.KeyEnter:
 		return []byte{'\r'}
-	case tea.KeyBackspace, tea.KeyCtrlH:
+	case tea.KeyBackspace:
 		return []byte{0x7f}
 	case tea.KeyTab:
 		return []byte{'\t'}
@@ -1364,48 +1419,6 @@ func baseKeyBytes(msg tea.KeyMsg) []byte {
 		return []byte("\x1b[3~")
 	case tea.KeyInsert:
 		return []byte("\x1b[2~")
-	case tea.KeyShiftTab:
-		return []byte("\x1b[Z")
-	case tea.KeyCtrlUp:
-		return []byte("\x1b[1;5A")
-	case tea.KeyCtrlDown:
-		return []byte("\x1b[1;5B")
-	case tea.KeyCtrlRight:
-		return []byte("\x1b[1;5C")
-	case tea.KeyCtrlLeft:
-		return []byte("\x1b[1;5D")
-	case tea.KeyCtrlHome:
-		return []byte("\x1b[1;5H")
-	case tea.KeyCtrlEnd:
-		return []byte("\x1b[1;5F")
-	case tea.KeyCtrlPgUp:
-		return []byte("\x1b[5;5~")
-	case tea.KeyCtrlPgDown:
-		return []byte("\x1b[6;5~")
-	case tea.KeyShiftUp:
-		return []byte("\x1b[1;2A")
-	case tea.KeyShiftDown:
-		return []byte("\x1b[1;2B")
-	case tea.KeyShiftRight:
-		return []byte("\x1b[1;2C")
-	case tea.KeyShiftLeft:
-		return []byte("\x1b[1;2D")
-	case tea.KeyShiftHome:
-		return []byte("\x1b[1;2H")
-	case tea.KeyShiftEnd:
-		return []byte("\x1b[1;2F")
-	case tea.KeyCtrlShiftUp:
-		return []byte("\x1b[1;6A")
-	case tea.KeyCtrlShiftDown:
-		return []byte("\x1b[1;6B")
-	case tea.KeyCtrlShiftRight:
-		return []byte("\x1b[1;6C")
-	case tea.KeyCtrlShiftLeft:
-		return []byte("\x1b[1;6D")
-	case tea.KeyCtrlShiftHome:
-		return []byte("\x1b[1;6H")
-	case tea.KeyCtrlShiftEnd:
-		return []byte("\x1b[1;6F")
 	case tea.KeyF1:
 		return []byte("\x1bOP")
 	case tea.KeyF2:
@@ -1431,12 +1444,101 @@ func baseKeyBytes(msg tea.KeyMsg) []byte {
 	case tea.KeyF12:
 		return []byte("\x1b[24~")
 	default:
-		if msg.Type >= 0 && msg.Type <= 31 {
-			return []byte{byte(msg.Type)}
+		if mod.Contains(tea.ModCtrl) {
+			if b, ok := legacyCtrlByte(code); ok {
+				return []byte{b}
+			}
+			if code >= 0x20 && code <= 0x7e {
+				return []byte{byte(code)}
+			}
+			return nil
 		}
-		if msg.Type == tea.KeyCtrlQuestionMark {
-			return []byte{0x7f}
+		if unicode.IsPrint(code) {
+			if mod.Contains(tea.ModShift) {
+				if msg.ShiftedCode != 0 {
+					code = msg.ShiftedCode
+				} else {
+					code = legacyShiftedCode(code)
+				}
+			}
+			return []byte(string(code))
 		}
 		return nil
+	}
+}
+
+func legacyCtrlByte(code rune) (byte, bool) {
+	switch code {
+	case tea.KeySpace, '@', '2':
+		return 0x00, true
+	case '[', '3':
+		return 0x1b, true
+	case '\\', '4':
+		return 0x1c, true
+	case ']', '5':
+		return 0x1d, true
+	case '^', '~', '6':
+		return 0x1e, true
+	case '_', '/', '7':
+		return 0x1f, true
+	case '?', '8':
+		return 0x7f, true
+	case 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+		'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z':
+		return byte(code-'a') + 1, true
+	case 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+		'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z':
+		return byte(code-'A') + 1, true
+	default:
+		return 0, false
+	}
+}
+
+func legacyShiftedCode(code rune) rune {
+	switch code {
+	case '`':
+		return '~'
+	case '1':
+		return '!'
+	case '2':
+		return '@'
+	case '3':
+		return '#'
+	case '4':
+		return '$'
+	case '5':
+		return '%'
+	case '6':
+		return '^'
+	case '7':
+		return '&'
+	case '8':
+		return '*'
+	case '9':
+		return '('
+	case '0':
+		return ')'
+	case '-':
+		return '_'
+	case '=':
+		return '+'
+	case '[':
+		return '{'
+	case ']':
+		return '}'
+	case '\\':
+		return '|'
+	case ';':
+		return ':'
+	case '\'':
+		return '"'
+	case ',':
+		return '<'
+	case '.':
+		return '>'
+	case '/':
+		return '?'
+	default:
+		return unicode.ToUpper(code)
 	}
 }

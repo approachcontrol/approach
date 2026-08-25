@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -194,7 +194,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 	tests := []struct {
 		name  string
 		setup func(Model) Model
-		key   tea.KeyMsg
+		key   tea.KeyPressMsg
 	}{
 		{
 			name: "3",
@@ -204,7 +204,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 				m.activePane = ui.PaneBottom
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}},
+			key: tea.KeyPressMsg{Text: string([]rune{'3'})},
 		},
 		{
 			name: "ctrl+a fallback",
@@ -215,7 +215,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 				m.activeFlowSurface = true
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyCtrlA},
+			key: tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl},
 		},
 		{
 			name: "right-arrow",
@@ -226,7 +226,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 				m.activeFlowSurface = false
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyRight},
+			key: tea.KeyPressMsg{Code: tea.KeyRight},
 		},
 	}
 
@@ -330,7 +330,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
 	m.activePane = m.contentPane
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
 	if cmd == nil {
 		t.Fatal("expected active Flow result to schedule refresh tick")
@@ -410,7 +410,7 @@ func TestModel_FlowRefreshTracksF5RefetchBeforePendingTick(t *testing.T) {
 	m, _ = updateFlowRefreshTest(m, startup)
 	before := m.ListRequest(ui.ModeFlows)
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	if cmd == nil {
 		t.Fatal("expected F5 to start a global refresh batch")
 	}
@@ -450,7 +450,7 @@ func TestModel_FlowRefreshTracksRepoChangeRefetchBeforePendingTick(t *testing.T)
 	m.activePane = ui.PaneRepos
 	before := m.ListRequest(ui.ModeFlows)
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("expected repo change to fetch flows for the new repo")
 	}
@@ -487,7 +487,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	})
 	m.activePane = m.contentPane
 	var activeCmd tea.Cmd
-	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, activeCmd = updateFlowRefreshTest(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if activeCmd == nil {
 		t.Fatal("expected active Flow surface entry to fetch flows")
 	}
@@ -498,7 +498,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	m.activePane = ui.PaneRepos
 
 	var cmd tea.Cmd
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("repo change returned nil command, want stored-pane refresh batch")
 	}
@@ -537,13 +537,13 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	m.activeFlowSurface = false
 	m.activePane = ui.PaneRepos
 	var cmd tea.Cmd
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("expected repo change in worktrees mode to fetch worktrees")
 	}
 	m.activePane = m.contentPane
 
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected active flows toggle to supersede stale in-flight Flow fetch")
 	}
@@ -617,7 +617,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 				})
 			},
 			trigger: func(m Model) (Model, tea.Cmd) {
-				return updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF5})
+				return updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyF5})
 			},
 			result: flowResultFromBatchCommand,
 		},
@@ -639,7 +639,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 				return m
 			},
 			trigger: func(m Model) (Model, tea.Cmd) {
-				return updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
+				return updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			},
 			result: flowResultFromCommand,
 		},
@@ -722,7 +722,7 @@ func TestModel_FlowRefreshOldTrackedResultDoesNotScheduleAfterNewerRefetch(t *te
 		t.Fatal("expected auto refresh request to be in flight")
 	}
 
-	m, f5Cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, f5Cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	f5Request := m.flowRefreshInFlight
 	if f5Request == 0 || f5Request == autoRequest {
 		t.Fatalf("F5 request = %d, want nonzero request distinct from auto request %d", f5Request, autoRequest)
@@ -764,7 +764,7 @@ func TestModel_ActiveFlowsExitCancelsRefreshOwnershipWithoutRefreshingHiddenStor
 	beforeRequest := m.ListRequest(ui.ModeFlows)
 	beforeGeneration := m.flowRefreshTickGen
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 
 	if m.activeFlowSurfaceVisible() {
 		t.Fatal("Active Flows remained visible after toggle")
@@ -868,7 +868,7 @@ func TestModel_FocusingDegradedStoredFlowsRestartsRefresh(t *testing.T) {
 	m.flowRefreshInFlightMode = 0
 	beforeRequest := m.ListRequest(ui.ModeFlows)
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
 	if m.activePane != ui.PaneBottom || m.contentPane != ui.PaneBottom {
 		t.Fatalf("focus = active %d remembered %d, want bottom/bottom", m.activePane, m.contentPane)
@@ -889,7 +889,7 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 	tests := []struct {
 		name                  string
 		setup                 func(Model) Model
-		key                   tea.KeyMsg
+		key                   tea.KeyPressMsg
 		wantGenerationAdvance bool
 	}{
 		{
@@ -899,7 +899,7 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 				m.contentPane = ui.PaneTop
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyTab},
+			key: tea.KeyPressMsg{Code: tea.KeyTab},
 		},
 		{
 			name: "enter flows horizontally",
@@ -909,7 +909,7 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 				m.contentPane = ui.PaneBottom
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyRight},
+			key: tea.KeyPressMsg{Code: tea.KeyRight},
 		},
 		{
 			name: "exit active flows to bottom pane",
@@ -919,7 +919,7 @@ func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
 				m.activeFlowSurface = true
 				return m
 			},
-			key:                   tea.KeyMsg{Type: tea.KeyCtrlA},
+			key:                   tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl},
 			wantGenerationAdvance: true,
 		},
 	}
@@ -992,11 +992,11 @@ func TestModel_FlowRefreshTickIgnoresOldLoopAfterReenteringFlows(t *testing.T) {
 	m.bottomMode = ui.ModePlans
 	m.contentPane = ui.PaneBottom
 	m.activePane = ui.PaneBottom
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 	oldGeneration := m.flowRefreshTickGen
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, cmd))
-	m, _ = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = updateFlowRefreshTest(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 	if m.flowRefreshTickGen == oldGeneration {
 		t.Fatal("re-entering flows should advance the refresh generation")
 	}

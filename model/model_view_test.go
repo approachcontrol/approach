@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
@@ -24,7 +24,7 @@ func TestModel_ViewShowsBranchData(t *testing.T) {
 	}
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "main") {
 		t.Error("view should contain branch 'main'")
 	}
@@ -43,7 +43,7 @@ func TestModel_ViewContainsExpectedContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	view := m.View()
+	view := viewContent(m)
 
 	for _, name := range []string{"alpha", "bravo", "charlie"} {
 		if !strings.Contains(view, name) {
@@ -59,7 +59,7 @@ func TestModel_ViewNoReposShowsEmptyMessage(t *testing.T) {
 	m := model.New(nil)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "No repositories found") {
 		t.Fatalf("view with no repos should explain that no repositories were found, got:\n%s", view)
 	}
@@ -73,7 +73,7 @@ func TestModel_ViewWorktreesModeShowsPlaceholder(t *testing.T) {
 	branches := []gitquery.Branch{{Name: "main", HasUpstream: true}}
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "No worktrees to show") {
 		t.Error("ModeWorktrees should show worktree-specific empty state even when branch data is loaded")
 	}
@@ -86,9 +86,9 @@ func TestModel_ViewStashesModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "No stashes") {
 		t.Error("ModeStashes with no data should show stash-specific empty state")
 	}
@@ -98,10 +98,10 @@ func TestModel_ViewDistinguishesFilteredEmptyRepos(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz")})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("zzz"))})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "No repo results for zzz") {
 		t.Fatalf("filtered repo pane should explain that the repo filter has no matches, got:\n%s", view)
 	}
@@ -123,10 +123,10 @@ func TestModel_ViewKeepsSelectedSessionVisibleBelowTableHeader(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-2", RepoPath: "/dev/alpha", Branch: "session-row-2"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "session-row-2") {
 		t.Fatalf("selected session should be visible below table header:\n%s", view)
 	}
@@ -147,11 +147,11 @@ func TestModel_ViewKeepsExpandedSelectedPlanVisibleBelowTableHeader(t *testing.T
 		}},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "plan-row-2") {
 		t.Fatalf("selected plan should be visible below table header:\n%s", view)
 	}
@@ -167,11 +167,11 @@ func TestModel_ViewRestoresShortcutPaneAfterKeepingRepoFilter(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alp")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("alp"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Shortcuts") {
 		t.Fatalf("kept repo filter should restore shortcut pane, got:\n%s", view)
 	}
@@ -219,7 +219,7 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			name: "stashes",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 				m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 				return m
 			},
@@ -230,7 +230,7 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			name: "history",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 				m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
 				return m
 			},
@@ -241,7 +241,7 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			name: "reflog",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 				m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()[:1]})
 				return m
 			},
@@ -255,10 +255,10 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			m := model.New(testRepos())
 			m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 			m = tt.setup(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz")})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("zzz"))})
 
-			view := m.View()
+			view := viewContent(m)
 			if !strings.Contains(view, tt.want) {
 				t.Fatalf("filtered %s pane should explain that the filter has no matches, got:\n%s", tt.name, view)
 			}
@@ -273,7 +273,7 @@ func TestModel_ViewStatusBarShowsKeyHints(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "tab") || !strings.Contains(view, "pane") {
 		t.Error("view should contain tab pane shortcut")
 	}
@@ -283,10 +283,10 @@ func TestModel_ViewStashesModeShowsStashContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "WIP: feature A") {
 		t.Error("view should contain stash message 'WIP: feature A'")
 	}
@@ -299,10 +299,10 @@ func TestModel_StatusBarStashesModeShowsStashKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // stashes
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "enter") {
 		t.Error("stashes status bar should mention 'enter'")
 	}
@@ -315,11 +315,11 @@ func TestModel_StatusBarStashesModeShowsDropHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}}) // enable destructive
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})}) // enable destructive
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // stashes
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "d      drop") {
 		t.Error("stashes view should mention 'd      drop' in destructive mode")
 	}
@@ -332,7 +332,7 @@ func TestModel_ViewReadOnlyHidesDeleteHint(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inBranchesMode(m)
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "d: delete") {
 		t.Error("read-only mode should NOT show 'd: delete'")
 	}
@@ -342,9 +342,9 @@ func TestModel_ViewReadOnlyHidesDropHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // stashes
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "d: drop") {
 		t.Error("read-only mode should NOT show 'd: drop'")
 	}
@@ -355,7 +355,7 @@ func TestModel_ViewReadOnlyShowsDestructiveModeHint(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inBranchesMode(m)
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "D      destructive mode") {
 		t.Error("read-only mode should show 'D      destructive mode' hint")
 	}
@@ -371,9 +371,9 @@ func TestModel_ViewDestructiveModeShowsDeleteHint(t *testing.T) {
 			{Name: "feature", HasUpstream: true},
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "d      delete") {
 		t.Error("destructive mode should show 'd      delete'")
 	}
@@ -383,9 +383,9 @@ func TestModel_ViewHistoryModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "No commits") {
 		t.Error("history mode with no commits should show history-specific empty state")
 	}
@@ -395,10 +395,10 @@ func TestModel_ViewHistoryModeShowsCommitContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Fix login bug") {
 		t.Error("view should contain commit subject 'Fix login bug'")
 	}
@@ -411,10 +411,10 @@ func TestModel_StatusBarHistoryModeShowsHistoryKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "enter  diff") {
 		t.Error("mode 3 view should mention 'enter  diff'")
 	}
@@ -430,9 +430,9 @@ func TestModel_ViewDestructiveModeHidesDestructiveHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inBranchesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "D      destructive mode") {
 		t.Error("destructive mode should NOT show 'D      destructive mode' hint")
 	}
@@ -442,16 +442,16 @@ func TestModel_ViewWorktreesModeDestructiveShowsDeleteHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}}) // enable destructive
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})}) // enable destructive
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 	// Navigate to non-root worktree
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "d      delete") {
 		t.Error("worktrees mode destructive non-stale should show 'd      delete'")
 	}
@@ -464,12 +464,12 @@ func TestModel_ViewWorktreesModeLockedHidesDeleteHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
 	}})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "d: delete") {
 		t.Error("locked worktree should not show 'd: delete'")
 	}
@@ -483,7 +483,7 @@ func TestModel_ViewWorktreesModeLockedShowsUnlockHint(t *testing.T) {
 		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
 	}})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "u      unlock") {
 		t.Error("locked worktree should show 'u      unlock'")
 	}
@@ -507,9 +507,9 @@ func TestModel_ViewWorktreesModeShowsMoveHintForMovableWorktree(t *testing.T) {
 				{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 				tt.worktree,
 			}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-			view := m.View()
+			view := viewContent(m)
 			if !strings.Contains(view, "m      move") {
 				t.Fatalf("movable %s worktree should show move hint, got:\n%s", tt.name, view)
 			}
@@ -534,7 +534,7 @@ func TestModel_ViewWorktreesModeHidesMoveHintForIneligibleWorktrees(t *testing.T
 			m = inRightPane(m)
 			m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{tt.worktree}})
 
-			view := m.View()
+			view := viewContent(m)
 			if strings.Contains(view, "m      move") {
 				t.Fatalf("%s worktree should not show move hint, got:\n%s", tt.name, view)
 			}
@@ -549,9 +549,9 @@ func TestModel_ViewWorktreeMoveInputShowsPromptAndPlaceholder(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Move worktree to:") {
 		t.Fatalf("move input should show prompt, got:\n%s", view)
 	}
@@ -564,12 +564,12 @@ func TestModel_ViewWorktreesModeLockedStaleHidesDeleteAndPruneHints(t *testing.T
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha-gone", BranchName: "offline", Locked: true, Stale: true},
 	}})
 
-	view := m.View()
+	view := viewContent(m)
 	for _, hint := range []string{"d      delete", "p      prune"} {
 		if strings.Contains(view, hint) {
 			t.Errorf("locked stale worktree should not show %q", hint)
@@ -581,13 +581,13 @@ func TestModel_ViewWorktreesModeDestructiveStaleShowsPruneHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}}) // enable destructive
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})}) // enable destructive
 	wts := []gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "stale-branch", Stale: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "p      prune") {
 		t.Error("worktrees mode destructive stale should show 'p      prune'")
 	}
@@ -606,7 +606,7 @@ func TestModel_ViewWorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "D      destructive mode") {
 		t.Error("worktrees mode read-only should show 'D      destructive mode'")
 	}
@@ -625,7 +625,7 @@ func TestModel_ViewWorktreesModeShowsWorktreeContent(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "main") {
 		t.Error("view should contain worktree branch 'main'")
 	}
@@ -646,7 +646,7 @@ func TestModel_ViewWorktreesDirtyShowsDiffHint(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	view := m.View()
+	view := viewContent(m)
 	for _, hint := range []string{"enter  diff", "t/c    terminal / code"} {
 		if !strings.Contains(view, hint) {
 			t.Errorf("view should show %q for dirty worktree", hint)
@@ -663,7 +663,7 @@ func TestModel_ViewWorktreesCleanHidesEnterDiff(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "enter  diff") {
 		t.Error("view should NOT show 'enter  diff' for clean worktree")
 	}
@@ -681,7 +681,7 @@ func TestModel_ViewWorktreesStaleHidesAllActions(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	view := m.View()
+	view := viewContent(m)
 	for _, hint := range []string{"enter: diff", "t: terminal", "c: code"} {
 		if strings.Contains(view, hint) {
 			t.Errorf("view should NOT show %q for stale worktree", hint)
@@ -695,7 +695,7 @@ func TestModel_ViewWorktreeUnlockFailureShowsStatusError(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "unlock failed") {
 		t.Error("view should show unlock failure in status bar")
 	}
@@ -714,9 +714,9 @@ func TestModel_ViewWorktreeUnlockFailureClearsOnNavigation(t *testing.T) {
 	}})
 	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "unlock failed") {
 		t.Error("unlock failure should clear on navigation")
 	}
@@ -728,7 +728,7 @@ func TestModel_ViewWorktreeUnlockFailureIgnoredForStaleRepo(t *testing.T) {
 	m = selectBravo(m)
 	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "unlock failed") {
 		t.Error("stale unlock failure should not render status error")
 	}
@@ -742,7 +742,7 @@ func TestModel_ViewWorktreeUnlockFailureClearsOnSuccess(t *testing.T) {
 
 	m, _ = update(m, model.WorktreeUnlockedMsg{RepoPath: "/dev/alpha"})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "unlock failed") {
 		t.Error("unlock failure should clear after successful unlock")
 	}
@@ -754,7 +754,7 @@ func TestModel_ViewGitFetchFailureShowsStatusError(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, model.GitFetchFailedMsg{RepoPath: "/dev/alpha", Err: "fetch failed"})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "fetch failed") {
 		t.Error("view should show fetch failure in status bar")
 	}
@@ -771,7 +771,7 @@ func TestModel_ViewGitPullFailureClearsOnSuccess(t *testing.T) {
 
 	m, _ = update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "pull failed") {
 		t.Error("pull failure should clear after successful pull")
 	}
@@ -793,7 +793,7 @@ func TestModel_ListFetchErrorShowsStatusWithoutClearingPane(t *testing.T) {
 		Mode:     ui.ModeWorktrees,
 	})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "failed to load worktrees: boom") {
 		t.Error("view should show list fetch failure in status bar")
 	}
@@ -818,7 +818,7 @@ func TestModel_ListFetchErrorOnEmptyPaneDoesNotLookLikeNoData(t *testing.T) {
 		Mode:     ui.ModeWorktrees,
 	})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "failed to load worktrees: boom") {
 		t.Error("view should show list fetch failure in status bar")
 	}
@@ -844,7 +844,7 @@ func TestModel_ListFetchErrorOnEmptyPaneStillLooksFailedAfterStatusExpires(t *te
 	})
 	m, _ = update(m, model.StatusExpiredMsg{Seq: 1})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "failed to load worktrees: boom") {
 		t.Fatalf("status bar text should expire, got:\n%s", view)
 	}
@@ -866,8 +866,8 @@ func TestModel_FilteredEmptyItemsTakePrecedenceOverListFetchErrorPlaceholder(t *
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz")})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("zzz"))})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath: "/dev/alpha",
@@ -877,7 +877,7 @@ func TestModel_FilteredEmptyItemsTakePrecedenceOverListFetchErrorPlaceholder(t *
 		Mode:     ui.ModeWorktrees,
 	})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "failed to load worktrees: boom") {
 		t.Error("status bar should still show the fetch failure")
 	}
@@ -912,7 +912,7 @@ func TestModel_ZeroListRequestFetchErrorFailsClosed(t *testing.T) {
 	})
 	m = tm.(model.Model)
 
-	if strings.Contains(m.View(), "zero request failure") {
+	if strings.Contains(viewContent(m), "zero request failure") {
 		t.Fatal("zero-request list failure should be ignored")
 	}
 }
@@ -926,7 +926,7 @@ func TestModel_ZeroListRequestResultFailsClosed(t *testing.T) {
 	})
 	m = tm.(model.Model)
 
-	if strings.Contains(m.View(), "zero-request-branch") {
+	if strings.Contains(viewContent(m), "zero-request-branch") {
 		t.Fatal("zero-request list result should be ignored")
 	}
 }
@@ -943,7 +943,7 @@ func TestModel_StaleListFetchErrorIgnored(t *testing.T) {
 		Mode:     ui.ModeWorktrees,
 	})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "failed to load worktrees: stale") {
 		t.Error("stale list fetch failure should not show in status bar")
 	}
@@ -953,7 +953,7 @@ func TestModel_WrongModeListFetchErrorIgnored(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath: "/dev/alpha",
@@ -963,7 +963,7 @@ func TestModel_WrongModeListFetchErrorIgnored(t *testing.T) {
 		Mode:     ui.ModeBranches,
 	})
 
-	if strings.Contains(m.View(), "failed to load branches: stale") {
+	if strings.Contains(viewContent(m), "failed to load branches: stale") {
 		t.Error("same-repo list failure from another mode should not show in status bar")
 	}
 }
@@ -978,7 +978,7 @@ func TestModel_FetchErrorWithUnknownKindIgnored(t *testing.T) {
 		Err:      "missing kind",
 	})
 
-	if strings.Contains(m.View(), "missing kind") {
+	if strings.Contains(viewContent(m), "missing kind") {
 		t.Error("fetch error without kind should fail closed")
 	}
 }
@@ -997,7 +997,7 @@ func TestModel_ListSuccessClearsOnlyFetchStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	if strings.Contains(m.View(), "failed to load worktrees: boom") {
+	if strings.Contains(viewContent(m), "failed to load worktrees: boom") {
 		t.Error("current list success should clear fetch status")
 	}
 
@@ -1005,7 +1005,7 @@ func TestModel_ListSuccessClearsOnlyFetchStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	if !strings.Contains(m.View(), "unlock failed") {
+	if !strings.Contains(viewContent(m), "unlock failed") {
 		t.Error("list success should not clear non-fetch status")
 	}
 }
@@ -1017,7 +1017,7 @@ func TestModel_ListSuccessDoesNotClearDiffFetchStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:     "/dev/alpha",
 		Err:          "diff failed",
@@ -1031,7 +1031,7 @@ func TestModel_ListSuccessDoesNotClearDiffFetchStatus(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true},
 	}})
 
-	if !strings.Contains(m.View(), "diff failed") {
+	if !strings.Contains(viewContent(m), "diff failed") {
 		t.Error("list success should not clear an active diff fetch failure")
 	}
 }
@@ -1069,7 +1069,7 @@ func TestModel_OldListFetchErrorIgnoredAfterNewerListRequest(t *testing.T) {
 	})
 	m, _ = update(m, oldErr)
 
-	if strings.Contains(m.View(), oldErr.Err) {
+	if strings.Contains(viewContent(m), oldErr.Err) {
 		t.Error("older same-mode list failure should be ignored after newer request succeeds")
 	}
 }
@@ -1087,7 +1087,7 @@ func TestModel_WrongModeListSuccessDoesNotClearFetchStatus(t *testing.T) {
 
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{{Name: "main"}}})
 
-	if !strings.Contains(m.View(), "worktree fetch failed") {
+	if !strings.Contains(viewContent(m), "worktree fetch failed") {
 		t.Error("success for another list mode should not clear current fetch status")
 	}
 }
@@ -1097,15 +1097,15 @@ func TestModel_NonModalKeysClearFetchStatus(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m, _ = update(m, model.FetchErrorMsg{RepoPath: "/dev/alpha", Err: "fetch failed", Kind: model.FetchList, Mode: ui.ModeWorktrees})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if strings.Contains(m.View(), "fetch failed") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if strings.Contains(viewContent(m), "fetch failed") {
 		t.Error("non-modal keypress should clear transient status")
 	}
 
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:     "/dev/alpha",
 		Err:          "diff failed",
@@ -1115,8 +1115,8 @@ func TestModel_NonModalKeysClearFetchStatus(t *testing.T) {
 		WorktreePath: "/dev/alpha",
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if strings.Contains(m.View(), "diff failed") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if strings.Contains(viewContent(m), "diff failed") {
 		t.Error("non-modal keypress should clear diff fetch status")
 	}
 }
@@ -1125,13 +1125,13 @@ func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
 	})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "commit: Fix login bug") {
 		t.Error("reflog mode should show reflog subject")
 	}
@@ -1148,12 +1148,12 @@ func TestModel_ReflogEmptyDiffPagesMessage(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: ""})
 
 	if cmd == nil {
@@ -1169,12 +1169,12 @@ func TestModel_ReflogDiffPagesContent(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt\n+added line"})
 
 	if cmd == nil {
@@ -1189,9 +1189,9 @@ func TestModel_ViewReflogModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "No reflog entries") {
 		t.Error("reflog mode with no data should show reflog-specific empty state")
 	}

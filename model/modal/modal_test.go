@@ -5,15 +5,15 @@ import (
 	"reflect"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/model/modal"
 )
 
 type sentinelMsg string
 
-func keyRunes(s string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+func keyRunes(s string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: string([]rune(s))}
 }
 
 func TestConfirmAcceptReturnsActionCommandAndCloses(t *testing.T) {
@@ -54,7 +54,7 @@ func TestConfirmAcceptReturnsActionCommandAndCloses(t *testing.T) {
 }
 
 func TestConfirmCancelClosesWithoutCommand(t *testing.T) {
-	for _, key := range []tea.KeyMsg{keyRunes("n"), keyRunes("q"), {Type: tea.KeyEscape}} {
+	for _, key := range []tea.KeyPressMsg{keyRunes("n"), keyRunes("q"), {Code: tea.KeyEscape}} {
 		m := modal.OpenConfirm("Drop stash? (y/n)", func() tea.Cmd {
 			t.Fatal("cancel must not invoke action")
 			return nil
@@ -93,13 +93,13 @@ func TestInputEditsValidatesAndSubmitsTrimmedValue(t *testing.T) {
 	)
 
 	m, _, _ = m.Update(keyRunes("featx"))
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 
 	if got := m.View().Input; got != "feat" {
 		t.Fatalf("expected input %q, got %q", "feat", got)
 	}
 
-	m, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Accepted {
 		t.Fatalf("expected Accepted, got %v", out)
@@ -131,7 +131,7 @@ func TestInputAcceptsSpaceKey(t *testing.T) {
 	)
 
 	m, _, _ = m.Update(keyRunes("Build"))
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m, _, _ = m.Update(keyRunes("flow"))
 
 	if got := m.View().Input; got != "Build flow" {
@@ -156,7 +156,7 @@ func TestInputInvalidSubmitStaysOpenWithError(t *testing.T) {
 		},
 	)
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Consumed {
 		t.Fatalf("expected Consumed, got %v", out)
@@ -184,7 +184,7 @@ func TestTextEditSharedKeysMatchOnInputAndFormPaths(t *testing.T) {
 			setup: func(text string, cursor int) modal.Modal {
 				m := modal.OpenSingleLineInput("Edit", "text", text, nil, nil)
 				for m.View().InputCursor > cursor {
-					m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+					m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 				}
 				return m
 			},
@@ -206,7 +206,7 @@ func TestTextEditSharedKeysMatchOnInputAndFormPaths(t *testing.T) {
 					}},
 				})
 				for m.View().Form.Fields[0].Cursor > cursor {
-					m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+					m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 				}
 				return m
 			},
@@ -220,21 +220,21 @@ func TestTextEditSharedKeysMatchOnInputAndFormPaths(t *testing.T) {
 		name       string
 		text       string
 		cursor     int
-		keys       []tea.KeyMsg
+		keys       []tea.KeyPressMsg
 		wantText   string
 		wantCursor int
 	}{
-		{name: "insert at cursor", text: "ab", cursor: 1, keys: []tea.KeyMsg{keyRunes("x")}, wantText: "axb", wantCursor: 2},
-		{name: "backspace at start", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyBackspace}}, wantText: "ab", wantCursor: 0},
-		{name: "backspace at end", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyBackspace}}, wantText: "a", wantCursor: 1},
-		{name: "delete at end", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyDelete}}, wantText: "ab", wantCursor: 2},
-		{name: "delete at start", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyDelete}}, wantText: "b", wantCursor: 0},
-		{name: "left clamps at start", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyLeft}}, wantText: "ab", wantCursor: 0},
-		{name: "right clamps at end", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyRight}}, wantText: "ab", wantCursor: 2},
-		{name: "home", text: "ab", cursor: 2, keys: []tea.KeyMsg{{Type: tea.KeyHome}}, wantText: "ab", wantCursor: 0},
-		{name: "end", text: "ab", cursor: 0, keys: []tea.KeyMsg{{Type: tea.KeyEnd}}, wantText: "ab", wantCursor: 2},
-		{name: "ctrl+u clears", text: "ab", cursor: 1, keys: []tea.KeyMsg{{Type: tea.KeyCtrlU}}, wantText: "", wantCursor: 0},
-		{name: "space insert", text: "ab", cursor: 1, keys: []tea.KeyMsg{{Type: tea.KeySpace}}, wantText: "a b", wantCursor: 2},
+		{name: "insert at cursor", text: "ab", cursor: 1, keys: []tea.KeyPressMsg{keyRunes("x")}, wantText: "axb", wantCursor: 2},
+		{name: "backspace at start", text: "ab", cursor: 0, keys: []tea.KeyPressMsg{{Code: tea.KeyBackspace}}, wantText: "ab", wantCursor: 0},
+		{name: "backspace at end", text: "ab", cursor: 2, keys: []tea.KeyPressMsg{{Code: tea.KeyBackspace}}, wantText: "a", wantCursor: 1},
+		{name: "delete at end", text: "ab", cursor: 2, keys: []tea.KeyPressMsg{{Code: tea.KeyDelete}}, wantText: "ab", wantCursor: 2},
+		{name: "delete at start", text: "ab", cursor: 0, keys: []tea.KeyPressMsg{{Code: tea.KeyDelete}}, wantText: "b", wantCursor: 0},
+		{name: "left clamps at start", text: "ab", cursor: 0, keys: []tea.KeyPressMsg{{Code: tea.KeyLeft}}, wantText: "ab", wantCursor: 0},
+		{name: "right clamps at end", text: "ab", cursor: 2, keys: []tea.KeyPressMsg{{Code: tea.KeyRight}}, wantText: "ab", wantCursor: 2},
+		{name: "home", text: "ab", cursor: 2, keys: []tea.KeyPressMsg{{Code: tea.KeyHome}}, wantText: "ab", wantCursor: 0},
+		{name: "end", text: "ab", cursor: 0, keys: []tea.KeyPressMsg{{Code: tea.KeyEnd}}, wantText: "ab", wantCursor: 2},
+		{name: "ctrl+u clears", text: "ab", cursor: 1, keys: []tea.KeyPressMsg{{Code: 'u', Mod: tea.ModCtrl}}, wantText: "", wantCursor: 0},
+		{name: "space insert", text: "ab", cursor: 1, keys: []tea.KeyPressMsg{{Code: tea.KeySpace}}, wantText: "a b", wantCursor: 2},
 	}
 	for _, p := range paths {
 		for _, tc := range cases {
@@ -269,8 +269,8 @@ func TestSingleLineInputOpensWithCursorAtEndAndInsertsAtCursor(t *testing.T) {
 		t.Fatalf("cursor = %d, want end of initial input", view.InputCursor)
 	}
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	m, _, _ = m.Update(keyRunes("x"))
 
 	view = m.View()
@@ -285,14 +285,14 @@ func TestSingleLineInputOpensWithCursorAtEndAndInsertsAtCursor(t *testing.T) {
 func TestSingleLineInputMovesCursorWithoutChangingText(t *testing.T) {
 	m := modal.OpenSingleLineInput("New branch", "branch name", "abcd", nil, nil)
 
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyLeft},
-		{Type: tea.KeyLeft},
-		{Type: tea.KeyRight},
-		{Type: tea.KeyHome},
-		{Type: tea.KeyEnd},
-		{Type: tea.KeyCtrlA},
-		{Type: tea.KeyCtrlE},
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyLeft},
+		{Code: tea.KeyLeft},
+		{Code: tea.KeyRight},
+		{Code: tea.KeyHome},
+		{Code: tea.KeyEnd},
+		{Code: 'a', Mod: tea.ModCtrl},
+		{Code: 'e', Mod: tea.ModCtrl},
 	} {
 		var out modal.Outcome
 		m, out, _ = m.Update(key)
@@ -313,27 +313,27 @@ func TestSingleLineInputMovesCursorWithoutChangingText(t *testing.T) {
 func TestSingleLineInputDeletesAroundCursorAndClearsInput(t *testing.T) {
 	m := modal.OpenSingleLineInput("New branch", "branch name", "abcd", nil, nil)
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if got := m.View().Input; got != "abcd" {
 		t.Fatalf("backspace at start changed input to %q", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDelete})
 	if got := m.View().Input; got != "bcd" {
 		t.Fatalf("delete at cursor input = %q, want %q", got, "bcd")
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDelete})
 	if got := m.View().Input; got != "bcd" {
 		t.Fatalf("delete at end changed input to %q", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if got := m.View().Input; got != "bc" {
 		t.Fatalf("backspace input = %q, want %q", got, "bc")
 	}
 
 	m = m.SetInputError("bad input")
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	view := m.View()
 	if view.Input != "" || view.InputErr != "" || view.InputCursor != 0 {
 		t.Fatalf("ctrl+u view = input %q err %q cursor %d, want cleared", view.Input, view.InputErr, view.InputCursor)
@@ -356,9 +356,9 @@ func TestSingleLineInputSubmitTrimsAndPreservesCursorOnInvalidSubmit(t *testing.
 			return nil
 		},
 	)
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Consumed {
 		t.Fatalf("expected Consumed, got %v", out)
@@ -379,7 +379,7 @@ func TestSingleLineInputSubmitTrimsAndPreservesCursorOnInvalidSubmit(t *testing.
 		submitted = input
 		return nil
 	})
-	next, out, cmd = next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd = next.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if out != modal.Accepted {
 		t.Fatalf("expected Accepted, got %v", out)
 	}
@@ -419,11 +419,11 @@ func TestMultiLineInputOpensWithModeAndInsertsNewlineWithAltEnter(t *testing.T) 
 		t.Fatalf("cursor = %d, want end of initial input", view.InputCursor)
 	}
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	var out modal.Outcome
 	var cmd tea.Cmd
-	m, out, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, out, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
 	if out != modal.Consumed {
 		t.Fatalf("alt+enter outcome = %v, want Consumed", out)
 	}
@@ -438,7 +438,7 @@ func TestMultiLineInputOpensWithModeAndInsertsNewlineWithAltEnter(t *testing.T) 
 		t.Fatalf("cursor = %d, want after inserted newline", view.InputCursor)
 	}
 
-	m, out, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, out, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if out != modal.Accepted {
 		t.Fatalf("enter outcome = %v, want Accepted", out)
 	}
@@ -459,20 +459,20 @@ func TestMultiLineInputOpensWithModeAndInsertsNewlineWithAltEnter(t *testing.T) 
 func TestMultiLineInputMovesVerticallyPreservingPreferredColumn(t *testing.T) {
 	m := modal.OpenMultiLineInput("Instructions", "task instructions", "abc\ndefgh\nxy", nil, nil)
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.View().InputCursor; got != 6 {
 		t.Fatalf("cursor after up = %d, want same column on previous line", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.View().InputCursor; got != 2 {
 		t.Fatalf("cursor after second up = %d, want same column on first line", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.View().InputCursor; got != 6 {
 		t.Fatalf("cursor after down = %d, want same preferred column", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.View().InputCursor; got != 12 {
 		t.Fatalf("cursor after clamped down = %d, want end of shorter line", got)
 	}
@@ -481,9 +481,9 @@ func TestMultiLineInputMovesVerticallyPreservingPreferredColumn(t *testing.T) {
 func TestMultiLineInputLeftRightAndDeletesCrossLineBoundaries(t *testing.T) {
 	m := modal.OpenMultiLineInput("Instructions", "task instructions", "ab\ncd", nil, nil)
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	view := m.View()
 	if view.Input != "abcd" {
 		t.Fatalf("backspace at line start input = %q, want joined lines", view.Input)
@@ -493,10 +493,10 @@ func TestMultiLineInputLeftRightAndDeletesCrossLineBoundaries(t *testing.T) {
 	}
 
 	m = modal.OpenMultiLineInput("Instructions", "task instructions", "ab\ncd", nil, nil)
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDelete})
 	view = m.View()
 	if view.Input != "abcd" {
 		t.Fatalf("delete at line end input = %q, want joined lines", view.Input)
@@ -506,11 +506,11 @@ func TestMultiLineInputLeftRightAndDeletesCrossLineBoundaries(t *testing.T) {
 	}
 
 	m = modal.OpenMultiLineInput("Instructions", "task instructions", "a\nb", nil, nil)
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	if got := m.View().InputCursor; got != 2 {
 		t.Fatalf("left across newline cursor = %d, want before second-line rune", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	if got := m.View().InputCursor; got != 3 {
 		t.Fatalf("right across newline cursor = %d, want end", got)
 	}
@@ -523,7 +523,7 @@ func TestMultiLineInputSubmitTrimsOuterWhitespaceOnly(t *testing.T) {
 		return nil
 	})
 
-	_, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Accepted {
 		t.Fatalf("outcome = %v, want Accepted", out)
@@ -544,7 +544,7 @@ func TestRawMultiLineInputSubmitPreservesOuterWhitespace(t *testing.T) {
 		return nil
 	})
 
-	_, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Accepted {
 		t.Fatalf("outcome = %v, want Accepted", out)
@@ -632,7 +632,7 @@ func TestSelectCarriesExplicitLayoutWithoutChangingSelectionBehavior(t *testing.
 		t.Fatalf("select items were not copied before caller mutation: %#v", view.SelectItems)
 	}
 
-	m, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if out != modal.Consumed || cmd != nil {
 		t.Fatalf("down outcome=%v cmd=%T, want consumed nil cmd", out, cmd)
 	}
@@ -644,7 +644,7 @@ func TestSelectCarriesExplicitLayoutWithoutChangingSelectionBehavior(t *testing.
 		t.Fatalf("layout changed after movement: %#v", view.SelectLayout)
 	}
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if out != modal.Accepted {
 		t.Fatalf("enter outcome = %v, want Accepted", out)
 	}
@@ -668,7 +668,7 @@ func TestSelectMovesWithWrapping(t *testing.T) {
 		{Label: "claude", Value: "claude"},
 	}, 0, nil)
 
-	m, out, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if out != modal.Consumed {
 		t.Fatalf("expected Consumed for down, got %v", out)
 	}
@@ -676,12 +676,12 @@ func TestSelectMovesWithWrapping(t *testing.T) {
 		t.Fatalf("down selected index = %d, want 1", got)
 	}
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.View().SelectIndex; got != 0 {
 		t.Fatalf("down should wrap to 0, got %d", got)
 	}
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.View().SelectIndex; got != 1 {
 		t.Fatalf("up should wrap to 1, got %d", got)
 	}
@@ -720,7 +720,7 @@ func TestSelectEnterSubmitsSelectedValueAndCloses(t *testing.T) {
 		return func() tea.Msg { return sentinelMsg("saved") }
 	})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if out != modal.Accepted {
 		t.Fatalf("expected Accepted, got %v", out)
@@ -743,7 +743,7 @@ func TestSelectEnterSubmitsSelectedValueAndCloses(t *testing.T) {
 }
 
 func TestSelectCancelClosesWithoutSubmit(t *testing.T) {
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyEscape}, {Type: tea.KeyCtrlC}} {
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, {Code: 'c', Mod: tea.ModCtrl}} {
 		m := modal.OpenSelect("Choose agent", []modal.SelectItem{
 			{Label: "codex", Value: "codex"},
 		}, 0, func(string) tea.Cmd {
@@ -823,18 +823,18 @@ func TestFormEditsNavigatesTogglesAndSubmitsStructuredValues(t *testing.T) {
 	})
 
 	m, _, _ = m.Update(keyRunes("  project  "))
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	if view := m.View().Form; view.FocusIndex != 1 {
 		t.Fatalf("tab focus = %d, want checkbox", view.FocusIndex)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if view := m.View().Form; view.FocusIndex != 2 {
 		t.Fatalf("down focus = %d, want visibility", view.FocusIndex)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if out != modal.Accepted {
 		t.Fatalf("enter outcome = %v, want Accepted", out)
 	}
@@ -878,9 +878,9 @@ func TestFormMultilineTextFieldAcceptsNewlinesAndSubmitsStructuredValues(t *test
 	})
 
 	m, _, _ = m.Update(keyRunes("Build Flow"))
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _, _ = m.Update(keyRunes("first line"))
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
 	m, _, _ = m.Update(keyRunes("second line"))
 	view := m.View().Form
 	if view.FocusIndex != 1 {
@@ -893,18 +893,18 @@ func TestFormMultilineTextFieldAcceptsNewlinesAndSubmitsStructuredValues(t *test
 		t.Fatalf("instructions cursor = %d, want end", got)
 	}
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	if got := m.View().Form.FocusIndex; got != 0 {
 		t.Fatalf("shift+tab should navigate to title field, focus = %d", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	if got := m.View().Form.Fields[1].Value; got != "first line\nsecond line" {
 		t.Fatalf("instructions changed after navigation: %q", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _, _ = m.Update(keyRunes("main"))
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if out != modal.Accepted {
 		t.Fatalf("enter outcome = %v, want Accepted", out)
 	}
@@ -939,11 +939,11 @@ func TestFormShiftTabNavigatesBackwards(t *testing.T) {
 		},
 	})
 
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	if got := m.View().Form.FocusIndex; got != 2 {
 		t.Fatalf("shift+tab focus = %d, want wrap to last field", got)
 	}
-	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	if got := m.View().Form.FocusIndex; got != 1 {
 		t.Fatalf("shift+tab focus = %d, want checkbox", got)
 	}
@@ -969,7 +969,7 @@ func TestFormInvalidSubmitStaysOpenWithError(t *testing.T) {
 		},
 	})
 
-	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if out != modal.Consumed {
 		t.Fatalf("enter outcome = %v, want Consumed", out)
 	}
@@ -1006,7 +1006,7 @@ func TestDiffScrollsClampsAndCloses(t *testing.T) {
 		t.Fatalf("expected scroll clamped at 0, got %d", got)
 	}
 
-	m, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m, out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if out != modal.Cancelled {
 		t.Fatalf("expected Cancelled, got %v", out)
 	}

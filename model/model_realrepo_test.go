@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/internal/testgit"
@@ -157,7 +157,7 @@ func TestModel_ModeFetchesProduceResultsAgainstRealRepo(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := setupModelRepo(t)
 			m = inRightPane(m)
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{tc.key})})
 			if cmd == nil {
 				t.Fatalf("expected fetch cmd for %s, got nil", tc.name)
 			}
@@ -177,7 +177,7 @@ func TestModel_WorktreeDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, result := initWorktreeResult(t, m)
 	m, _ = update(m, result) // load real worktrees (root is dirty)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -199,13 +199,13 @@ func TestModel_BranchDiffPayloadAgainstRealRepo(t *testing.T) {
 	writeFile(t, dir, "README.md", "hello\nchanged\n")
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // branches
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'b'})}) // branches
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd, got nil")
 	}
 	m, _ = update(m, cmd()) // load real branches (root branch dirty)
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -236,7 +236,7 @@ func TestModel_CreateBranchFromSelectedBranchAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "tag", "base", initial)
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if cmd == nil {
 		t.Fatal("expected branches fetch cmd")
 	}
@@ -252,12 +252,12 @@ func TestModel_CreateBranchFromSelectedBranchAgainstRealRepo(t *testing.T) {
 		t.Fatalf("expected base branch in rows: %+v", m.Rows())
 	}
 	for i := 0; i < baseIndex; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feature/from-base"))})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected create branch cmd")
 	}
@@ -290,10 +290,10 @@ func TestModel_MoveWorktreeAgainstRealRepo(t *testing.T) {
 	if len(m.Worktrees()) != 2 {
 		t.Fatalf("expected root and linked worktree, got %+v", m.Worktrees())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat-renamed")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat-renamed"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected move command")
 	}
@@ -327,13 +327,13 @@ func TestModel_StashDiffPayloadAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "stash")
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // stashes
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd, got nil")
 	}
 	m, _ = update(m, cmd()) // load real stashes
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -353,13 +353,13 @@ func TestModel_CommitDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ := setupModelRepo(t)
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}) // history
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})}) // history
 	if cmd == nil {
 		t.Fatal("expected fetchCommits cmd, got nil")
 	}
 	m, _ = update(m, cmd()) // load real commits
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -382,13 +382,13 @@ func TestModel_ReflogDiffPayloadAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "commit", "-am", "second commit")
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // reflog
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})}) // reflog
 	if cmd == nil {
 		t.Fatal("expected fetchReflog cmd, got nil")
 	}
 	m, _ = update(m, cmd()) // load real reflog entries
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -421,7 +421,7 @@ func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
 	m = inRightPane(m)
 	m, result := initWorktreeResult(t, m)
 	m, _ = update(m, result)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
 	}
@@ -456,12 +456,12 @@ func TestModel_AgentLaunchFromBranchPaneIncludesCommit(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, branchCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, branchCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if branchCmd == nil {
 		t.Fatal("expected branch fetch command")
 	}
 	m, _ = update(m, branchCmd())
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
 	}
@@ -497,9 +497,9 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	m = inRightPane(m)
 	m, result := initWorktreeResult(t, m)
 	m, _ = update(m, result)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-smoke")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("agent-smoke"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if createCmd == nil {
 		t.Fatal("expected create worktree command")
 	}
@@ -558,9 +558,9 @@ func TestModel_CreateTagThenAgentLaunchUsesNoBranchMetadata(t *testing.T) {
 	m = inRightPane(m)
 	m, result := initWorktreeResult(t, m)
 	m, _ = update(m, result)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v1.0.0")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("v1.0.0"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if createCmd == nil {
 		t.Fatal("expected create worktree command")
 	}
@@ -598,9 +598,9 @@ func TestModel_CreateWorktreeRunsBootstrapHookAgainstRealRepo(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bootstrap-smoke")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("bootstrap-smoke"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if createCmd == nil {
 		t.Fatal("expected create worktree command")
 	}
@@ -624,9 +624,9 @@ func TestModel_CreateWorktreeRunsBootstrapHookAgainstRealRepo(t *testing.T) {
 func TestModel_CreateWorktreeWithoutHookPreservesCreatedMessageAgainstRealRepo(t *testing.T) {
 	m, _ := setupModelRepo(t)
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("no-hook")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("no-hook"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if createCmd == nil {
 		t.Fatal("expected create worktree command")
 	}
@@ -663,7 +663,7 @@ func TestModel_BootstrapFailureRefreshesWorktreesAndShowsStatus(t *testing.T) {
 
 func TestModel_BootstrapFailureExitsActiveFlows(t *testing.T) {
 	m := inWorktreesMode(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("mode before bootstrap failure = %d, want active flows", m.Mode())
 	}
@@ -695,12 +695,12 @@ func TestModel_StaleBootstrapFailureIsIgnored(t *testing.T) {
 
 func TestModel_StaleBootstrapFailureRequestIsIgnoredAfterNewerSubmit(t *testing.T) {
 	m := inWorktreesMode(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
-	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("new")})
-	m, secondCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("old"))})
+	m, firstCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("new"))})
+	m, secondCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if firstCmd == nil || secondCmd == nil {
 		t.Fatal("expected create commands")
 	}
@@ -721,14 +721,14 @@ func TestModel_StaleBootstrapFailureRequestIsIgnoredAfterNewerSubmit(t *testing.
 
 func TestModel_CancelledPromptDoesNotSupersedeInFlightCreate(t *testing.T) {
 	m := inWorktreesMode(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
-	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("old"))})
+	m, firstCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if firstCmd == nil {
 		t.Fatal("expected create command")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 
 	msg := firstCmd()
 	m, _ = update(m, msg)
@@ -756,9 +756,9 @@ func TestModel_PullRequestWorktreeBootstrapFailureAgainstRealRepo(t *testing.T) 
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("123")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("123"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if createCmd == nil {
 		t.Fatal("expected create PR worktree command")
 	}
@@ -794,9 +794,9 @@ func TestModel_CreateThenAgentLaunchWaitsForBootstrapHook(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-bootstrap")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("agent-bootstrap"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	msg := createCmd()
 	created, ok := msg.(model.WorktreeCreatedMsg)
 	if !ok {
@@ -833,9 +833,9 @@ func TestModel_CreateThenAgentLaunchSkipsAgentWhenBootstrapFails(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-bootstrap-fail")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("agent-bootstrap-fail"))})
+	m, createCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	msg := createCmd()
 	failed, ok := msg.(model.WorktreeBootstrapFailedMsg)
 	if !ok {
@@ -879,7 +879,7 @@ func TestModel_CombinedCleanupForceDeleteSucceedsAgainstRealRepo(t *testing.T) {
 	}
 
 	// Confirm branch deletion → `git branch -d feat` fails (unmerged) → DeleteFailedMsg.
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected branch delete cmd, got nil")
 	}
@@ -893,7 +893,7 @@ func TestModel_CombinedCleanupForceDeleteSucceedsAgainstRealRepo(t *testing.T) {
 	}
 
 	// Confirm force delete → `git branch -D feat` succeeds → WorktreeDeleteCompletedMsg.
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected force delete cmd, got nil")
 	}

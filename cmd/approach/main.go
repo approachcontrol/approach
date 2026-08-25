@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/config"
@@ -529,7 +529,6 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	// private tmux helper still carries an authoritative Flow reservation.
 	p := tea.NewProgram(
 		model.NewWithOptions(repos, modelOpts),
-		tea.WithAltScreen(),
 		tea.WithFilter(model.DeferQuitDuringFlowLaunch),
 	)
 	controller.SetAppliedNotifier(func(event launchcontrol.AppliedEvent) {

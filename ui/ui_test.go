@@ -2,12 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
@@ -60,7 +60,7 @@ func TestClearDarkThemeBordersUseFocusAndMutedTokens(t *testing.T) {
 	}
 }
 
-func requireStyleColor(t *testing.T, name string, got lipgloss.TerminalColor, want lipgloss.Color) {
+func requireStyleColor(t *testing.T, name string, got, want color.Color) {
 	t.Helper()
 	if got != want {
 		t.Fatalf("%s = %v, want %v", name, got, want)
@@ -165,18 +165,10 @@ func TestResolveEmbeddedTerminalDock(t *testing.T) {
 
 func forceTrueColor(t *testing.T) {
 	t.Helper()
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
 }
 
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, PaneTop, true, false, false)
+	bar := ansi.Strip(RenderStatusBar(120, 2, 0, PaneTop, true, false, false))
 	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {
 		if !strings.Contains(bar, legend) {
 			t.Errorf("branches mode status bar should contain legend %q", legend)
@@ -232,8 +224,52 @@ func TestRenderInputDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
 	}
 }
 
+func TestBorderedDialogsPreserveIntendedOuterWidth(t *testing.T) {
+	const (
+		terminalWidth = 72
+		wantWidth     = terminalWidth - 4
+	)
+	tests := []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name: "form",
+			lines: func() []string {
+				lines, _, _ := formDialogPanel(FormView{
+					Title:  "New repo",
+					Fields: []FormField{{ID: "name", Kind: FormText, Label: "Repo name"}},
+				}, terminalWidth, 12)
+				return lines
+			}(),
+		},
+		{
+			name: "input",
+			lines: renderInputDialog(inputRenderParams{
+				prompt:      "Create worktree from",
+				placeholder: WorktreeInputPlaceholder,
+			}, terminalWidth, 12),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotWidth := 0
+			for _, line := range tt.lines {
+				lineWidth := lipgloss.Width(strings.TrimSpace(ansi.Strip(line)))
+				if lineWidth > gotWidth {
+					gotWidth = lineWidth
+				}
+			}
+			if gotWidth != wantWidth {
+				t.Fatalf("dialog width = %d, want %d", gotWidth, wantWidth)
+			}
+		})
+	}
+}
+
 func TestStatusBar_IndicatorLegendSpacing(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, PaneTop, true, false, false)
+	bar := ansi.Strip(RenderStatusBar(120, 2, 0, PaneTop, true, false, false))
 	for _, pair := range [][2]string{
 		{"clean", "●"},
 	} {
@@ -477,7 +513,7 @@ func TestRenderFlowCreateFormOverlayIsCompactAndLeavesBackgroundVisible(t *testi
 			Overlay: OverlayForm,
 			Form:    form}})
 	text := ansi.Strip(view)
-	for _, want := range []string{"alpha", "New flow", "Title", "Instructions", "Base ref", "main", shortcutOverflowMarker, "alt+enter: newline"} {
+	for _, want := range []string{"alpha", "New flow", "Title", "Instructions", "Base ref", "main", shortcutOverflowMarker, "alt/shift+enter: newline", "enter/ctrl+enter: submit"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("flow form overlay missing %q:\n%s", want, text)
 		}
@@ -1215,14 +1251,7 @@ func TestRenderEmbeddedTerminalPaneSmallAllocations(t *testing.T) {
 }
 
 func TestRenderEmbeddedTerminalPaneBorderUsesFocusColor(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
+	forceTrueColor(t)
 
 	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Active: true}}
 	focused := renderEmbeddedTerminalPane(tabs, nil, false, true, 12, 3)
@@ -1266,14 +1295,7 @@ func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 }
 
 func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
+	forceTrueColor(t)
 
 	normal := renderShortcutPane(statusBarParams{
 		Mode:                   ModeSessions,
@@ -1835,7 +1857,7 @@ func TestStatusBar_InputOverlayShowsMultiLineHints(t *testing.T) {
 			InputPrompt: LaunchInstructionsPrompt,
 			InputMode:   InputMultiLine}})
 	status := strings.Split(view, "\n")[7]
-	for _, hint := range []string{"enter: submit", "alt+enter: newline", "esc: cancel"} {
+	for _, hint := range []string{"enter: submit", "alt/shift+enter: newline", "esc: cancel"} {
 		if !strings.Contains(status, hint) {
 			t.Errorf("expected hint %q in multi-line input status %q", hint, status)
 		}
@@ -1868,7 +1890,7 @@ func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 			InputValue:       "Implement the selected plan",
 			InputMode:        InputMultiLine}})
 	status := strings.Split(view, "\n")[11]
-	for _, hint := range []string{"enter: submit", "alt+enter: newline", "esc: cancel"} {
+	for _, hint := range []string{"enter: submit", "alt/shift+enter: newline", "esc: cancel"} {
 		if !strings.Contains(status, hint) {
 			t.Errorf("expected hint %q in launch overlay bar %q", hint, status)
 		}
@@ -1879,7 +1901,7 @@ func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 }
 
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
-	bar := RenderStatusBar(160, 2, 0, PaneTop, true, false, false)
+	bar := ansi.Strip(RenderStatusBar(160, 2, 0, PaneTop, true, false, false))
 	for _, pair := range [][2]string{
 		{"bksp: pane", "q/esc: quit"},
 		{"d: delete", "f: fetch"},
@@ -3175,7 +3197,7 @@ func TestBranchPane_RootAnnotationUsesBlueStyle(t *testing.T) {
 	}
 	lines := renderBranchPaneSelected(rows, 0, 0, 80, 10, "/dev/alpha")
 	joined := strings.Join(lines, "\n")
-	blueRoot := rootStyle.Render("[root]")
+	blueRoot := strings.TrimSuffix(selectedSegment(rootStyle, "[root]"), "\x1b[m")
 	if !strings.Contains(joined, blueRoot) {
 		t.Error("root label in branch pane should use blue rootStyle")
 	}
@@ -3228,10 +3250,11 @@ func TestRender_HighlightsSelectedBranch(t *testing.T) {
 		BranchSelected: 0,
 		ActivePane:     PaneTop,
 	})
-	if !strings.Contains(view, "> clean") {
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, "> clean") {
 		t.Error("first branch should be highlighted when BranchSelected=0")
 	}
-	if strings.Contains(view, "> dirty") {
+	if strings.Contains(plain, "> dirty") {
 		t.Error("dirty branch should not be highlighted when BranchSelected=0")
 	}
 }
@@ -3250,10 +3273,11 @@ func TestRender_HighlightsSecondBranch(t *testing.T) {
 		BranchSelected: 1,
 		ActivePane:     PaneTop,
 	})
-	if !strings.Contains(view, "> dirty") {
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, "> dirty") {
 		t.Error("dirty branch should be highlighted when BranchSelected=1")
 	}
-	if strings.Contains(view, "> clean") {
+	if strings.Contains(plain, "> clean") {
 		t.Error("clean branch should not be highlighted when BranchSelected=1")
 	}
 }
@@ -3287,8 +3311,8 @@ func TestBranchPane_CursorDoesNotShiftBranchName(t *testing.T) {
 	selected := renderBranchPaneSelected(rows, 0, 0, 80, 10, "/dev/alpha")
 
 	// Find position of "first" in both renders — should be at the same column
-	unselIdx := strings.Index(unselected[0], "first")
-	selIdx := strings.Index(selected[0], "first")
+	unselIdx := strings.Index(ansi.Strip(unselected[0]), "first")
+	selIdx := strings.Index(ansi.Strip(selected[0]), "first")
 	if unselIdx == -1 || selIdx == -1 {
 		t.Fatalf("branch name 'first' not found in output: unsel=%q sel=%q", unselected[0], selected[0])
 	}
@@ -3944,14 +3968,7 @@ func TestRender_SelectOverlayPlacementsUseTerminalBody(t *testing.T) {
 }
 
 func TestRender_SelectOverlayPreservesStyledBaseRowsAroundPanel(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
+	forceTrueColor(t)
 
 	view := Render(RenderParams{
 		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
@@ -4195,7 +4212,7 @@ func TestRender_LaunchInstructionsInputDialogMarksOverflow(t *testing.T) {
 }
 
 func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
-	bar := RenderStatusBar(120, 3, 0, PaneTop, true, false, false)
+	bar := ansi.Strip(RenderStatusBar(120, 3, 0, PaneTop, true, false, false))
 	for _, hint := range []string{"f: fetch", "F: pull"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("stashes mode status bar should not contain %q", hint)
@@ -4544,7 +4561,7 @@ func TestWorktreePane_CursorHighlight(t *testing.T) {
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	}
 	lines := renderWorktreePane(wts, 1, 0, 80, 10)
-	joined := strings.Join(lines, "\n")
+	joined := ansi.Strip(strings.Join(lines, "\n"))
 	if !strings.Contains(joined, "> feat") {
 		t.Error("expected '> feat' cursor on second item")
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
@@ -645,7 +645,7 @@ func TestAutofixLaunchOpensOneUntrackedEmbeddedSlot(t *testing.T) {
 				t.Fatalf("autofix terminal slot = %#v", slot)
 			}
 			wantLabel := "1 " + tc.provider + " autofix running"
-			view := ansi.Strip(m.View())
+			view := ansi.Strip(viewContent(m))
 			if !strings.Contains(view, wantLabel) {
 				t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
 			}
@@ -973,7 +973,7 @@ func TestAutofixPrepareUsesReservedPRNumber(t *testing.T) {
 		t.Fatalf("reserved PR terminal slot = %#v", m.embeddedTerminals)
 	}
 	wantLabel := "1 codex autofix running"
-	if view := ansi.Strip(m.View()); !strings.Contains(view, wantLabel) {
+	if view := ansi.Strip(viewContent(m)); !strings.Contains(view, wantLabel) {
 		t.Fatalf("dock does not contain %q:\n%s", wantLabel, view)
 	}
 }
@@ -1105,7 +1105,7 @@ func TestAutofixKeyIsBoundOnBothFlowSurfacesAndInertElsewhere(t *testing.T) {
 		h := newManualLaunchHarness(t, record)
 		m := h.model()
 		m.activePane = ui.PaneBottom
-		next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
+		next, cmd := m.handleKey(tea.KeyPressMsg{Text: string([]rune{'U'})})
 		m = h.drain(next.(Model), cmd, 0)
 		if len(h.launchContexts) != 1 {
 			t.Fatalf("embedded launches = %#v, want exactly one from the Flows surface", h.launchContexts)
@@ -1131,7 +1131,7 @@ func TestAutofixKeyIsBoundOnBothFlowSurfacesAndInertElsewhere(t *testing.T) {
 		h := newManualLaunchHarness(t, record)
 		m := h.model()
 		m.activePane = ui.PaneRepos
-		next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
+		next, cmd := m.handleKey(tea.KeyPressMsg{Text: string([]rune{'U'})})
 		h.drain(next.(Model), cmd, 0)
 		if len(h.launchContexts) != 0 {
 			t.Fatalf("U must be inert while the repo pane holds focus: %#v", h.launchContexts)
@@ -1147,7 +1147,7 @@ func TestAutofixKeyIsBoundOnBothFlowSurfacesAndInertElsewhere(t *testing.T) {
 			Kind:   flowLaunchKindManualPhase,
 			FlowID: record.FlowID,
 		}, flowLaunchStateReading)
-		next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
+		next, cmd := m.handleKey(tea.KeyPressMsg{Text: string([]rune{'U'})})
 		m = h.drain(next.(Model), cmd, 0)
 		if len(h.launchContexts) != 0 {
 			t.Fatalf("U must refuse while a launch holds the Flow: %#v", h.launchContexts)
@@ -1504,8 +1504,8 @@ func TestAutofixHintReachesTheRenderedView(t *testing.T) {
 	m.width, m.height = 200, 24
 	m = m.reflowForTerminalDock()
 
-	if !strings.Contains(m.View(), "autofix PR") {
-		t.Fatalf("an eligible Flow row should render the autofix hint:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "autofix PR") {
+		t.Fatalf("an eligible Flow row should render the autofix hint:\n%s", viewContent(m))
 	}
 
 	occupied := m
@@ -1514,8 +1514,8 @@ func TestAutofixHintReachesTheRenderedView(t *testing.T) {
 		FlowID:   record.FlowID,
 		Terminal: flowPhaseLaunchTestTerminal{state: "running"},
 	})
-	if strings.Contains(occupied.View(), "autofix PR") {
-		t.Fatalf("an occupied Flow must not render the autofix hint:\n%s", occupied.View())
+	if strings.Contains(occupied.View().Content, "autofix PR") {
+		t.Fatalf("an occupied Flow must not render the autofix hint:\n%s", occupied.View().Content)
 	}
 }
 

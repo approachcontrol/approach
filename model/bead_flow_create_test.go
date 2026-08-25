@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
@@ -84,7 +84,7 @@ func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *tes
 			return flowstore.EpicProgression{RepoPath: "/dev/alpha", EpicID: "epic-1", Enabled: true}, preparedFlow, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
@@ -95,7 +95,7 @@ func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *tes
 	m, _ = applyTestCommand(m, expansionCmd)
 	order = nil
 
-	m, toggleCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, toggleCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if toggleCmd == nil {
 		t.Fatal("epic a returned nil toggle command")
 	}
@@ -118,8 +118,8 @@ func TestEpicAutoProgressionEnablePreparesFirstReadyChildWithoutLaunching(t *tes
 	if got := m.TransientError(); got != "Enabled auto-progression for epic epic-1; Flow flow-child is prepared" {
 		t.Fatalf("status = %q", got)
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "[epic]  [auto]") {
-		t.Fatalf("enabled marker missing:\n%s", ansi.Strip(m.View()))
+	if !strings.Contains(ansi.Strip(viewContent(m)), "[epic]  [auto]") {
+		t.Fatalf("enabled marker missing:\n%s", ansi.Strip(viewContent(m)))
 	}
 }
 
@@ -169,7 +169,7 @@ func TestEpicAutoProgressionRevalidatesSelectedChildBeforeClaim(t *testing.T) {
 				},
 			})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if cmd == nil {
 				t.Fatal("enable returned nil command")
 			}
@@ -222,7 +222,7 @@ func TestEpicAutoProgressionClaimFailureStopsBeforeFlowPreparation(t *testing.T)
 				},
 			})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if cmd == nil {
 				t.Fatal("claiming enable returned nil command")
 			}
@@ -234,10 +234,10 @@ func TestEpicAutoProgressionClaimFailureStopsBeforeFlowPreparation(t *testing.T)
 			if !strings.Contains(status, "Could not claim child epic-1.1; auto-progression remains off") || !strings.Contains(status, tt.cause.Error()) {
 				t.Fatalf("claim failure status = %q", status)
 			}
-			if strings.Contains(ansi.Strip(m.View()), "[auto]") {
-				t.Fatalf("claim failure enabled progression:\n%s", ansi.Strip(m.View()))
+			if strings.Contains(ansi.Strip(viewContent(m)), "[auto]") {
+				t.Fatalf("claim failure enabled progression:\n%s", ansi.Strip(viewContent(m)))
 			}
-			if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}); retry == nil {
+			if _, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})}); retry == nil {
 				t.Fatal("claim failure did not release admission for retry")
 			}
 		})
@@ -276,7 +276,7 @@ func TestEpicAutoProgressionStalePreClaimFailureDoesNotAdoptReplacement(t *testi
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claims != 0 || reads != 0 || downstream != 0 {
 		t.Fatalf("stale pre-claim claims/reads/downstream = %d/%d/%d, want 0/0/0", claims, reads, downstream)
@@ -317,7 +317,7 @@ func TestEpicAutoProgressionAdoptsPreparedFlowWithoutClaim(t *testing.T) {
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claims != 0 {
 		t.Fatalf("adoption ClaimBead calls = %d, want 0", claims)
@@ -325,8 +325,8 @@ func TestEpicAutoProgressionAdoptsPreparedFlowWithoutClaim(t *testing.T) {
 	if got, want := strings.Join(order, " -> "), "list -> reserve -> enable"; got != want {
 		t.Fatalf("adoption order = %q, want %q", got, want)
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "[auto]") {
-		t.Fatalf("adoption did not enable progression:\n%s", ansi.Strip(m.View()))
+	if !strings.Contains(ansi.Strip(viewContent(m)), "[auto]") {
+		t.Fatalf("adoption did not enable progression:\n%s", ansi.Strip(viewContent(m)))
 	}
 }
 
@@ -374,7 +374,7 @@ func TestEpicAutoProgressionRetryAdoptsClaimedChildBeforeReadySibling(t *testing
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("retry enable returned nil command")
 	}
@@ -425,7 +425,7 @@ func TestEpicAutoProgressionRetryRejectsRunningMarkedChildInsteadOfClaimingSibli
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if creates != 0 {
 		t.Fatalf("running child retry creates = %d, want 0 (must not claim a Ready sibling instead)", creates)
@@ -505,7 +505,7 @@ func TestEpicAutoProgressionRetryIgnoresConsumedMarkedChildAndClaimsReadySibling
 				},
 			})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			m, _ = update(m, cmd())
 			if claimedID != "epic-1.2" || creates != 1 {
 				t.Fatalf("consumed %s retry claimed=%q creates=%d, want sibling epic-1.2 and 1 create", tt.status, claimedID, creates)
@@ -557,7 +557,7 @@ func TestEpicAutoProgressionRetryRefusesSiblingWhenConsumedMarkerBecomesActive(t
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claimedID != "" || creates != 0 {
 		t.Fatalf("reactivated marker claimed=%q creates=%d, want no sibling claim", claimedID, creates)
@@ -617,7 +617,7 @@ func TestEpicAutoProgressionRetryRefusesSiblingWhenConsumedMarkerReactivatesAfte
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if reads < 2 {
 		t.Fatalf("ReadFlow calls = %d, want confirmation then claim-boundary revalidation", reads)
@@ -664,7 +664,7 @@ func TestEpicAutoProgressionRetryRejectsReplacementOfMigratedMarkedChild(t *test
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claims != 0 || releases != 1 {
 		t.Fatalf("migrated replacement retry claims/releases = %d/%d, want 0/1", claims, releases)
@@ -704,7 +704,7 @@ func TestEpicAutoProgressionRetryRejectsReplacementWithDifferentNonce(t *testing
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claims != 0 || releases != 1 {
 		t.Fatalf("nonce replacement retry claims/releases = %d/%d, want 0/1", claims, releases)
@@ -758,7 +758,7 @@ func TestEpicAutoProgressionRetryRecoversMigratedMarkedChildWithoutGeneration(t 
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("retry enable returned nil command")
 	}
@@ -820,7 +820,7 @@ func TestEpicAutoProgressionRetryDiscoversNewlyMarkedDirectChildBeforeReadySibli
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("retry enable returned nil command")
 	}
@@ -869,7 +869,7 @@ func TestEpicAutoProgressionRetryDoesNotSkipIncompleteClaimedChild(t *testing.T)
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claims != 1 || reserves != 1 || downstream != 0 {
 		t.Fatalf("incomplete retry claims/reserves/downstream = %d/%d/%d, want 1/1/0", claims, reserves, downstream)
@@ -912,7 +912,7 @@ func TestEpicAutoProgressionRetryRevalidatesDirectChildBeforeClaim(t *testing.T)
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if childrenCalls != 3 || claims != 0 || releases != 1 {
 		t.Fatalf("reparented retry children/claims/releases = %d/%d/%d, want 3/0/1", childrenCalls, claims, releases)
@@ -953,7 +953,7 @@ func TestEpicAutoProgressionRetryRejectsReplacementBeforeClaim(t *testing.T) {
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claims != 0 || releases != 1 {
 		t.Fatalf("replacement retry claims/releases = %d/%d, want 0/1", claims, releases)
@@ -1002,7 +1002,7 @@ func TestEpicAutoProgressionManualPreparedChildDoesNotBlockReadySibling(t *testi
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, _ = update(m, cmd())
 	if claimedID != "epic-1.2" {
 		t.Fatalf("claimed child = %q, want ready sibling", claimedID)
@@ -1037,16 +1037,16 @@ func TestEpicAutoProgressionDisableDoesNotConsultChildrenOrFlows(t *testing.T) {
 			return model.FlowStartResult{}, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
 	m, _ = applyTestCommand(m, expansionCmd)
-	if !strings.Contains(ansi.Strip(m.View()), "[epic]  [auto]") {
-		t.Fatalf("enabled marker hidden by child failure:\n%s", ansi.Strip(m.View()))
+	if !strings.Contains(ansi.Strip(viewContent(m)), "[epic]  [auto]") {
+		t.Fatalf("enabled marker hidden by child failure:\n%s", ansi.Strip(viewContent(m)))
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("disable returned nil command")
 	}
@@ -1084,13 +1084,13 @@ func TestEpicAutoProgressionEnableWithNoReadyChildCreatesNothing(t *testing.T) {
 			return flowstore.EpicProgression{}, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
 	m, _ = applyTestCommand(m, expansionCmd)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("no-ready enable returned nil command instead of status result")
 	}
@@ -1212,13 +1212,13 @@ func TestEpicAutoProgressionDeterministicEnableRefusalsRemainKnownDisabled(t *te
 				return flowstore.EpicProgression{}, false, nil
 			}
 			m := inBeadsPane(newTestModel(testRepos(), opts))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 			m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 				RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 				Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 			})
 			m, _ = applyTestCommand(m, expansionCmd)
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if cmd == nil {
 				t.Fatal("initial enable returned nil command")
 			}
@@ -1226,7 +1226,7 @@ func TestEpicAutoProgressionDeterministicEnableRefusalsRemainKnownDisabled(t *te
 			if claims != tt.wantClaims {
 				t.Fatalf("ClaimBead calls = %d, want %d", claims, tt.wantClaims)
 			}
-			if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}); retry == nil {
+			if _, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})}); retry == nil {
 				t.Fatal("deterministic refusal changed known-disabled progression to unknown")
 			}
 		})
@@ -1261,13 +1261,13 @@ func TestEpicAutoProgressionUnknownPreparationRefreshesVisibleFlow(t *testing.T)
 		},
 	}))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 30})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 	})
 	m, _ = applyTestCommand(m, expansionCmd)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	m, refreshCmd := update(m, cmd())
 	if refreshCmd == nil {
 		t.Fatal("unknown preparation outcome did not request a Flow refresh")
@@ -1363,19 +1363,19 @@ func TestEpicAutoProgressionEnableWriteReconciliation(t *testing.T) {
 				},
 			}
 			m := loadEpicProgressionTestModel(t, opts)
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			m, _ = update(m, cmd())
 			if claims != 1 || releases != 1 {
 				t.Fatalf("claims/reservation releases = %d/%d, want 1/1", claims, releases)
 			}
-			view := ansi.Strip(m.View())
+			view := ansi.Strip(viewContent(m))
 			if got := strings.Contains(view, "[auto]"); got != tt.wantEnabled {
 				t.Fatalf("enabled marker = %t, want %t\n%s", got, tt.wantEnabled, view)
 			}
 			if tt.wantStatus != "" && !strings.Contains(m.TransientError(), tt.wantStatus) {
 				t.Fatalf("toggle status = %q, want substring %q", m.TransientError(), tt.wantStatus)
 			}
-			_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			_, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if gotKnown := retry != nil; gotKnown != tt.wantKnown {
 				t.Fatalf("retry available = %t, want known state %t", gotKnown, tt.wantKnown)
 			}
@@ -1437,13 +1437,13 @@ func TestEpicAutoProgressionDisableWriteReconciliation(t *testing.T) {
 				},
 			}
 			m := loadEpicProgressionTestModel(t, opts)
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			m, _ = update(m, cmd())
-			view := ansi.Strip(m.View())
+			view := ansi.Strip(viewContent(m))
 			if got := strings.Contains(view, "[auto]"); got != tt.wantEnabled {
 				t.Fatalf("enabled marker = %t, want %t\n%s", got, tt.wantEnabled, view)
 			}
-			_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			_, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if gotKnown := retry != nil; gotKnown != tt.wantKnown {
 				t.Fatalf("retry available = %t, want known state %t", gotKnown, tt.wantKnown)
 			}
@@ -1465,7 +1465,7 @@ func loadEpicProgressionTestModel(t *testing.T, opts model.Options) model.Model 
 		}
 	}
 	m := inBeadsPane(newTestModel(testRepos(), opts))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 		Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
@@ -1511,13 +1511,13 @@ func TestEpicAutoProgressionToggleOwnsAInEveryBeadsSubview(t *testing.T) {
 					return flowstore.EpicProgression{}, false, nil
 				},
 			}))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{tt.key})})
 			m, expansionCmd := update(m, tt.msg(m.ListRequest(tt.mode)))
 			if expansionCmd == nil {
 				t.Fatal("epic result did not start expansion")
 			}
 			m, _ = applyTestCommand(m, expansionCmd)
-			m, toggleCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, toggleCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if toggleCmd == nil {
 				t.Fatal("epic toggle did not own a")
 			}
@@ -1551,12 +1551,12 @@ func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T)
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, readyCmd())
 
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, createCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if createCmd == nil {
 		t.Fatal("Ready f returned nil create command")
 	}
@@ -1565,7 +1565,7 @@ func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T)
 		t.Fatalf("CreateFlow calls = %d, want 1", createCalls)
 	}
 
-	m, refreshCmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, refreshCmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	if refreshCmd == nil {
 		t.Fatal("f5 returned nil refresh command")
 	}
@@ -1584,7 +1584,7 @@ func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T)
 
 	m = applyBeadsResultFor(t, m, ui.ModeBeadsReady, "/dev/bravo", m.ListRequest(ui.ModeBeadsReady), true,
 		[]beadsquery.Bead{{ID: "bd-2", Title: "Two"}})
-	_, retryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, retryCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if retryCmd == nil {
 		t.Fatal("rescan-driven repo change stranded Ready Flow creation")
 	}
@@ -1599,9 +1599,9 @@ func TestBeadsReadyCreateFlowRequiresUsableBeadIDAndToleratesEmptyTitle(t *testi
 			CreateFlow:     create,
 		}))
 		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		return applyBeadsResult(t, m, ui.ModeBeadsReady, true, beads)
 	}
 
@@ -1618,10 +1618,10 @@ func TestBeadsReadyCreateFlowRequiresUsableBeadIDAndToleratesEmptyTitle(t *testi
 				createCalls++
 				return model.FlowStartResult{}, nil
 			})
-			if strings.Contains(ansi.Strip(m.View()), "new flow") {
-				t.Fatalf("unusable Bead ID advertised the Flow shortcut:\n%s", ansi.Strip(m.View()))
+			if strings.Contains(ansi.Strip(viewContent(m)), "new flow") {
+				t.Fatalf("unusable Bead ID advertised the Flow shortcut:\n%s", ansi.Strip(viewContent(m)))
 			}
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 			if cmd != nil {
 				t.Fatalf("unusable Bead ID returned create command %T", cmd)
 			}
@@ -1637,7 +1637,7 @@ func TestBeadsReadyCreateFlowRequiresUsableBeadIDAndToleratesEmptyTitle(t *testi
 			createdRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 		})
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 		if cmd == nil {
 			t.Fatal("titleless Bead returned nil create command")
 		}
@@ -1661,11 +1661,11 @@ func TestBeadsReadyCreateFlowFailureWithoutDetailReportsFallback(t *testing.T) {
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, readyCmd())
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, createCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	created := createCmd().(model.ReadyBeadFlowCreatedMsg)
 
 	m, _ = update(m, model.ReadyBeadFlowCreateFailedMsg{
@@ -1722,16 +1722,16 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 			return nil, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if readyCmd == nil {
 		t.Fatal("entering Ready returned nil query command")
 	}
 	m, _ = update(m, readyCmd())
 	m = setBeadsQuery(t, m, "Selected")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("Ready f returned nil create command")
 	}
@@ -1799,12 +1799,12 @@ func TestBeadsReadyFlowRequestsCarryNormalizedSelectedBeadLink(t *testing.T) {
 					},
 				}
 				m := inBeadsPane(newTestModel(testRepos(), opts))
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 				m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "  bead-child  ", Parent: tt.parent, Title: "Child"}})
 
-				_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+				_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 				if cmd == nil {
 					t.Fatalf("Ready %c returned nil command", key)
 				}
@@ -1833,9 +1833,9 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			CreateFlow:     create,
 			FetchRepo:      func(string) error { return nil },
 		}))
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		return applyBeadsResult(t, m, ui.ModeBeadsReady, available, beads)
 	}
 
@@ -1847,7 +1847,7 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 		}
 		assertNoCreate := func(t *testing.T, m model.Model) {
 			t.Helper()
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 			if cmd != nil {
 				t.Fatalf("invalid Ready context returned command %T", cmd)
 			}
@@ -1859,8 +1859,8 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 		// Left-pane focus must keep `f` on the repo-fetch binding, not merely
 		// avoid Flow creation.
 		m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, create)
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-		_, leftCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+		_, leftCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 		if leftCmd == nil {
 			t.Fatal("left-pane f lost the repo fetch binding")
 		}
@@ -1879,7 +1879,7 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 
 		for _, subview := range []rune{'b', 'o', 'i', 'c'} {
 			m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, create)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{subview})})
 			assertNoCreate(t, m)
 		}
 
@@ -1888,9 +1888,9 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			ListOpenBeads:  func(string) ([]beadsquery.Bead, error) { return nil, nil },
 			CreateFlow:     create,
 		}))
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		assertNoCreate(t, m) // loading
 		assertNoCreate(t, newReadyModel(t, nil, false, create))
 		assertNoCreate(t, newReadyModel(t, nil, true, create))
@@ -1905,8 +1905,8 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			createCalls++
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 		})
-		m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-		m, duplicate := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
+		m, duplicate := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 		if first == nil || duplicate != nil {
 			t.Fatalf("create commands = first %T duplicate %T, want non-nil then nil", first, duplicate)
 		}
@@ -1915,7 +1915,7 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 		if createCalls != 1 {
 			t.Fatalf("CreateFlow calls = %d, want 1", createCalls)
 		}
-		_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		_, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 		if retry == nil {
 			t.Fatal("accepted completion did not release Ready create")
 		}
@@ -1925,8 +1925,8 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 		m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 		})
-		m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-		_, mixed := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+		m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
+		_, mixed := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 		if first == nil || mixed != nil {
 			t.Fatalf("mixed create commands = first %T second %T, want non-nil then nil", first, mixed)
 		}
@@ -1936,13 +1936,13 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 		m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, func(model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-persisted"}}, errors.New("worktree unavailable")
 		})
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 		failed := cmd().(model.ReadyBeadFlowCreateFailedMsg)
 		m, _ = update(m, failed)
 		if got := m.TransientError(); got != "Flow flow-persisted was created, but preparation failed: worktree unavailable" {
 			t.Fatalf("failure status = %q", got)
 		}
-		_, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		_, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 		if retry == nil {
 			t.Fatal("accepted failure did not release Ready create")
 		}
@@ -1985,24 +1985,24 @@ func TestEpicProgressionClaimAndPreparationKeepSharedAdmissionUntilResult(t *tes
 					return model.FlowStartResult{}, tt.prepareErr
 				},
 			}))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 			m, expansionCmd := update(m, model.BeadsOpenResultMsg{
 				RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsOpen), Available: true,
 				Beads: []beadsquery.Bead{{ID: "epic-1", Title: "Epic", IssueType: "epic"}},
 			})
 			m, _ = applyTestCommand(m, expansionCmd)
 
-			m, admitted := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			m, admitted := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 			if admitted == nil {
 				t.Fatal("epic toggle did not acquire shared admission")
 			}
-			if _, duplicate := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}); duplicate != nil {
+			if _, duplicate := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})}); duplicate != nil {
 				t.Fatalf("second epic toggle entered while first was outstanding: %T", duplicate)
 			}
 
-			m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 			m, _ = applyTestCommand(m, readyCmd)
-			if _, readyCreate := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); readyCreate != nil {
+			if _, readyCreate := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})}); readyCreate != nil {
 				t.Fatalf("navigation released shared admission before result: %T", readyCreate)
 			}
 
@@ -2016,7 +2016,7 @@ func TestEpicProgressionClaimAndPreparationKeepSharedAdmissionUntilResult(t *tes
 			if tt.prepareErr != nil && !strings.Contains(m.TransientError(), tt.prepareErr.Error()) {
 				t.Fatalf("stale post-claim failure status = %q, want cause %q", m.TransientError(), tt.prepareErr)
 			}
-			if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); retry == nil {
+			if _, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})}); retry == nil {
 				t.Fatal("progression result did not release shared admission")
 			}
 		})
@@ -2037,20 +2037,20 @@ func TestBeadsReadyStartKeyOwnershipConsumesUnavailableAndEarlyInput(t *testing.
 			},
 		}))
 		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-		m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+		m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		m, _ = update(m, readyCmd())
 		return m
 	}
 
 	t.Run("missing agent", func(t *testing.T) {
 		m := newReady("   ")
-		view := ansi.Strip(m.View())
+		view := ansi.Strip(viewContent(m))
 		if !strings.Contains(view, "new flow") || strings.Contains(view, "new flow + start") || strings.Contains(view, "pull") {
 			t.Fatalf("missing-agent Ready shortcuts are wrong:\n%s", view)
 		}
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 		if cmd != nil || startCalls != 0 {
 			t.Fatalf("owned missing-agent F returned %T and started %d times", cmd, startCalls)
 		}
@@ -2061,17 +2061,17 @@ func TestBeadsReadyStartKeyOwnershipConsumesUnavailableAndEarlyInput(t *testing.
 		open func(model.Model) model.Model
 	}{
 		{name: "search", open: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 			return m
 		}},
 		{name: "picker", open: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
 			return m
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := tt.open(newReady("codex"))
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+			_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 			if cmd != nil || startCalls != 0 {
 				t.Fatalf("%s F returned %T and started %d times", tt.name, cmd, startCalls)
 			}
@@ -2092,17 +2092,17 @@ func TestBeadsReadyStartKeyOwnershipConsumesUnavailableAndEarlyInput(t *testing.
 			},
 		}))
 		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 30})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-		m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+		m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		m, _ = update(m, readyCmd())
 		m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 			Command: "codex", FlowID: "flow-existing", FlowPhaseID: "implementation",
 		}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 		if cmd != nil || startCalls != 0 {
 			t.Fatalf("terminal-focused F returned %T and started %d Ready flows", cmd, startCalls)
 		}
@@ -2133,22 +2133,22 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 					return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 				},
 			}))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-			m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+			m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 			m, _ = update(m, readyCmd())
-			m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			m, createCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 			stale := createCmd().(model.ReadyBeadFlowCreatedMsg)
 			if createCalls != 1 {
 				t.Fatalf("initial CreateFlow calls = %d, want 1", createCalls)
 			}
 
 			if tt.activeFlows {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+				m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			}
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+			m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 			m, staleCmd := update(m, stale)
 			if staleCmd != nil || m.TransientError() != "" {
 				t.Fatalf("stale completion changed UI: status=%q cmd=%T", m.TransientError(), staleCmd)
@@ -2164,13 +2164,13 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 			}
 
 			if tt.activeFlows {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			} else {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 			}
 			m = applyBeadsResultFor(t, m, ui.ModeBeadsReady, "/dev/alpha", m.ListRequest(ui.ModeBeadsReady), true, []beadsquery.Bead{{ID: "bd-1", Title: "One"}})
-			_, retryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			_, retryCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 			if retryCmd == nil {
 				t.Fatal("repo round trip stranded Ready Flow creation")
 			}
@@ -2181,14 +2181,14 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 func TestBeadsReadyCreateFlowCompletionRefreshesVisibleFlowSurface(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
-		keys        []tea.KeyMsg
+		keys        []tea.KeyPressMsg
 		height      int
 		wantRefresh int
 	}{
 		{name: "beads ready with background flows visible", height: 30, wantRefresh: 1},
-		{name: "selected repo flows", height: 30, keys: []tea.KeyMsg{{Type: tea.KeyTab}, {Type: tea.KeyRunes, Runes: []rune{'3'}}}, wantRefresh: 1},
-		{name: "active flows", height: 30, keys: []tea.KeyMsg{{Type: tea.KeyCtrlA}}, wantRefresh: 1},
-		{name: "other surface with background flows hidden", height: 20, keys: []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune{'1'}}}, wantRefresh: 0},
+		{name: "selected repo flows", height: 30, keys: []tea.KeyPressMsg{{Code: tea.KeyTab}, {Text: string([]rune{'3'})}}, wantRefresh: 1},
+		{name: "active flows", height: 30, keys: []tea.KeyPressMsg{{Code: 'a', Mod: tea.ModCtrl}}, wantRefresh: 1},
+		{name: "other surface with background flows hidden", height: 20, keys: []tea.KeyPressMsg{{Text: string([]rune{'1'})}}, wantRefresh: 0},
 	} {
 		for _, failed := range []bool{false, true} {
 			outcome := "success"
@@ -2214,11 +2214,11 @@ func TestBeadsReadyCreateFlowCompletionRefreshesVisibleFlowSurface(t *testing.T)
 					},
 				}))
 				m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: tt.height})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-				m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+				m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 				m, _ = update(m, readyCmd())
-				m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+				m, createCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 				completion := createCmd()
 				for _, key := range tt.keys {
 					m, _ = update(m, key)
@@ -2250,12 +2250,12 @@ func TestBeadsReadyCreateFlowSameRepoFilterAndCursorChangesKeepRequestCurrent(t 
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, readyCmd())
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, createCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m = setBeadsQuery(t, m, "Two")
 	m, _ = update(m, createCmd())
 	if got := m.TransientError(); got != "Created flow: bd-1: One" {
@@ -2276,9 +2276,9 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 			},
 		}))
 		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-		m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+		m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		m, _ = update(m, readyCmd())
 		return m
 	}
@@ -2290,16 +2290,16 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 	}{
 		{name: "available", transform: func(m model.Model) model.Model { return m }, want: true},
 		{name: "left focused", transform: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+			m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 			return m
 		}},
 		{name: "non ready", transform: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 			return m
 		}},
 		{name: "loading", transform: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 			return m
 		}},
 		{name: "unavailable", transform: func(m model.Model) model.Model {
@@ -2312,24 +2312,24 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 			return setBeadsQuery(t, m, "no-match")
 		}},
 		{name: "creating", transform: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 			return m
 		}},
 		{name: "search active", transform: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 			return m
 		}},
 		{name: "agent picker open", transform: func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
 			return m
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := tt.transform(newModel(t))
-			got := strings.Contains(ansi.Strip(m.View()), "new flow")
+			got := strings.Contains(ansi.Strip(viewContent(m)), "new flow")
 			if got != tt.want {
-				t.Fatalf("new flow shortcut visible = %v, want %v:\n%s", got, tt.want, ansi.Strip(m.View()))
+				t.Fatalf("new flow shortcut visible = %v, want %v:\n%s", got, tt.want, ansi.Strip(viewContent(m)))
 			}
 		})
 	}
@@ -2348,13 +2348,13 @@ func TestBeadsReadyCreateFlowPickerConsumesFWithoutCreating(t *testing.T) {
 		},
 	}))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, readyCmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd != nil {
 		_ = immediateTestCommandMessages(cmd)
 	}
@@ -2394,11 +2394,11 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	})
 	m = inBeadsPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, readyCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, readyCmd())
-	_, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, createCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	message := createCmd()
 	created, ok := message.(model.ReadyBeadFlowCreatedMsg)
 	if !ok {
@@ -2494,12 +2494,12 @@ func TestBeadsReadyCreateFlowRefusesDuplicateBeadFlow(t *testing.T) {
 		},
 		FetchRepo: func(string) error { return nil },
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-1", Title: "One"}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	failed, ok := cmd().(model.ReadyBeadFlowCreateFailedMsg)
 	if !ok {
 		t.Fatal("Ready create did not report a create failure")
@@ -2516,7 +2516,7 @@ func TestBeadsReadyCreateFlowRefusesDuplicateBeadFlow(t *testing.T) {
 	if createCalls != 1 {
 		t.Fatalf("CreateFlow calls = %d, want exactly 1; the refusal must not be retried", createCalls)
 	}
-	if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); retry == nil {
+	if _, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})}); retry == nil {
 		t.Fatal("duplicate-Bead refusal did not release Ready create readiness")
 	}
 }
@@ -2540,12 +2540,12 @@ func TestBeadsReadyCreateFlowSurfacesUnreadableBeadRefusal(t *testing.T) {
 		},
 		FetchRepo: func(string) error { return nil },
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-1", Title: "One"}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	failed, ok := cmd().(model.ReadyBeadFlowCreateFailedMsg)
 	if !ok {
 		t.Fatal("Ready create did not report a create failure")
@@ -2565,7 +2565,7 @@ func TestBeadsReadyCreateFlowSurfacesUnreadableBeadRefusal(t *testing.T) {
 	if strings.Contains(got, "was created") {
 		t.Fatalf("status = %q, but the refusal wrote nothing", got)
 	}
-	if _, retry := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); retry == nil {
+	if _, retry := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})}); retry == nil {
 		t.Fatal("unreadable refusal did not release Ready create readiness")
 	}
 }

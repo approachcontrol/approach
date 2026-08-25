@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
@@ -20,8 +20,8 @@ var errFlowHeadlessWrite = errors.New("state root locked")
 func refetchFlowsMode(t *testing.T, m model.Model) model.Model {
 	t.Helper()
 	before := m.ListRequest(ui.ModeFlows)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 	if m.ListRequest(ui.ModeFlows) <= before {
 		t.Fatalf("list request = %d, want a newer request than %d", m.ListRequest(ui.ModeFlows), before)
 	}
@@ -56,7 +56,7 @@ func TestModel_LaunchIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, headlessCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, headlessCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if headlessCmd == nil {
 		t.Fatal("h returned nil persistence command")
 	}
@@ -101,7 +101,7 @@ func TestModel_FailedHeadlessWriteReleasesTheLaunchFence(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, headlessCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, headlessCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if headlessCmd == nil {
 		t.Fatal("h returned nil persistence command")
 	}
@@ -138,13 +138,13 @@ func TestModel_OverlappingHeadlessWritesKeepTheLaunchFenced(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if first == nil {
 		t.Fatal("the first h press should return a persistence command")
 	}
 	// Only one write may be outstanding per Flow, so the second press records
 	// intent instead of starting a command that could reach the store first.
-	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, second := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if second != nil {
 		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
 	}
@@ -189,11 +189,11 @@ func TestModel_QueuedHeadlessTogglesAlternateFromThePendingValue(t *testing.T) {
 	// Both presses land before the first result is handled, so the second must
 	// alternate from the value the first one queued rather than the stale row.
 	// Writes are serialized, so the store observes them in the pressed order.
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if first == nil {
 		t.Fatal("the first h press should return a persistence command")
 	}
-	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, second := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if second != nil {
 		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
 	}
@@ -233,7 +233,7 @@ func TestModel_QueuedHeadlessToggleKeepsItsOwnSurfaceScope(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
 	// The write starts from the repository Flow list, so it is repo-scoped.
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if first == nil {
 		t.Fatal("the first h press should return a persistence command")
 	}
@@ -241,7 +241,7 @@ func TestModel_QueuedHeadlessToggleKeepsItsOwnSurfaceScope(t *testing.T) {
 	// The queued toggle is entered from Active Flows, which is global. The
 	// follow-up must carry that scope so its result is not rejected as off-repo.
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, second := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if second != nil {
 		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
 	}
@@ -280,7 +280,7 @@ func TestModel_CoalescedHeadlessToggleKeepsTheLatestSurfaceScope(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
 	// A repo-scoped write starts from the repository Flow list.
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if first == nil {
 		t.Fatal("the first h press should return a persistence command")
 	}
@@ -288,13 +288,13 @@ func TestModel_CoalescedHeadlessToggleKeepsTheLatestSurfaceScope(t *testing.T) {
 	// Two Active Flows toggles bring the intent back to the in-flight value, so
 	// the completion needs no follow-up but still belongs to the global surface.
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 
 	// The user moves to another repository before the write lands, so a
 	// repo-scoped result would be discarded as off-repo.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // repo bravo
 
 	m, followUp := update(m, first())
 	if followUp != nil {
@@ -319,15 +319,15 @@ func TestModel_QueuedHeadlessToggleKeepsGlobalScopeAcrossTheChain(t *testing.T) 
 
 	// The chain starts global, from Active Flows.
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if first == nil {
 		t.Fatal("the first h press should return a persistence command")
 	}
 
 	// A later toggle from the repository Flow list must not narrow the chain's
 	// scope: the follow-up still has to reach the cross-repository cache.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	m, second := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if second != nil {
 		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
 	}
@@ -345,8 +345,8 @@ func TestModel_QueuedHeadlessToggleKeepsGlobalScopeAcrossTheChain(t *testing.T) 
 	}
 
 	// The user selects another repository before the follow-up lands.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // repo bravo
 	m, _ = update(m, followUpMsg)
 
 	if got := model.ActiveFlowRecordsForTest(m); len(got) != 1 || !got[0].Headless {
@@ -368,9 +368,9 @@ func TestModel_FailedWriteReportsDroppedQueuedHeadlessToggles(t *testing.T) {
 
 	// Three presses queue headless-off behind the in-flight headless-off write.
 	// The failure leaves the store on, so that intent can no longer be reached.
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, followUp := update(m, first())
 	m = settleModelCommands(t, m, followUp, 4)
 
@@ -405,9 +405,9 @@ func TestModel_QueuedHeadlessTogglesCoalesceToTheLastIntent(t *testing.T) {
 
 	// Three presses from headless-on: the middle intent never has to reach the
 	// store because the in-flight write already persists the final value.
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, followUp := update(m, first())
 	if followUp != nil {
 		t.Fatalf("follow-up command %T issued although the in-flight write matched the last intent", followUp)
@@ -445,14 +445,14 @@ func TestModel_RepairIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 
-	m, headlessCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, headlessCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if headlessCmd == nil {
 		t.Fatal("h returned nil persistence command")
 	}
 
 	// Repair reads the persisted preference asynchronously and would otherwise
 	// win the race against the in-flight headless write.
-	m, repairCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	m, repairCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'R'})})
 	m = settleModelCommands(t, m, repairCmd, 4)
 	if listCalls != 0 {
 		t.Fatalf("repair read the Flow list %d times while the headless write was in flight, want none", listCalls)
@@ -462,7 +462,7 @@ func TestModel_RepairIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	}
 
 	m, _ = update(m, headlessCmd())
-	m, repairCmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	m, repairCmd = update(m, tea.KeyPressMsg{Text: string([]rune{'R'})})
 	if repairCmd == nil {
 		t.Fatal("repair stayed fenced after the headless write completed")
 	}

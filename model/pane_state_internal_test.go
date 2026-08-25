@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
@@ -65,7 +65,7 @@ func TestRepositorySwitchStartsBothStoredPaneRequests(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/one"}, {Path: "/two"}})
 	beforeTop := m.currentListRequest(ui.ModeBeadsReady)
 	beforeBottom := m.currentListRequest(ui.ModeFlows)
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("repository switch returned no stored-pane fetch command")
@@ -90,18 +90,18 @@ func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
 	})
 
 	// Repository focus suppresses pane-local numbers.
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows {
 		t.Fatalf("repository number mutated stored modes to %d/%d", m.topMode, m.bottomMode)
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if m.topMode != ui.ModeWorktrees || m.bottomMode != ui.ModeFlows || m.activePane != ui.PaneTop {
 		t.Fatalf("top 1 = top %d bottom %d focus %d, want Git / Flows / top", m.topMode, m.bottomMode, m.activePane)
 	}
 	before := m.listRequests
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	m = next.(Model)
 	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows {
 		t.Fatalf("top right = top %d bottom %d, want Ready / unchanged Flows", m.topMode, m.bottomMode)
@@ -137,12 +137,12 @@ func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
 		t.Fatalf("accepted Ready result = %#v available=%t, want bd-ready and available", got, m.BeadsAvailable(ui.ModeBeadsReady))
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeSessions || m.activePane != ui.PaneBottom {
 		t.Fatalf("bottom 1 = top %d bottom %d focus %d, want unchanged Beads / Sessions / bottom", m.topMode, m.bottomMode, m.activePane)
 	}
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
 	if m.bottomMode != ui.ModeFlows || m.topMode != ui.ModeBeadsReady {
 		t.Fatalf("bottom left = top %d bottom %d, want unchanged Beads / wrapped Flows", m.topMode, m.bottomMode)
 	}
@@ -151,13 +151,13 @@ func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
 func TestPaneFocusCyclesForwardAndBackward(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
 	for i, want := range []ui.Pane{ui.PaneTop, ui.PaneBottom, ui.PaneRepos} {
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 		if m.activePane != want {
 			t.Fatalf("forward step %d focus = %d, want %d", i, m.activePane, want)
 		}
 	}
 	for i, want := range []ui.Pane{ui.PaneBottom, ui.PaneTop, ui.PaneRepos} {
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 		if m.activePane != want {
 			t.Fatalf("backward step %d focus = %d, want %d", i, m.activePane, want)
 		}
@@ -166,15 +166,15 @@ func TestPaneFocusCyclesForwardAndBackward(t *testing.T) {
 
 func TestRepositoryEnterFocusesTopAfterBottomPaneWasRemembered(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 
 	if m.activePane != ui.PaneRepos || m.contentPane != ui.PaneBottom {
 		t.Fatalf("precondition focus = active %d remembered %d, want repos/bottom", m.activePane, m.contentPane)
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.activePane != ui.PaneTop || m.contentPane != ui.PaneTop || !m.repoPaneCollapsed {
 		t.Fatalf("Enter focus = active %d remembered %d collapsed %t, want top/top/true", m.activePane, m.contentPane, m.repoPaneCollapsed)
 	}
@@ -186,13 +186,13 @@ func TestPaneFocusCyclesSkipReposWhenCollapsed(t *testing.T) {
 	m.activePane = ui.PaneTop
 	m.contentPane = ui.PaneTop
 	for i, want := range []ui.Pane{ui.PaneBottom, ui.PaneTop} {
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 		if m.activePane != want {
 			t.Fatalf("collapsed forward step %d focus = %d, want %d", i, m.activePane, want)
 		}
 	}
 	for i, want := range []ui.Pane{ui.PaneBottom, ui.PaneTop} {
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 		if m.activePane != want {
 			t.Fatalf("collapsed backward step %d focus = %d, want %d", i, m.activePane, want)
 		}
@@ -210,7 +210,7 @@ func TestPaneModeSwitchPreservesOtherPaneState(t *testing.T) {
 		m.expandedFlowID = "two"
 		m.selectedFlowPhaseID = "implementation"
 
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 
 		if m.FlowSelected() != 1 || m.expandedFlowID != "two" || m.selectedFlowPhaseID != "implementation" {
 			t.Fatalf("top switch reset bottom Flow state: selected=%d expanded=%q phase=%q", m.FlowSelected(), m.expandedFlowID, m.selectedFlowPhaseID)
@@ -225,7 +225,7 @@ func TestPaneModeSwitchPreservesOtherPaneState(t *testing.T) {
 		m.contentPane = ui.PaneBottom
 		m.inlineWorktreeSessionPath = "/repo-worktree"
 
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 
 		if m.inlineWorktreeSessionPath != "/repo-worktree" {
 			t.Fatalf("bottom switch cleared top inline session path: %q", m.inlineWorktreeSessionPath)
@@ -241,8 +241,8 @@ func TestPaneModeSwitchPreservesOtherPaneState(t *testing.T) {
 		m.inlineWorktreeSessionPath = "/repo-worktree"
 		m.plans = newPlanPane().SetItems([]planstore.PlanRecord{{PlanID: "one"}, {PlanID: "two"}}).Move(1, 1, 80)
 
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 
 		if m.inlineWorktreeSessionPath != "/repo-worktree" || m.PlanSelected() != 1 {
 			t.Fatalf("Active Flows reset stored state: inline=%q plan selected=%d", m.inlineWorktreeSessionPath, m.PlanSelected())
@@ -259,7 +259,7 @@ func TestActiveFlowsReverseCycleActivatesContentBeforeTerminal(t *testing.T) {
 	m.terminalDockVisible = true
 	m.embeddedTerminals = []embeddedTerminalSlot{{Number: 1, Terminal: internalFakeEmbeddedTerminal{state: "running"}}}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 
 	if m.activePane != ui.PaneBottom || m.terminalFocus != terminalFocusTerminal || !m.terminalPrefixActive {
 		t.Fatalf("reverse terminal focus = pane %d focus %d prefix %t, want bottom/terminal/true", m.activePane, m.terminalFocus, m.terminalPrefixActive)
@@ -269,7 +269,7 @@ func TestActiveFlowsReverseCycleActivatesContentBeforeTerminal(t *testing.T) {
 func TestActiveFlowsTerminalReturnPreservesRememberedContentPane(t *testing.T) {
 	tests := []struct {
 		name       string
-		key        tea.KeyType
+		key        rune
 		remembered ui.Pane
 	}{
 		{name: "forward returns to remembered bottom", key: tea.KeyTab, remembered: ui.PaneBottom},
@@ -285,7 +285,7 @@ func TestActiveFlowsTerminalReturnPreservesRememberedContentPane(t *testing.T) {
 			m.terminalFocus = terminalFocusTerminal
 			m.terminalPrefixActive = true
 
-			m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tt.key})
+			m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tt.key})
 
 			if m.activePane != tt.remembered || m.contentPane != tt.remembered || m.terminalFocus != terminalFocusList || m.terminalPrefixActive {
 				t.Fatalf("terminal return = active %d remembered %d focus %d prefix %t, want %d/%d/list/false", m.activePane, m.contentPane, m.terminalFocus, m.terminalPrefixActive, tt.remembered, tt.remembered)
@@ -311,7 +311,7 @@ func TestDegradedPaneFocusSwapReflowsNewlyVisibleList(t *testing.T) {
 		t.Fatalf("precondition hidden Session scroll = %d, want 15", m.sessions.Scroll())
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 
 	wantScroll := len(records) - m.paneContentHeight(ui.ModeSessions)
 	if m.sessions.SelectedIndex() != 15 || m.sessions.Scroll() != wantScroll {
@@ -326,7 +326,7 @@ func TestRefreshAndActiveFlowsUseIndependentRequestSlots(t *testing.T) {
 	beadsBefore := m.currentListRequest(ui.ModeBeadsReady)
 	flowsBefore := m.currentListRequest(ui.ModeFlows)
 	activeBefore := m.currentListRequest(ui.ModeActiveFlows)
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyF5})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF5})
 	m = next.(Model)
 	if m.currentListRequest(ui.ModeBeadsReady) == beadsBefore || m.currentListRequest(ui.ModeFlows) == flowsBefore {
 		t.Fatal("f5 did not advance both stored-pane requests")
@@ -335,12 +335,12 @@ func TestRefreshAndActiveFlowsUseIndependentRequestSlots(t *testing.T) {
 		t.Fatal("f5 outside takeover advanced Active Flows")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m = next.(Model)
 	activeBefore = m.currentListRequest(ui.ModeActiveFlows)
 	beadsBefore = m.currentListRequest(ui.ModeBeadsReady)
 	flowsBefore = m.currentListRequest(ui.ModeFlows)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyF5})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF5})
 	m = next.(Model)
 	if m.currentListRequest(ui.ModeBeadsReady) == beadsBefore || m.currentListRequest(ui.ModeFlows) == flowsBefore || m.currentListRequest(ui.ModeActiveFlows) == activeBefore {
 		t.Fatal("f5 during takeover did not independently advance both stored panes and Active Flows")
@@ -351,12 +351,12 @@ func TestActiveFlowsToggleRestoresStoredStateWithoutTopFetch(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
 	topMode, bottomMode, remembered, focus := m.topMode, m.bottomMode, m.contentPane, m.activePane
 	topRequest := m.currentListRequest(topMode)
-	next, entryCmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	next, entryCmd := m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m = next.(Model)
 	if entryCmd == nil || !m.activeFlowSurfaceVisible() {
 		t.Fatal("Active Flows entry did not start its takeover request")
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m = next.(Model)
 	if m.activeFlowSurfaceVisible() || m.topMode != topMode || m.bottomMode != bottomMode || m.contentPane != remembered || m.activePane != focus {
 		t.Fatalf("takeover exit restored top/bottom/remembered/focus as %d/%d/%d/%d, want %d/%d/%d/%d", m.topMode, m.bottomMode, m.contentPane, m.activePane, topMode, bottomMode, remembered, focus)
@@ -370,32 +370,32 @@ func TestActiveFlowsToggleRestoresFocusChangedDuringTakeover(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(Model) Model
-		move  tea.KeyMsg
+		move  tea.KeyPressMsg
 	}{
 		{
 			name: "content entry restores content after takeover moved to repos",
 			setup: func(m Model) Model {
 				return m.focusContentPane(ui.PaneTop)
 			},
-			move: tea.KeyMsg{Type: tea.KeyTab},
+			move: tea.KeyPressMsg{Code: tea.KeyTab},
 		},
 		{
 			name:  "repo entry restores repos after takeover moved to content",
 			setup: func(m Model) Model { return m.focusRepoPane() },
-			move:  tea.KeyMsg{Type: tea.KeyTab},
+			move:  tea.KeyPressMsg{Code: tea.KeyTab},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := tt.setup(New([]scanner.Repo{{Path: "/repo"}}))
 			wantActive, wantContent := m.activePane, m.contentPane
-			m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			m = updatePaneStateTestModel(t, m, tt.move)
 			if m.activePane == wantActive {
 				t.Fatalf("takeover focus did not move from precondition pane %d", wantActive)
 			}
 
-			m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 
 			if m.activeFlowSurfaceVisible() || m.activePane != wantActive || m.contentPane != wantContent {
 				t.Fatalf("takeover exit = activeFlow %t active %d content %d, want false/%d/%d", m.activeFlowSurfaceVisible(), m.activePane, m.contentPane, wantActive, wantContent)
@@ -406,8 +406,8 @@ func TestActiveFlowsToggleRestoresFocusChangedDuringTakeover(t *testing.T) {
 
 func TestStoredPaneListErrorsRemainIndependent(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	topRequest := m.currentListRequest(ui.ModeWorktrees)
 	bottomRequest := m.currentListRequest(ui.ModeFlows)
 
@@ -434,7 +434,7 @@ func TestStoredPaneListErrorsRemainIndependent(t *testing.T) {
 
 func TestRemovedDefaultViewKeyIsUnbound(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+	next, cmd := m.Update(tea.KeyPressMsg{Text: string([]rune{'V'})})
 	m = next.(Model)
 	if cmd != nil || m.modal.IsOpen() || m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows {
 		t.Fatalf("V changed state: cmd=%T modal=%t top=%d bottom=%d", cmd, m.modal.IsOpen(), m.topMode, m.bottomMode)
@@ -443,9 +443,9 @@ func TestRemovedDefaultViewKeyIsUnbound(t *testing.T) {
 
 func TestFlowsLKeyNoLongerAliasesBeads(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	next, cmd := m.Update(tea.KeyPressMsg{Text: string([]rune{'l'})})
 	m = next.(Model)
 	if cmd != nil || m.activePane != ui.PaneBottom || m.bottomMode != ui.ModeFlows || m.topMode != ui.ModeBeadsReady {
 		t.Fatalf("Flows l changed pane state: cmd=%T focus=%d top=%d bottom=%d", cmd, m.activePane, m.topMode, m.bottomMode)
@@ -470,32 +470,32 @@ func collectInitMessages(cmd tea.Cmd) []tea.Msg {
 
 func TestStoredPaneModesSurviveFocusAndTakeoverTransitions(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.activePane != ui.PaneTop || m.contentPane != ui.PaneTop {
 		t.Fatalf("initial content focus = active %d content %d, want top/top", m.activePane, m.contentPane)
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModePlans || m.activePane != ui.PaneBottom || m.contentPane != ui.PaneBottom {
 		t.Fatalf("top -> bottom state = top %d bottom %d active %d content %d", m.topMode, m.bottomMode, m.activePane, m.contentPane)
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if m.activePane != ui.PaneRepos || m.contentPane != ui.PaneBottom || m.Mode() != ui.ModePlans {
 		t.Fatalf("repo focus = active %d content %d mode %d, want repos/bottom/plans", m.activePane, m.contentPane, m.Mode())
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if !m.activeFlowSurface || m.activePane != ui.PaneRepos || m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModePlans || m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("takeover entry changed stored state: takeover %t active %d top %d bottom %d mode %d", m.activeFlowSurface, m.activePane, m.topMode, m.bottomMode, m.Mode())
 	}
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if m.activeFlowSurface || m.activePane != ui.PaneRepos || m.contentPane != ui.PaneBottom || m.Mode() != ui.ModePlans {
 		t.Fatalf("takeover exit = takeover %t active %d content %d mode %d, want false/repos/bottom/plans", m.activeFlowSurface, m.activePane, m.contentPane, m.Mode())
 	}
 
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModePlans || m.activePane != ui.PaneTop || m.contentPane != ui.PaneTop || m.Mode() != ui.ModeBeadsReady {
 		t.Fatalf("bottom -> top restore = top %d bottom %d active %d content %d mode %d", m.topMode, m.bottomMode, m.activePane, m.contentPane, m.Mode())
 	}
@@ -512,9 +512,9 @@ func TestCrossPaneListResultCompatibility(t *testing.T) {
 		m := New([]scanner.Repo{{Path: "/repo"}})
 		m.topMode = ui.ModeWorktrees
 		request := m.currentListRequest(ui.ModeWorktrees)
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 		m = updatePaneStateTestModel(t, m, WorktreeResultMsg{RepoPath: "/repo", ListRequest: request, Worktrees: []gitquery.Worktree{{Path: "/repo", BranchName: "main"}}})
 		if len(m.Worktrees()) != 1 || m.Mode() != ui.ModePlans {
 			t.Fatalf("off-screen Git result = rows %d mode %d, want cached row with Plans still focused", len(m.Worktrees()), m.Mode())
@@ -525,8 +525,8 @@ func TestCrossPaneListResultCompatibility(t *testing.T) {
 		m := New([]scanner.Repo{{Path: "/repo"}})
 		m.bottomMode = ui.ModeSessions
 		request := m.currentListRequest(ui.ModeSessions)
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 		m = updatePaneStateTestModel(t, m, SessionResultMsg{RepoPath: "/repo", ListRequest: request, Sessions: []sessions.SessionRecord{{SessionID: "session-1"}}})
 		if len(m.Sessions()) != 1 || m.Mode() != ui.ModeWorktrees {
 			t.Fatalf("off-screen Sessions result = rows %d mode %d, want cached row with Worktrees still focused", len(m.Sessions()), m.Mode())
@@ -536,9 +536,9 @@ func TestCrossPaneListResultCompatibility(t *testing.T) {
 	t.Run("stored Beads cache may fill while bottom pane is focused", func(t *testing.T) {
 		m := New([]scanner.Repo{{Path: "/repo"}})
 		request := m.currentListRequest(ui.ModeBeadsReady)
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 		m = updatePaneStateTestModel(t, m, BeadsReadyResultMsg{RepoPath: "/repo", ListRequest: request, Available: true, Beads: []beadsquery.Bead{{ID: "bd-1"}}})
 		if len(m.Beads(ui.ModeBeadsReady)) != 1 || m.Mode() != ui.ModePlans {
 			t.Fatalf("background Beads result = rows %d mode %d, want cached row with Plans focused", len(m.Beads(ui.ModeBeadsReady)), m.Mode())
@@ -549,9 +549,9 @@ func TestCrossPaneListResultCompatibility(t *testing.T) {
 		m := New([]scanner.Repo{{Path: "/repo"}})
 		m.topMode = ui.ModeWorktrees
 		request := m.currentListRequest(ui.ModeWorktrees)
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updatePaneStateTestModel(t, m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 		m = updatePaneStateTestModel(t, m, FetchErrorMsg{RepoPath: "/repo", Pane: "worktrees", Err: "boom", Kind: FetchList, Mode: ui.ModeWorktrees, ListRequest: request})
 		if m.TransientError() != "boom" || m.Mode() != ui.ModePlans {
 			t.Fatalf("background error = %q mode %d, want accepted error with Plans focused", m.TransientError(), m.Mode())

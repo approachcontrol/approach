@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
@@ -76,7 +76,7 @@ func (h *manualLaunchHarness) confirm(m Model) Model {
 	if !m.modal.IsOpen() {
 		h.t.Fatal("confirm called without an open modal")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	next, cmd := m.Update(tea.KeyPressMsg{Text: string([]rune{'y'})})
 	m = next.(Model)
 	return h.drain(m, cmd, 0)
 }

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/gitquery"
@@ -121,7 +121,7 @@ func TestModel_WorktreeAgentLaunchUsesRepoTmuxSessionInTmuxMode(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true}
 	m := worktreeModel(t, spy.options("tmux"))
 
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	next = drainTmuxLaunch(t, next, cmd)
 
 	if len(spy.tmuxContexts) != 1 {
@@ -142,7 +142,7 @@ func TestModel_WorktreeAgentLaunchStaysExternalOnEmbeddedBackend(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true}
 	m := worktreeModel(t, spy.options(""))
 
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	next = drainTmuxLaunch(t, next, cmd)
 
 	if len(spy.tmuxContexts) != 0 {
@@ -160,7 +160,7 @@ func TestModel_WorktreeAgentLaunchFallsBackToExternalWithoutTmux(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: false}
 	m := worktreeModel(t, spy.options("tmux"))
 
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	next = drainTmuxLaunch(t, next, cmd)
 
 	if len(spy.tmuxContexts) != 0 {
@@ -182,7 +182,7 @@ func TestModel_WorktreeAgentFallbackNoteReportedOnInteractiveLaunch(t *testing.T
 	spy := &tmuxModeSpy{tmuxAvailable: false, interactiveFallback: true}
 	m := worktreeModel(t, spy.options("tmux"))
 
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected an interactive launch command")
 	}
@@ -217,7 +217,7 @@ func TestModel_AutofixTmuxLaunchFailureReportsError(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, tmuxErr: errors.New("tmux server refused")}
 	m := worktreeModel(t, spy.options("tmux"))
 
-	next, _ := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, _ := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if got := next.TransientError(); !strings.Contains(got, "tmux server refused") {
 		t.Fatalf("status = %q, want the launch error", got)
 	}
@@ -227,7 +227,7 @@ func TestModel_AttachKeyOpensExistingRepoTmuxSession(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, sessionExists: true}
 	m := worktreeModel(t, spy.options("tmux"))
 
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'T'})})
 	if cmd == nil {
 		t.Fatal("expected an attach command")
 	}
@@ -265,7 +265,7 @@ func TestModel_AttachKeyReportsMissingRepoTmuxSession(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, sessionExists: false}
 	m := worktreeModel(t, spy.options("tmux"))
 
-	next, _ := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	next, _ := update(m, tea.KeyPressMsg{Text: string([]rune{'T'})})
 	if len(spy.attachCommands) != 0 {
 		t.Fatalf("a missing session must not open a terminal, got %#v", spy.attachCommands)
 	}
@@ -278,7 +278,7 @@ func TestModel_AttachKeyIsInertOnEmbeddedBackend(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, sessionExists: true}
 	m := worktreeModel(t, spy.options(""))
 
-	next, _ := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	next, _ := update(m, tea.KeyPressMsg{Text: string([]rune{'T'})})
 	if len(spy.attachCommands) != 0 {
 		t.Fatalf("T must do nothing on the default backend, got %#v", spy.attachCommands)
 	}
@@ -291,15 +291,15 @@ func TestModel_AttachKeyIsInertOnEmbeddedBackend(t *testing.T) {
 // backend and the rendered shortcut bar; ui_test owns the hint's own rules.
 func TestModel_AttachHintFollowsBackend(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true}
-	if !strings.Contains(worktreeModel(t, spy.options("tmux")).View(), "attach tmux") {
+	if !strings.Contains(worktreeModel(t, spy.options("tmux")).View().Content, "attach tmux") {
 		t.Fatal("expected tmux mode to offer the attach affordance")
 	}
-	if strings.Contains(worktreeModel(t, spy.options("")).View(), "attach tmux") {
+	if strings.Contains(worktreeModel(t, spy.options("")).View().Content, "attach tmux") {
 		t.Fatal("the default backend has no per-repo tmux session to attach to")
 	}
 
 	noTmux := &tmuxModeSpy{tmuxAvailable: false}
-	if strings.Contains(worktreeModel(t, noTmux.options("tmux")).View(), "attach tmux") {
+	if strings.Contains(worktreeModel(t, noTmux.options("tmux")).View().Content, "attach tmux") {
 		t.Fatal("tmux mode without tmux installed cannot attach")
 	}
 }
@@ -307,7 +307,7 @@ func TestModel_AttachHintFollowsBackend(t *testing.T) {
 func launchInTmuxMode(t *testing.T, spy *tmuxModeSpy) model.Model {
 	t.Helper()
 	m := worktreeModel(t, spy.options("tmux"))
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	return deliverLaunchMessages(next, cmd)
 }
 
@@ -376,11 +376,11 @@ func TestModel_TmuxTerminalPendingSuppressesASecondSpawn(t *testing.T) {
 
 	// The first launch's terminal command is held rather than run, which is
 	// exactly the state a real in-flight spawn is in.
-	first, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	first, firstCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if firstCmd == nil {
 		t.Fatal("expected a launch command")
 	}
-	second, secondCmd := update(first, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	second, secondCmd := update(first, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	second = deliverLaunchMessages(second, secondCmd)
 	if len(spy.attachCommands) != 0 {
 		t.Fatalf("a pending terminal must suppress the second spawn, got %#v", spy.attachCommands)
@@ -392,7 +392,7 @@ func TestModel_TmuxTerminalPendingSuppressesASecondSpawn(t *testing.T) {
 	if len(spy.attachCommands) != 1 {
 		t.Fatalf("terminal launches after the first result = %d, want one", len(spy.attachCommands))
 	}
-	fourth, fourthCmd := update(third, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	fourth, fourthCmd := update(third, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	deliverLaunchMessages(fourth, fourthCmd)
 	if len(spy.attachCommands) != 2 {
 		t.Fatalf("terminal launches after the flag cleared = %d, want a fresh spawn", len(spy.attachCommands))
@@ -463,7 +463,7 @@ func TestModel_TmuxLaunchWithoutAVisibleSessionOpensNothing(t *testing.T) {
 func TestModel_EmbeddedBackendOpensNoRepoTerminal(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, sessionExists: true}
 	m := worktreeModel(t, spy.options(""))
-	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	deliverLaunchMessages(next, cmd)
 
 	if len(spy.attachCommands) != 0 {

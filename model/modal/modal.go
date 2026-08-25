@@ -3,7 +3,7 @@ package modal
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type Kind int
@@ -483,7 +483,18 @@ func normalizeLayout(layout Layout) Layout {
 	return layout
 }
 
-func (m Modal) Update(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) Update(msg tea.Msg) (Modal, Outcome, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		return m.updateKey(msg)
+	case tea.PasteMsg:
+		return m.updatePaste(msg.Content)
+	default:
+		return m, Ignored, nil
+	}
+}
+
+func (m Modal) updateKey(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	switch m.kind {
 	case Confirm:
 		return m.updateConfirm(msg)
@@ -502,7 +513,36 @@ func (m Modal) Update(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	}
 }
 
-func (m Modal) updateConfirm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) updatePaste(content string) (Modal, Outcome, tea.Cmd) {
+	if content == "" {
+		return m, Consumed, nil
+	}
+	switch m.kind {
+	case Input:
+		edit := textEditState{content: m.input, cursor: m.inputCursor, column: m.inputColumn}.clamped()
+		m.applyInputEdit(edit.insert([]rune(content)), true)
+		return m, Consumed, nil
+	case Form:
+		m.formFocus = clampFormFocus(m.formFocus, len(m.formFields))
+		if len(m.formFields) == 0 {
+			return m, Consumed, nil
+		}
+		field := &m.formFields[m.formFocus]
+		if field.Kind != FormText && field.Kind != FormMultilineText {
+			return m, Consumed, nil
+		}
+		edit := textEditState{content: field.Value, cursor: field.Cursor, column: -1}.clamped()
+		edit = edit.insert([]rune(content))
+		field.Value = edit.content
+		field.Cursor = edit.cursor
+		m.formErr = ""
+		return m, Consumed, nil
+	default:
+		return m, Consumed, nil
+	}
+}
+
+func (m Modal) updateConfirm(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	switch msg.String() {
 	case "y", "enter":
 		cmd := deferAction(m.action)
@@ -517,10 +557,10 @@ func (m Modal) updateConfirm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	}
 }
 
-func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) updateInput(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	edit := textEditState{content: m.input, cursor: m.inputCursor, column: m.inputColumn}.clamped()
 	switch msg.String() {
-	case "alt+enter":
+	case "alt+enter", "shift+enter":
 		if m.inputMode == InputMultiLine {
 			m.applyInputEdit(edit.insert([]rune{'\n'}), true)
 		}
@@ -531,7 +571,7 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 			return m, Consumed, nil
 		}
 		return m.submitInput()
-	case "ctrl+s":
+	case "ctrl+s", "ctrl+enter":
 		if !m.editor {
 			return m, Consumed, nil
 		}
@@ -578,12 +618,11 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		m.applyInputEdit(edit.clear(), true)
 		return m, Consumed, nil
 	default:
-		if msg.Type == tea.KeySpace {
-			m.applyInputEdit(edit.insert([]rune{' '}), true)
-			return m, Consumed, nil
+		if isUnmodifiedSpace(msg) && msg.Text == "" {
+			msg.Text = " "
 		}
-		if msg.Type == tea.KeyRunes {
-			m.applyInputEdit(edit.insert(msg.Runes), true)
+		if msg.Text != "" {
+			m.applyInputEdit(edit.insert([]rune(msg.Text)), true)
 			return m, Consumed, nil
 		}
 		return m, Consumed, nil
@@ -771,7 +810,7 @@ func lineLength(runes []rune, starts []int, line int) int {
 	return len(runes) - start
 }
 
-func (m Modal) updateSelect(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) updateSelect(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		if len(m.selectItems) == 0 {
@@ -805,22 +844,14 @@ func (m *Modal) clearSelectNote() {
 	m.selectNoteKind = NoteNeutral
 }
 
-func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) updateForm(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	m.formFocus = clampFormFocus(m.formFocus, len(m.formFields))
 	switch msg.String() {
-	case "enter":
-		values := m.formValues()
-		if m.formValidate != nil {
-			if err := m.formValidate(values); err != nil {
-				m.formErr = err.Error()
-				return m, Consumed, nil
-			}
+	case "enter", "ctrl+enter":
+		if msg.String() == "ctrl+enter" && (len(m.formFields) == 0 || m.formFields[m.formFocus].Kind != FormMultilineText) {
+			return m, Consumed, nil
 		}
-		cmd := deferFormSubmit(m.formSubmit, values)
-		if cmd == nil {
-			return Modal{}, Accepted, nil
-		}
-		return Modal{}, Accepted, cmd
+		return m.submitForm()
 	case "esc", "ctrl+c":
 		return Modal{}, Cancelled, nil
 	case "tab":
@@ -847,7 +878,7 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
 			return m, Consumed, nil
 		}
-		if msg.Type == tea.KeySpace {
+		if isUnmodifiedSpace(msg) {
 			field.Checked = !field.Checked
 			m.formErr = ""
 		}
@@ -866,7 +897,7 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 			field.SelectedIndex = nextSelectIndex(field.SelectedIndex, len(field.Options))
 			m.formErr = ""
 		default:
-			if msg.Type == tea.KeySpace {
+			if isUnmodifiedSpace(msg) {
 				field.SelectedIndex = nextSelectIndex(field.SelectedIndex, len(field.Options))
 				m.formErr = ""
 			}
@@ -875,10 +906,25 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	return m, Consumed, nil
 }
 
-func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Outcome, tea.Cmd) {
+func (m Modal) submitForm() (Modal, Outcome, tea.Cmd) {
+	values := m.formValues()
+	if m.formValidate != nil {
+		if err := m.formValidate(values); err != nil {
+			m.formErr = err.Error()
+			return m, Consumed, nil
+		}
+	}
+	cmd := deferFormSubmit(m.formSubmit, values)
+	if cmd == nil {
+		return Modal{}, Accepted, nil
+	}
+	return Modal{}, Accepted, cmd
+}
+
+func (m Modal) updateFormTextField(msg tea.KeyPressMsg, field *FormField) (Modal, Outcome, tea.Cmd) {
 	edit := textEditState{content: field.Value, cursor: field.Cursor, column: -1}.clamped()
 	switch msg.String() {
-	case "alt+enter":
+	case "alt+enter", "shift+enter":
 		if field.Kind == FormMultilineText {
 			edit = edit.insert([]rune{'\n'})
 		}
@@ -909,16 +955,21 @@ func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Out
 	case "ctrl+u":
 		edit = edit.clear()
 	default:
-		if msg.Type == tea.KeySpace {
-			edit = edit.insert([]rune{' '})
-		} else if msg.Type == tea.KeyRunes {
-			edit = edit.insert(msg.Runes)
+		if isUnmodifiedSpace(msg) && msg.Text == "" {
+			msg.Text = " "
+		}
+		if msg.Text != "" {
+			edit = edit.insert([]rune(msg.Text))
 		}
 	}
 	field.Value = edit.content
 	field.Cursor = edit.cursor
 	m.formErr = ""
 	return m, Consumed, nil
+}
+
+func isUnmodifiedSpace(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeySpace && msg.Mod == 0
 }
 
 func (m Modal) formValues() FormValues {
@@ -1029,7 +1080,7 @@ func deferFormSubmit(submit func(FormValues) tea.Cmd, values FormValues) tea.Cmd
 	}
 }
 
-func (m Modal) updateDiff(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) updateDiff(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
 		return Modal{}, Cancelled, nil
@@ -1048,7 +1099,7 @@ func (m Modal) updateDiff(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	}
 }
 
-func (m Modal) updateText(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+func (m Modal) updateText(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
 		return Modal{}, Cancelled, deferCancel(m.cancel, m.View())

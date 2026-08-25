@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/scanner"
@@ -266,8 +266,9 @@ func TestRender_PromptEditorHintKeysSurviveClamping(t *testing.T) {
 		!strings.Contains(got, "esc") || !strings.Contains(got, "enter") {
 		t.Fatalf("wide status text = %q", got)
 	}
-	if got := promptEditorStatusText(35); got != promptEditorStatusCompact {
-		t.Fatalf("status text at width 35 = %q, want the compact form", got)
+	compactWidth := lipgloss.Width(promptEditorStatusCompact)
+	if got := promptEditorStatusText(compactWidth); got != promptEditorStatusCompact {
+		t.Fatalf("status text at width %d = %q, want the compact form", compactWidth, got)
 	}
 	// Below that the compact form no longer fits; the fallback still names the
 	// save and cancel keys inside 20 columns.
@@ -517,7 +518,7 @@ func TestRender_PromptEditorStatusBarReplacesTheGenericMultilineHints(t *testing
 	if strings.Contains(view, "alt+enter: newline") {
 		t.Fatalf("editor should not show the generic multiline hints:\n%s", view)
 	}
-	if !strings.Contains(view, "ctrl+s save") {
+	if !strings.Contains(view, "ctrl+s/ctrl+enter save") {
 		t.Fatalf("expected the editor status hints:\n%s", view)
 	}
 
@@ -531,7 +532,7 @@ func TestRender_PromptEditorStatusBarReplacesTheGenericMultilineHints(t *testing
 			InputValue:  "body",
 			InputCursor: 4,
 			InputMode:   InputMultiLine}}))
-	if !strings.Contains(generic, "alt+enter: newline") {
+	if !strings.Contains(generic, "alt/shift+enter: newline") {
 		t.Fatalf("generic multiline input lost its hints:\n%s", generic)
 	}
 }

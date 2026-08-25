@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
@@ -224,7 +224,7 @@ func resumeSavedSessionForTest(t *testing.T, m model.Model, msg tea.Msg) (model.
 
 func selectSavedSessionForTest(t *testing.T, m model.Model) (model.Model, tea.Cmd) {
 	t.Helper()
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		return m, nil
 	}
@@ -338,17 +338,17 @@ func assertOnlyListRequestChanged(t *testing.T, before map[ui.Mode]uint64, after
 
 // inRightPane switches focus to the right pane.
 func inRightPane(m model.Model) model.Model {
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() == ui.PaneTop && !ui.IsGitMode(m.Mode()) {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	}
 	return m
 }
 
 func inBeadsPane(m model.Model) model.Model {
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() == ui.PaneTop && !ui.IsBeadsMode(m.Mode()) {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	}
 	return m
 }
@@ -359,13 +359,13 @@ func switchTestMode(m model.Model, mode ui.Mode) (model.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.ActivePane() == ui.PaneRepos {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 	if pane == ui.PaneBottom && m.ActivePane() == ui.PaneTop {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 	if pane == ui.PaneTop && m.ActivePane() == ui.PaneBottom {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	key := '1'
 	if pane == ui.PaneTop && ui.IsBeadsMode(mode) {
@@ -379,28 +379,28 @@ func switchTestMode(m model.Model, mode ui.Mode) (model.Model, tea.Cmd) {
 			key = '3'
 		}
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 	if ui.IsGitMode(mode) && m.Mode() != mode {
 		letter := map[ui.Mode]rune{ui.ModeWorktrees: 'w', ui.ModeBranches: 'b', ui.ModeStashes: 's', ui.ModeHistory: 'h', ui.ModeReflog: 'r'}[mode]
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{letter}})
+		m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{letter})})
 	}
 	if ui.IsBeadsMode(mode) && m.Mode() != mode {
 		letter := map[ui.Mode]rune{ui.ModeBeadsReady: 'r', ui.ModeBeadsBlocked: 'b', ui.ModeBeadsOpen: 'o', ui.ModeBeadsInProgress: 'i', ui.ModeBeadsClosed: 'c'}[mode]
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{letter}})
+		m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{letter})})
 	}
 	return m, cmd
 }
 
 // selectBravo navigates to repo index 1 (bravo) in the left pane.
 func selectBravo(m model.Model) model.Model {
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	return m
 }
 
 // inBranchesMode switches to right pane and selects the branches subview.
 func inBranchesMode(m model.Model) model.Model {
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	return m
 }
 
@@ -586,12 +586,12 @@ func TestModel_WorktreeCursorWraps(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	// Wrap backward from 0 to last
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.WorktreeSelected() != 2 {
 		t.Errorf("expected WorktreeSelected to wrap to 2, got %d", m.WorktreeSelected())
 	}
 	// Wrap forward from last to 0
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.WorktreeSelected() != 0 {
 		t.Errorf("expected WorktreeSelected to wrap to 0, got %d", m.WorktreeSelected())
 	}
@@ -606,11 +606,11 @@ func TestModel_LockedWorktreeParticipatesInNavigation(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.WorktreeSelected() != 1 {
 		t.Errorf("expected locked worktree to be selectable, got index %d", m.WorktreeSelected())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.WorktreeSelected() != 0 {
 		t.Errorf("expected navigation away from locked worktree, got index %d", m.WorktreeSelected())
 	}
@@ -629,7 +629,7 @@ func TestModel_WorktreeScrollFollowsCursor(t *testing.T) {
 
 	// Move cursor past viewport
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.WorktreeSelected() != 9 {
 		t.Errorf("expected cursor at 9, got %d", m.WorktreeSelected())
@@ -652,14 +652,14 @@ func TestModel_ModeSwitchPreservesWorktreeCursors(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.WorktreeSelected() != 2 {
 		t.Fatalf("expected WorktreeSelected 2, got %d", m.WorktreeSelected())
 	}
 	// Switch away and back
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
 	if m.WorktreeSelected() != 2 {
 		t.Errorf("expected WorktreeSelected preserved at 2, got %d", m.WorktreeSelected())
 	}
@@ -668,7 +668,7 @@ func TestModel_ModeSwitchPreservesWorktreeCursors(t *testing.T) {
 func TestModel_SwitchToWorktreesModeFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m) // switch to the branches subview
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd on switch to worktrees, got nil")
 	}
@@ -677,7 +677,7 @@ func TestModel_SwitchToWorktreesModeFiresFetch(t *testing.T) {
 func TestModel_SwitchToBranchesFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd from switch to mode 2, got nil")
 	}
@@ -693,16 +693,16 @@ func TestModel_WindowSizeUpdates(t *testing.T) {
 
 func TestModel_EmptyReposNoPanic(t *testing.T) {
 	m := model.New(nil)
-	_ = m.View()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	_, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	_ = viewContent(m)
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	_, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 }
 
 func TestModel_QuitKeys(t *testing.T) {
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune{'q'}},
-		{Type: tea.KeyCtrlC},
-		{Type: tea.KeyEscape},
+	for _, key := range []tea.KeyPressMsg{
+		{Text: string([]rune{'q'})},
+		{Code: 'c', Mod: tea.ModCtrl},
+		{Code: tea.KeyEscape},
 	} {
 		m := model.New(testRepos())
 		_, cmd := update(m, key)
@@ -720,12 +720,12 @@ func TestModel_QuitKeys(t *testing.T) {
 
 func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed right pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 
 	if m.RepoPaneCollapsed() {
 		t.Fatal("ctrl+r should expand the repos pane")
@@ -738,7 +738,7 @@ func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 	}
 
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if m.RepoPaneCollapsed() || m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ctrl+r from expanded right pane collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
@@ -746,10 +746,10 @@ func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 
 func TestModel_CtrlRDoesNotRestoreRepoPaneDuringSearch(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 
 	if !m.SearchActive() || !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("search ctrl+r searchActive=%t collapsed=%t activePane=%d, want unchanged collapsed search", m.SearchActive(), m.RepoPaneCollapsed(), m.ActivePane())
@@ -760,13 +760,13 @@ func TestModel_TabSkipsCollapsedRepoPaneWithoutSessionTerminal(t *testing.T) {
 	for _, mode := range []ui.Mode{ui.ModeWorktrees, ui.ModeSessions} {
 		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
 			m := model.New(testRepos())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if mode != ui.ModeWorktrees {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{keyForMode(mode)}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{keyForMode(mode)})})
 			}
 
 			for i := 0; i < 3; i++ {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 				if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 					t.Fatalf("tab %d collapsed=%t activePane=%d, want collapsed content pane", i+1, m.RepoPaneCollapsed(), m.ActivePane())
 				}
@@ -778,8 +778,8 @@ func TestModel_TabSkipsCollapsedRepoPaneWithoutSessionTerminal(t *testing.T) {
 func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // right to left
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // mode 3 (stashes)
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})    // right to left
 
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
@@ -792,10 +792,10 @@ func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testin
 func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
 	for _, tt := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "backspace", key: tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
@@ -805,8 +805,8 @@ func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
 				Status:   "draft",
 				Phases:   []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}},
 			}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			if got := m.SelectedPlanPhaseID(); got != "p1" {
 				t.Fatalf("selected plan phase = %q, want p1 before %s", got, tt.name)
 			}
@@ -832,12 +832,12 @@ func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
 func TestModel_TabFromLeftPaneReturnsToActiveFlowsWithoutChangingMode(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
 	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("active pane = %d, want right pane after tab", m.ActivePane())
@@ -853,8 +853,8 @@ func TestModel_TabFromLeftPaneReturnsToActiveFlowsWithoutChangingMode(t *testing
 
 func TestModel_F2DoesNotSwitchPanesWhileSearchIsActive(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
 
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("active pane = %d, want left pane while search handles f2", m.ActivePane())
@@ -862,12 +862,12 @@ func TestModel_F2DoesNotSwitchPanesWhileSearchIsActive(t *testing.T) {
 }
 
 func TestModel_BackKeysEditRightPaneSearchInsteadOfSwitchingPanes(t *testing.T) {
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyBackspace}, {Type: tea.KeyCtrlH}} {
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyBackspace}, {Code: 'h', Mod: tea.ModCtrl}} {
 		t.Run(key.String(), func(t *testing.T) {
 			m := model.New(testRepos())
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
 
 			m, cmd := update(m, key)
 
@@ -887,19 +887,19 @@ func TestModel_BackKeysEditRightPaneSearchInsteadOfSwitchingPanes(t *testing.T) 
 func TestModel_BackKeysEditModalInputInsteadOfSwitchingPanes(t *testing.T) {
 	for _, tt := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "backspace", key: tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := model.New(testRepos())
 			m = inRightPane(m)
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 			if cmd != nil {
 				t.Fatalf("opening worktree input produced cmd %T, want nil", cmd)
 			}
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f', 'e', 'a', 't'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'f', 'e', 'a', 't'})})
 
 			m, cmd = update(m, tt.key)
 
@@ -920,7 +920,7 @@ func TestModel_BackKeysEditModalInputInsteadOfSwitchingPanes(t *testing.T) {
 
 func TestModel_LeftPaneDownNavigatesRepos(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.Selected() != 1 {
 		t.Errorf("expected selected 1 after down in left pane, got %d", m.Selected())
 	}
@@ -929,9 +929,9 @@ func TestModel_LeftPaneDownNavigatesRepos(t *testing.T) {
 func TestModel_LeftPaneDownFiresFetchInBranchMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // branches
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // back to left pane
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})}) // branches
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})    // back to left pane
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Error("expected fetch cmd after repo navigation in branches mode, got nil")
 	}
@@ -939,8 +939,8 @@ func TestModel_LeftPaneDownFiresFetchInBranchMode(t *testing.T) {
 
 func TestModel_LeftPaneUpNavigatesRepos(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // selected=1
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})   // selected=0
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // selected=1
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})   // selected=0
 	if m.Selected() != 0 {
 		t.Errorf("expected selected 0 after up, got %d", m.Selected())
 	}
@@ -949,10 +949,10 @@ func TestModel_LeftPaneUpNavigatesRepos(t *testing.T) {
 func TestModel_LeftPaneDownWrapsToFirst(t *testing.T) {
 	m := model.New(testRepos()) // 3 repos
 	// Move to last repo
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // 1
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // 2
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // 1
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // 2
 	// One more should wrap to 0
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.Selected() != 0 {
 		t.Errorf("expected selected to wrap to 0, got %d", m.Selected())
 	}
@@ -960,7 +960,7 @@ func TestModel_LeftPaneDownWrapsToFirst(t *testing.T) {
 
 func TestModel_LeftPaneUpWrapsToLast(t *testing.T) {
 	m := model.New(testRepos()) // 3 repos
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.Selected() != 2 {
 		t.Errorf("expected selected to wrap to 2, got %d", m.Selected())
 	}
@@ -975,7 +975,7 @@ func TestModel_RepoSwitchClearsRightPaneData(t *testing.T) {
 		t.Fatal("expected 1 row before switching repos")
 	}
 	// Switch to next repo — old data should be cleared immediately
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if len(m.Rows()) != 0 {
 		t.Errorf("expected rows cleared on repo switch, got %d", len(m.Rows()))
 	}
@@ -992,7 +992,7 @@ func TestModel_RepoSwitchClearsWorktrees(t *testing.T) {
 	if len(m.Worktrees()) != 1 {
 		t.Fatal("expected 1 worktree before switching repos")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if len(m.Worktrees()) != 0 {
 		t.Errorf("expected worktrees cleared on repo switch, got %d", len(m.Worktrees()))
 	}
@@ -1004,10 +1004,10 @@ func TestModel_LeftPaneDownResetsRightPaneCursors(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
 		{Name: "a"}, {Name: "b"}, {Name: "c"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // move branch cursor
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // branchSelected=2
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // navigate to bravo
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // move branch cursor
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // branchSelected=2
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // navigate to bravo
 	if m.BranchSelected() != 0 {
 		t.Errorf("expected branchSelected reset to 0, got %d", m.BranchSelected())
 	}
@@ -1015,10 +1015,10 @@ func TestModel_LeftPaneDownResetsRightPaneCursors(t *testing.T) {
 
 func TestModel_LeftPaneModeKeysAreNoOps(t *testing.T) {
 	m := model.New(testRepos())
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune{'b'}},
-		{Type: tea.KeyRunes, Runes: []rune{'h'}},
-		{Type: tea.KeyRunes, Runes: []rune{'l'}},
+	for _, key := range []tea.KeyPressMsg{
+		{Text: string([]rune{'b'})},
+		{Text: string([]rune{'h'})},
+		{Text: string([]rune{'l'})},
 	} {
 		before := listRequests(m)
 		m2, cmd := update(m, key)
@@ -1039,7 +1039,7 @@ func TestModel_RightArrowFromLeftPaneIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
@@ -1057,7 +1057,7 @@ func TestModel_LeftArrowFromLeftPaneIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
 
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
@@ -1077,11 +1077,11 @@ func TestModel_RightArrowFromLeftPaneInNonEdgeModeIsNoOp(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
 		{Name: "main"}, {Name: "feature"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
@@ -1103,11 +1103,11 @@ func TestModel_LeftPaneActionKeysAreNoOps(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
 		{Name: "feat", IsWorktree: true, Dirty: true, WorktreePaths: []string{"/dev/alpha"}},
 	}})
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune{'d'}},
-		{Type: tea.KeyRunes, Runes: []rune{'t'}},
-		{Type: tea.KeyRunes, Runes: []rune{'c'}},
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyEnter},
+		{Text: string([]rune{'d'})},
+		{Text: string([]rune{'t'})},
+		{Text: string([]rune{'c'})},
 	} {
 		_, cmd := update(m, key)
 		if cmd != nil {
@@ -1121,8 +1121,8 @@ func TestModel_LeftPaneActionKeysAreNoOps(t *testing.T) {
 func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
 	m := model.New(testRepos())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 
 	if m.RepoSearch() != "c" {
 		t.Fatalf("expected repo search query c, got %q", m.RepoSearch())
@@ -1147,7 +1147,7 @@ func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
 		t.Fatalf("expected filtered selection to fetch charlie, got %q", repoPath)
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "charlie") {
 		t.Error("filtered repo view should contain charlie")
 	}
@@ -1169,8 +1169,8 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 		{
 			name: "left pane repo search",
 			setup: func(m model.Model) model.Model {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 				return m
 			},
 			wantPane:  ui.PaneRepos,
@@ -1181,8 +1181,8 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 			name: "right pane item search",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
 				return m
 			},
 			wantPane:  ui.PaneTop,
@@ -1192,7 +1192,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := tc.setup(model.New(testRepos()))
-			for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyRight}} {
+			for _, key := range []tea.KeyPressMsg{{Code: tea.KeyLeft}, {Code: tea.KeyRight}} {
 				before := listRequests(m)
 				m2, cmd := update(m, key)
 				if cmd != nil {
@@ -1220,7 +1220,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 func TestModel_ModalSuppressesPaneNavigationKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if cmd != nil {
 		t.Fatalf("opening worktree input produced cmd %T, want nil", cmd)
 	}
@@ -1228,7 +1228,7 @@ func TestModel_ModalSuppressesPaneNavigationKeys(t *testing.T) {
 		t.Fatalf("Overlay() = %d, want worktree input", m.Overlay())
 	}
 
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyRight}, {Type: tea.KeyF2}} {
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyLeft}, {Code: tea.KeyRight}, {Code: tea.KeyF2}} {
 		before := listRequests(m)
 		m2, cmd := update(m, key)
 		if cmd != nil {
@@ -1249,10 +1249,10 @@ func TestModel_ModalSuppressesPaneNavigationKeys(t *testing.T) {
 
 func TestModel_EscapeClearsRepoFilterWithoutQuitting(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if cmd != nil {
 		t.Fatalf("expected esc to clear search without quitting or refetching, got cmd %T", cmd)
 	}
@@ -1266,11 +1266,11 @@ func TestModel_EscapeClearsRepoFilterWithoutQuitting(t *testing.T) {
 
 func TestModel_EscapeClearsKeptRepoFilterWithoutChangingRepo(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if cmd != nil {
 		t.Fatalf("expected esc to clear kept search without refetching, got cmd %T", cmd)
 	}
@@ -1284,15 +1284,15 @@ func TestModel_EscapeClearsKeptRepoFilterWithoutChangingRepo(t *testing.T) {
 
 func TestModel_BackspaceOnEmptyRepoFilterInputClearsFilter(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 
 	if m.RepoSearch() != "" || !m.SearchActive() {
 		t.Fatalf("expected empty active repo search before final backspace, got query=%q active=%v", m.RepoSearch(), m.SearchActive())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("expected clearing empty repo search to produce no command, got %T", cmd)
 	}
@@ -1310,22 +1310,22 @@ func TestModel_ZeroRepoFilterHidesStaleRightPaneItems(t *testing.T) {
 		{Path: "/dev/alpha-feature", BranchName: "feature/alpha", Dirty: true},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	if cmd != nil {
 		t.Fatalf("expected starting search to produce no command, got %T", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if cmd != nil {
 		t.Fatalf("expected no fetch when repo filter has no matches, got %T", cmd)
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "feature/alpha") || strings.Contains(view, "/dev/alpha-feature") {
 		t.Fatal("zero-match repo filter should not render stale worktree rows")
 	}
 
 	m = inRightPane(m)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("expected enter on stale hidden worktree to be a no-op, got %T", cmd)
 	}
@@ -1343,14 +1343,14 @@ func TestModel_SlashFiltersRightPaneItems(t *testing.T) {
 		{Name: "bugfix"},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 
 	if m.ItemSearch() != "fa" {
 		t.Fatalf("expected item search query fa, got %q", m.ItemSearch())
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "feature/auth") {
 		t.Error("filtered branch view should contain feature/auth")
 	}
@@ -1360,7 +1360,7 @@ func TestModel_SlashFiltersRightPaneItems(t *testing.T) {
 		}
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.BranchSelected() != 0 {
 		t.Errorf("single filtered item should wrap to index 0, got %d", m.BranchSelected())
 	}
@@ -1374,15 +1374,15 @@ func TestModel_BackspaceOnEmptyItemFilterInputClearsFilter(t *testing.T) {
 		{Name: "feature/auth"},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 
 	if m.ItemSearch() != "" || !m.SearchActive() {
 		t.Fatalf("expected empty active item search before final backspace, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("expected clearing empty item search to produce no command, got %T", cmd)
 	}
@@ -1404,16 +1404,16 @@ func TestModel_RightPaneSearchIsPerSubviewAndEscapeClearsIt(t *testing.T) {
 		{Index: 1, Date: "2026-03-18", Message: "bugfix stash"},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range "auth" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if rows := m.Rows(); len(rows) != 1 || rows[0].Branch.Name != "feature/auth" {
 		t.Fatalf("expected branch filter to leave feature/auth, got %#v", rows)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if m.ItemSearch() != "" {
 		t.Fatalf("expected stashes to keep their own empty filter, got %q", m.ItemSearch())
 	}
@@ -1421,19 +1421,19 @@ func TestModel_RightPaneSearchIsPerSubviewAndEscapeClearsIt(t *testing.T) {
 		t.Fatalf("expected stashes unfiltered by the branch query, got %#v", stashes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if m.ItemSearch() != "auth" {
 		t.Fatalf("expected branch filter restored on subview re-entry, got %q", m.ItemSearch())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if cmd != nil {
 		t.Fatalf("expected esc to clear right-pane search without quitting, got %T", cmd)
 	}
 	if m.ItemSearch() != "" || m.SearchActive() {
 		t.Fatalf("expected right-pane filter cleared and inactive, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, name := range []string{"main", "feature/auth", "bugfix"} {
 		if !strings.Contains(view, name) {
 			t.Fatalf("clearing the filter should restore branch %s", name)
@@ -1449,9 +1449,9 @@ func TestModel_RightPaneFilterAppliesToAsyncReplacement(t *testing.T) {
 		{Name: "bugfix"},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range "api" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
 		{Name: "feature/api"},
@@ -1462,7 +1462,7 @@ func TestModel_RightPaneFilterAppliesToAsyncReplacement(t *testing.T) {
 	if m.ItemSearch() != "api" {
 		t.Fatalf("expected async replacement to keep item search api, got %q", m.ItemSearch())
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "feature/api") {
 		t.Fatal("active filter should apply to replacement branch result")
 	}
@@ -1482,8 +1482,8 @@ func TestModel_RightPaneUpDownDoesNotMoveRepoSelection(t *testing.T) {
 	m := model.New(testRepos())
 	m = selectBravo(m) // selected=1
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.Selected() != 1 {
 		t.Errorf("expected selected unchanged at 1 in right pane, got %d", m.Selected())
 	}
@@ -1503,25 +1503,25 @@ func TestModel_UpDownNavigatesAllBranches(t *testing.T) {
 	if m.BranchSelected() != 0 {
 		t.Errorf("expected cursor at 0, got %d", m.BranchSelected())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.BranchSelected() != 1 {
 		t.Errorf("expected cursor at 1, got %d", m.BranchSelected())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.BranchSelected() != 2 {
 		t.Errorf("expected cursor at 2, got %d", m.BranchSelected())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.BranchSelected() != 3 {
 		t.Errorf("expected cursor at 3, got %d", m.BranchSelected())
 	}
 	// Wrap to first
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.BranchSelected() != 0 {
 		t.Errorf("expected cursor to wrap to 0, got %d", m.BranchSelected())
 	}
 	// Wrap backward to last
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.BranchSelected() != 3 {
 		t.Errorf("expected cursor to wrap to 3, got %d", m.BranchSelected())
 	}
@@ -1530,15 +1530,15 @@ func TestModel_UpDownNavigatesAllBranches(t *testing.T) {
 func TestModel_StashCursorWraps(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	// Wrap backward from 0 to last
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.StashSelected() != 2 {
 		t.Errorf("expected StashSelected to wrap to 2, got %d", m.StashSelected())
 	}
 	// Wrap forward from last to 0
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.StashSelected() != 0 {
 		t.Errorf("expected StashSelected to wrap to 0, got %d", m.StashSelected())
 	}
@@ -1561,7 +1561,7 @@ func TestModel_BranchScrollFollowsCursor(t *testing.T) {
 	}
 	// Move cursor down past the viewport
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.BranchSelected() != 9 {
 		t.Errorf("expected cursor at 9, got %d", m.BranchSelected())
@@ -1578,7 +1578,7 @@ func TestModel_BranchScrollFollowsCursor(t *testing.T) {
 
 	// Move back up to 0
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if m.BranchSelected() != 0 {
 		t.Errorf("expected cursor back at 0, got %d", m.BranchSelected())
@@ -1605,7 +1605,7 @@ func TestModel_RepoScrollFollowsCursor(t *testing.T) {
 
 	// Move cursor down past the viewport
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.Selected() != 9 {
 		t.Errorf("expected cursor at 9, got %d", m.Selected())
@@ -1621,7 +1621,7 @@ func TestModel_RepoScrollFollowsCursor(t *testing.T) {
 
 	// Move back up to 0
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if m.Selected() != 0 {
 		t.Errorf("expected cursor back at 0, got %d", m.Selected())
@@ -1641,7 +1641,7 @@ func TestModel_RepoScrollWrapsFromTopToBottom(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.RepoContentOverhead + contentHeight})
 
 	// Press Up from index 0 — should wrap to last repo
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.Selected() != 9 {
 		t.Errorf("expected cursor at 9 after wrap, got %d", m.Selected())
 	}
@@ -1662,10 +1662,10 @@ func TestModel_RepoScrollWrapsFromBottomToTop(t *testing.T) {
 
 	// Navigate to last repo
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	// Press Down — should wrap to first repo
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.Selected() != 0 {
 		t.Errorf("expected cursor at 0 after wrap, got %d", m.Selected())
 	}
@@ -1684,7 +1684,7 @@ func TestModel_StashScrollFollowsCursor(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.StashContentOverhead + contentHeight})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
 
 	if m.StashScroll() != 0 {
@@ -1693,7 +1693,7 @@ func TestModel_StashScrollFollowsCursor(t *testing.T) {
 
 	// Move cursor down past the viewport
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.StashSelected() != 9 {
 		t.Errorf("expected cursor at 9, got %d", m.StashSelected())
@@ -1715,7 +1715,7 @@ func TestModel_StashScrollFollowsCursor(t *testing.T) {
 
 	// Move back up to 0
 	for i := 0; i < 9; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if m.StashScroll() != 0 {
 		t.Errorf("expected scroll back to 0, got %d", m.StashScroll())
@@ -1735,12 +1735,12 @@ func TestModel_StashScrollAccountsForLongMessages(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 50 + ui.LeftPaneWidth + 2, Height: ui.StashContentOverhead + contentHeight})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
 
 	// Move to stash 2 (each takes 2 lines, so stash 2 starts at visual line 4)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.StashSelected() != 2 {
 		t.Errorf("expected cursor at 2, got %d", m.StashSelected())
 	}
@@ -1759,10 +1759,10 @@ func TestModel_StashCursorUsesStashViewportAtTinyHeight(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.StashContentOverhead})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.StashSelected() != 1 {
 		t.Fatalf("expected stash cursor at 1, got %d", m.StashSelected())
 	}
@@ -1776,12 +1776,12 @@ func TestModel_StashCursorUsesStashViewportAtTinyHeight(t *testing.T) {
 func TestModel_ModeSwitchOnKeyPress(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if m.Mode() != 3 {
 		t.Errorf("expected mode 3 (stashes), got %d", m.Mode())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
 	if m.Mode() != 1 {
 		t.Errorf("expected mode 1 (worktrees), got %d", m.Mode())
 	}
@@ -1790,7 +1790,7 @@ func TestModel_ModeSwitchOnKeyPress(t *testing.T) {
 func TestModel_Key4SwitchesToHistoryMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if m.Mode() != 4 {
 		t.Errorf("expected mode 4, got %d", m.Mode())
 	}
@@ -1799,7 +1799,7 @@ func TestModel_Key4SwitchesToHistoryMode(t *testing.T) {
 func TestModel_SwitchToHistoryFiresFetchCommits(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if cmd == nil {
 		t.Fatal("expected fetchCommits cmd on switch to mode 4, got nil")
 	}
@@ -1810,25 +1810,25 @@ func TestModel_NumberKeysSwitchToCorrectModes(t *testing.T) {
 	m = inRightPane(m)
 
 	// Key 2 → ModeBranches
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if m.Mode() != 2 {
 		t.Errorf("key 2: expected mode 2 (ModeBranches), got %d", m.Mode())
 	}
 
 	// Key 3 → ModeStashes
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if m.Mode() != 3 {
 		t.Errorf("key 3: expected mode 3 (ModeStashes), got %d", m.Mode())
 	}
 
 	// Key 4 → ModeHistory
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if m.Mode() != 4 {
 		t.Errorf("key 4: expected mode 4 (ModeHistory), got %d", m.Mode())
 	}
 
 	// Key w → ModeWorktrees
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
 	if m.Mode() != 1 {
 		t.Errorf("key w: expected mode 1 (ModeWorktrees), got %d", m.Mode())
 	}
@@ -1837,7 +1837,7 @@ func TestModel_NumberKeysSwitchToCorrectModes(t *testing.T) {
 func TestModel_Key5SwitchesToReflog(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if m.Mode() != 5 {
 		t.Errorf("expected mode 5 (reflog), got %d", m.Mode())
 	}
@@ -1847,7 +1847,7 @@ func TestModel_PressingCurrentModeKeyNoFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	// Already in mode 1 (worktrees); pressing 1 should not fire a redundant fetch
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if cmd != nil {
 		t.Error("pressing 1 while already in mode 1 should not fire fetch")
 	}
@@ -1855,9 +1855,9 @@ func TestModel_PressingCurrentModeKeyNoFetch(t *testing.T) {
 
 func TestModel_ModeSwitchPreservesSelection(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})                      // select bravo (left pane)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})                     // switch to right pane
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})         // select bravo (left pane)
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})        // switch to right pane
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // mode 3 (stashes)
 	if m.Selected() != 1 {
 		t.Errorf("expected selection preserved at 1, got %d", m.Selected())
 	}
@@ -1866,8 +1866,8 @@ func TestModel_ModeSwitchPreservesSelection(t *testing.T) {
 func TestModel_LeftFromBranchesSwitchesToWorktrees(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // branches
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})  // worktrees
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight}) // branches
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})  // worktrees
 	if m.Mode() != 1 {
 		t.Errorf("expected mode 1 (worktrees), got %d", m.Mode())
 	}
@@ -1881,7 +1881,7 @@ func TestModel_NumberedModeSwitchClearsStatus(t *testing.T) {
 		t.Fatalf("TransientError() = %q, want operation failed", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if got := m.TransientError(); got != "" {
 		t.Fatalf("numbered mode switch left status %q, want cleared", got)
 	}
@@ -1891,12 +1891,12 @@ func TestModel_ModeSwitchViaArrowFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	// Right to mode 2 (branches) should fetch branches
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 	if cmd == nil {
 		t.Fatal("expected fetch cmd on mode switch to branches, got nil")
 	}
 	// Right to mode 3 (stashes) should fetch stashes
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	_, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 	if cmd == nil {
 		t.Fatal("expected fetch cmd on mode switch to stashes, got nil")
 	}
@@ -1905,8 +1905,8 @@ func TestModel_ModeSwitchViaArrowFiresFetch(t *testing.T) {
 func TestModel_SwitchToBranchesFiresFetchBranches(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}) // stashes
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 	if cmd == nil {
 		t.Fatal("expected fetch cmd on switch to mode 2, got nil")
 	}
@@ -1915,7 +1915,7 @@ func TestModel_SwitchToBranchesFiresFetchBranches(t *testing.T) {
 func TestModel_SwitchToStashesFiresFetchStashes(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd on switch to mode 3, got nil")
 	}
@@ -2036,15 +2036,15 @@ func TestModel_StaleCommitResultDiscarded(t *testing.T) {
 func TestModel_CommitCursorWraps(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	// Wrap backward from 0 to last
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.CommitSelected() != 2 {
 		t.Errorf("expected CommitSelected to wrap to 2, got %d", m.CommitSelected())
 	}
 	// Wrap forward from last to 0
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.CommitSelected() != 0 {
 		t.Errorf("expected CommitSelected to wrap to 0, got %d", m.CommitSelected())
 	}
@@ -2058,12 +2058,12 @@ func TestModel_CommitScrollFollowsCursor(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.GitContentOverhead + 3})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: commits})
 
 	// Move cursor past viewport
 	for i := 0; i < 10; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.CommitScroll() == 0 {
 		t.Error("expected scroll to advance when cursor moves past viewport")
@@ -2073,16 +2073,16 @@ func TestModel_CommitScrollFollowsCursor(t *testing.T) {
 func TestModel_ModeSwitchPreservesCommitCursors(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.CommitSelected() != 2 {
 		t.Fatalf("expected CommitSelected 2, got %d", m.CommitSelected())
 	}
 	// Switch away and back
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'w'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if m.CommitSelected() != 2 {
 		t.Errorf("expected CommitSelected preserved at 2, got %d", m.CommitSelected())
 	}
@@ -2091,13 +2091,13 @@ func TestModel_ModeSwitchPreservesCommitCursors(t *testing.T) {
 func TestModel_RepoSwitchClearsCommits(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	if len(m.Commits()) != 3 {
 		t.Fatal("expected 3 commits")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if len(m.Commits()) != 0 {
 		t.Errorf("expected commits cleared on repo switch, got %d", len(m.Commits()))
 	}
@@ -2197,7 +2197,7 @@ func TestModel_ReflogResultUpdatesState(t *testing.T) {
 func TestModel_SwitchToReflogFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if m.Mode() != 5 {
 		t.Fatalf("expected mode 5, got %d", m.Mode())
 	}
@@ -2218,15 +2218,15 @@ func TestModel_StaleReflogResultDiscarded(t *testing.T) {
 func TestModel_ReflogCursorWraps(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	// Wrap backward from 0 to last
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.ReflogSelected() != 2 {
 		t.Errorf("expected ReflogSelected to wrap to 2, got %d", m.ReflogSelected())
 	}
 	// Wrap forward from last to 0
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.ReflogSelected() != 0 {
 		t.Errorf("expected ReflogSelected to wrap to 0, got %d", m.ReflogSelected())
 	}
@@ -2245,10 +2245,10 @@ func TestModel_ReflogScrollFollowsCursor(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: ui.GitContentOverhead + 3})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: entries})
 	for i := 0; i < 10; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.ReflogScroll() == 0 {
 		t.Error("expected reflog scroll to advance, got 0")
@@ -2258,14 +2258,14 @@ func TestModel_ReflogScrollFollowsCursor(t *testing.T) {
 func TestModel_RepoSwitchClearsReflogs(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	if len(m.Reflogs()) != 3 {
 		t.Fatalf("expected 3 reflogs loaded, got %d", len(m.Reflogs()))
 	}
 	// Switch to left pane and navigate down
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if len(m.Reflogs()) != 0 {
 		t.Errorf("expected reflogs cleared on repo switch, got %d", len(m.Reflogs()))
 	}
