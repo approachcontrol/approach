@@ -3,7 +3,7 @@ package model_test
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
@@ -17,16 +17,16 @@ func pressKey(m model.Model, r rune) model.Model {
 		switch r {
 		case '2', '3', '4':
 			if m.ActivePane() == ui.PaneTop {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 			}
 			r -= 1
 		case '1':
 			if m.ActivePane() == ui.PaneBottom {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 			}
 		}
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	return m
 }
 
@@ -97,7 +97,7 @@ func TestTopLevelKeys_SixThroughNineAreSilentNoOps(t *testing.T) {
 
 	for _, key := range []rune{'6', '7', '8', '9'} {
 		var cmd tea.Cmd
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 		if m.Mode() != ui.ModeWorktrees {
 			t.Fatalf("after %q mode = %d, want unchanged ModeWorktrees", key, m.Mode())
 		}
@@ -128,7 +128,7 @@ func TestTopLevelKeys_GitKeyWhileInGitIsNoOp(t *testing.T) {
 	m = pressKey(m, 's') // stashes subview
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 
 	if m.Mode() != ui.ModeStashes {
 		t.Fatalf("mode = %d, want unchanged ModeStashes", m.Mode())
@@ -177,7 +177,7 @@ func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
 
 			before := listRequests(m)
 			var cmd tea.Cmd
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			m, cmd = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			if m.Mode() != ui.ModeActiveFlows {
 				t.Fatalf("ctrl+a mode = %d, want active flows", m.Mode())
 			}
@@ -187,7 +187,7 @@ func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
 			assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
 
 			before = listRequests(m)
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			m, cmd = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			if m.Mode() != tc.wantReturn {
 				t.Fatalf("second ctrl+a mode = %d, want %d", m.Mode(), tc.wantReturn)
 			}
@@ -221,7 +221,7 @@ func TestActiveFlowsToggle_WorksFromLeftPane(t *testing.T) {
 	m := model.New(testRepos())
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ctrl+a from left pane active pane = %d, want left pane preserved", m.ActivePane())
@@ -240,7 +240,7 @@ func TestActiveFlowsToggle_InertWhileSearchActive(t *testing.T) {
 	m = pressKey(m, '/')
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("ctrl+a while searching mode = %d, want unchanged worktrees", m.Mode())
@@ -255,13 +255,13 @@ func TestBottomPaneArrowsCycleBottomViews(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, '2') // sessions
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 	if m.Mode() != ui.ModePlans {
 		t.Fatalf("right from sessions mode = %d, want ModePlans", m.Mode())
 	}
 
 	m = pressKey(m, '4') // flows
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 	if m.Mode() != ui.ModeSessions {
 		t.Fatalf("right from flows mode = %d, want wrapped Sessions", m.Mode())
 	}
@@ -269,13 +269,13 @@ func TestBottomPaneArrowsCycleBottomViews(t *testing.T) {
 
 func TestTopLevelArrows_InertInsideActiveFlows(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	before := listRequests(m)
 
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyLeft},
-		{Type: tea.KeyRight},
-		{Type: tea.KeyRunes, Runes: []rune{'l'}},
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyLeft},
+		{Code: tea.KeyRight},
+		{Text: string([]rune{'l'})},
 	} {
 		var cmd tea.Cmd
 		m, cmd = update(m, key)
@@ -291,12 +291,12 @@ func TestTopLevelArrows_InertInsideActiveFlows(t *testing.T) {
 
 func TestTopLevelNumberedKeys_InertInsideActiveFlows(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	before := listRequests(m)
 
 	for _, key := range []rune{'1', '2', '3', '4', '5', '6', '7', '8', '9'} {
 		var cmd tea.Cmd
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 		if m.Mode() != ui.ModeActiveFlows {
 			t.Fatalf("%q in active flows mode = %d, want unchanged active flows", string(key), m.Mode())
 		}
@@ -320,7 +320,7 @@ func TestRetiredKeys_HLInertInSessionsAndPlans(t *testing.T) {
 		before := listRequests(m)
 		for _, key := range []rune{'h', 'l'} {
 			var cmd tea.Cmd
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+			m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 			if m.Mode() != view.mode {
 				t.Fatalf("%q in mode %d switched to %d, want inert", key, view.mode, m.Mode())
 			}
@@ -348,8 +348,8 @@ func testHistoryWithCommits(t *testing.T) model.Model {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, 'h')
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.CommitSelected() != 2 {
 		t.Fatalf("CommitSelected = %d, want 2", m.CommitSelected())
 	}
@@ -398,7 +398,7 @@ func TestGitSubview_SessionsPlansKeepResetOnEntry(t *testing.T) {
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "First", Status: "draft"},
 		{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Second", Status: "draft"},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.PlanSelected() != 1 {
 		t.Fatalf("PlanSelected = %d, want 1", m.PlanSelected())
 	}
@@ -441,7 +441,7 @@ func TestGitSubview_FilterIsPerSubview(t *testing.T) {
 	for _, r := range "zebra" {
 		m = pressKey(m, r)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := len(m.Worktrees()); got != 1 {
 		t.Fatalf("filtered worktrees = %d, want 1", got)
 	}

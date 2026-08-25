@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/internal/controlplane"
@@ -30,9 +30,9 @@ func TestModel_Key7SwitchesToPlansAndFetches(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	if m.Mode() != ui.ModePlans {
 		t.Fatalf("mode = %d, want plans", m.Mode())
 	}
@@ -66,8 +66,8 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	if cmd == nil {
 		t.Fatal("expected initial plans fetch")
 	}
@@ -76,11 +76,11 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 		t.Fatalf("initial Plans() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("expected plans refetch after repo change")
 	}
@@ -103,8 +103,8 @@ func TestModel_StalePlanResultIgnored(t *testing.T) {
 		ListPlans: func(planstore.PlanFilter) ([]planstore.PlanRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 
 	// A result with a stale (zero) list request must be ignored.
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
@@ -122,13 +122,13 @@ func TestModel_PlanListErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	if cmd == nil {
 		t.Fatal("expected plans fetch command")
 	}
 	m, _ = update(m, cmd())
-	if got := m.View(); !strings.Contains(got, "failed to load plans") {
+	if got := viewContent(m); !strings.Contains(got, "failed to load plans") {
 		t.Fatalf("expected plan load error in view:\n%s", got)
 	}
 }
@@ -150,8 +150,8 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
@@ -162,7 +162,7 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 		Commit:       "abc123",
 	}}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -175,8 +175,8 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	if got := m.InputMode(); got != modal.InputMultiLine {
 		t.Fatalf("launch instructions input mode = %v, want multi-line", got)
 	}
-	if !strings.Contains(m.View(), "Launch instructions") {
-		t.Fatalf("expected launch instructions prompt in view:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Launch instructions") {
+		t.Fatalf("expected launch instructions prompt in view:\n%s", viewContent(m))
 	}
 	prompt := strings.ToLower(m.WorktreeInput())
 	for _, want := range []string{"implement plans", "plan-1", "/state/approach/sessions/v1/plans/plan-1/plan.md", "read the plan file", "begin implementation"} {
@@ -208,7 +208,7 @@ func TestModel_AKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 		RepoPath: "/dev/alpha",
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -233,8 +233,8 @@ func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
@@ -243,7 +243,7 @@ func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 		WorktreePath: "/dev/plan-worktree",
 	}}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -276,10 +276,10 @@ func TestModel_PlanPromptTemplateAppliesToSelectedPlanPhase(t *testing.T) {
 		},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -288,7 +288,7 @@ func TestModel_PlanPromptTemplateAppliesToSelectedPlanPhase(t *testing.T) {
 		t.Fatalf("phase launch instructions = %q, want %q", m.WorktreeInput(), want)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
@@ -311,13 +311,13 @@ func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -345,8 +345,8 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
@@ -356,20 +356,20 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		Branch:       "feature/plans",
 		Commit:       "abc123",
 	}}, ListRequest: m.ListRequest(ui.ModePlans)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if got := m.InputMode(); got != modal.InputMultiLine {
 		t.Fatalf("launch instructions input mode = %v, want multi-line", got)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Custom instructions")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("Custom instructions"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyHome})
 	for range len("Custom ") {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("launch")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("launch"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
@@ -432,7 +432,7 @@ func TestModel_PlanLaunchInstructionsSubmitReverifiesPin(t *testing.T) {
 		Status:   "approved",
 		RepoPath: "/dev/alpha",
 	}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -440,7 +440,7 @@ func TestModel_PlanLaunchInstructionsSubmitReverifiesPin(t *testing.T) {
 		t.Fatalf("replace pin: %v", err)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
@@ -464,14 +464,14 @@ func TestModel_PlanLaunchInstructionsEscCancels(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd cancelling launch instructions, got %T", cmd)
 	}
@@ -489,15 +489,15 @@ func TestModel_PlanLaunchInstructionsRejectsBlankSubmit(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd for blank launch instructions, got %T", cmd)
 	}
@@ -537,13 +537,13 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 		},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if gotPhase := m.SelectedPlanPhaseID(); gotPhase != "p2" {
 		t.Fatalf("selected phase = %q, want p2", gotPhase)
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -557,7 +557,7 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 		}
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
@@ -601,17 +601,17 @@ func TestModel_AKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 		},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if gotPhase := m.SelectedPlanPhaseID(); gotPhase != "p2" {
 		t.Fatalf("selected phase = %q, want p2", gotPhase)
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
@@ -634,7 +634,7 @@ func TestModel_XKeyTogglesPlanPhaseRows(t *testing.T) {
 		},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("toggle phases returned command %T, want nil", cmd)
 	}
@@ -645,7 +645,7 @@ func TestModel_XKeyTogglesPlanPhaseRows(t *testing.T) {
 		t.Fatalf("expanding plan should keep plan row selected, got phase %q", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if got := m.ExpandedPlanID(); got != "" {
 		t.Fatalf("second toggle expanded plan = %q, want collapsed", got)
 	}
@@ -654,10 +654,10 @@ func TestModel_XKeyTogglesPlanPhaseRows(t *testing.T) {
 func TestModel_IKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd with no selected plan, got %T", cmd)
 	}
@@ -666,17 +666,17 @@ func TestModel_IKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 func TestModel_IKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command without selected agent")
 	}
-	if !strings.Contains(m.View(), "Press A to choose") {
+	if !strings.Contains(viewContent(m), "Press A to choose") {
 		t.Fatal("expected unset-agent status")
 	}
 }
@@ -713,15 +713,15 @@ func TestModel_IKeyLaunchPathFallsBackFromPlanRepoToSelectedRepo(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 			m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{tc.plan}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 			if cmd != nil {
 				t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 			}
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if cmd == nil {
 				t.Fatal("expected submit command")
 			}
@@ -742,17 +742,17 @@ func TestModel_IKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "", errors.New("bad plan path") },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command on resolver error")
 	}
-	if !strings.Contains(m.View(), "bad plan path") {
+	if !strings.Contains(viewContent(m), "bad plan path") {
 		t.Fatal("expected resolver error in status")
 	}
 }
@@ -762,18 +762,18 @@ func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for missing launch path")
 	}
-	if !strings.Contains(m.View(), "Cannot determine launch path for this plan") {
+	if !strings.Contains(viewContent(m), "Cannot determine launch path for this plan") {
 		t.Fatal("expected missing launch path status")
 	}
 }
@@ -787,17 +787,17 @@ func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
@@ -805,7 +805,7 @@ func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 	if launchCmd == nil {
 		t.Fatal("expected status expiry command on launch error")
 	}
-	if !strings.Contains(m.View(), "agent unavailable") {
+	if !strings.Contains(viewContent(m), "agent unavailable") {
 		t.Fatal("expected launch error in status")
 	}
 }
@@ -825,13 +825,13 @@ func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected copy command")
 	}
@@ -869,7 +869,7 @@ func TestModel_EKeyEditsSelectedPlanAndRefreshesPlansAfterExit(t *testing.T) {
 	})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'e'})})
 	if cmd == nil {
 		t.Fatal("expected edit command")
 	}
@@ -907,11 +907,11 @@ func TestModel_EKeyPlanEditorErrorShowsStatus(t *testing.T) {
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'e'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command on editor error")
 	}
-	if !strings.Contains(m.View(), "editor unavailable") {
+	if !strings.Contains(viewContent(m), "editor unavailable") {
 		t.Fatal("expected editor error in status")
 	}
 }
@@ -927,7 +927,7 @@ func TestModel_StalePlanEditResultDoesNotShowStatusOrRefresh(t *testing.T) {
 		t.Fatalf("expected nil cmd for stale edit error, got %T", cmd)
 	}
 	assertListRequestsUnchanged(t, before, m)
-	if strings.Contains(m.View(), "editor failed") {
+	if strings.Contains(viewContent(m), "editor failed") {
 		t.Fatal("stale edit error should not show in status")
 	}
 
@@ -942,7 +942,7 @@ func TestModel_PlanEditResultRefreshesStoredPlansWhileTopPaneFocused(t *testing.
 	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
 		PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Plan",
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	before := m.ListRequest(ui.ModePlans)
 
 	m, cmd := update(m, model.PlanEditResultMsg{RepoPath: "/dev/alpha"})
@@ -966,13 +966,13 @@ func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected copy command")
 	}
@@ -986,10 +986,10 @@ func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 func TestModel_YKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd with no selected plan, got %T", cmd)
 	}
@@ -1000,17 +1000,17 @@ func TestModel_YKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "", errors.New("cannot resolve plan path") },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command on resolver error")
 	}
-	if !strings.Contains(m.View(), "cannot resolve plan path") {
+	if !strings.Contains(viewContent(m), "cannot resolve plan path") {
 		t.Fatal("expected resolver error in status")
 	}
 }
@@ -1021,18 +1021,18 @@ func TestModel_YKeyPlanClipboardErrorShowsStatus(t *testing.T) {
 		CopyToClipboard:  func(string) error { return errors.New("clipboard unavailable") },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected copy command")
 	}
 	m, _ = update(m, cmd())
-	if !strings.Contains(m.View(), "clipboard unavailable") {
+	if !strings.Contains(viewContent(m), "clipboard unavailable") {
 		t.Fatal("expected clipboard error in status")
 	}
 }
@@ -1047,10 +1047,10 @@ func TestModel_YKeyHistoryAndReflogCopyUseInjectedClipboard(t *testing.T) {
 			},
 		})
 		m = inRightPane(m)
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 		m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1], ListRequest: m.ListRequest(ui.ModeHistory)})
 
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 		if cmd == nil {
 			t.Fatal("expected copy command")
 		}
@@ -1068,10 +1068,10 @@ func TestModel_YKeyHistoryAndReflogCopyUseInjectedClipboard(t *testing.T) {
 			},
 		})
 		m = inRightPane(m)
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()[:1], ListRequest: m.ListRequest(ui.ModeReflog)})
 
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 		if cmd == nil {
 			t.Fatal("expected copy command")
 		}

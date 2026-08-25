@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
@@ -207,10 +207,10 @@ func TestModel_ListFetchModesShareRequestAndStaleResultBehavior(t *testing.T) {
 				},
 			})
 			m, _ = switchTestMode(m, tc.mode)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+			m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 			beforeRequest := m.ListRequest(tc.mode)
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
+			m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			started := m
 			request := m.ListRequest(tc.mode)
 			if request == 0 || request == beforeRequest {
@@ -223,7 +223,7 @@ func TestModel_ListFetchModesShareRequestAndStaleResultBehavior(t *testing.T) {
 				t.Fatalf("list adapter ran before command execution: %d call(s)", loadCount)
 			}
 
-			switched, _ := update(m, tea.KeyMsg{Type: tea.KeyDown})
+			switched, _ := update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			var msg tea.Msg
 			for _, candidate := range immediateTestCommandMessages(cmd) {
 				if errMsg, ok := candidate.(model.FetchErrorMsg); ok && errMsg.Mode == tc.mode {

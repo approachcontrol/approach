@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
@@ -20,7 +20,7 @@ func TestModel_CtrlGTogglesGlobalAutoMergeOnlyAfterSaveSucceeds(t *testing.T) {
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if cmd == nil || len(saves) != 0 {
 		t.Fatalf("ctrl+g command = %v saves = %v, want deferred save", cmd != nil, saves)
 	}
@@ -29,7 +29,7 @@ func TestModel_CtrlGTogglesGlobalAutoMergeOnlyAfterSaveSucceeds(t *testing.T) {
 		t.Fatalf("saves = %v, want enable", saves)
 	}
 	m, _ = update(m, msg)
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd = update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("second ctrl+g returned no save command")
 	}
@@ -48,8 +48,8 @@ func TestModel_CtrlGCoalescesOverlappingTogglesInOrder(t *testing.T) {
 		},
 	})
 
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
-	m, second := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, first := update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	m, second := update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if first == nil || second != nil {
 		t.Fatalf("overlapping toggle commands = first %v second %v, want one serialized write", first != nil, second != nil)
 	}
@@ -65,7 +65,7 @@ func TestModel_CtrlGCoalescesOverlappingTogglesInOrder(t *testing.T) {
 		t.Fatalf("serialized saves = %v, want enable then disable", saves)
 	}
 
-	_, next := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, next := update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if next == nil {
 		t.Fatal("settled off value did not accept a new enable toggle")
 	}
@@ -79,10 +79,10 @@ func TestModel_FailedGlobalAutoMergeSaveLeavesPriorValueInForce(t *testing.T) {
 	m := inRightPane(newTestModel(testRepos(), model.Options{
 		SaveFlowAutoMerge: func(bool) error { return errors.New("config locked") },
 	}))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	m, _ = update(m, cmd())
-	if !strings.Contains(m.View(), "config locked") {
-		t.Fatalf("failed save status missing from view:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "config locked") {
+		t.Fatalf("failed save status missing from view:\n%s", viewContent(m))
 	}
 }
 
@@ -107,7 +107,7 @@ func TestModel_GCyclesFlowAutoMergeOverride(t *testing.T) {
 
 	for range 3 {
 		var cmd tea.Cmd
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+		m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'G'})})
 		if cmd == nil {
 			t.Fatal("G returned no mutation command")
 		}
@@ -131,8 +131,8 @@ func TestModel_GCoalescesOverlappingOverrideCycles(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 
-	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
-	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	m, first := update(m, tea.KeyPressMsg{Text: string([]rune{'G'})})
+	m, second := update(m, tea.KeyPressMsg{Text: string([]rune{'G'})})
 	if first == nil || second != nil {
 		t.Fatalf("overlapping G commands = first %v second %v, want one serialized write", first != nil, second != nil)
 	}

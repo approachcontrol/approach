@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/model"
@@ -15,8 +15,8 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-func repoCreateKey(input string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(input)}
+func repoCreateKey(input string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: string([]rune(input))}
 }
 
 func TestModel_LeftPaneNOpensRepoCreationForm(t *testing.T) {
@@ -29,8 +29,8 @@ func TestModel_LeftPaneNOpensRepoCreationForm(t *testing.T) {
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("Overlay() = %d, want repo form", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "New repo") || !strings.Contains(m.View(), "Create GitHub repo") {
-		t.Fatalf("repo creation form missing expected fields:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "New repo") || !strings.Contains(viewContent(m), "Create GitHub repo") {
+		t.Fatalf("repo creation form missing expected fields:\n%s", viewContent(m))
 	}
 }
 
@@ -71,7 +71,7 @@ func TestModel_RepoCreateSubmitUsesDefaults(t *testing.T) {
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected create repo command")
 	}
@@ -96,11 +96,11 @@ func TestModel_RepoCreateSubmitSupportsUncheckedGitHubAndPrivateVisibility(t *te
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected create repo command")
 	}
@@ -117,15 +117,15 @@ func TestModel_RepoCreateValidationStaysInForm(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{RepoCreateRoot: "/dev"})
 
 	m, _ = update(m, repoCreateKey("n"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("invalid form should not return command")
 	}
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("Overlay() = %d, want form", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "repo name cannot be empty") {
-		t.Fatalf("expected validation error in form:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "repo name cannot be empty") {
+		t.Fatalf("expected validation error in form:\n%s", viewContent(m))
 	}
 }
 
@@ -144,7 +144,7 @@ func TestModel_RepoCreatedRefreshesAndSelectsNewRepo(t *testing.T) {
 	})
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, refreshCmd := update(m, cmd())
 	if refreshCmd == nil {
 		t.Fatal("repo creation success should start repo refresh")
@@ -179,7 +179,7 @@ func TestModel_RepoCreatedRefreshKeepsSelectedNewRepoVisible(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 8})
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("repo-24"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, refreshCmd := update(m, cmd())
 	if refreshCmd == nil {
 		t.Fatal("repo creation should refresh repos")
@@ -217,7 +217,7 @@ func TestModel_RepoCreatedRefreshSelectsRelativeScanRepoFromAbsoluteDestination(
 	})
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, refreshCmd := update(m, cmd())
 	if refreshCmd == nil {
 		t.Fatal("repo creation should refresh repos")
@@ -241,13 +241,13 @@ func TestModel_RepoCreateFailureReopensFormWithPreviousValues(t *testing.T) {
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
 
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("Overlay() = %d, want form", m.Overlay())
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "project") || !strings.Contains(view, "permission denied") {
 		t.Fatalf("failed create should reopen form with previous values and error:\n%s", view)
 	}
@@ -277,13 +277,13 @@ func TestModel_RepoCreatePartialFailureRetriesGitHubOnly(t *testing.T) {
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
-	if m.Overlay() != ui.OverlayForm || !strings.Contains(m.View(), "Local repo created; GitHub/origin setup failed") {
-		t.Fatalf("partial failure should reopen retry form:\n%s", m.View())
+	if m.Overlay() != ui.OverlayForm || !strings.Contains(viewContent(m), "Local repo created; GitHub/origin setup failed") {
+		t.Fatalf("partial failure should reopen retry form:\n%s", viewContent(m))
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected retry create command")
 	}
@@ -322,7 +322,7 @@ func TestModel_RepoCreatePartialFailureRefreshesLocalRepo(t *testing.T) {
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, refreshCmd := update(m, cmd())
 	if refreshCmd == nil {
 		t.Fatal("partial local success should refresh repos behind the retry form")
@@ -333,7 +333,7 @@ func TestModel_RepoCreatePartialFailureRefreshesLocalRepo(t *testing.T) {
 
 	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, refreshCmd))
 	m, _ = update(m, refreshMsg)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("Overlay() = %d, want closed form after cancel", m.Overlay())
@@ -361,20 +361,20 @@ func TestModel_RepoCreateRetryRequiresGitHubEnabled(t *testing.T) {
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("retry form should not submit when GitHub creation is unchecked")
 	}
 	if len(calls) != 1 {
 		t.Fatalf("CreateRepo calls = %d, want original call only", len(calls))
 	}
-	if !strings.Contains(m.View(), "GitHub creation must stay enabled when retrying GitHub setup") {
-		t.Fatalf("retry validation should explain required GitHub retry:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "GitHub creation must stay enabled when retrying GitHub setup") {
+		t.Fatalf("retry validation should explain required GitHub retry:\n%s", viewContent(m))
 	}
 }
 
@@ -396,28 +396,28 @@ func TestModel_RepoCreateRetryKeepsStateWhenNameChanges(t *testing.T) {
 
 	m, _ = update(m, repoCreateKey("n"))
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("Overlay() = %d, want retry form", m.Overlay())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	m, _ = update(m, repoCreateKey("other"))
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("changed retry name should fail validation before running create command")
 	}
 	if len(calls) != 1 {
 		t.Fatalf("CreateRepo calls = %d, want original call only", len(calls))
 	}
-	if !strings.Contains(m.View(), "repo name must remain project when retrying GitHub setup") {
-		t.Fatalf("retry validation should preserve form state:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "repo name must remain project when retrying GitHub setup") {
+		t.Fatalf("retry validation should preserve form state:\n%s", viewContent(m))
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	m, _ = update(m, repoCreateKey("project"))
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected retry command after restoring original name")
 	}

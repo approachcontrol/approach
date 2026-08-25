@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/beadsquery"
@@ -883,8 +883,8 @@ func renderApplication(p RenderParams) string {
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(leftBorderColor).
-		Width(leftContentWidth).
-		Height(paneRowHeight).
+		Width(leftContentWidth + 2).
+		Height(paneRowHeight + 2).
 		Render(leftContent)
 
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery, p.RepoPaneCollapsed)
@@ -999,8 +999,8 @@ func renderApplication(p RenderParams) string {
 	rightPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(rightBorderColor).
-		Width(rightContentWidth).
-		Height(paneRowHeight).
+		Width(rightContentWidth + 2).
+		Height(paneRowHeight + 2).
 		Render(rightContent)
 	if p.TopMode != 0 && p.BottomMode != 0 {
 		sharedOuterRows := paneRowHeight + stackedPaneBorderRows
@@ -1030,8 +1030,8 @@ func renderApplication(p RenderParams) string {
 		shortcutPane := lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(inactiveBorderColor).
-			Width(shortcutContentWidth).
-			Height(paneRowHeight).
+			Width(shortcutContentWidth + 2).
+			Height(paneRowHeight + 2).
 			Render(renderShortcutPane(status, shortcutContentWidth, paneRowHeight))
 		panes = append(panes, shortcutPane)
 	}
@@ -1153,8 +1153,8 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(borderColor).
-		Width(width).
-		Height(contentRows).
+		Width(width + 2).
+		Height(contentRows + 2).
 		Render(strings.Join(lines, "\n"))
 }
 
@@ -1777,7 +1777,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			return renderStatusText(width, promptEditorStatusText(width))
 		}
 		if sp.InputMode == InputMultiLine {
-			return renderStatusText(width, "  enter: submit  alt+enter: newline  esc: cancel  bksp/del: edit")
+			return renderStatusText(width, "  enter: submit  alt/shift+enter: newline  esc: cancel  bksp/del: edit")
 		}
 		return renderStatusText(width, "  enter: submit  esc: cancel  bksp/del: edit  left/right: move")
 	case overlay == OverlaySelect:
@@ -1787,7 +1787,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		return renderStatusText(width, "  up/down select  enter: confirm  esc: cancel")
 	case overlay == OverlayForm:
 		if sp.FormHasMultiline {
-			return renderStatusText(width, "  tab/shift+tab: fields  alt+enter: newline  enter: submit  esc: cancel")
+			return renderStatusText(width, "  tab/shift+tab: fields  alt/shift+enter: newline  enter/ctrl+enter: submit  esc: cancel")
 		}
 		return renderStatusText(width, "  tab/shift+tab: fields  space: toggle/select  enter: submit  esc: cancel")
 	case overlay != OverlayNone:
@@ -1941,7 +1941,10 @@ func padShortcutKey(key string, width int) string {
 func shortcutSections(sp statusBarParams) []shortcutSection {
 	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.Mode == ModePRBabysitter || sp.ActiveFlows || sp.PRBabysitter
 	if sp.EmbeddedTerminalActive {
-		hints := []shortcutHint{{Key: "ctrl+]", Label: "commands"}}
+		hints := []shortcutHint{
+			{Key: "ctrl+]", Label: "commands"},
+			{Key: "ctrl+shift+]", Label: "send ctrl+]"},
+		}
 		if sp.EmbeddedTerminalPrefix {
 			hints = []shortcutHint{
 				{Key: "ctrl+]", Label: "send"},

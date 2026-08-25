@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/model"
@@ -23,8 +23,8 @@ func plansInRightPaneAtSize(t *testing.T, m model.Model, records []planstore.Pla
 	t.Helper()
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: records, ListRequest: m.ListRequest(ui.ModePlans)})
 	return m
 }
@@ -42,7 +42,7 @@ func TestModel_EnterOnPlanExpandsPhasesWithoutReadingPlan(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("plans-mode enter should not return a plan read command")
 	}
@@ -52,7 +52,7 @@ func TestModel_EnterOnPlanExpandsPhasesWithoutReadingPlan(t *testing.T) {
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"Tracer bullet", "completed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded plan view missing %q:\n%s", want, view)
@@ -79,7 +79,7 @@ func TestModel_OKeyOnPlanOpensPlanText(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	if cmd == nil {
 		t.Fatal("plans-mode o should return a plan read command")
 	}
@@ -105,9 +105,9 @@ func TestModel_PlansFilterMatchesPlanAndPhaseFields(t *testing.T) {
 		{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Unrelated", Status: "blocked", Branch: "main"},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range []rune("tracer") {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
 	got := m.Plans()
 	if len(got) != 1 || got[0].PlanID != "plan-1" {
@@ -122,13 +122,13 @@ func TestModel_EnterOnExpandedPlanCollapsesPhases(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("plans-mode second enter should not return a command")
 	}
-	if strings.Contains(m.View(), "Tracer bullet") {
-		t.Fatalf("second enter should collapse phases:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Tracer bullet") {
+		t.Fatalf("second enter should collapse phases:\n%s", viewContent(m))
 	}
 }
 
@@ -141,15 +141,15 @@ func TestModel_DownOnExpandedPlanSelectsFirstPhase(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p2", Title: "Other phase", Status: "pending", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.PlanSelected(); got != 0 {
 		t.Fatalf("phase selection should keep selected plan, got %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "p1" {
 		t.Fatalf("selected phase = %q, want p1", got)
 	}
-	if view := m.View(); !strings.Contains(view, "Tracer bullet") || strings.Contains(view, "Other phase") {
+	if view := viewContent(m); !strings.Contains(view, "Tracer bullet") || strings.Contains(view, "Other phase") {
 		t.Fatalf("expanded selected plan should stay visible and not expand another plan:\n%s", view)
 	}
 }
@@ -161,10 +161,10 @@ func TestModel_NoOpPlanMovementKeepsExpandedPhases(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if !strings.Contains(m.View(), "Tracer bullet") {
-		t.Fatalf("no-op movement should keep phases expanded:\n%s", m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if !strings.Contains(viewContent(m), "Tracer bullet") {
+		t.Fatalf("no-op movement should keep phases expanded:\n%s", viewContent(m))
 	}
 }
 
@@ -183,14 +183,14 @@ func TestModel_ExpandedPlanAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 	}
 	m = plansInRightPaneAtSize(t, m, records, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 	for i := 0; i < 4; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := m.PlanScroll(); got != 3 {
 		t.Fatalf("expanded bottom plan should scroll phase block into view, got scroll %d", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"Bottom phase one", "Bottom phase two"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded bottom plan missing %q:\n%s", want, view)
@@ -211,9 +211,9 @@ func TestModel_ExpandedSinglePlanScrollsWithinManyPhases(t *testing.T) {
 		},
 	}}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 3; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
 	if got := m.PlanSelected(); got != 0 {
@@ -222,7 +222,7 @@ func TestModel_ExpandedSinglePlanScrollsWithinManyPhases(t *testing.T) {
 	if got := m.PlanScroll(); got != 0 {
 		t.Fatalf("expected expanded phase block to scroll to 1, got %d", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Phase 3") {
 		t.Fatalf("selected expanded phase should be reachable:\n%s", view)
 	}
@@ -241,9 +241,9 @@ func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
 		},
 	}}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 5; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := m.SelectedPlanPhaseID(); got != "p5" {
 		t.Fatalf("selected phase = %q, want p5", got)
@@ -259,7 +259,7 @@ func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
 	if got := m.PlanScroll(); got != 2 {
 		t.Fatalf("expected reflow to keep selected phase visible at scroll 3, got %d", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Phase 5") {
 		t.Fatalf("selected phase should remain visible after reflow:\n%s", view)
 	}
@@ -286,14 +286,14 @@ func TestModel_TallExpandedPlanAtViewportBottomShowsFirstPhases(t *testing.T) {
 	}
 	m = plansInRightPaneAtSize(t, m, records, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 	for i := 0; i < 4; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := m.PlanScroll(); got != 4 {
 		t.Fatalf("tall expanded bottom plan should move plan row to top, got scroll %d", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"Plan 5", "Phase 1", "Phase 2"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("tall expanded bottom plan should reveal initial phases, missing %q:\n%s", want, view)
@@ -317,9 +317,9 @@ func TestModel_ExpandedPlanPhaseSelectionMovesToNextPlanAfterLastPhase(t *testin
 		{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Plan 2", Status: "draft"},
 	}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 6; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
 	if got := m.PlanSelected(); got != 1 {
@@ -328,7 +328,7 @@ func TestModel_ExpandedPlanPhaseSelectionMovesToNextPlanAfterLastPhase(t *testin
 	if got := m.SelectedPlanPhaseID(); got != "" {
 		t.Fatalf("phase selection should clear after moving to next plan, got %q", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "Phase 5") {
 		t.Fatalf("moving to next plan should collapse expanded phases:\n%s", view)
 	}
@@ -347,21 +347,21 @@ func TestModel_ExpandedSinglePlanKeepsLastPhaseSelectedAtBottomBoundary(t *testi
 		},
 	}}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.SelectedPlanPhaseID(); got != "p2" {
 		t.Fatalf("selected phase = %q, want p2", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.SelectedPlanPhaseID(); got != "p2" {
 		t.Fatalf("single-plan bottom boundary should keep last phase selected, got %q", got)
 	}
 	if got := m.PlanSelected(); got != 0 {
 		t.Fatalf("single-plan bottom boundary should keep selected plan, got %d", got)
 	}
-	if view := m.View(); !strings.Contains(view, "Phase 2") {
+	if view := viewContent(m); !strings.Contains(view, "Phase 2") {
 		t.Fatalf("last selected phase should remain visible:\n%s", view)
 	}
 }
@@ -382,12 +382,12 @@ func TestModel_ExpandedPlanScrollsUpWithinManyPhases(t *testing.T) {
 		},
 	}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 2; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 
 	if got := m.PlanSelected(); got != 1 {
 		t.Fatalf("scrolling up inside expanded plan should not move selection, got %d", got)
@@ -396,23 +396,23 @@ func TestModel_ExpandedPlanScrollsUpWithinManyPhases(t *testing.T) {
 		t.Fatalf("expected expanded phase block to scroll up to 1, got %d", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.PlanSelected(); got != 1 {
 		t.Fatalf("returning from first phase should keep selected plan, got %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
 		t.Fatalf("phase selection should clear when returning to plan row, got %q", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Phase 1") {
 		t.Fatalf("expanded phases should remain visible after returning to plan row:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.PlanSelected(); got != 0 {
 		t.Fatalf("expected movement to previous plan after returning to plan row, got %d", got)
 	}
-	view = m.View()
+	view = viewContent(m)
 	if strings.Contains(view, "Phase 1") {
 		t.Fatalf("moving to previous plan should collapse expanded phases:\n%s", view)
 	}
@@ -429,21 +429,21 @@ func TestModel_CollapsingExpandedPlanResumesPlanMovement(t *testing.T) {
 		{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Plan 2", Status: "draft"},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.SelectedPlanPhaseID(); got != "p1" {
 		t.Fatalf("selected phase = %q, want p1", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.PlanSelected(); got != 1 {
 		t.Fatalf("expected plan movement after collapse, got %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
 		t.Fatalf("selected phase should clear after collapse, got %q", got)
 	}
-	if view := m.View(); strings.Contains(view, "Phase 1") {
+	if view := viewContent(m); strings.Contains(view, "Phase 1") {
 		t.Fatalf("collapsed plan should not show phase rows:\n%s", view)
 	}
 }
@@ -455,20 +455,20 @@ func TestModel_BackspaceAwayFromPlansAndTabBackPreservesSelectedPhase(t *testing
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Phase 1", Status: "completed", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.SelectedPlanPhaseID(); got != "p1" {
 		t.Fatalf("selected phase = %q, want p1", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if got := m.ActivePane(); got != ui.PaneTop {
 		t.Fatalf("backspace should move focus to top pane, got active pane %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "p1" {
 		t.Fatalf("selected phase should persist when focus leaves plans pane, got %q", got)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if got := m.ActivePane(); got != ui.PaneBottom {
 		t.Fatalf("tab should return focus to plans pane, got active pane %d", got)
 	}
@@ -484,13 +484,13 @@ func TestModel_PlanListReplacementClearsExpandedPhases(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Persist plans", Status: "draft",
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
-	if strings.Contains(m.View(), "Tracer bullet") {
-		t.Fatalf("plan replacement should clear expanded phases:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Tracer bullet") {
+		t.Fatalf("plan replacement should clear expanded phases:\n%s", viewContent(m))
 	}
 }
 
@@ -503,13 +503,13 @@ func TestModel_PlanRefetchStartClearsExpandedPhases(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	if cmd == nil {
 		t.Fatal("expected plans refetch command")
 	}
-	if strings.Contains(m.View(), "Tracer bullet") {
-		t.Fatalf("plan refetch start should clear expanded phases:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Tracer bullet") {
+		t.Fatalf("plan refetch start should clear expanded phases:\n%s", viewContent(m))
 	}
 }
 
@@ -522,12 +522,12 @@ func TestModel_FilterSelectionChangeClearsExpandedPhases(t *testing.T) {
 			Phases: []planstore.PlanPhase{{PhaseID: "p2", Title: "Needle phase", Status: "pending", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range []rune("needle") {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "Tracer bullet") || strings.Contains(view, "Needle phase") {
 		t.Fatalf("filter changing selected plan should clear expanded phases:\n%s", view)
 	}
@@ -540,12 +540,12 @@ func TestModel_PlanFilterChangeClearsExpandedPhasesEvenWhenSelectionStays(t *tes
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range []rune("persist") {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
-	if strings.Contains(m.View(), "Tracer bullet") {
-		t.Fatalf("plan filtering should collapse expanded phases:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Tracer bullet") {
+		t.Fatalf("plan filtering should collapse expanded phases:\n%s", viewContent(m))
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/flowstore"
@@ -46,12 +46,12 @@ func closedFlowFrom(record flowstore.FlowRecord, reason string) flowstore.FlowRe
 }
 
 func pressC(m model.Model) (model.Model, tea.Cmd) {
-	return update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	return update(m, tea.KeyPressMsg{Text: string([]rune{'C'})})
 }
 
 func typeModalInput(m model.Model, text string) model.Model {
 	for _, r := range text {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
 	return m
 }
@@ -87,7 +87,7 @@ func TestModel_CloseFlowModalRejectsBlankReason(t *testing.T) {
 
 	m, _ = pressC(m)
 	m = typeModalInput(m, "   ")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("submitting a blank reason returned command %T, want nil", cmd)
 	}
@@ -116,7 +116,7 @@ func TestModel_CloseFlowPersistsReasonAndRerendersRow(t *testing.T) {
 
 	m, _ = pressC(m)
 	m = typeModalInput(m, "  superseded by #42  ")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("submitting a reason should return a command")
 	}
@@ -149,7 +149,7 @@ func TestModel_CloseFlowFailureSetsStatus(t *testing.T) {
 
 	m, _ = pressC(m)
 	m = typeModalInput(m, "no longer needed")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("submitting a reason should return a command")
 	}
@@ -179,15 +179,15 @@ func TestModel_CloseFlowRemovesRowFromActiveFlows(t *testing.T) {
 		},
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{first, second})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 
 	m, _ = pressC(m)
 	if m.Overlay() != ui.OverlayInput {
 		t.Fatalf("overlay = %d, want the close modal from the Active Flows surface", m.Overlay())
 	}
 	m = typeModalInput(m, "done with this")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("submitting a reason should return a command")
 	}
@@ -211,7 +211,7 @@ func TestModel_CloseFlowRemovesLastActiveFlowRowWithoutPanicking(t *testing.T) {
 
 	m, _ = pressC(m)
 	m = typeModalInput(m, "the only one")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("submitting a reason should return a command")
 	}
@@ -220,7 +220,7 @@ func TestModel_CloseFlowRemovesLastActiveFlowRowWithoutPanicking(t *testing.T) {
 	if active := model.ActiveFlowsForTest(m); len(active) != 0 {
 		t.Fatalf("Active Flows = %#v, want empty", active)
 	}
-	if view := m.View(); view == "" {
+	if view := viewContent(m); view == "" {
 		t.Fatal("rendering an emptied Active Flows surface produced no view")
 	}
 }
@@ -251,7 +251,7 @@ func TestModel_CKeyReopensClosedFlowThroughConfirm(t *testing.T) {
 		t.Fatalf("reopen prompt = %q, want it to name the Flow", prompt)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("confirming a reopen should return a command")
 	}
@@ -278,7 +278,7 @@ func TestModel_ReopenConfirmDeclinedLeavesFlowClosed(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{closed})
 
 	m, _ = pressC(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if cmd != nil {
 		t.Fatalf("declining the reopen returned command %T, want nil", cmd)
 	}
@@ -308,10 +308,10 @@ func TestModel_ReopenFromFlowsPaneReadmitsRowToActiveFlows(t *testing.T) {
 	if active := model.ActiveFlowsForTest(m); len(active) != 0 {
 		t.Fatalf("Active Flows = %#v, want the closed row hidden before the reopen", active)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 
 	m, _ = pressC(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("confirming a reopen should return a command")
 	}
@@ -418,7 +418,7 @@ func TestModel_CloseSucceedsWithRunningPhase(t *testing.T) {
 
 	m, _ = pressC(m)
 	m = typeModalInput(m, "stopping this work")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("submitting a reason should return a command")
 	}
@@ -458,7 +458,7 @@ func TestModel_ClosedFlowAdvertisesNoBlockedKeys(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 400, Height: 40})
 
 	blocked := []string{"launch next", "repair", "mark merged", "auto:"}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	for _, label := range blocked {
 		if strings.Contains(view, label) {
 			t.Fatalf("closed Flow row advertises blocked key %q:\n%s", label, view)
@@ -469,7 +469,7 @@ func TestModel_ClosedFlowAdvertisesNoBlockedKeys(t *testing.T) {
 	}
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	phaseView := ansi.Strip(m.View())
+	phaseView := ansi.Strip(viewContent(m))
 	for _, label := range append(blocked, "resume", "reset ready") {
 		if strings.Contains(phaseView, label) {
 			t.Fatalf("closed Flow phase row advertises blocked key %q:\n%s", label, phaseView)
@@ -509,7 +509,7 @@ func TestModel_ClosedFlowRefusesRelaunchKeysButKeepsHeadless(t *testing.T) {
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{closed})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 			if cmd != nil {
 				if _, ok := cmd().(flowTerminalOpenRequest); ok {
 					t.Fatalf("%c launched an agent on a closed Flow", key)
@@ -531,7 +531,7 @@ func TestModel_ClosedFlowRefusesRelaunchKeysButKeepsHeadless(t *testing.T) {
 		})
 		m = flowsInRightPane(t, m, []flowstore.FlowRecord{closed})
 
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 		if cmd == nil {
 			t.Fatal("h on a closed Flow should still return a command")
 		}

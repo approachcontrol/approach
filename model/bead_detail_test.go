@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/beadsquery"
@@ -51,7 +51,7 @@ func TestBeadDetailEnterPagesVisibleFilteredSelectionInEverySubview(t *testing.T
 			})
 			m = setBeadsQuery(t, m, "needle")
 
-			m, fetchCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, fetchCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if fetchCmd == nil {
 				t.Fatal("enter returned nil detail command")
 			}
@@ -108,8 +108,8 @@ func TestBeadDetailEnterRequiresVisibleSettledSelection(t *testing.T) {
 			setup: func(t *testing.T, opts model.Options) model.Model {
 				opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 				m := settledBeadDetailModel(t, opts, ui.ModeBeadsOpen, 'o', []beadsquery.Bead{{ID: "bd-zero"}, {ID: "bd-retained"}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 				if !m.BeadsPending(ui.ModeBeadsOpen) || m.BeadsSelected(ui.ModeBeadsOpen) != 1 {
 					t.Fatalf("pending setup lost retained selection: pending=%v selected=%d", m.BeadsPending(ui.ModeBeadsOpen), m.BeadsSelected(ui.ModeBeadsOpen))
 				}
@@ -128,7 +128,7 @@ func TestBeadDetailEnterRequiresVisibleSettledSelection(t *testing.T) {
 			}
 			m := tt.setup(t, opts)
 
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if cmd != nil || showCalls != 0 {
 				t.Fatalf("enter = cmd %T show calls %d, want inert", cmd, showCalls)
 			}
@@ -147,11 +147,11 @@ func TestBeadDetailRefreshInvalidatesResultAfterSameBeadSettles(t *testing.T) {
 	}
 	m := settledBeadDetailModel(t, opts, ui.ModeBeadsOpen, 'o', []beadsquery.Bead{{ID: "bd-same"}})
 
-	m, detailCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, detailCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if detailCmd == nil {
 		t.Fatal("enter returned nil detail command")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	if !m.BeadsPending(ui.ModeBeadsOpen) {
 		t.Fatal("f5 did not mark Beads Open pending")
 	}
@@ -182,7 +182,7 @@ func TestBeadDetailStaleSuccessesAreIgnored(t *testing.T) {
 				return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 			}
 			m := settledBeadDetailModel(t, opts, ui.ModeBeadsOpen, 'o', beadDetailRows())
-			m, detailCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, detailCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if detailCmd == nil {
 				t.Fatal("enter returned nil detail command")
 			}
@@ -210,7 +210,7 @@ func TestBeadDetailStaleErrorsAreIgnored(t *testing.T) {
 			opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 			opts.ShowBead = func(string, string) (string, error) { return "", errors.New("stale failure") }
 			m := settledBeadDetailModel(t, opts, ui.ModeBeadsOpen, 'o', beadDetailRows())
-			m, detailCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, detailCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if detailCmd == nil {
 				t.Fatal("enter returned nil detail command")
 			}
@@ -234,7 +234,7 @@ func TestBeadDetailCurrentErrorIsDisplayedWithCapturedIdentity(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ShowBead = func(string, string) (string, error) { return "", errors.New("detail unavailable") }
 	m := settledBeadDetailModel(t, opts, ui.ModeBeadsOpen, 'o', beadDetailRows())
-	m, detailCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, detailCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	errMsg, ok := detailCmd().(model.FetchErrorMsg)
 	if !ok {
@@ -259,9 +259,9 @@ func TestBeadDetailCursorMayMoveAwayAndBackBeforeCompletion(t *testing.T) {
 		return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 	}
 	m := settledBeadDetailModel(t, opts, ui.ModeBeadsOpen, 'o', beadDetailRows())
-	m, detailCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, detailCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 
 	result := detailCmd().(model.BeadDetailResultMsg)
 	_, pagerCmd := update(m, result)
@@ -281,7 +281,7 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 			name: "repeated enter on same bead",
 			apply: func(t *testing.T, m model.Model) model.Model {
 				t.Helper()
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 				return m
 			},
 		},
@@ -289,7 +289,7 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 			name: "cursor moves to different bead",
 			apply: func(t *testing.T, m model.Model) model.Model {
 				t.Helper()
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 				return m
 			},
 		},
@@ -308,15 +308,15 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 		{
 			name: "switches subview containing same id",
 			apply: func(t *testing.T, m model.Model) model.Model {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 				return applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-original"}})
 			},
 		},
 		{
 			name: "switches away and back to settled same bead",
 			apply: func(t *testing.T, m model.Model) model.Model {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 				return applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-original"}})
 			},
 		},
@@ -324,8 +324,8 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 			name: "changes repository",
 			apply: func(t *testing.T, m model.Model) model.Model {
 				t.Helper()
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 				return m
 			},
 		},
@@ -333,10 +333,10 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 			name: "changes repository away and back to settled same bead",
 			apply: func(t *testing.T, m model.Model) model.Model {
 				t.Helper()
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 				return applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-original"}})
 			},
 		},
@@ -344,7 +344,7 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 			name: "starts refresh and hides retained rows",
 			apply: func(t *testing.T, m model.Model) model.Model {
 				t.Helper()
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 				if !m.BeadsPending(ui.ModeBeadsOpen) {
 					t.Fatal("refresh did not leave Beads pending")
 				}
@@ -355,7 +355,7 @@ func beadDetailStaleTransitions() []beadDetailStaleTransition {
 			name: "refresh settles again on same bead",
 			apply: func(t *testing.T, m model.Model) model.Model {
 				t.Helper()
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 				return applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-original"}})
 			},
 		},
@@ -372,10 +372,10 @@ func beadDetailRows() []beadsquery.Bead {
 func settledBeadDetailModel(t *testing.T, opts model.Options, mode ui.Mode, key rune, beads []beadsquery.Bead) model.Model {
 	t.Helper()
 	m := newTestModel(testRepos(), opts)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	if mode != ui.ModeBeadsReady {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 	}
 	return applyBeadsResult(t, m, mode, true, beads)
 }

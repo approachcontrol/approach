@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
@@ -44,18 +44,18 @@ func newSliceEpicModelWithOptions(t *testing.T, opts model.Options, beads []bead
 	}
 	m := inBeadsPane(newTestModel(testRepos(), opts))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 40})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	return applyBeadsResult(t, m, ui.ModeBeadsReady, true, beads)
 }
 
 func sliceEpicHintShown(m model.Model) bool {
-	return strings.Contains(ansi.Strip(m.View()), "slice epic")
+	return strings.Contains(ansi.Strip(viewContent(m)), "slice epic")
 }
 
 func pressSliceEpic(m model.Model) (model.Model, tea.Cmd) {
-	return update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
+	return update(m, tea.KeyPressMsg{Text: string([]rune{'S'})})
 }
 
 // captureSliceLaunch presses S and keeps the launch command undelivered, so the
@@ -85,7 +85,7 @@ func TestSliceEpic_AdvertisesAndLaunchesOneAgentInSelectedRepo(t *testing.T) {
 	}, sliceEpicBeads())
 
 	if !sliceEpicHintShown(m) {
-		t.Fatalf("settled Ready epic selection did not advertise the slice shortcut:\n%s", ansi.Strip(m.View()))
+		t.Fatalf("settled Ready epic selection did not advertise the slice shortcut:\n%s", ansi.Strip(viewContent(m)))
 	}
 
 	m, cmd := captureSliceLaunch(t, m)
@@ -177,8 +177,8 @@ func TestSliceEpic_NotOwnedOutsideSettledReadyEpicSelection(t *testing.T) {
 		// but the subview is pending, so the selection is not settled.
 		{"pending subview", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 			if !m.BeadsPending(ui.ModeBeadsReady) || len(m.Beads(ui.ModeBeadsReady)) != 1 {
 				t.Fatalf("setup did not leave a retained row in a pending Ready subview: pending=%v rows=%#v",
 					m.BeadsPending(ui.ModeBeadsReady), m.Beads(ui.ModeBeadsReady))
@@ -191,22 +191,22 @@ func TestSliceEpic_NotOwnedOutsideSettledReadyEpicSelection(t *testing.T) {
 		}},
 		{"filter with zero matches", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 			for _, r := range "zzzz" {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 			}
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			return m
 		}},
 		{"active search", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 			return m
 		}},
 		{"repo pane focused", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 			if m.ActivePane() != ui.PaneRepos {
 				t.Fatalf("setup did not focus the repo pane: %v", m.ActivePane())
 			}
@@ -214,7 +214,7 @@ func TestSliceEpic_NotOwnedOutsideSettledReadyEpicSelection(t *testing.T) {
 		}},
 		{"open modal", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
 			if !model.ModalOpenForTest(m) {
 				t.Fatal("setup did not open a modal")
 			}
@@ -224,7 +224,7 @@ func TestSliceEpic_NotOwnedOutsideSettledReadyEpicSelection(t *testing.T) {
 		// even though the Ready rows are still loaded underneath it.
 		{"active flows takeover", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			if m.Mode() != ui.ModeActiveFlows {
 				t.Fatalf("setup did not open the Active Flows takeover: %v", m.Mode())
 			}
@@ -234,7 +234,7 @@ func TestSliceEpic_NotOwnedOutsideSettledReadyEpicSelection(t *testing.T) {
 		// focusedMode returns the bottom mode, so S is not owned.
 		{"bottom pane focused", func(t *testing.T) model.Model {
 			m := newSliceEpicModel(t, opts(), sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 			if m.ActivePane() != ui.PaneBottom {
 				t.Fatalf("setup did not focus the bottom pane: %v", m.ActivePane())
 			}
@@ -253,7 +253,7 @@ func TestSliceEpic_NotOwnedOutsideSettledReadyEpicSelection(t *testing.T) {
 			launches = 0
 			m := tt.build(t)
 			if sliceEpicHintShown(m) {
-				t.Fatalf("slice shortcut advertised in an unowned context:\n%s", ansi.Strip(m.View()))
+				t.Fatalf("slice shortcut advertised in an unowned context:\n%s", ansi.Strip(viewContent(m)))
 			}
 			before := m.TransientError()
 			next, cmd := pressSliceEpic(m)
@@ -287,16 +287,16 @@ func TestSliceEpic_NotOwnedWhileEmbeddedTerminalInputIsFocused(t *testing.T) {
 		},
 	}))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 40})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, sliceEpicBeads())
 	m, _ = update(m, flowTerminalOpenRequest{LaunchContext: actions.AgentLaunchContext{
 		Command: "codex", FlowID: "flow-existing", FlowPhaseID: "implementation",
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 
 	if sliceEpicHintShown(m) {
 		t.Fatal("slice shortcut advertised while the embedded terminal input was focused")
@@ -331,11 +331,11 @@ func TestSliceEpic_NotOwnedInNonReadyBeadsSubviews(t *testing.T) {
 					return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 				},
 			}, sliceEpicBeads())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{sub.key}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{sub.key})})
 			m = applyBeadsResult(t, m, sub.mode, true, sliceEpicBeads())
 
 			if sliceEpicHintShown(m) {
-				t.Fatalf("slice shortcut advertised in the %s subview:\n%s", sub.name, ansi.Strip(m.View()))
+				t.Fatalf("slice shortcut advertised in the %s subview:\n%s", sub.name, ansi.Strip(viewContent(m)))
 			}
 			next, cmd := pressSliceEpic(m)
 			if cmd != nil {
@@ -492,7 +492,7 @@ func TestSliceEpic_FenceAdmitsOneLaunchAtATime(t *testing.T) {
 
 	// The fence is held while the launch command has not resolved yet, and the
 	// shared preparation admission suppresses f/F/a with it.
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if strings.Contains(view, "slice epic") {
 		t.Fatalf("slice shortcut stayed advertised while its own launch was in flight:\n%s", view)
 	}
@@ -556,10 +556,10 @@ func TestSliceEpic_HeldFenceSurvivesSelectionAndRepoChanges(t *testing.T) {
 	}
 
 	// Move the selection, then switch repositories. Neither releases the fence.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if model.SliceEpicLaunchInFlightForTest(m) != true {
 		t.Fatal("a selection or repository change released the in-flight slice fence")
 	}

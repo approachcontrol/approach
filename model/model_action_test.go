@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 
@@ -53,7 +53,7 @@ func TestModel_EnterOnDirtyWorktreeFetchesDiffWithoutOverlay(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
@@ -70,7 +70,7 @@ func TestModel_EnterOnCleanWorktreeIsNoOp(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone for clean worktree, got %d", m.Overlay())
 	}
@@ -87,7 +87,7 @@ func TestModel_EnterOnStaleWorktreeIsNoOp(t *testing.T) {
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone for stale worktree, got %d", m.Overlay())
 	}
@@ -104,7 +104,7 @@ func TestModel_EnterOnLockedDirtyWorktreeFetchesDiffWithoutOverlay(t *testing.T)
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected no overlay for locked dirty worktree, got %d", m.Overlay())
 	}
@@ -117,7 +117,7 @@ func TestModel_EnterOnEmptyWorktreeListIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone with no worktrees, got %d", m.Overlay())
 	}
@@ -133,9 +133,9 @@ func TestModel_MoveWorktreeOpensInputForMovableLinkedWorktree(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 	if cmd != nil {
 		t.Fatal("expected opening move input to return no command")
 	}
@@ -145,8 +145,8 @@ func TestModel_MoveWorktreeOpensInputForMovableLinkedWorktree(t *testing.T) {
 	if m.ConfirmPrompt() != ui.WorktreeMovePrompt {
 		t.Fatalf("expected move prompt %q, got %q", ui.WorktreeMovePrompt, m.ConfirmPrompt())
 	}
-	if !strings.Contains(m.View(), ui.WorktreeMoveInputPlaceholder) {
-		t.Fatalf("expected move placeholder in view, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), ui.WorktreeMoveInputPlaceholder) {
+		t.Fatalf("expected move placeholder in view, got:\n%s", viewContent(m))
 	}
 	if m.WorktreeInput() != "" {
 		t.Fatalf("expected empty initial move input, got %q", m.WorktreeInput())
@@ -229,7 +229,7 @@ func TestModel_MoveWorktreeInputNoOpsWhenUnavailable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := tt.setup(model.New(testRepos()))
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 			if cmd != nil {
 				t.Fatal("expected no command")
 			}
@@ -248,9 +248,9 @@ func TestModel_MoveWorktreeSubmitReturnsCommandAndFailureReopensInput(t *testing
 		{Path: oldPath, BranchName: "feat"},
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat-renamed")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat-renamed"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected move overlay to close on submit, got %d", m.Overlay())
 	}
@@ -339,7 +339,7 @@ func TestModel_WorktreeMovePendingSelectionClampsWhenPathMissing(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	m, _ = update(m, model.WorktreeMovedMsg{
 		RepoPath: "/dev/alpha",
@@ -375,7 +375,7 @@ func TestModel_WorktreeDiffResultPagesDiff(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
@@ -397,7 +397,7 @@ func TestModel_WorktreeDiffFetchFailureCarriesIdentity(t *testing.T) {
 		{Path: "/dev/does-not-exist", BranchName: "main", Dirty: true},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -431,7 +431,7 @@ func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutPaging(t *testi
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:     "/dev/alpha",
@@ -445,7 +445,7 @@ func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutPaging(t *testi
 	if len(paged) != 0 {
 		t.Fatalf("fetch failure should not page text, got %#v", paged)
 	}
-	if !strings.Contains(m.View(), "failed to load diff: boom") {
+	if !strings.Contains(viewContent(m), "failed to load diff: boom") {
 		t.Fatal("expected matching diff fetch failure in status bar")
 	}
 }
@@ -456,9 +456,9 @@ func TestModel_StaleWorktreeDiffFetchFailureIgnored(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 1
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape}) // close overlay
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 2
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})  // request 1
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // close overlay
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})  // request 2
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:     "/dev/alpha",
@@ -469,7 +469,7 @@ func TestModel_StaleWorktreeDiffFetchFailureIgnored(t *testing.T) {
 		WorktreePath: "/dev/alpha",
 	})
 
-	if strings.Contains(m.View(), "old diff failure") {
+	if strings.Contains(viewContent(m), "old diff failure") {
 		t.Fatal("expected stale same-target diff failure to be ignored")
 	}
 }
@@ -508,7 +508,7 @@ func TestModel_WorktreeDiffResultDiscardedIfWorktreePathChanged(t *testing.T) {
 	}
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
@@ -532,8 +532,8 @@ func TestModel_WorktreeDiffResultAfterEscapeStillPages(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
@@ -562,9 +562,9 @@ func TestModel_WorktreeDiffResultFromOlderRequestIgnoredAfterReopen(t *testing.T
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 1
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape}) // close before result arrives
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 2 for same target
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})  // request 1
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // close before result arrives
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})  // request 2 for same target
 
 	m, firstCmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
@@ -597,8 +597,8 @@ func TestModel_ViewResultAfterModeSwitchIgnored(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'b'})})
 
 	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
@@ -619,8 +619,8 @@ func TestModel_ViewResultAfterPaneFocusSwitchIgnored(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
 	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
@@ -643,7 +643,7 @@ func TestModel_TKey_Worktree_FiresCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for t key on worktree")
 	}
@@ -656,7 +656,7 @@ func TestModel_CKey_Worktree_FiresCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for c key on worktree")
 	}
@@ -669,7 +669,7 @@ func TestModel_TKey_LockedWorktree_FiresCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for t key on locked worktree")
 	}
@@ -682,7 +682,7 @@ func TestModel_CKey_LockedWorktree_FiresCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for c key on locked worktree")
 	}
@@ -695,7 +695,7 @@ func TestModel_TKey_StaleWorktree_NoCmd(t *testing.T) {
 		{Path: "/dev/alpha-gone", BranchName: "gone", Stale: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd != nil {
 		t.Error("expected nil cmd for t key on stale worktree")
 	}
@@ -708,7 +708,7 @@ func TestModel_CKey_StaleWorktree_NoCmd(t *testing.T) {
 		{Path: "/dev/alpha-gone", BranchName: "gone", Stale: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd != nil {
 		t.Error("expected nil cmd for c key on stale worktree")
 	}
@@ -722,7 +722,7 @@ func TestModel_TAndCKeys_LockedStaleWorktree_NoCmd(t *testing.T) {
 			{Path: "/dev/alpha-gone", BranchName: "gone", Locked: true, Stale: true},
 		}
 		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 		if cmd != nil {
 			t.Errorf("expected nil cmd for %q key on locked stale worktree", key)
 		}
@@ -732,7 +732,7 @@ func TestModel_TAndCKeys_LockedStaleWorktree_NoCmd(t *testing.T) {
 func TestModel_TKey_EmptyWorktrees_NoCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd != nil {
 		t.Error("expected nil cmd for t key with no worktrees")
 	}
@@ -741,7 +741,7 @@ func TestModel_TKey_EmptyWorktrees_NoCmd(t *testing.T) {
 func TestModel_CKey_EmptyWorktrees_NoCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd != nil {
 		t.Error("expected nil cmd for c key with no worktrees")
 	}
@@ -756,7 +756,7 @@ func TestModel_FKey_Worktree_FiresFetchCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for f key on worktree")
 	}
@@ -771,7 +771,7 @@ func TestModel_FKey_BareRepoWithoutWorktree_FiresFetchCmd(t *testing.T) {
 	m := model.New([]scanner.Repo{repo})
 	m = inRightPane(m)
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for fetch on bare repo without worktrees")
 	}
@@ -786,7 +786,7 @@ func TestModel_FKey_BareRepoBranchesWithoutSelection_FiresFetchCmd(t *testing.T)
 	m := model.New([]scanner.Repo{repo})
 	m = inBranchesMode(m)
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for branch-pane fetch on bare repo without rows")
 	}
@@ -804,16 +804,16 @@ func TestModel_LeftPaneFKeyFetchesFilteredReposOnly(t *testing.T) {
 			return nil
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bravo")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("bravo"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("expected batch fetch command")
 	}
-	if !strings.Contains(m.View(), "Fetching 0/1 visible repo...") {
-		t.Fatalf("expected initial batch fetch status, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetching 0/1 visible repo...") {
+		t.Fatalf("expected initial batch fetch status, got:\n%s", viewContent(m))
 	}
 
 	msgs := runBatchCmd(t, cmd)
@@ -834,16 +834,16 @@ func TestModel_LeftPaneFKeyFetchesFilteredReposOnly(t *testing.T) {
 
 func TestModel_LeftPaneFKeyWithNoVisibleReposShowsStatus(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("missing")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("missing"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command when no repos are visible")
 	}
-	if !strings.Contains(m.View(), "No visible repos to fetch") {
-		t.Fatalf("expected no-visible-repos status, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "No visible repos to fetch") {
+		t.Fatalf("expected no-visible-repos status, got:\n%s", viewContent(m))
 	}
 }
 
@@ -852,16 +852,16 @@ func TestModel_LeftPaneFKeyDuringVisibleRepoFetchDoesNotStartAnotherBatch(t *tes
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, firstCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if firstCmd == nil {
 		t.Fatal("expected first batch fetch command")
 	}
-	m, secondCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, secondCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if secondCmd != nil {
 		t.Fatal("expected no command when batch fetch is already in progress")
 	}
-	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
-		t.Fatalf("expected original batch progress to remain visible, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetching 0/3 visible repos...") {
+		t.Fatalf("expected original batch progress to remain visible, got:\n%s", viewContent(m))
 	}
 }
 
@@ -870,15 +870,15 @@ func TestModel_VisibleRepoFetchProgressSurvivesOrdinaryKeypress(t *testing.T) {
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	msgs := runBatchCmd(t, cmd)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
-		t.Fatalf("active progress should survive ordinary keypress, got:\n%s", m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !strings.Contains(viewContent(m), "Fetching 0/3 visible repos...") {
+		t.Fatalf("active progress should survive ordinary keypress, got:\n%s", viewContent(m))
 	}
 	m, _ = update(m, msgs[0])
-	if !strings.Contains(m.View(), "Fetching 1/3 visible repos...") {
-		t.Fatalf("active progress should continue after result, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetching 1/3 visible repos...") {
+		t.Fatalf("active progress should continue after result, got:\n%s", viewContent(m))
 	}
 }
 
@@ -887,22 +887,22 @@ func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	msgs := runBatchCmd(t, cmd)
 	for i, msg := range msgs {
 		m, cmd = update(m, msg)
 		if i < len(msgs)-1 {
 			want := fmt.Sprintf("Fetching %d/3 visible repos...", i+1)
-			if !strings.Contains(m.View(), want) {
-				t.Fatalf("expected progress %q, got:\n%s", want, m.View())
+			if !strings.Contains(viewContent(m), want) {
+				t.Fatalf("expected progress %q, got:\n%s", want, viewContent(m))
 			}
 			if cmd != nil {
 				t.Fatal("did not expect refresh before batch completion")
 			}
 		}
 	}
-	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
-		t.Fatalf("expected final success status, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status, got:\n%s", viewContent(m))
 	}
 	if cmd == nil {
 		t.Fatal("expected one selected-repo refresh when batch completes")
@@ -914,10 +914,10 @@ func TestModel_VisibleRepoFetchRefreshesStoredTopModeAfterBottomPaneTakesFocus(t
 	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	msgs := runBatchCmd(t, cmd)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	before := listRequests(m)
 
 	for _, msg := range msgs {
@@ -935,17 +935,17 @@ func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	for _, msg := range runBatchCmd(t, cmd) {
 		m, _ = update(m, msg)
 	}
-	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
-		t.Fatalf("expected final success status before expiry, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status before expiry, got:\n%s", viewContent(m))
 	}
 
 	m, _ = update(m, model.StatusExpiredMsg{Seq: 1})
-	if strings.Contains(m.View(), "Fetched 3 visible repos") {
-		t.Fatalf("expected final success status to expire, got:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status to expire, got:\n%s", viewContent(m))
 	}
 }
 
@@ -954,7 +954,7 @@ func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	for _, msg := range runBatchCmd(t, cmd) {
 		m, _ = update(m, msg)
 	}
@@ -966,8 +966,8 @@ func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
 	if m.TransientErrorFadeStep() != 1 {
 		t.Fatalf("expected fade step 1, got %d", m.TransientErrorFadeStep())
 	}
-	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
-		t.Fatalf("fade should keep status visible, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetched 3 visible repos") {
+		t.Fatalf("fade should keep status visible, got:\n%s", viewContent(m))
 	}
 
 	m, _ = update(m, model.StatusFadeMsg{Seq: 1, Step: 2})
@@ -981,15 +981,15 @@ func TestModel_VisibleRepoFetchFinalStatusStillClearsOnKeypress(t *testing.T) {
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	for _, msg := range runBatchCmd(t, cmd) {
 		m, _ = update(m, msg)
 	}
 	m, _ = update(m, model.StatusFadeMsg{Seq: 1, Step: 1})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if strings.Contains(m.View(), "Fetched 3 visible repos") {
-		t.Fatalf("expected keypress to clear faded status immediately, got:\n%s", m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if strings.Contains(viewContent(m), "Fetched 3 visible repos") {
+		t.Fatalf("expected keypress to clear faded status immediately, got:\n%s", viewContent(m))
 	}
 }
 
@@ -998,14 +998,14 @@ func TestModel_VisibleRepoFetchStatusExpiryDoesNotClearNewerStatus(t *testing.T)
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	for _, msg := range runBatchCmd(t, cmd) {
 		m, _ = update(m, msg)
 	}
 	m, _ = update(m, model.GitFetchFailedMsg{RepoPath: "/dev/alpha", Err: "fetch failed: newer"})
 
 	m, _ = update(m, model.StatusExpiredMsg{Seq: 1})
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "fetch failed: newer") {
 		t.Fatalf("expiry should not clear a newer git status, got:\n%s", view)
 	}
@@ -1028,11 +1028,11 @@ func TestModel_VisibleRepoFetchPartialFailureSummaryIsCapped(t *testing.T) {
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	for _, msg := range runBatchCmd(t, cmd) {
 		m, cmd = update(m, msg)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Fetched 1/5 visible repos; failed: bravo, charlie, delta +1 more") {
 		t.Fatalf("expected capped failure summary, got:\n%s", view)
 	}
@@ -1046,13 +1046,13 @@ func TestModel_VisibleRepoFetchStaleResultIgnoredByRequest(t *testing.T) {
 		FetchRepo: func(string) error { return nil },
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	m, cmd := update(m, model.VisibleRepoFetchResultMsg{Request: 999, RepoPath: "/dev/alpha"})
 	if cmd != nil {
 		t.Fatal("stale batch result should not trigger refresh")
 	}
-	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
-		t.Fatalf("stale result should not advance batch progress, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetching 0/3 visible repos...") {
+		t.Fatalf("stale result should not advance batch progress, got:\n%s", viewContent(m))
 	}
 }
 
@@ -1060,21 +1060,21 @@ func TestModel_VisibleRepoFetchRefreshesOnlyIfCurrentSelectionWasCaptured(t *tes
 	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bravo")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("bravo"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	msgs := runBatchCmd(t, cmd)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	m, _ = update(m, msgs[0])
-	if !strings.Contains(m.View(), "Fetched 1 visible repo") {
-		t.Fatalf("expected final success status, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetched 1 visible repo") {
+		t.Fatalf("expected final success status, got:\n%s", viewContent(m))
 	}
 }
 
@@ -1082,9 +1082,9 @@ func TestModel_VisibleRepoFetchRefreshesChangedSelectionInsideCapturedBatch(t *t
 	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	msgs := runBatchCmd(t, cmd)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	for _, msg := range msgs {
 		m, cmd = update(m, msg)
@@ -1092,8 +1092,8 @@ func TestModel_VisibleRepoFetchRefreshesChangedSelectionInsideCapturedBatch(t *t
 	if cmd == nil {
 		t.Fatal("expected refresh when changed selection is part of captured batch")
 	}
-	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
-		t.Fatalf("expected final success status, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status, got:\n%s", viewContent(m))
 	}
 }
 
@@ -1110,7 +1110,7 @@ func TestModel_RightPaneFetchUsesInjectedFetchRepo(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'f'})})
 	if cmd == nil {
 		t.Fatal("expected fetch command")
 	}
@@ -1129,7 +1129,7 @@ func TestModel_ShiftFKey_Worktree_FiresPullCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for F key on worktree")
 	}
@@ -1146,7 +1146,7 @@ func TestModel_FAndShiftFKeys_StaleWorktree_NoCmd(t *testing.T) {
 		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 			{Path: "/dev/alpha-gone", BranchName: "gone", Stale: true},
 		}})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 		if cmd != nil {
 			t.Errorf("expected nil cmd for %q key on stale worktree", key)
 		}
@@ -1160,7 +1160,7 @@ func TestModel_ShiftFKey_NonWorktreeBranch_NoCmd(t *testing.T) {
 		{Name: "feature"},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd for pull on non-worktree branch, got %T", cmd)
 	}
@@ -1171,7 +1171,7 @@ func TestModel_ShiftFKey_BareRepoWithoutWorktree_NoCmd(t *testing.T) {
 	m := model.New([]scanner.Repo{repo})
 	m = inRightPane(m)
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd for pull on bare repo without selected worktree, got %T", cmd)
 	}
@@ -1195,14 +1195,14 @@ func TestModel_FAndShiftFKeys_NonWorktreeAndBranchModes_NoCmd(t *testing.T) {
 			m = inRightPane(m)
 			switch tc.mode {
 			case ui.ModeStashes:
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 			case ui.ModeHistory:
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 			case ui.ModeReflog:
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 			}
 
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{tc.key})})
 			if cmd != nil {
 				t.Fatalf("expected nil cmd for %q in mode %d, got %T", tc.key, tc.mode, cmd)
 			}
@@ -1223,7 +1223,7 @@ func TestModel_BareRepoCheckedOutBranchDeleteNoCmd(t *testing.T) {
 	}})
 	m = enableDestructive(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no delete confirm for checked-out bare repo branch, got overlay %d", m.Overlay())
 	}
@@ -1241,7 +1241,7 @@ func TestModel_RootBranchDeleteAllowsCleanedRepoPath_NoCmd(t *testing.T) {
 	}})
 	m = enableDestructive(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no delete confirm for cleaned root branch path, got overlay %d", m.Overlay())
 	}
@@ -1254,9 +1254,9 @@ func TestModel_CKey_BareRepoHistory_NoCmd(t *testing.T) {
 	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
 	m := model.New([]scanner.Repo{repo})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd for opening code from bare repo history, got %T", cmd)
 	}
@@ -1265,7 +1265,7 @@ func TestModel_CKey_BareRepoHistory_NoCmd(t *testing.T) {
 func TestModel_GitFetchedRefetchesStoredTopModeAfterBottomPaneTakesFocus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	before := listRequests(m)
 
 	next, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
@@ -1278,7 +1278,7 @@ func TestModel_GitFetchedRefetchesStoredTopModeAfterBottomPaneTakesFocus(t *test
 func TestModel_GitPulledRefetchesStoredTopModeAfterBottomPaneTakesFocus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	before := listRequests(m)
 
 	next, cmd := update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
@@ -1303,7 +1303,7 @@ func TestModel_StaleGitPullFailedMsgIgnored(t *testing.T) {
 	m = selectBravo(m)
 	m, _ = update(m, model.GitPullFailedMsg{RepoPath: "/dev/alpha", Err: "pull failed"})
 
-	if strings.Contains(m.View(), "pull failed") {
+	if strings.Contains(viewContent(m), "pull failed") {
 		t.Fatal("expected stale pull failure to be ignored")
 	}
 }
@@ -1381,7 +1381,7 @@ func TestModel_EnterStillRequiresDirtyWorktree(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
 	// Root branch (dirty-root) is pinned to index 0: enter opens diff
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter on dirty root branch should open diff")
 	}
@@ -1389,15 +1389,15 @@ func TestModel_EnterStillRequiresDirtyWorktree(t *testing.T) {
 	// in TestModel_BranchDiffPayloadAgainstRealRepo.
 
 	// Navigate to clean-1 (index 1): enter is no-op
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	_, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Error("enter on clean-1 should be no-op")
 	}
 
 	// Navigate to clean-2 (index 2): enter is no-op
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	_, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Error("enter on clean-2 should be no-op")
 	}
@@ -1417,7 +1417,7 @@ func TestModel_EnterFetchesBranchDiffWithoutOverlayForDirtyWorktree(t *testing.T
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
@@ -1441,7 +1441,7 @@ func TestModel_BranchDiffResultForWrongWorktreePathIgnored(t *testing.T) {
 			},
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	_, cmd := update(m, model.BranchDiffResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -1491,7 +1491,7 @@ func TestModel_BranchDiffFetchFailureMatchesBranchAndWorktreePath(t *testing.T) 
 			WorktreePaths: []string{"/dev/alpha"},
 		}},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:    "/dev/alpha",
@@ -1501,7 +1501,7 @@ func TestModel_BranchDiffFetchFailureMatchesBranchAndWorktreePath(t *testing.T) 
 		DiffRequest: 1,
 		BranchName:  "feat",
 	})
-	if strings.Contains(m.View(), "branch diff failed") {
+	if strings.Contains(viewContent(m), "branch diff failed") {
 		t.Fatal("missing worktree path branch diff failure should be ignored")
 	}
 
@@ -1514,7 +1514,7 @@ func TestModel_BranchDiffFetchFailureMatchesBranchAndWorktreePath(t *testing.T) 
 		BranchName:   "feat",
 		WorktreePath: "/dev/elsewhere",
 	})
-	if strings.Contains(m.View(), "branch diff failed") {
+	if strings.Contains(viewContent(m), "branch diff failed") {
 		t.Fatal("wrong worktree path branch diff failure should be ignored")
 	}
 
@@ -1527,7 +1527,7 @@ func TestModel_BranchDiffFetchFailureMatchesBranchAndWorktreePath(t *testing.T) 
 		BranchName:   "feat",
 		WorktreePath: "/dev/alpha",
 	})
-	if !strings.Contains(m.View(), "branch diff failed") {
+	if !strings.Contains(viewContent(m), "branch diff failed") {
 		t.Fatal("matching branch diff failure should show in status bar")
 	}
 }
@@ -1543,7 +1543,7 @@ func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
@@ -1557,14 +1557,14 @@ func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
 func modelInHistoryWithCommits() model.Model {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	return m
 }
 
 func TestModel_EnterInHistoryFetchesCommitDiffWithoutOverlay(t *testing.T) {
 	m := modelInHistoryWithCommits()
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
@@ -1576,9 +1576,9 @@ func TestModel_EnterInHistoryFetchesCommitDiffWithoutOverlay(t *testing.T) {
 func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	// No commits loaded
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
@@ -1591,9 +1591,9 @@ func TestModel_CommitDiffResultStoresDiff(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	_, cmd := update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
 	if cmd == nil {
 		t.Fatal("expected commit diff to launch pager")
@@ -1611,7 +1611,7 @@ func TestModel_StaleCommitDiffResultDiscarded(t *testing.T) {
 
 func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 	m := modelInHistoryWithCommits()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:    "/dev/alpha",
@@ -1621,7 +1621,7 @@ func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 		DiffRequest: 1,
 		Hash:        "wrong",
 	})
-	if strings.Contains(m.View(), "commit diff failed") {
+	if strings.Contains(viewContent(m), "commit diff failed") {
 		t.Fatal("wrong-hash commit diff failure should be ignored")
 	}
 
@@ -1633,7 +1633,7 @@ func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 		DiffRequest: 99,
 		Hash:        "abc1234",
 	})
-	if strings.Contains(m.View(), "commit diff failed") {
+	if strings.Contains(viewContent(m), "commit diff failed") {
 		t.Fatal("wrong-request commit diff failure should be ignored")
 	}
 
@@ -1645,7 +1645,7 @@ func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 		DiffRequest: 1,
 		Hash:        "abc1234",
 	})
-	if !strings.Contains(m.View(), "commit diff failed") {
+	if !strings.Contains(viewContent(m), "commit diff failed") {
 		t.Fatal("matching commit diff failure should show in status bar")
 	}
 }
@@ -1659,9 +1659,9 @@ func TestModel_YKeyCopiesHashInHistoryMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for y key in mode 3")
 	}
@@ -1674,7 +1674,7 @@ func TestModel_YKeyCopiesHashInHistoryMode(t *testing.T) {
 func TestModel_YKeyNoOpInWorktreesMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for y key in mode 1, got %T", cmd)
 	}
@@ -1683,8 +1683,8 @@ func TestModel_YKeyNoOpInWorktreesMode(t *testing.T) {
 func TestModel_YKeyNoOpWithNoCommits(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for y key with no commits, got %T", cmd)
 	}
@@ -1695,7 +1695,7 @@ func TestModel_ClipboardResultShowsError(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = update(m, model.ClipboardResultMsg{Err: "no supported clipboard command installed; install wl-copy, xclip, or xsel"})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "no supported clipboard command installed") {
 		t.Fatalf("expected clipboard error in view, got:\n%s", view)
 	}
@@ -1706,7 +1706,7 @@ func TestModel_TerminalResultShowsError(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = update(m, model.TerminalResultMsg{Err: "TERMINAL is set to \"ghostterm\", but that command was not found"})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "ghostterm") {
 		t.Fatalf("expected terminal error in view, got:\n%s", view)
 	}
@@ -1715,7 +1715,7 @@ func TestModel_TerminalResultShowsError(t *testing.T) {
 func TestModel_DKeyNoOpInHistoryMode(t *testing.T) {
 	m := modelInHistoryWithCommits()
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone in history mode, got %d", m.Overlay())
 	}
@@ -1723,7 +1723,7 @@ func TestModel_DKeyNoOpInHistoryMode(t *testing.T) {
 
 func TestModel_TKeyInHistoryFiresCmd(t *testing.T) {
 	m := modelInHistoryWithCommits()
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for t key in history mode")
 	}
@@ -1731,7 +1731,7 @@ func TestModel_TKeyInHistoryFiresCmd(t *testing.T) {
 
 func TestModel_CKeyInHistoryFiresCmd(t *testing.T) {
 	m := modelInHistoryWithCommits()
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for c key in history mode")
 	}
@@ -1742,9 +1742,9 @@ func TestModel_CKeyInHistoryFiresCmd(t *testing.T) {
 func TestModel_EnterOnStashFetchesDiffWithoutOverlay(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
@@ -1757,9 +1757,9 @@ func TestModel_StashDiffResultStoresDiff(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	_, cmd := update(m, model.StashDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		Index:       0,
@@ -1790,14 +1790,14 @@ func TestModel_StaleStashDiffDoesNotLaunchAfterModeChange(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	_, cmd := update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, DiffRequest: 1, Diff: "stale stash diff"})
 
 	if cmd != nil || len(paged) != 0 {
@@ -1809,12 +1809,12 @@ func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	_, cmd := update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, DiffRequest: 1, Diff: "old index diff"})
 	if cmd != nil || len(paged) != 0 {
@@ -1845,9 +1845,9 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
 
 	_, cmd := update(m, model.StashDiffResultMsg{
@@ -1884,9 +1884,9 @@ func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
 
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
 
 	m, _ = update(m, model.FetchErrorMsg{
@@ -1897,7 +1897,7 @@ func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
 		DiffRequest: 1,
 		StashIndex:  newStash.Index,
 	})
-	if strings.Contains(m.View(), "missing stash identity failed") {
+	if strings.Contains(viewContent(m), "missing stash identity failed") {
 		t.Fatal("missing stash date/message failure should be ignored")
 	}
 
@@ -1911,7 +1911,7 @@ func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
 		StashDate:    oldStash.Date,
 		StashMessage: oldStash.Message,
 	})
-	if strings.Contains(m.View(), "old stash diff failed") {
+	if strings.Contains(viewContent(m), "old stash diff failed") {
 		t.Fatal("stale stash identity failure should be ignored")
 	}
 
@@ -1925,7 +1925,7 @@ func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
 		StashDate:    newStash.Date,
 		StashMessage: newStash.Message,
 	})
-	if !strings.Contains(m.View(), "new stash diff failed") {
+	if !strings.Contains(viewContent(m), "new stash diff failed") {
 		t.Fatal("matching stash identity failure should show in status bar")
 	}
 }
@@ -1940,7 +1940,7 @@ func TestModel_DKeyNoOpInReadOnlyMode(t *testing.T) {
 		Branches: []gitquery.Branch{{Name: "feat"}},
 	})
 	// d should be no-op in read-only mode (default)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone in read-only mode, got %d", m.Overlay())
 	}
@@ -1952,7 +1952,7 @@ func TestModel_ShiftDTogglesDestructiveOn(t *testing.T) {
 	if m.Destructive() {
 		t.Fatal("expected destructive=false initially")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	if !m.Destructive() {
 		t.Error("expected destructive=true after Shift+D")
 	}
@@ -1966,9 +1966,9 @@ func TestModel_DKeyWorksInDestructiveMode(t *testing.T) {
 		Branches: []gitquery.Branch{{Name: "feat"}},
 	})
 	// Enable destructive mode
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	// Now d should work
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm in destructive mode, got %d", m.Overlay())
 	}
@@ -1977,9 +1977,9 @@ func TestModel_DKeyWorksInDestructiveMode(t *testing.T) {
 func TestModel_DKeyNoOpInReadOnlyModeStashes(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone for stash drop in read-only mode, got %d", m.Overlay())
 	}
@@ -1988,8 +1988,8 @@ func TestModel_DKeyNoOpInReadOnlyModeStashes(t *testing.T) {
 func TestModel_ShiftDTogglesDestructiveOff(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	if m.Destructive() {
 		t.Error("expected destructive=false after second Shift+D")
 	}
@@ -1998,7 +1998,7 @@ func TestModel_ShiftDTogglesDestructiveOff(t *testing.T) {
 func TestModel_ShiftDWorksFromLeftPane(t *testing.T) {
 	m := model.New(testRepos())
 	// Left pane is active by default
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	if !m.Destructive() {
 		t.Error("expected destructive=true from left pane")
 	}
@@ -2007,10 +2007,10 @@ func TestModel_ShiftDWorksFromLeftPane(t *testing.T) {
 func TestModel_DestructivePersistsAcrossRepoSwitch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	// Switch to left pane and navigate to a different repo
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if !m.Destructive() {
 		t.Error("expected destructive to persist after repo switch")
 	}
@@ -2019,12 +2019,12 @@ func TestModel_DestructivePersistsAcrossRepoSwitch(t *testing.T) {
 func TestModel_ShiftDNoOpDuringConfirmOverlay(t *testing.T) {
 	m := modelWithDeletableBranch()
 	// Open confirm dialog
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatal("expected OverlayConfirm")
 	}
 	// Shift+D should be ignored while confirm is active
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	if !m.Destructive() {
 		t.Error("expected destructive to remain true during confirm overlay")
 	}
@@ -2084,7 +2084,7 @@ func TestModel_CombinedCleanupConfirmYReturnsCmd(t *testing.T) {
 		t.Fatalf("expected OverlayConfirm, got %d", m.Overlay())
 	}
 	// Confirm branch deletion
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after confirm, got %d", m.Overlay())
 	}
@@ -2107,7 +2107,7 @@ func TestModel_CombinedCleanupConfirmNClosesDialog(t *testing.T) {
 	}})
 	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
 	// Decline branch deletion
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after cancel, got %d", m.Overlay())
 	}
@@ -2135,7 +2135,7 @@ func TestModel_CombinedCleanupForceDeleteFailureSurfacesError(t *testing.T) {
 		t.Fatalf("expected branch confirm overlay, got %d", m.Overlay())
 	}
 	// Confirm branch deletion → DeleteBranch fails on fake path → DeleteFailedMsg
-	_, branchDeleteCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, branchDeleteCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if branchDeleteCmd == nil {
 		t.Fatal("expected branch delete cmd, got nil")
 	}
@@ -2152,7 +2152,7 @@ func TestModel_CombinedCleanupForceDeleteFailureSurfacesError(t *testing.T) {
 		t.Fatal("expected ConfirmForce=true for force confirm")
 	}
 	// Confirm force-delete
-	_, forceCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, forceCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if forceCmd == nil {
 		t.Fatal("expected force cmd, got nil")
 	}
@@ -2170,7 +2170,7 @@ func TestModel_PKeyRequiresDestructiveMode(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "stale", Stale: true},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p without destructive mode should be no-op, got overlay %d", m.Overlay())
 	}
@@ -2180,7 +2180,7 @@ func TestModel_PKeyNoOpOnNonStaleWorktree(t *testing.T) {
 	m := modelWithWorktrees([]gitquery.Worktree{
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p on non-stale worktree should be no-op, got overlay %d", m.Overlay())
 	}
@@ -2190,7 +2190,7 @@ func TestModel_PKeyOnStaleWorktreeShowsConfirm(t *testing.T) {
 	m := modelWithWorktrees([]gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "stale-branch", Stale: true},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("p on stale worktree should open confirm, got overlay %d", m.Overlay())
 	}
@@ -2203,7 +2203,7 @@ func TestModel_PKeyNoOpOnLockedStaleWorktree(t *testing.T) {
 	m := modelWithWorktrees([]gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},
 	})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p on locked stale worktree should be no-op, got overlay %d", m.Overlay())
 	}
@@ -2216,7 +2216,7 @@ func TestModel_PKeyNoOpInBranchesMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p in branches mode should be no-op, got overlay %d", m.Overlay())
 	}
@@ -2243,7 +2243,7 @@ func TestModel_TKeyInWorktreesModeFiresCmd(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for t key in worktrees mode")
 	}
@@ -2255,7 +2255,7 @@ func TestModel_CKeyInWorktreesModeFiresCmd(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for c key in worktrees mode")
 	}
@@ -2267,7 +2267,7 @@ func TestModel_TKeyOnStaleWorktreeIsNoOp(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "stale", Stale: true},
 	}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd != nil {
 		t.Error("expected nil cmd for t key on stale worktree")
 	}
@@ -2289,7 +2289,7 @@ func TestModel_WorktreeDeleteCompletedMsgIsNoOp(t *testing.T) {
 func TestModel_NKeyOpensWorktreeInput(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
@@ -2307,7 +2307,7 @@ func TestModel_NKeyOpensWorktreeInput(t *testing.T) {
 func TestModel_PKeyOpensPullRequestWorktreeInput(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
@@ -2338,12 +2338,12 @@ func TestModel_NKeyNoOpOutsideCreationModes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
 			m = inWorktreesMode(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{tc.key})})
 			if m.Mode() != tc.mode {
 				t.Fatalf("expected mode %d, got %d", tc.mode, m.Mode())
 			}
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 			if m.Overlay() != ui.OverlayNone {
 				t.Errorf("expected OverlayNone, got %d", m.Overlay())
 			}
@@ -2368,12 +2368,12 @@ func TestModel_PKeyNoOpOutsideWorktreesMode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
 			m = inWorktreesMode(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{tc.key})})
 			if m.Mode() != tc.mode {
 				t.Fatalf("expected mode %d, got %d", tc.mode, m.Mode())
 			}
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
 			if m.Overlay() != ui.OverlayNone {
 				t.Errorf("expected OverlayNone, got %d", m.Overlay())
 			}
@@ -2386,8 +2386,8 @@ func TestModel_PKeyNoOpOutsideWorktreesMode(t *testing.T) {
 
 func TestModel_PKeyNoOpWithoutSelectedRepo(t *testing.T) {
 	m := model.New(nil)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
@@ -2399,9 +2399,9 @@ func TestModel_PKeyNoOpWithoutSelectedRepo(t *testing.T) {
 func TestModel_WorktreeInputCapturesRunesAndBackspace(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if m.WorktreeInput() != "fea" {
 		t.Errorf("expected input %q, got %q", "fea", m.WorktreeInput())
 	}
@@ -2410,9 +2410,9 @@ func TestModel_WorktreeInputCapturesRunesAndBackspace(t *testing.T) {
 func TestModel_WorktreeInputEscCancels(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
@@ -2427,9 +2427,9 @@ func TestModel_WorktreeInputEscCancels(t *testing.T) {
 func TestModel_WorktreeInputCtrlCCancels(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
@@ -2444,8 +2444,8 @@ func TestModel_WorktreeInputCtrlCCancels(t *testing.T) {
 func TestModel_WorktreeInputEnterRequiresText(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
 	}
@@ -2460,8 +2460,8 @@ func TestModel_WorktreeInputEnterRequiresText(t *testing.T) {
 func TestModel_PullRequestWorktreeInputEnterRequiresText(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
 	}
@@ -2479,9 +2479,9 @@ func TestModel_PullRequestWorktreeInputEnterRequiresText(t *testing.T) {
 func TestModel_PullRequestWorktreeInputRejectsUnsupportedURL(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("https://gitlab.com/acme/project/-/merge_requests/123")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("https://gitlab.com/acme/project/-/merge_requests/123"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
 	}
@@ -2499,9 +2499,9 @@ func TestModel_PullRequestWorktreeInputRejectsUnsupportedURL(t *testing.T) {
 func TestModel_WorktreeInputEnterCreatesWorktree(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
@@ -2517,9 +2517,9 @@ func TestModel_WorktreeInputEnterCreatesWorktree(t *testing.T) {
 func TestModel_PullRequestWorktreeInputEnterCreatesWorktree(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("123")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("123"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
@@ -2550,7 +2550,7 @@ func TestModel_WorktreeCreatedRefetchesWorktrees(t *testing.T) {
 
 func TestModel_WorktreeCreatedExitsActiveFlows(t *testing.T) {
 	m := inWorktreesMode(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("mode before create completion = %d, want active flows", m.Mode())
 	}
@@ -2616,15 +2616,15 @@ func TestModel_WorktreeCreateFailedUsesFallbackError(t *testing.T) {
 func TestModel_NKeyInBranchesModeOpensBranchInput(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "" {
 		t.Errorf("expected empty branch input, got %q", m.WorktreeInput())
 	}
-	if !strings.Contains(m.View(), "Create branch:") {
-		t.Errorf("expected branch prompt in view, got %q", m.View())
+	if !strings.Contains(viewContent(m), "Create branch:") {
+		t.Errorf("expected branch prompt in view, got %q", viewContent(m))
 	}
 	if got := m.InputMode(); got != modal.InputSingleLine {
 		t.Errorf("branch input mode = %v, want single-line", got)
@@ -2637,7 +2637,7 @@ func TestModel_NKeyInBranchesModeOpensBranchInput(t *testing.T) {
 func TestModel_NKeyInBranchesModeWithNoRepoIsNoOp(t *testing.T) {
 	m := model.New(nil)
 	m = inBranchesMode(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
@@ -2649,8 +2649,8 @@ func TestModel_NKeyInBranchesModeWithNoRepoIsNoOp(t *testing.T) {
 func TestModel_BranchInputEnterRequiresText(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
 	}
@@ -2665,9 +2665,9 @@ func TestModel_BranchInputEnterRequiresText(t *testing.T) {
 func TestModel_BranchInputEnterCreatesBranch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/one")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feature/one"))})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
@@ -2690,10 +2690,10 @@ func TestModel_BranchInputUsesSelectedBranchAsStartPoint(t *testing.T) {
 			{Name: "base"},
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feature/from-base"))})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected create branch cmd")
 	}
@@ -2716,10 +2716,10 @@ func TestModel_BranchInputUsesFullRefForHeadsPrefixedBranch(t *testing.T) {
 			{Name: "heads/base", FullRef: "refs/heads/heads/base"},
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-heads-base")})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feature/from-heads-base"))})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected create branch cmd")
 	}
@@ -2746,7 +2746,7 @@ func TestModel_BranchCreatedRefetchesBranches(t *testing.T) {
 
 func TestModel_BranchCreatedExitsActiveFlows(t *testing.T) {
 	m := inBranchesMode(model.New(testRepos()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("mode before branch creation = %d, want active flows", m.Mode())
 	}
@@ -2769,8 +2769,8 @@ func TestModel_BranchCreateFailedReopensBranchInput(t *testing.T) {
 	if m.WorktreeInputErr() != "boom" {
 		t.Errorf("expected error restored, got %q", m.WorktreeInputErr())
 	}
-	if !strings.Contains(m.View(), "Create branch:") {
-		t.Errorf("expected branch prompt in view, got %q", m.View())
+	if !strings.Contains(viewContent(m), "Create branch:") {
+		t.Errorf("expected branch prompt in view, got %q", viewContent(m))
 	}
 }
 
@@ -2790,9 +2790,9 @@ func TestModel_BranchCreateFailedRetryPreservesStartPoint(t *testing.T) {
 		Err:        "bad branch name",
 		StartPoint: "refs/heads/base",
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feature/from-base"))})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected retry create branch cmd")
 	}
@@ -2826,9 +2826,9 @@ func TestModel_BranchCreatedClearsFilterBeforeSelectingNewBranch(t *testing.T) {
 			{Name: "base"},
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("base")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("base"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
 	m, _ = update(m, model.BranchResultMsg{
@@ -2884,8 +2884,8 @@ func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown}) // repo bravo
 	m, _ = update(m, model.BranchResultMsg{
 		RepoPath: "/dev/bravo",
 		Branches: []gitquery.Branch{
@@ -2903,7 +2903,7 @@ func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
 
 // enableDestructive presses Shift+D to enter destructive mode.
 func enableDestructive(m model.Model) model.Model {
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 	return m
 }
 
@@ -2920,7 +2920,7 @@ func modelWithDeletableBranch() model.Model {
 
 func TestModel_DKeyOpensConfirmOverlay(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm, got %d", m.Overlay())
 	}
@@ -2937,7 +2937,7 @@ func TestModel_DKeyOnNonWorktreeBranchOpensDeleteConfirm(t *testing.T) {
 		Branches: []gitquery.Branch{{Name: "main"}},
 	})
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm for non-worktree branch, got %d", m.Overlay())
 	}
@@ -2953,7 +2953,7 @@ func TestModel_DKeyNoOpWithNoBranches(t *testing.T) {
 	m := model.New(testRepos())
 	// No branches loaded
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone when no branches, got %d", m.Overlay())
 	}
@@ -2961,8 +2961,8 @@ func TestModel_DKeyNoOpWithNoBranches(t *testing.T) {
 
 func TestModel_ConfirmCancelEsc(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed on esc, got %d", m.Overlay())
 	}
@@ -2976,8 +2976,8 @@ func TestModel_ConfirmCancelEsc(t *testing.T) {
 
 func TestModel_ConfirmCancelQ(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'q'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed on q, got %d", m.Overlay())
 	}
@@ -2991,8 +2991,8 @@ func TestModel_ConfirmCancelQ(t *testing.T) {
 
 func TestModel_ConfirmCancelN(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed on n, got %d", m.Overlay())
 	}
@@ -3000,8 +3000,8 @@ func TestModel_ConfirmCancelN(t *testing.T) {
 
 func TestModel_ConfirmYClosesOverlayAndReturnsCmd(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after confirm, got %d", m.Overlay())
 	}
@@ -3012,8 +3012,8 @@ func TestModel_ConfirmYClosesOverlayAndReturnsCmd(t *testing.T) {
 
 func TestModel_ConfirmEnterExecutesAction(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after enter, got %d", m.Overlay())
 	}
@@ -3031,8 +3031,8 @@ func TestModel_BranchDeleteFailReturnsDeleteFailedMsg(t *testing.T) {
 		Branches: []gitquery.Branch{{Name: "feat"}},
 	})
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected cmd, got nil")
 	}
@@ -3075,7 +3075,7 @@ func TestModel_ForceConfirmCancelClearsForce(t *testing.T) {
 		Target:      "feat",
 		ForceAction: func() error { return nil },
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after cancel, got %d", m.Overlay())
 	}
@@ -3091,7 +3091,7 @@ func TestModel_ForceConfirmYExecutesForceAction(t *testing.T) {
 		Target:      "feat",
 		ForceAction: func() error { return nil },
 	})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after force confirm, got %d", m.Overlay())
 	}
@@ -3109,8 +3109,8 @@ func TestModel_ForceConfirmYExecutesForceAction(t *testing.T) {
 
 func TestModel_ConfirmDialogBlocksModeSwitch(t *testing.T) {
 	m := modelWithDeletableBranch()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if m.Mode() != ui.ModeBranches {
 		t.Errorf("confirm dialog should block mode switch, mode changed to %d", m.Mode())
 	}
@@ -3122,14 +3122,14 @@ func modelInStashesWithStashes() model.Model {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	return m
 }
 
 func TestModel_DKeyInStashesModeOpensConfirmDialog(t *testing.T) {
 	m := modelInStashesWithStashes()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm, got %d", m.Overlay())
 	}
@@ -3141,9 +3141,9 @@ func TestModel_DKeyInStashesModeOpensConfirmDialog(t *testing.T) {
 func TestModel_DKeyInStashesModeWithNoStashesDoesNothing(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	// No stashes loaded
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone when no stashes, got %d", m.Overlay())
 	}
@@ -3151,8 +3151,8 @@ func TestModel_DKeyInStashesModeWithNoStashesDoesNothing(t *testing.T) {
 
 func TestModel_StashDropConfirmReturnsStashDroppedMsg(t *testing.T) {
 	m := modelInStashesWithStashes()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected cmd after stash drop confirm, got nil")
 	}
@@ -3169,7 +3169,7 @@ func TestModel_TKey_WorktreeBranch_FiresCmd(t *testing.T) {
 			{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/alpha"}},
 		},
 	})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd when pressing t on a worktree branch")
 	}
@@ -3188,7 +3188,7 @@ func TestModel_TKey_UsesInjectedLaunchTerminal(t *testing.T) {
 		{Path: "/dev/alpha-worktrees/feature", BranchName: "feature"},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd == nil {
 		t.Fatal("expected terminal launch command")
 	}
@@ -3206,7 +3206,7 @@ func TestModel_CKey_WorktreeBranch_FiresCmd(t *testing.T) {
 			{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/alpha"}},
 		},
 	})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd when pressing c on a worktree branch")
 	}
@@ -3221,7 +3221,7 @@ func TestModel_TKey_NonWorktreeBranch_NoCmd(t *testing.T) {
 			{Name: "stale-branch"},
 		},
 	})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd != nil {
 		t.Error("expected nil cmd when pressing t on a non-worktree branch")
 	}
@@ -3236,7 +3236,7 @@ func TestModel_CKey_NonWorktreeBranch_NoCmd(t *testing.T) {
 			{Name: "stale-branch"},
 		},
 	})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd != nil {
 		t.Error("expected nil cmd when pressing c on a non-worktree branch")
 	}
@@ -3275,11 +3275,11 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 	} {
 		t.Run(setup.name, func(t *testing.T) {
 			m := setup.fn(model.New(testRepos()))
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
 			if m.Overlay() != ui.OverlaySelect {
 				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
-			view := m.View()
+			view := viewContent(m)
 			for _, want := range []string{"Choose interactive helper", "codex", "claude", "cursor-agent"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected agent select view to contain %q", want)
@@ -3310,8 +3310,8 @@ func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestModel(testRepos(), model.Options{AgentCommand: tt.agent})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-			view := m.View()
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+			view := viewContent(m)
 
 			if !strings.Contains(view, "> "+tt.wantSelected) {
 				t.Fatalf("expected %s selected in view:\n%s", tt.wantSelected, view)
@@ -3410,8 +3410,8 @@ func TestModel_AgentSelectSavesAndSetsCodex(t *testing.T) {
 			return nil
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected overlay closed, got %d", m.Overlay())
 	}
@@ -3429,9 +3429,9 @@ func TestModel_AgentSelectSavesAndSetsCodex(t *testing.T) {
 
 func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
 	}
@@ -3449,9 +3449,9 @@ func TestModel_AgentSelectUpWrapSavesAndSetsCursor(t *testing.T) {
 			return nil
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
 	}
@@ -3473,8 +3473,8 @@ func TestModel_AgentSelectEscCancelsWithoutSaving(t *testing.T) {
 			return nil
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected overlay closed, got %d", m.Overlay())
@@ -3494,8 +3494,8 @@ func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{
 		SaveAgentCommand: func(string) error { return errors.New("disk full") },
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
 	}
@@ -3503,7 +3503,7 @@ func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
 	if m.AgentCommand() != "codex" {
 		t.Fatalf("expected failed save to keep session agent, got %q", m.AgentCommand())
 	}
-	if !strings.Contains(m.View(), "disk full") {
+	if !strings.Contains(viewContent(m), "disk full") {
 		t.Fatal("expected save failure in status bar")
 	}
 }
@@ -3516,7 +3516,7 @@ func TestModel_F2OpensPromptTemplatePicker(t *testing.T) {
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF2})
 
 	if cmd != nil {
 		t.Fatalf("F2 returned cmd %T, want nil", cmd)
@@ -3524,7 +3524,7 @@ func TestModel_F2OpensPromptTemplatePicker(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want select", m.Overlay())
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{
 		"Prompt templates",
 		"Plan launch",
@@ -3552,8 +3552,8 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected prompt template edit request")
 	}
@@ -3566,7 +3566,7 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 	}
 
 	// enter now inserts a newline in the editor; ctrl+s is the save key.
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected save prompt template command")
 	}
@@ -3578,7 +3578,7 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want picker reopened", m.Overlay())
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Plan launch") || !strings.Contains(view, "custom") {
 		t.Fatalf("expected refreshed picker with custom status:\n%s", view)
 	}
@@ -3597,15 +3597,15 @@ func TestModel_PromptTemplateEditorEnterInsertsNewlineInsteadOfSaving(t *testing
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("editor enter returned cmd %T, want nil", cmd)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("two")})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("two"))})
 	if got := m.WorktreeInput(); got != "one\ntwo" {
 		t.Fatalf("editor buffer = %q, want a newline inserted by enter", got)
 	}
@@ -3625,7 +3625,7 @@ func TestModel_PromptTemplateEditorCancelReturnsToPickerWithFeedback(t *testing.
 	}{
 		{"clean cancel", func(m model.Model) model.Model { return m }, "No changes to Plan launch"},
 		{"dirty cancel", func(m model.Model) model.Model {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("x"))})
 			return m
 		}, "Discarded changes to Plan launch"},
 	}
@@ -3639,12 +3639,12 @@ func TestModel_PromptTemplateEditorCancelReturnsToPickerWithFeedback(t *testing.
 					return nil
 				},
 			})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+			m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			m, _ = update(m, cmd())
 			m = tc.mutate(m)
 
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+			m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			if cmd == nil {
 				t.Fatal("expected a picker return command from cancel")
 			}
@@ -3653,7 +3653,7 @@ func TestModel_PromptTemplateEditorCancelReturnsToPickerWithFeedback(t *testing.
 			if m.Overlay() != ui.OverlaySelect {
 				t.Fatalf("overlay = %v, want the picker reopened", m.Overlay())
 			}
-			view := ansi.Strip(m.View())
+			view := ansi.Strip(viewContent(m))
 			if !strings.Contains(view, tc.wantNote) {
 				t.Fatalf("expected %q in the picker note:\n%s", tc.wantNote, view)
 			}
@@ -3668,9 +3668,9 @@ func TestModel_PromptTemplateEditorCancelReturnsToPickerWithFeedback(t *testing.
 			}
 
 			// The note is transient: the next picker keystroke clears it.
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-			if strings.Contains(ansi.Strip(m.View()), tc.wantNote) {
-				t.Fatalf("picker note survived a navigation keystroke:\n%s", m.View())
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+			if strings.Contains(ansi.Strip(viewContent(m)), tc.wantNote) {
+				t.Fatalf("picker note survived a navigation keystroke:\n%s", viewContent(m))
 			}
 		})
 	}
@@ -3686,16 +3686,16 @@ func TestModel_PromptTemplateBlankSaveResetsAndReportsThatOutcome(t *testing.T) 
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	if !strings.Contains(ansi.Strip(m.View()), "empty: saving restores the built-in default") {
-		t.Fatalf("expected the empty-buffer warning while the buffer is blank:\n%s", m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	if !strings.Contains(ansi.Strip(viewContent(m)), "empty: saving restores the built-in default") {
+		t.Fatalf("expected the empty-buffer warning while the buffer is blank:\n%s", viewContent(m))
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected a reset command from a blank save")
 	}
@@ -3704,7 +3704,7 @@ func TestModel_PromptTemplateBlankSaveResetsAndReportsThatOutcome(t *testing.T) 
 	if resets != 1 {
 		t.Fatalf("resets = %d, want 1", resets)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Plan launch reset to default") {
 		t.Fatalf("expected the editor-origin reset wording:\n%s", view)
 	}
@@ -3732,14 +3732,14 @@ func TestModel_PromptTemplateEditUsesFixedEditorViewport(t *testing.T) {
 		PlanPromptTemplate: template,
 	})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected prompt template edit request")
 	}
 	m, _ = update(m, cmd())
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	for _, want := range []string{"line 01", "line 12█"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("prompt template editor should show %q in its fixed viewport:\n%s", want, view)
@@ -3752,10 +3752,10 @@ func TestModel_PromptTemplateEditUsesFixedEditorViewport(t *testing.T) {
 
 	short := newTestModel(testRepos(), model.Options{PlanPromptTemplate: "one line"})
 	short, _ = update(short, tea.WindowSizeMsg{Width: 100, Height: 24})
-	short, _ = update(short, tea.KeyMsg{Type: tea.KeyF2})
-	short, cmd = update(short, tea.KeyMsg{Type: tea.KeyEnter})
+	short, _ = update(short, tea.KeyPressMsg{Code: tea.KeyF2})
+	short, cmd = update(short, tea.KeyPressMsg{Code: tea.KeyEnter})
 	short, _ = update(short, cmd())
-	if shortBounds := promptEditorPanelBounds(t, ansi.Strip(short.View())); shortBounds != tallBounds {
+	if shortBounds := promptEditorPanelBounds(t, ansi.Strip(short.View().Content)); shortBounds != tallBounds {
 		t.Fatalf("editor panel = %v for a short template, want the fixed %v", shortBounds, tallBounds)
 	}
 }
@@ -3790,15 +3790,15 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 		SavePromptTemplate: func(string, string, string) error { return errors.New("read-only config") },
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected prompt template edit request")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("new {title}")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("new {title}"))})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected save prompt template command")
 	}
@@ -3812,7 +3812,7 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 	if got := m.WorktreeInput(); got != "new {title}" {
 		t.Fatalf("editor draft after failure = %q, want the unsaved draft", got)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "read-only config") {
 		t.Fatalf("expected the persistence error inside the editor:\n%s", view)
 	}
@@ -3822,10 +3822,10 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 	if !strings.Contains(view, "modified") {
 		t.Fatalf("expected the reconstructed editor to open dirty:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.PlanResultMsg{
 		RepoPath: "/dev/alpha",
 		Plans: []planstore.PlanRecord{{
@@ -3837,7 +3837,7 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 		ListRequest: m.ListRequest(ui.ModePlans),
 	})
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
@@ -3859,25 +3859,25 @@ func TestModel_PromptTemplateResetClearsCustomValueAndReopensPicker(t *testing.T
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	// Reset is protected from an accidental single keypress.
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd != nil {
 		t.Fatalf("r returned cmd %T, want a confirmation instead", cmd)
 	}
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("overlay = %v, want a reset confirmation", m.Overlay())
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "Reset Flow plan to its built-in default?") {
-		t.Fatalf("expected the reset confirmation prompt:\n%s", m.View())
+	if !strings.Contains(ansi.Strip(viewContent(m)), "Reset Flow plan to its built-in default?") {
+		t.Fatalf("expected the reset confirmation prompt:\n%s", viewContent(m))
 	}
 	if resetSection != "" || resetKey != "" {
 		t.Fatal("opening the confirmation must not reset anything")
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected reset prompt template command")
 	}
@@ -3889,7 +3889,7 @@ func TestModel_PromptTemplateResetClearsCustomValueAndReopensPicker(t *testing.T
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want picker reopened", m.Overlay())
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if strings.Contains(view, "Flow plan        custom") {
 		t.Fatalf("expected Flow plan reset to default:\n%s", view)
 	}
@@ -3914,11 +3914,11 @@ func TestModel_PromptTemplateResetCancellationLeavesTheCustomValueIntact(t *test
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("expected a picker return command from a cancelled reset")
 	}
@@ -3927,7 +3927,7 @@ func TestModel_PromptTemplateResetCancellationLeavesTheCustomValueIntact(t *test
 	if resets != 0 {
 		t.Fatalf("cancelled reset ran %d times, want 0", resets)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Flow plan        custom") {
 		t.Fatalf("cancelled reset must leave the custom value intact:\n%s", view)
 	}
@@ -3948,8 +3948,8 @@ func TestModel_PromptTemplateResetOnDefaultTemplateIsANoOpNote(t *testing.T) {
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	if cmd != nil {
 		t.Fatalf("r on a default template returned cmd %T, want nil", cmd)
@@ -3960,8 +3960,8 @@ func TestModel_PromptTemplateResetOnDefaultTemplateIsANoOpNote(t *testing.T) {
 	if resets != 0 {
 		t.Fatalf("reset ran %d times on an already-default template, want 0", resets)
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "Plan launch is already default") {
-		t.Fatalf("expected the informational note:\n%s", m.View())
+	if !strings.Contains(ansi.Strip(viewContent(m)), "Plan launch is already default") {
+		t.Fatalf("expected the informational note:\n%s", viewContent(m))
 	}
 }
 
@@ -3971,10 +3971,10 @@ func TestModel_PromptTemplateResetFailureKeepsPickerSelectionAndShowsTheError(t 
 		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected reset prompt template command")
 	}
@@ -3983,7 +3983,7 @@ func TestModel_PromptTemplateResetFailureKeepsPickerSelectionAndShowsTheError(t 
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want the picker", m.Overlay())
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "read-only config") {
 		t.Fatalf("expected the reset error in the picker note row:\n%s", view)
 	}
@@ -4001,12 +4001,12 @@ func TestModel_PromptTemplateEditorOriginResetFailureReconstructsTheEditor(t *te
 		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected a reset command from a whitespace-only save")
 	}
@@ -4018,8 +4018,8 @@ func TestModel_PromptTemplateEditorOriginResetFailureReconstructsTheEditor(t *te
 	if got := m.WorktreeInput(); got != " " {
 		t.Fatalf("editor draft after a failed editor-origin reset = %q, want the whitespace draft", got)
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "read-only config") {
-		t.Fatalf("expected the reset error inside the editor:\n%s", m.View())
+	if !strings.Contains(ansi.Strip(viewContent(m)), "read-only config") {
+		t.Fatalf("expected the reset error inside the editor:\n%s", viewContent(m))
 	}
 }
 
@@ -4029,17 +4029,17 @@ func TestModel_PromptTemplateEditorOriginResetFailureKeepsTheCursor(t *testing.T
 		ResetPromptTemplate: func(string, string) error { return errors.New("read-only config") },
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("   ")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("   "))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyHome})
 	if got := m.InputCursor(); got != 0 {
 		t.Fatalf("cursor before submit = %d, want 0", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected a reset command from a whitespace-only save")
 	}
@@ -4067,18 +4067,18 @@ func TestModel_PromptTemplateSaveRetryAfterFailureSucceeds(t *testing.T) {
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("er")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("er"))})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	m, _ = update(m, cmd())
 
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Fatalf("overlay = %v, want the editor retained for retry", m.Overlay())
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected a retry save command")
 	}
@@ -4090,22 +4090,22 @@ func TestModel_PromptTemplateSaveRetryAfterFailureSucceeds(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want the picker after a successful retry", m.Overlay())
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "Saved Plan launch") {
-		t.Fatalf("expected the success note after a retry:\n%s", m.View())
+	if !strings.Contains(ansi.Strip(viewContent(m)), "Saved Plan launch") {
+		t.Fatalf("expected the success note after a retry:\n%s", viewContent(m))
 	}
 }
 
 func TestModel_PromptTemplatePreviewReturnsToPickerSelection(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'v'})})
 	if m.Overlay() != ui.OverlayPlanText {
 		t.Fatalf("overlay = %v, want the preview", m.Overlay())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("expected a picker return command when the preview closes")
 	}
@@ -4114,16 +4114,16 @@ func TestModel_PromptTemplatePreviewReturnsToPickerSelection(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("overlay = %v, want the picker reopened", m.Overlay())
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "> Flow plan") {
-		t.Fatalf("expected the preview to return to the same selection:\n%s", m.View())
+	if !strings.Contains(ansi.Strip(viewContent(m)), "> Flow plan") {
+		t.Fatalf("expected the preview to return to the same selection:\n%s", viewContent(m))
 	}
 }
 
 func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testing.T) {
 	m := model.New(testRepos())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'v'})})
 
 	if m.Overlay() != ui.OverlayPlanText {
 		t.Fatalf("overlay = %v, want text preview", m.Overlay())
@@ -4135,10 +4135,10 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 		}
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'v'})})
 
 	preview = m.OverlayText()
 	for _, want := range []string{"Use the approach-flow skill", "{instructions}", "After completing this phase goal"} {
@@ -4147,12 +4147,12 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 		}
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
 	for range 9 {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'v'})})
 	preview = m.OverlayText()
 	if preview != "autofix pr #{pr_number}" {
 		t.Fatalf("autofix built-in preview = %q, want the default template", preview)
@@ -4170,17 +4170,17 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening effort picker, got %T", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected effort select overlay, got %d", m.Overlay())
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"Choose codex reasoning effort", "default", "minimal", "low", "medium", "high", "xhigh"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("codex effort picker missing %q:\n%s", want, view)
@@ -4191,9 +4191,9 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	}
 
 	for range 4 {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save effort command")
 	}
@@ -4217,17 +4217,17 @@ func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'M'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening model picker, got %T", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected model select overlay, got %d", m.Overlay())
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"Choose codex model", "default", "gpt-5.5"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("codex model picker missing %q:\n%s", want, view)
@@ -4237,8 +4237,8 @@ func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		t.Fatalf("codex model picker should not include claude models:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save model command")
 	}
@@ -4256,19 +4256,19 @@ func TestModel_FlowModelPickerOpensFromLeftPane(t *testing.T) {
 		AgentCommand: "codex",
 	})
 	m, _ = switchTestMode(m, ui.ModeFlows)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("test setup active pane = %d, want left pane", m.ActivePane())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'M'})})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening model picker, got %T", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected model select overlay from left pane, got %d", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+	if view := viewContent(m); !strings.Contains(view, "Choose codex model") {
 		t.Fatalf("codex model picker did not open from left pane:\n%s", view)
 	}
 }
@@ -4324,11 +4324,11 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestModel(testRepos(), tt.options)
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 12})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 
-			view := ansi.Strip(m.View())
+			view := ansi.Strip(viewContent(m))
 			agentIndex := strings.Index(view, tt.wantAgent)
 			if agentIndex < 0 {
 				t.Fatalf("Flow shortcuts missing agent label %q:\n%s", tt.wantAgent, view)
@@ -4358,17 +4358,17 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{AgentCommand: "claude"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected effort select overlay, got %d", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "max") {
+	if view := viewContent(m); !strings.Contains(view, "max") {
 		t.Fatalf("claude effort picker should include max:\n%s", view)
 	}
-	if view := m.View(); !strings.Contains(view, "Choose claude reasoning effort") {
+	if view := viewContent(m); !strings.Contains(view, "Choose claude reasoning effort") {
 		t.Fatalf("claude effort picker should name provider:\n%s", view)
 	}
 }
@@ -4376,11 +4376,11 @@ func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if cmd != nil {
 		t.Fatalf("search E returned command %T, want nil", cmd)
 	}
@@ -4391,19 +4391,19 @@ func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
 		t.Fatalf("search query after E = %q, want E", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected agent select overlay, got %d", m.Overlay())
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if cmd != nil {
 		t.Fatalf("modal E returned command %T, want nil", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("modal E changed overlay to %d, want select", m.Overlay())
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Choose interactive helper") || strings.Contains(view, "reasoning effort") {
 		t.Fatalf("modal E should keep existing agent picker:\n%s", view)
 	}
@@ -4417,13 +4417,13 @@ func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	for range 2 {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save effort command")
 	}
@@ -4431,7 +4431,7 @@ func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.
 	if got := m.ReasoningEffortFor("codex"); got != "low" {
 		t.Fatalf("expected failed save to keep session effort low, got %q", got)
 	}
-	if !strings.Contains(m.View(), "disk full") {
+	if !strings.Contains(viewContent(m), "disk full") {
 		t.Fatal("expected save failure in status bar")
 	}
 }
@@ -4439,17 +4439,17 @@ func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.
 func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command without selected agent")
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay without agent, got %d", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "Press A to choose") {
+	if !strings.Contains(viewContent(m), "Press A to choose") {
 		t.Fatal("expected unset-agent status")
 	}
 }
@@ -4474,7 +4474,7 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
 	}
@@ -4504,7 +4504,7 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", Commit: "abc123", IsMain: true},
 	}, ListRequest: m.ListRequest(ui.ModeWorktrees)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
 	}
@@ -4539,7 +4539,7 @@ func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
 			{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/alpha"}},
 		},
 	})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
 	}
@@ -4556,7 +4556,7 @@ func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
 		m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 		m = inBranchesMode(m)
 		m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{{Name: "feat"}}})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 		if cmd != nil {
 			t.Fatal("expected nil command for bare branch")
 		}
@@ -4567,7 +4567,7 @@ func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
 		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 			{Path: "/dev/gone", BranchName: "gone", Stale: true},
 		}})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 		if cmd != nil {
 			t.Fatal("expected nil command for stale worktree")
 		}
@@ -4581,7 +4581,7 @@ func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
 				{Name: "gone", IsWorktree: true, WorktreePaths: []string{"/dev/gone"}, WorktreeStale: []bool{true}},
 			},
 		})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 		if cmd != nil {
 			t.Fatal("expected nil command for stale branch row")
 		}
@@ -4594,11 +4594,11 @@ func TestModel_AKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command without selected agent")
 	}
-	if !strings.Contains(m.View(), "Press A to choose") {
+	if !strings.Contains(viewContent(m), "Press A to choose") {
 		t.Fatal("expected unset-agent status")
 	}
 }
@@ -4614,11 +4614,11 @@ func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command when launch cannot be built")
 	}
-	if !strings.Contains(m.View(), "agent unavailable") {
+	if !strings.Contains(viewContent(m), "agent unavailable") {
 		t.Fatal("expected launch build error in status bar")
 	}
 }
@@ -4640,12 +4640,12 @@ func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
 	}
 	m, _ = update(m, cmd())
-	if !strings.Contains(m.View(), "exit status") {
+	if !strings.Contains(viewContent(m), "exit status") {
 		t.Fatal("expected agent process error in status bar")
 	}
 	if !cleanupCalled {
@@ -4699,7 +4699,7 @@ func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
 		t.Fatal("AgentResultMsg returned nil command, want asynchronous finalization")
 	}
 	m, _ = update(m, cmd())
-	if !strings.Contains(m.View(), "finalize session: state unavailable") {
+	if !strings.Contains(viewContent(m), "finalize session: state unavailable") {
 		t.Fatal("expected finalize error in status bar")
 	}
 }
@@ -4731,7 +4731,7 @@ func TestModel_DetachedAgentResultShowsLaunchedStatus(t *testing.T) {
 	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
 
 	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true})
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "Launched codex") {
 		t.Fatalf("expected detached launch status mentioning the agent, got view:\n%s", view)
 	}
@@ -4754,7 +4754,7 @@ func TestModel_DetachedAgentResultErrorTakesPrecedence(t *testing.T) {
 	if finalized {
 		t.Fatal("detached launch must not finalize even on error")
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "exit status 1") {
 		t.Fatalf("expected detached launch error in status bar, got view:\n%s", view)
 	}
@@ -4775,9 +4775,9 @@ func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if m.Mode() != ui.ModeSessions {
 		t.Fatalf("mode = %d, want sessions", m.Mode())
 	}
@@ -4811,8 +4811,8 @@ func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if cmd == nil {
 		t.Fatal("expected initial sessions fetch")
 	}
@@ -4821,11 +4821,11 @@ func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 		t.Fatalf("initial Sessions() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("expected sessions refetch after repo change")
 	}
@@ -4863,7 +4863,7 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -4898,13 +4898,13 @@ func TestModel_OKeyOnSessionOpensTranscriptOverlay(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	if cmd == nil {
 		t.Fatal("expected transcript fetch command")
 	}
@@ -4921,13 +4921,13 @@ func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "first line\nsecond line\nthird line"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if cmd == nil {
 		t.Fatal("expected summary pager command")
 	}
@@ -4940,13 +4940,13 @@ func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if cmd == nil {
 		t.Fatal("expected empty summary pager command")
 	}
@@ -4962,13 +4962,13 @@ func TestModel_SKeySessionSummaryPagerFailureShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "summary"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for pager construction failure")
 	}
@@ -4986,17 +4986,17 @@ func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "summary"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, transcriptCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, transcriptCmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if transcriptCmd == nil {
 		t.Fatal("expected transcript fetch command")
 	}
-	m, summaryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, summaryCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	if summaryCmd == nil {
 		t.Fatal("expected summary pager command")
 	}
@@ -5013,17 +5013,17 @@ func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
 func TestModel_SKeySessionSummaryNoOpsOutsideSessionSelection(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // plans: s has no meaning here
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})}) // plans: s has no meaning here
 
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}); cmd != nil {
 		t.Fatalf("expected s outside sessions to no-op, got %T", cmd)
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay outside sessions, got %d", m.Overlay())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'s'})}); cmd != nil {
 		t.Fatalf("expected s with no selected session to no-op, got %T", cmd)
 	}
 	if m.Overlay() != ui.OverlayNone {
@@ -5040,13 +5040,13 @@ func TestModel_YKeyCopiesSelectedSessionID(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "raw-codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected copy session id command")
 	}
@@ -5055,7 +5055,7 @@ func TestModel_YKeyCopiesSelectedSessionID(t *testing.T) {
 	if len(copied) != 1 || copied[0] != "raw-codex-session-1" {
 		t.Fatalf("copied = %#v, want raw session id", copied)
 	}
-	if strings.Contains(m.View(), "raw-codex-session-1") {
+	if strings.Contains(viewContent(m), "raw-codex-session-1") {
 		t.Fatal("session id copy should not render copied id as an error")
 	}
 }
@@ -5069,13 +5069,13 @@ func TestModel_YKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})}); cmd != nil {
 		t.Fatalf("expected y outside copyable modes to no-op, got %T", cmd)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})}); cmd != nil {
 		t.Fatalf("expected y with no selected session to no-op, got %T", cmd)
 	}
 	if len(copied) != 0 {
@@ -5090,18 +5090,18 @@ func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected copy command")
 	}
 	m, _ = update(m, cmd())
-	if !strings.Contains(m.View(), "clipboard unavailable") {
+	if !strings.Contains(viewContent(m), "clipboard unavailable") {
 		t.Fatal("expected clipboard error in status bar")
 	}
 }
@@ -5109,19 +5109,19 @@ func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3 + ui.TerminalChipRows})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "one", Summary: "one first\none second"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-2", RepoPath: "/dev/alpha", Branch: "two", Summary: "two first\ntwo second"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-3", RepoPath: "/dev/alpha", Branch: "three", Summary: "three only"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "> codex     three") {
 		t.Fatalf("expected selected third session to stay visible:\n%s", view)
 	}
@@ -5191,9 +5191,9 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderCodex,
@@ -5208,7 +5208,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
@@ -5220,7 +5220,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 		got.PlanPath != "/state/approach/plans/plan-1/plan.md" {
 		t.Fatalf("unexpected embedded resume context: %#v", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex feature/api running", "agent output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("embedded terminal view missing %q:\n%s", want, view)
@@ -5234,10 +5234,10 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 	for _, tt := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "backspace", key: tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
@@ -5247,9 +5247,9 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 			m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 				Provider:     sessions.ProviderCodex,
 				SessionID:    "codex-session-1",
@@ -5258,7 +5258,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 				CWD:          "/dev/alpha-worktrees/feat",
 				Branch:       "feature/api",
 			}}, ListRequest: m.ListRequest(ui.ModeSessions)})
-			m, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			m, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 			if cmd == nil {
 				t.Fatal("embedded session resume should schedule terminal repaint ticks")
 			}
@@ -5286,9 +5286,9 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 		Provider:     sessions.ProviderCodex,
 		SessionID:    "codex-session-1",
@@ -5297,12 +5297,12 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 		CWD:          "/dev/alpha-worktrees/feat",
 		Branch:       "feature/api",
 	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if cmd != nil {
 		t.Fatalf("tab from session terminal returned cmd %T, want nil", cmd)
 	}
@@ -5312,7 +5312,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\t" {
 		t.Fatalf("terminal-owned tab writes = %#v, want tab byte", fakeTerm.writes)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("backspace after returning to session terminal returned cmd %T, want nil", cmd)
 	}
@@ -5347,22 +5347,22 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 		}
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(m.View(), "real-pty-output") {
+		if strings.Contains(viewContent(m), "real-pty-output") {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("embedded terminal view never showed real PTY output:\n%s", m.View())
+	t.Fatalf("embedded terminal view never showed real PTY output:\n%s", viewContent(m))
 }
 
 func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.T) {
@@ -5377,8 +5377,8 @@ func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderCodex,
@@ -5389,7 +5389,7 @@ func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected external resume command when embedded PTY is unsupported")
 	}
@@ -5406,38 +5406,38 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd != nil {
 		t.Fatalf("plain terminal key should not return approach command, got %T", cmd)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlE})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlW})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnd})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDelete})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgUp})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlLeft})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlRight})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDelete})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'f'}), Mod: tea.ModAlt})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 
 	want := []string{
 		"a", " ",
@@ -5461,13 +5461,13 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	wantStartWidth := ui.EmbeddedTerminalPTYWidth(180)
 	wantStartHeight := ui.ResolveEmbeddedTerminalDock(24, true).BackendPTYRows
@@ -5479,7 +5479,7 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 	if started[0] != wantPaddedStartWidth {
 		t.Fatalf("embedded terminal start width = %d, want padded width %d", started[0], wantPaddedStartWidth)
 	}
-	_ = m.View()
+	_ = viewContent(m)
 	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
@@ -5501,7 +5501,7 @@ func TestModel_EmbeddedTerminalUsesResponsiveRenderAndBackendRows(t *testing.T) 
 	}
 
 	fakeTerm.visibleCalls = nil
-	_ = m.View()
+	_ = viewContent(m)
 	if want := [2]int{wantWidth, 19}; len(fakeTerm.visibleCalls) != 1 || fakeTerm.visibleCalls[0] != want {
 		t.Fatalf("height 65 visible calls = %#v, want [%v]", fakeTerm.visibleCalls, want)
 	}
@@ -5520,7 +5520,7 @@ func TestModel_EmbeddedTerminalUsesResponsiveRenderAndBackendRows(t *testing.T) 
 		if got := fakeTerm.resizes[len(fakeTerm.resizes)-1]; got != [2]int{wantWidth, tc.wantBackend} {
 			t.Fatalf("height %d resize = %v, want %v", tc.height, got, [2]int{wantWidth, tc.wantBackend})
 		}
-		_ = m.View()
+		_ = viewContent(m)
 		if tc.wantRender == 0 {
 			if len(fakeTerm.visibleCalls) != beforeVisible {
 				t.Fatalf("height %d requested visible lines while collapsed: %#v", tc.height, fakeTerm.visibleCalls[beforeVisible:])
@@ -5531,7 +5531,7 @@ func TestModel_EmbeddedTerminalUsesResponsiveRenderAndBackendRows(t *testing.T) 
 	}
 
 	writes := len(fakeTerm.writes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != writes {
 		t.Fatalf("auto-collapsed terminal received user input: %#v", fakeTerm.writes[writes:])
 	}
@@ -5542,7 +5542,7 @@ func TestModel_EmbeddedTerminalWidthIgnoresShortcutAndSearchState(t *testing.T) 
 		m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, 180, 24)
 
 		m = model.SetSearchActiveForTest(m, true)
-		_ = m.View()
+		_ = viewContent(m)
 		want := [2]int{
 			ui.EmbeddedTerminalPTYWidth(180),
 			ui.ResolveEmbeddedTerminalDock(24, true).RenderPTYRows,
@@ -5582,15 +5582,15 @@ func TestModel_EmbeddedTerminalWidthIgnoresShortcutAndSearchState(t *testing.T) 
 func TestModel_EmbeddedTerminalKeepsFullWidthWhenRepoPaneCollapsesAndExpands(t *testing.T) {
 	const width, height = 180, 24
 	m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, width, height)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	baseline := len(fakeTerm.resizes)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !m.RepoPaneCollapsed() {
 		t.Fatal("enter on selected repo should collapse the repos pane")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if m.RepoPaneCollapsed() {
 		t.Fatal("ctrl+r should expand the repos pane")
 	}
@@ -5613,14 +5613,14 @@ func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Mo
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	return m, fakeTerm, started
 }
 
@@ -5666,33 +5666,33 @@ func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{alphaRecord}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	// Switching the selected repo clears the sessions cache while the dock
 	// and its terminal persist.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if len(m.Sessions()) != 0 {
 		t.Fatalf("repo switch should clear the sessions cache, got %d records", len(m.Sessions()))
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
 	if cmd == nil {
 		t.Fatal("picker with a cold cache should load sessions on demand")
 	}
 	m, _ = update(m, cmd())
 	if m.Overlay() != ui.OverlaySelect {
-		t.Fatalf("expected picker overlay after on-demand load, got overlay %d:\n%s", m.Overlay(), m.View())
+		t.Fatalf("expected picker overlay after on-demand load, got overlay %d:\n%s", m.Overlay(), viewContent(m))
 	}
-	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
+	if view := viewContent(m); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
 		t.Fatalf("picker view missing loaded session:\n%s", view)
 	}
 
@@ -5716,36 +5716,36 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
 	if cmd != nil {
 		t.Fatalf("opening picker should not return command, got %T", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected picker overlay, got %d", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
+	if view := viewContent(m); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
 		t.Fatalf("picker view missing sessions:\n%s", view)
 	} else {
 		assertRenderedSelectPanel(t, view, "Resume session", 72, 12, 54, 5)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = selectSavedSessionForTest(t, m)
 
 	if want := []string{"codex-session-1", "claude-session-2"}; !reflect.DeepEqual(started, want) {
 		t.Fatalf("started = %#v, want %#v", started, want)
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex feature/api running", "2 claude docs running", "second output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("embedded terminal view missing %q:\n%s", want, view)
@@ -5764,14 +5764,14 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, tick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, tick := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if tick == nil {
 		t.Fatal("expected first embedded terminal to schedule repaint tick")
 	}
@@ -5782,9 +5782,9 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 		t.Fatalf("exited terminal should stop repaint loop, got %T", stopped)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	_, restarted := selectSavedSessionForTest(t, m)
 	if restarted == nil {
 		t.Fatal("opening a new running terminal after all PTYs exited should restart repaint tick")
@@ -5802,23 +5802,23 @@ func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = selectSavedSessionForTest(t, m)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "first output") {
 		t.Fatalf("switch to terminal 1 should render first terminal:\n%s", view)
 	}
@@ -5839,32 +5839,32 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/one", Branch: "feature/one"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/two", Branch: "feature/two"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-3", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/three", Branch: "feature/three"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = selectSavedSessionForTest(t, m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = selectSavedSessionForTest(t, m)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	terms["codex-session-2"].state = "exited"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex feature/one running", "2 codex feature/three running", "first output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("renumbered session terminal view missing %q:\n%s", want, view)
@@ -5876,19 +5876,19 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 		}
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	if view = m.View(); !strings.Contains(view, "third output") || strings.Contains(view, "first output") {
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	if view = viewContent(m); !strings.Contains(view, "third output") || strings.Contains(view, "first output") {
 		t.Fatalf("switching to renumbered terminal 2 should show former third terminal:\n%s", view)
 	}
 
 	terms["codex-session-1"].state = "exited"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 
-	view = m.View()
+	view = viewContent(m)
 	for _, want := range []string{"1 codex feature/three running", "third output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("closing first session terminal should promote former second tab to 1:\n%s", view)
@@ -5907,18 +5907,18 @@ func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "done") || strings.Contains(view, "1 codex") {
 		t.Fatalf("dismissed terminal should be removed:\n%s", view)
 	}
@@ -5935,20 +5935,20 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected terminate confirmation, got %d", m.Overlay())
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected terminate confirmation command")
 	}
@@ -5957,7 +5957,7 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 	if fakeTerm.State() != "terminated" {
 		t.Fatalf("terminal state = %q, want terminated", fakeTerm.State())
 	}
-	if view := m.View(); strings.Contains(view, "pty-live-output") || strings.Contains(view, "1 codex") {
+	if view := viewContent(m); strings.Contains(view, "pty-live-output") || strings.Contains(view, "1 codex") {
 		t.Fatalf("terminated terminal should be dismissed:\n%s", view)
 	}
 }
@@ -5970,15 +5970,15 @@ func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd != nil {
 		t.Fatalf("ctrl+c should go to the PTY, got command %T", cmd)
 	}
@@ -5986,15 +5986,15 @@ func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T
 		t.Fatalf("terminal writes = %#v, want ctrl-c", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'q'})})
 	if cmd != nil {
 		t.Fatalf("running terminal quit should open confirmation, got command %T", cmd)
 	}
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected quit confirmation, got %d", m.Overlay())
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected quit confirmation command")
 	}
@@ -6015,12 +6015,12 @@ func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
 
@@ -6041,12 +6041,12 @@ func TestModel_EmbeddedTerminalResizeSkipsExitedPTYs(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
 
@@ -6069,20 +6069,20 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, firstTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, firstTick := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if firstTick == nil {
 		t.Fatal("expected first embedded terminal to schedule repaint tick")
 	}
 
 	first.state = "exited"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, secondTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	m, secondTick := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if secondTick == nil {
 		t.Fatal("expected reopened embedded terminal to schedule repaint tick")
 	}
@@ -6105,12 +6105,12 @@ func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, tick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, tick := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if tick == nil {
 		t.Fatal("expected embedded terminal to schedule repaint tick")
 	}
@@ -6132,8 +6132,8 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderClaude,
@@ -6149,7 +6149,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
@@ -6204,17 +6204,17 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{record}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for embedded start failure")
 	}
 	m = settleModelCommands(t, m, cmd, 3)
-	if !strings.Contains(m.View(), "embedded start failed") {
-		t.Fatalf("expected embedded start failure in status:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "embedded start failed") {
+		t.Fatalf("expected embedded start failure in status:\n%s", viewContent(m))
 	}
 	if len(phaseUpdates) != 0 {
 		t.Fatalf("ordinary session resume should not update Flow phase, got %#v", phaseUpdates)
@@ -6230,13 +6230,13 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", CWD: "/dev/alpha/subdir"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
@@ -6256,13 +6256,13 @@ func TestModel_RKeyNormalizesStoredCodexAppPreferenceForCodexSessionResume(t *te
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "9a0c8d4e-1111-2222-3333-abcdefabcdef", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/legacy"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected embedded codex resume repaint command")
 	}
@@ -6285,8 +6285,8 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderClaude,
@@ -6296,7 +6296,7 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("embedded claude resume should schedule terminal repaint ticks")
 	}
@@ -6318,14 +6318,14 @@ func TestModel_RKeySessionResumeNoOpsOutsideSessionSelection(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // plans: r has no meaning here
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})}) // plans: r has no meaning here
 
-	if _, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
+	if _, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})}); cmd != nil {
 		t.Fatalf("expected r outside sessions to no-op, got %T", cmd)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if _, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
+	if _, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})}); cmd != nil {
 		t.Fatalf("expected r with no selected session to no-op, got %T", cmd)
 	}
 	if called {
@@ -6342,20 +6342,20 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for missing resume path")
 	}
 	if called {
 		t.Fatal("expected missing path not to call launcher")
 	}
-	if !strings.Contains(m.View(), "Session has no worktree path or cwd") {
+	if !strings.Contains(viewContent(m), "Session has no worktree path or cwd") {
 		t.Fatal("expected missing resume path status")
 	}
 }
@@ -6369,20 +6369,20 @@ func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderClaude, SessionID: "   ", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blank session id")
 	}
 	if called {
 		t.Fatal("expected blank session id not to call launcher")
 	}
-	if !strings.Contains(m.View(), "Session has no provider session ID") {
+	if !strings.Contains(viewContent(m), "Session has no provider session ID") {
 		t.Fatal("expected missing session id status")
 	}
 }
@@ -6408,17 +6408,17 @@ func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	m, _ = update(m, cmd())
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blank inline session id")
 	}
 	if called {
 		t.Fatal("expected blank inline session id not to call launcher")
 	}
-	if !strings.Contains(m.View(), "Session has no provider session ID") {
+	if !strings.Contains(viewContent(m), "Session has no provider session ID") {
 		t.Fatal("expected missing session id status")
 	}
 }
@@ -6445,9 +6445,9 @@ func TestModel_XKeyOpensInlineSessionsForSelectedWorktree(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("expected inline session fetch command")
 	}
@@ -6460,7 +6460,7 @@ func TestModel_XKeyOpensInlineSessionsForSelectedWorktree(t *testing.T) {
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
 	}
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"Sessions", "codex", "feature/inline", "ended", "Inline worktree sessions"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("inline sessions view missing %q:\n%s", want, view)
@@ -6485,12 +6485,12 @@ func TestModel_ArrowKeysSelectInlineWorktreeSessions(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	m, _ = update(m, cmd())
 
 	worktreeSelected := m.WorktreeSelected()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	if m.WorktreeSelected() != worktreeSelected {
 		t.Fatalf("WorktreeSelected() = %d, want %d", m.WorktreeSelected(), worktreeSelected)
@@ -6531,10 +6531,10 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	m, _ = update(m, cmd())
 
-	_, cmd = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected inline session resume command")
 	}
@@ -6583,20 +6583,20 @@ func TestModel_FilteringWorktreesClosesInlineSessions(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range []rune("main") {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
 
 	if got := m.WorktreeSessions(); len(got) != 0 {
 		t.Fatalf("inline sessions should close after filtering worktrees, got %#v", got)
 	}
-	if strings.Contains(m.View(), "Inline worktree sessions") {
-		t.Fatalf("inline session row should disappear after filtering:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Inline worktree sessions") {
+		t.Fatalf("inline session row should disappear after filtering:\n%s", viewContent(m))
 	}
 }
 
@@ -6616,20 +6616,20 @@ func TestModel_InlineWorktreeSessionFetchErrorShowsStatus(t *testing.T) {
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("expected inline session fetch command")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("expected second inline session fetch command")
 	}
 	m, _ = update(m, cmd())
 
-	if !strings.Contains(m.View(), "failed to load worktree sessions: session store offline") {
-		t.Fatalf("expected inline fetch error in status:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "failed to load worktree sessions: session store offline") {
+		t.Fatalf("expected inline fetch error in status:\n%s", viewContent(m))
 	}
 }
 
@@ -6649,36 +6649,36 @@ func TestModel_StaleInlineWorktreeSessionResultIsIgnored(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 	}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("expected inline session fetch command")
 	}
 	staleMsg := cmd()
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, staleMsg)
 
 	if got := m.WorktreeSessions(); len(got) != 0 {
 		t.Fatalf("stale inline result should be ignored, got %#v", got)
 	}
-	if strings.Contains(m.View(), "stale inline result") {
-		t.Fatalf("stale inline row should not render after mode switch:\n%s", m.View())
+	if strings.Contains(viewContent(m), "stale inline result") {
+		t.Fatalf("stale inline row should not render after mode switch:\n%s", viewContent(m))
 	}
 }
 
 func TestModel_SessionsFilterMatchesSessionFields(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/approach-worktrees/sessions", Branch: "main", Model: "gpt-5", Status: "ended", Summary: "Implement capture"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Branch: "docs", Model: "opus", Status: "last_seen", Summary: "Write docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range []rune("gpt ended capture") {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
 
 	got := m.Sessions()
@@ -6694,13 +6694,13 @@ func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
@@ -6708,22 +6708,22 @@ func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
 		t.Fatal("expected transcript fetch command")
 	}
 	m, _ = update(m, cmd())
-	if !strings.Contains(m.View(), "missing transcript") {
-		t.Fatalf("expected missing transcript status, got:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "missing transcript") {
+		t.Fatalf("expected missing transcript status, got:\n%s", viewContent(m))
 	}
 }
 
 func TestModel_ShiftNOpensAgentWorktreeInput(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inWorktreesMode(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Fatalf("expected worktree input overlay, got %d", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "launch agent") {
+	if !strings.Contains(viewContent(m), "launch agent") {
 		t.Fatalf("expected agent worktree prompt in view")
 	}
-	if !strings.Contains(m.View(), "branch, tag") || !strings.Contains(m.View(), "new branch") {
+	if !strings.Contains(viewContent(m), "branch, tag") || !strings.Contains(viewContent(m), "new branch") {
 		t.Fatalf("expected worktree input placeholder in view")
 	}
 	if got := m.InputMode(); got != modal.InputSingleLine {
@@ -6737,11 +6737,11 @@ func TestModel_ShiftNOpensAgentWorktreeInput(t *testing.T) {
 func TestModel_ShiftNWithNoSelectedAgentShowsStatus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command without selected agent")
 	}
-	if !strings.Contains(m.View(), "Press A to choose") {
+	if !strings.Contains(viewContent(m), "Press A to choose") {
 		t.Fatal("expected unset-agent status")
 	}
 }
@@ -6749,9 +6749,9 @@ func TestModel_ShiftNWithNoSelectedAgentShowsStatus(t *testing.T) {
 func TestModel_AgentWorktreeInputRequestsLaunch(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inWorktreesMode(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'N'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("feat"))})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected create worktree command")
 	}
@@ -6814,7 +6814,7 @@ func TestModel_AgentWorktreeCreateFailedReopensAgentPrompt(t *testing.T) {
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Fatalf("expected input overlay, got %d", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "launch agent") {
+	if !strings.Contains(viewContent(m), "launch agent") {
 		t.Fatal("expected agent prompt after create failure")
 	}
 	if m.WorktreeInput() != "feat" || m.WorktreeInputErr() != "boom" {
@@ -6835,14 +6835,14 @@ func TestModel_DKeyNoOpOnRootBranch(t *testing.T) {
 	m = enableDestructive(m)
 
 	// Cursor at root branch (pinned to index 0) — d should be no-op
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on root branch should be no-op, got overlay %d", m.Overlay())
 	}
 
 	// Navigate to feat (index 1) — d should open confirm
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("d on non-root branch should open confirm, got overlay %d", m.Overlay())
 	}
@@ -6869,7 +6869,7 @@ func TestModel_DKeyNoOpOnRootWorktree(t *testing.T) {
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	})
 	// Cursor at root worktree (index 0) — d should be no-op
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on root worktree should be no-op, got overlay %d", m.Overlay())
 	}
@@ -6881,8 +6881,8 @@ func TestModel_DKeyNoOpOnStaleWorktree(t *testing.T) {
 		{Path: "/dev/gone", BranchName: "stale-branch", Stale: true},
 	})
 	// Navigate to stale worktree (index 1)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on stale worktree should be no-op, got overlay %d", m.Overlay())
 	}
@@ -6893,8 +6893,8 @@ func TestModel_DKeyNoOpOnLockedWorktree(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on locked worktree should be no-op, got overlay %d", m.Overlay())
 	}
@@ -6908,8 +6908,8 @@ func TestModel_DKeyOnWorktreeRequiresDestructiveMode(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d without destructive mode should be no-op, got overlay %d", m.Overlay())
 	}
@@ -6933,9 +6933,9 @@ exit 2
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected cmd from confirm, got nil")
 	}
@@ -6955,9 +6955,9 @@ func TestModel_WorktreeRemoveFailReturnsDeleteFailedMsg(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected cmd from confirm, got nil")
 	}
@@ -6976,7 +6976,7 @@ func TestModel_WorktreeForceRemoveReturnsWorktreeRemovedMsg(t *testing.T) {
 		ForceAction: func() error { return nil },
 		SuccessMsg:  model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"},
 	})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected cmd from force confirm, got nil")
 	}
@@ -6992,8 +6992,8 @@ func TestModel_DKeyOnWorktreeShowsConfirm(t *testing.T) {
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	})
 	// Navigate to non-root worktree (index 1)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("d on non-root worktree should open confirm, got overlay %d", m.Overlay())
 	}
@@ -7009,7 +7009,7 @@ func TestModel_UKeyOnLockedWorktreeFiresUnlockCmd(t *testing.T) {
 		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'u'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("u should not open an overlay, got %d", m.Overlay())
 	}
@@ -7025,7 +7025,7 @@ func TestModel_UKeyUnlockFailureReturnsFailureMsg(t *testing.T) {
 		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'u'})})
 	if cmd == nil {
 		t.Fatal("expected unlock cmd")
 	}
@@ -7042,7 +7042,7 @@ func TestModel_UKeyOnUnlockedWorktreeIsNoOp(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'u'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("u on unlocked worktree should not open overlay, got %d", m.Overlay())
 	}
@@ -7055,7 +7055,7 @@ func TestModel_UKeyOutsideWorktreesModeIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'u'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("u outside worktrees mode should not open overlay, got %d", m.Overlay())
 	}
@@ -7071,7 +7071,7 @@ func TestModel_UKeyOnLockedMainWorktreeFiresUnlockCmd(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'u'})})
 	if cmd == nil {
 		t.Fatal("expected unlock cmd for locked main worktree")
 	}
@@ -7102,7 +7102,7 @@ func TestModel_StaleWorktreeUnlockedMsgIgnored(t *testing.T) {
 func modelInReflogWithEntries() model.Model {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	return m
 }
@@ -7110,7 +7110,7 @@ func modelInReflogWithEntries() model.Model {
 func TestModel_DKeyNoOpInReflogMode(t *testing.T) {
 	m := modelInReflogWithEntries()
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone in reflog mode, got %d", m.Overlay())
 	}
@@ -7118,7 +7118,7 @@ func TestModel_DKeyNoOpInReflogMode(t *testing.T) {
 
 func TestModel_YKeyCopiesHashInReflogMode(t *testing.T) {
 	m := modelInReflogWithEntries()
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for y key in reflog mode")
 	}
@@ -7127,8 +7127,8 @@ func TestModel_YKeyCopiesHashInReflogMode(t *testing.T) {
 func TestModel_YKeyNoOpWithNoReflogs(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for y key with no reflogs, got %T", cmd)
 	}
@@ -7136,7 +7136,7 @@ func TestModel_YKeyNoOpWithNoReflogs(t *testing.T) {
 
 func TestModel_EnterInReflogFetchesDiffWithoutOverlay(t *testing.T) {
 	m := modelInReflogWithEntries()
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
@@ -7149,9 +7149,9 @@ func TestModel_ReflogDiffResultStoresDiff(t *testing.T) {
 	var paged []string
 	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
 	if cmd == nil {
 		t.Fatal("expected reflog diff pager command")
@@ -7169,7 +7169,7 @@ func TestModel_StaleReflogDiffResultDiscarded(t *testing.T) {
 
 func TestModel_TKeyNoOpInReflogMode(t *testing.T) {
 	m := modelInReflogWithEntries()
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'t'})})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for t key in reflog mode, got %T", cmd)
 	}
@@ -7177,7 +7177,7 @@ func TestModel_TKeyNoOpInReflogMode(t *testing.T) {
 
 func TestModel_CKeyNoOpInReflogMode(t *testing.T) {
 	m := modelInReflogWithEntries()
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for c key in reflog mode, got %T", cmd)
 	}
@@ -7190,7 +7190,7 @@ func TestModel_ReflogDiffResultWrongHashDiscarded(t *testing.T) {
 
 func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 	m := modelInReflogWithEntries()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath:    "/dev/alpha",
@@ -7200,7 +7200,7 @@ func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 		DiffRequest: 1,
 		Hash:        "wrong",
 	})
-	if strings.Contains(m.View(), "reflog diff failed") {
+	if strings.Contains(viewContent(m), "reflog diff failed") {
 		t.Fatal("wrong-hash reflog diff failure should be ignored")
 	}
 
@@ -7212,7 +7212,7 @@ func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 		DiffRequest: 99,
 		Hash:        "abc1234",
 	})
-	if strings.Contains(m.View(), "reflog diff failed") {
+	if strings.Contains(viewContent(m), "reflog diff failed") {
 		t.Fatal("wrong-request reflog diff failure should be ignored")
 	}
 
@@ -7224,7 +7224,7 @@ func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 		DiffRequest: 1,
 		Hash:        "abc1234",
 	})
-	if !strings.Contains(m.View(), "reflog diff failed") {
+	if !strings.Contains(viewContent(m), "reflog diff failed") {
 		t.Fatal("matching reflog diff failure should show in status bar")
 	}
 }
@@ -7232,8 +7232,8 @@ func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 func TestModel_EnterInReflogNoEntriesIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}

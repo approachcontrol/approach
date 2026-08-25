@@ -287,8 +287,9 @@ value immediately, creating the config file if needed.
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
 Press `f2` in normal TUI views to open the prompt-template picker. From it you
-can edit `[agent].plan_prompt` (`enter`, then `ctrl+s` to save — `enter` inserts
-a newline), reset it to the built-in default (`r`, then confirm), or preview the
+can edit `[agent].plan_prompt` (`enter`, then `ctrl+s` or enhanced
+`ctrl+enter` to save; `enter` inserts a newline), reset it to the built-in
+default (`r`, then confirm), or preview the
 built-in prompt (`v`). See `docs/tui-guide.md` for the full key map.
 
 In the flows pane, `M` opens a provider-specific model picker and persists the
@@ -320,7 +321,8 @@ that line replaced with the full pair. The `autofix` key is not a phase prompt
 and never receives that suffix.
 
 The `f2` prompt-template picker also manages these Flow prompt keys. Saving a
-blank or whitespace-only template with `ctrl+s` resets that key by removing the
+blank or whitespace-only template with `ctrl+s`, or with `ctrl+enter` in a
+terminal that reports the distinct chord, resets that key by removing the
 config override, the same as a confirmed `r` from the picker.
 
 | Key | Type | Description |

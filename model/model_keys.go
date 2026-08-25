@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
@@ -20,7 +20,7 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	if m.modal.IsOpen() {
@@ -159,6 +159,38 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
+}
+
+func (m Model) handlePaste(content string) (tea.Model, tea.Cmd) {
+	if content == "" {
+		return m, nil
+	}
+	if m.modal.IsOpen() {
+		m.modal, _, _ = m.modal.Update(tea.PasteMsg{Content: content})
+		return m, nil
+	}
+	if m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal() {
+		return m.writeToActiveTerminal([]byte(content)), nil
+	}
+	if !m.searchActive {
+		return m, nil
+	}
+	oldRepoPath, _ := m.currentRepoPath()
+	m = m.setActiveSearchQuery(m.activeSearchQuery() + content)
+	if m.activePane == ui.PaneRepos && oldRepoPath != "" {
+		m = m.selectFilteredRepo(oldRepoPath)
+	}
+	m = m.clampSelectionsAfterFilter()
+	if m.activePane == ui.PaneRepos {
+		newRepoPath, ok := m.currentRepoPath()
+		if oldRepoPath != newRepoPath {
+			return m.handleRepoSelectionChanged(ok)
+		}
+	}
+	if m.activePane != ui.PaneRepos && ui.IsBeadsMode(m.focusedMode()) {
+		return m.reconcileBeadExpansion()
+	}
+	return m, nil
 }
 
 func (m Model) toggleEmbeddedTerminalDock() Model {
@@ -317,7 +349,7 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 	}
 }
 
-func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	beadsSearch := m.activePane != ui.PaneRepos && ui.IsBeadsMode(m.focusedMode())
 	oldRepoPath, _ := m.currentRepoPath()
@@ -340,8 +372,8 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m = m.setActiveSearchQuery("")
 	default:
-		if msg.Type == tea.KeyRunes {
-			m = m.setActiveSearchQuery(m.activeSearchQuery() + string(msg.Runes))
+		if msg.Text != "" {
+			m = m.setActiveSearchQuery(m.activeSearchQuery() + msg.Text)
 		}
 	}
 

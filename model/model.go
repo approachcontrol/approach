@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
@@ -1479,7 +1479,7 @@ func (m Model) Init() tea.Cmd {
 	return batchNonNil(m.fetchStoredModes(), m.autoAdvanceTickCmd(), m.launchSweepTickCmd())
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	mode := m.focusedMode()
 	repos, selected, repoScroll := m.repos.View()
 	worktrees, worktreeSelected, worktreeScroll := m.worktrees.View()
@@ -1538,7 +1538,7 @@ func (m Model) View() string {
 		beadsClosedTotal = 0
 	}
 	modalView := m.modal.View()
-	return ui.Render(ui.RenderParams{
+	content := ui.Render(ui.RenderParams{
 		Repos:                        repos,
 		ActiveTerminalRepoPaths:      m.activeTerminalRepoPaths(),
 		Selected:                     selected,
@@ -1690,6 +1690,9 @@ func (m Model) View() string {
 			EmbeddedTerminalVisible: m.terminalDockVisible,
 			EmbeddedTerminalFocused: m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal,
 			FlowTerminalActivity:    m.flowTerminalActivity()}})
+	view := tea.NewView(content)
+	view.AltScreen = true
+	return view
 }
 
 func (m Model) repoEmptyMessage(filteredRepos int) string {
@@ -2066,8 +2069,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next = modelNext
 	}()
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.PasteMsg:
+		return m.handlePaste(msg.Content)
 	case flowLaunchQuitRequestedMsg:
 		m.quitAfterFlowLaunch = true
 		m.interruptAfterFlowLaunch = msg.Interrupt

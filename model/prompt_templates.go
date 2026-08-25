@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model/modal"
@@ -61,7 +61,7 @@ func (m Model) openPromptTemplatePicker(selected int, note promptNote) Model {
 	return m
 }
 
-func (m Model) handlePromptTemplateModalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handlePromptTemplateModalKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	view := m.modal.View()
 	if view.Kind != modal.Select || view.Prompt != ui.PromptTemplateSelectPrompt {
 		return m, nil, false

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
@@ -31,8 +31,8 @@ func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecor
 	m = model.WithFlowWorktreeInspectionForTest(m, func(string) error { return nil })
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: records, ListRequest: m.ListRequest(ui.ModeFlows)})
 	return m
 }
@@ -201,7 +201,7 @@ func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstor
 	if m.ActivePane() == ui.PaneRepos {
 		m = inRightPane(m)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m, _ = update(m, model.ActiveFlowResultMsg{Flows: records, ListRequest: m.ListRequest(ui.ModeActiveFlows)})
 	return m
 }
@@ -281,7 +281,7 @@ func TestModel_CtrlAShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.
 		t.Fatalf("mode = %v, want worktrees before active flows toggle", m.Mode())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("active flows toggle should start or continue a Flow refresh")
 	}
@@ -292,7 +292,7 @@ func TestModel_CtrlAShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("mode = %v, want active flows", m.Mode())
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	for _, want := range []string{"active flows", "Alpha Flow", "Bravo Flow"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("active-flow view missing %q:\n%s", want, view)
@@ -308,8 +308,8 @@ func TestModel_CtrlAShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.
 		t.Fatalf("normal Flows() cache = %#v, want original repo-scoped alpha flow", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	view = ansi.Strip(m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	view = ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "worktrees") || strings.Contains(view, "Bravo Flow") {
 		t.Fatalf("ctrl+a should restore worktrees pane:\n%s", view)
 	}
@@ -334,19 +334,19 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 24})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	result := activeFlowResultFromCommand(t, cmd)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("switching active flows to repo pane returned command %T, want nil", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("repo movement should refresh both stored content panes")
 	}
 
 	m, _ = update(m, result)
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Bravo Flow") || strings.Contains(view, "Alpha Flow") {
 		t.Fatalf("left-pane active-flow filter should show only bravo after stale-safe result:\n%s", view)
 	}
@@ -354,8 +354,8 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 		t.Fatalf("active Flow filters = %#v, want one global fetch", filters)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	view = ansi.Strip(m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	view = ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Alpha Flow") || !strings.Contains(view, "Bravo Flow") {
 		t.Fatalf("returning focus to content pane should restore global active flows:\n%s", view)
 	}
@@ -373,10 +373,10 @@ func TestModel_ActiveFlowsLeftPaneFilterCleansRepoPath(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{alpha, bravo})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Bravo Flow") || strings.Contains(view, "Alpha Flow") {
 		t.Fatalf("left-pane active-flow filter should clean repo paths:\n%s", view)
 	}
@@ -391,13 +391,13 @@ func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 18})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected active Flow fetch command")
 	}
 	msg := cmd()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, repoMoveCmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, repoMoveCmd := update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if repoMoveCmd == nil {
 		t.Fatal("repo movement should refresh both stored content panes")
 	}
@@ -430,19 +430,19 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	m, cmd := switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, flowResultFromCommand(t, cmd))
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].FlowID != "bravo-flow" {
 		t.Fatalf("left-pane active flows = %#v, want repo-filtered bravo", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("left-pane enter in active flows returned command %T, want nil", cmd)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Shortcuts  Active flows") {
 		t.Fatalf("left-pane enter should keep active flows visible:\n%s", view)
 	}
@@ -485,14 +485,14 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 		},
 	}), []flowstore.FlowRecord{activeOne, merged, activeTwo})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("normal Flow selection = %d, want merged row index 1", got)
 	}
 
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{activeOne, merged, activeTwo})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	view := ansi.Strip(m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Active Two") || strings.Contains(view, "Merged Flow") {
 		t.Fatalf("active-flow surface should select among non-merged rows only:\n%s", view)
 	}
@@ -508,8 +508,8 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 		t.Fatalf("launch update = %#v, want active-two implementation", launched)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	view = ansi.Strip(m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	view = ansi.Strip(viewContent(m))
 	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 1 || !strings.Contains(view, "Merged Flow") {
 		t.Fatalf("normal Flow mode should retain merged selection after toggling back; selected=%d view:\n%s", m.FlowSelected(), view)
 	}
@@ -542,7 +542,7 @@ func TestModel_ActiveFlowsRefreshDoesNotPrepareAutoLaunch(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{previous})
 
 	_, cmd := update(m, model.ActiveFlowResultMsg{
@@ -560,17 +560,17 @@ func TestModel_ActiveFlowsRefreshDoesNotPrepareAutoLaunch(t *testing.T) {
 func TestModel_ActiveFlowsHorizontalNavigationIsInert(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	before := listRequests(m)
 
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "left arrow", key: tea.KeyMsg{Type: tea.KeyLeft}},
-		{name: "right arrow", key: tea.KeyMsg{Type: tea.KeyRight}},
-		{name: "l", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}},
+		{name: "left arrow", key: tea.KeyPressMsg{Code: tea.KeyLeft}},
+		{name: "right arrow", key: tea.KeyPressMsg{Code: tea.KeyRight}},
+		{name: "l", key: tea.KeyPressMsg{Text: string([]rune{'l'})}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd tea.Cmd
@@ -584,7 +584,7 @@ func TestModel_ActiveFlowsHorizontalNavigationIsInert(t *testing.T) {
 			if m.Mode() != ui.ModeActiveFlows {
 				t.Fatalf("%s from active Flow surface mode = %d, want active flows", tc.name, m.Mode())
 			}
-			if view := ansi.Strip(m.View()); !strings.Contains(view, "Active flows") {
+			if view := ansi.Strip(viewContent(m)); !strings.Contains(view, "Active flows") {
 				t.Fatalf("%s from active Flow surface should keep active Flow view:\n%s", tc.name, view)
 			}
 		})
@@ -597,11 +597,11 @@ func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 	}), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if cmd != nil {
 		t.Fatalf("n from active Flow surface returned command %T, want nil", cmd)
 	}
@@ -611,7 +611,7 @@ func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("n from active Flow surface mode = %d, want active flows", m.Mode())
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Active flows") {
 		t.Fatalf("n from active Flow surface should keep active Flow view visible:\n%s", view)
 	}
@@ -624,11 +624,11 @@ func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 func TestModel_ActiveFlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if cmd != nil {
 		t.Fatalf("tab from active Flow surface returned command %T, want nil", cmd)
 	}
@@ -638,12 +638,12 @@ func TestModel_ActiveFlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("tab from active Flow surface mode = %d, want active flows", m.Mode())
 	}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "Active flows") {
+	if view := ansi.Strip(viewContent(m)); !strings.Contains(view, "Active flows") {
 		t.Fatalf("tab from active Flow surface should keep active Flow view visible:\n%s", view)
 	}
 	assertListRequestsUnchanged(t, before, m)
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if cmd != nil {
 		t.Fatalf("tab back to active Flow surface returned command %T, want nil", cmd)
 	}
@@ -679,7 +679,7 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
 	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
@@ -688,8 +688,8 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 	m, asyncCmd := update(m, cmd())
 	m = settleModelCommands(t, m, asyncCmd, 2)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("active Flow terminal command mode should not forward unknown command bytes: %#v", fakeTerm.writes)
 	}
@@ -697,26 +697,26 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 		t.Fatalf("status = %q, want unknown terminal command", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
 		t.Fatalf("ctrl+] in active Flow terminal command mode should send literal ctrl+], writes = %#v", fakeTerm.writes)
 	}
 	before := listRequests(m)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from active Flow terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from left pane active pane = %d, want active Flow list", m.ActivePane())
 	}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "agent output") {
+	if view := ansi.Strip(viewContent(m)); !strings.Contains(view, "agent output") {
 		t.Fatalf("returning to active Flow list should keep the selected Flow terminal associated:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'j'})})
 	if len(fakeTerm.writes) != 1 {
 		t.Fatalf("active Flow list focus should not forward j to terminal: %#v", fakeTerm.writes)
 	}
@@ -732,7 +732,7 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if cmd != nil {
 		t.Fatalf("tab from Flow list returned command %T, want nil", cmd)
 	}
@@ -741,7 +741,7 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	}
 	assertListRequestsUnchanged(t, before, m)
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if cmd != nil {
 		t.Fatalf("tab back to Flow list returned command %T, want nil", cmd)
 	}
@@ -753,11 +753,11 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 
 func TestModel_CollapsedFlowPaneWithoutTerminalIgnoresTab(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	for i := 0; i < 3; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 		if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 			t.Fatalf("tab %d collapsed=%t activePane=%d, want collapsed Flow list", i+1, m.RepoPaneCollapsed(), m.ActivePane())
 		}
@@ -777,20 +777,20 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed Flow list", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab to Flow terminal collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x12" {
 		t.Fatalf("Flow terminal ctrl+r writes = %#v, want ctrl+r byte", fakeTerm.writes)
 	}
@@ -798,11 +798,11 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 		t.Fatalf("Flow terminal ctrl+r collapsed=%t activePane=%d, want unchanged collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab to Flow list collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("second tab to Flow terminal collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
@@ -811,16 +811,16 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "plan" {
 		t.Fatalf("selected active Flow phase = %q, want plan before leaving right pane", got)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("Backspace from active Flow surface returned command %T, want nil", cmd)
 	}
@@ -838,12 +838,12 @@ func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *te
 func TestModel_ActiveFlowsLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	if cmd != nil {
 		t.Fatalf("left-pane numbered key on active Flow surface returned command %T, want nil", cmd)
 	}
@@ -853,7 +853,7 @@ func TestModel_ActiveFlowsLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("left-pane numbered key changed mode = %d, want active flows", m.Mode())
 	}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "Active flows") {
+	if view := ansi.Strip(viewContent(m)); !strings.Contains(view, "Active flows") {
 		t.Fatalf("left-pane numbered key should keep active Flow view visible:\n%s", view)
 	}
 	assertListRequestsUnchanged(t, before, m)
@@ -862,7 +862,7 @@ func TestModel_ActiveFlowsLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 func TestModel_ActiveFlowsFetchErrorUsesActiveFetchMode(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), nil)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, nil)
 
 	m, _ = update(m, model.FetchErrorMsg{
@@ -873,7 +873,7 @@ func TestModel_ActiveFlowsFetchErrorUsesActiveFetchMode(t *testing.T) {
 		ListRequest: m.ListRequest(ui.ModeActiveFlows),
 	})
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "failed to load active flows: boom") {
 		t.Fatalf("active Flow surface should show Flow fetch failure in status bar:\n%s", view)
 	}
@@ -887,18 +887,18 @@ func TestModel_ActiveFlowsSearchAcceptsDigits(t *testing.T) {
 	flow.Title = "Release Flow 123"
 	flow.Branch = "release/123"
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	if cmd != nil {
 		t.Fatalf("digit in active Flow search returned command %T, want nil", cmd)
 	}
 	if got := m.ItemSearch(); got != "1" {
 		t.Fatalf("active Flow search query = %q, want 1", got)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "active flows") || !strings.Contains(view, "release/123") {
 		t.Fatalf("digit search should keep active Flow surface visible and filtered:\n%s", view)
 	}
@@ -908,7 +908,7 @@ func TestModel_ActiveFlowsPullDoesNotTargetHiddenWorktree(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	flow.WorktreePath = "/dev/alpha-worktrees/visible-flow"
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m, _ = update(m, model.WorktreeResultMsg{
 		RepoPath: "/dev/alpha",
 		Worktrees: []gitquery.Worktree{{
@@ -919,11 +919,11 @@ func TestModel_ActiveFlowsPullDoesNotTargetHiddenWorktree(t *testing.T) {
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'F'})})
 	if cmd != nil {
 		t.Fatalf("F from active Flow surface returned command %T, want nil to avoid hidden worktree pull", cmd)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Active flows") {
 		t.Fatalf("F from active Flow surface should leave active Flow view visible:\n%s", view)
 	}
@@ -933,23 +933,23 @@ func TestModel_EnterTogglesActiveFlowPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("enter on active Flow row returned command %T, want nil", cmd)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Plan Review") || !strings.Contains(view, "Implementation") {
 		t.Fatalf("enter should expand active Flow phase rows:\n%s", view)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("second enter on active Flow row returned command %T, want nil", cmd)
 	}
-	view = ansi.Strip(m.View())
+	view = ansi.Strip(viewContent(m))
 	if strings.Contains(view, "Plan Review") || strings.Contains(view, "Implementation") {
 		t.Fatalf("second enter should collapse active Flow phase rows:\n%s", view)
 	}
@@ -964,12 +964,12 @@ func TestModel_ActiveFlowRefreshPreservesNormalFlowSelection(t *testing.T) {
 	activeTwo.Title = "Active Two"
 
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{activeOne, activeTwo})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("normal Flow selection = %d, want active-two", got)
 	}
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{activeOne, activeTwo})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 
 	m, _ = update(m, model.ActiveFlowResultMsg{
 		Flows:       []flowstore.FlowRecord{activeOne, activeTwo},
@@ -1007,12 +1007,12 @@ func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
 		},
 	}}
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected active Flow phase resume command")
 	}
@@ -1057,10 +1057,10 @@ func TestModel_TrackedFlowPhaseResumeRechecksCloseAfterPersistence(t *testing.T)
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, persistCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, persistCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if persistCmd == nil {
 		t.Fatal("expected tracked resume persistence command")
 	}
@@ -1099,7 +1099,7 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
@@ -1110,7 +1110,7 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 		t.Fatalf("unexpected active Flow launch context: %#v", started)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) == 0 || fakeTerm.writes[len(fakeTerm.writes)-1] != "z" {
 		t.Fatalf("interactive active Flow launch should focus terminal input and forward z: %#v", fakeTerm.writes)
 	}
@@ -1137,7 +1137,7 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	m, cmd := flowLaunchFromKey(t, m)
 	if cmd == nil {
@@ -1146,14 +1146,14 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	m = settleModelCommands(t, m, cmd, 3)
 	writeCount := len(fakeTerm.writes)
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyF3})
 	if cmd != nil {
 		t.Fatalf("F3 in focused active Flow terminal returned command %T, want nil", cmd)
 	}
 	if len(fakeTerm.writes) != writeCount+1 || fakeTerm.writes[len(fakeTerm.writes)-1] != "\x1bOR" {
 		t.Fatalf("focused active Flow terminal F3 writes = %#v, want F3 escape sequence", fakeTerm.writes)
 	}
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "Active flows") {
 		t.Fatalf("F3 in focused active Flow terminal should not toggle active Flow surface:\n%s", view)
 	}
@@ -1181,13 +1181,13 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "flow/with-phases") || strings.Contains(view, "codex-session-1") {
 		t.Fatalf("active flows should visually override sessions mode:\n%s", view)
 	}
@@ -1200,7 +1200,7 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 		t.Fatal("expected active Flow launch to start a flow embedded terminal")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(flowTerm.writes) == 0 || flowTerm.writes[len(flowTerm.writes)-1] != "z" {
 		t.Fatalf("active Flow input over Sessions should go to flow terminal: %#v", flowTerm.writes)
 	}
@@ -1532,7 +1532,7 @@ func phaseByID(record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase 
 
 func expandSelectedFlowWithEnter(t *testing.T, m model.Model) model.Model {
 	t.Helper()
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("enter on Flow row returned command %T, want nil", cmd)
 	}
@@ -1563,10 +1563,10 @@ func flowRecordsForTerminals(count int) []flowstore.FlowRecord {
 func selectFlowRow(t *testing.T, m model.Model, index int) model.Model {
 	t.Helper()
 	for i := 0; i < 50 && m.FlowSelected() > index; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	for i := 0; i < 50 && m.FlowSelected() < index; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := m.FlowSelected(); got != index {
 		t.Fatalf("selected Flow row = %d, want %d", got, index)
@@ -1580,7 +1580,7 @@ func selectFlowPhaseByID(t *testing.T, m model.Model, phaseID string) model.Mode
 		m = expandSelectedFlowWithEnter(t, m)
 	}
 	for i := 0; i < 50 && m.SelectedFlowPhaseID() != phaseID; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := m.SelectedFlowPhaseID(); got != phaseID {
 		t.Fatalf("selected Flow phase = %q, want %q", got, phaseID)
@@ -1675,8 +1675,8 @@ func prepareSelectedFlowPhaseEmbeddedLaunch(t *testing.T, m model.Model, phaseID
 	return flowLaunchFromKey(t, m)
 }
 
-func flowLaunchKey() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}
+func flowLaunchKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: string([]rune{'g'})}
 }
 
 // flowLaunchFromKey presses g and runs the launch lifecycle's authoritative
@@ -1700,7 +1700,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("a on selected Flow row should persist auto-mode toggle")
 	}
@@ -1740,7 +1740,7 @@ func TestModel_HKeyPersistsSelectedFlowFromPhaseRowWithoutAffectingAnotherFlow(t
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{first, second})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if cmd == nil {
 		t.Fatal("h on selected phase returned nil command")
 	}
@@ -1766,7 +1766,7 @@ func TestModel_HKeyPersistenceFailureAndNoSelectionLeaveVisibleStateUnchanged(t 
 			},
 		})
 		m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 		if cmd == nil {
 			t.Fatal("h returned nil persistence command")
 		}
@@ -1788,12 +1788,12 @@ func TestModel_HKeyPersistenceFailureAndNoSelectionLeaveVisibleStateUnchanged(t 
 			},
 		})
 		m = flowsInRightPane(t, m, nil)
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 		if cmd != nil || called {
 			t.Fatalf("h without selection returned %T, adapter called=%v", cmd, called)
 		}
-		if strings.Contains(m.View(), "headless on") || strings.Contains(m.View(), "headless off") {
-			t.Fatalf("headless control should be hidden without a selected Flow:\n%s", m.View())
+		if strings.Contains(viewContent(m), "headless on") || strings.Contains(viewContent(m), "headless off") {
+			t.Fatalf("headless control should be hidden without a selected Flow:\n%s", viewContent(m))
 		}
 	})
 }
@@ -1813,11 +1813,11 @@ func TestModel_HKeyTogglesSelectedActiveFlowPhaseAndPreservesExpansion(t *testin
 		},
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 20 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if cmd == nil {
 		t.Fatal("h on selected active phase returned nil command")
 	}
@@ -2036,7 +2036,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testi
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("a on selected Flow phase should persist auto-mode toggle")
 	}
@@ -2064,7 +2064,7 @@ func TestModel_AKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("a on selected Flow row should return persistence command")
 	}
@@ -2093,7 +2093,7 @@ func TestModel_AKeyFlowAutoModeNoopsWithoutSelectedFlow(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, nil)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd != nil {
 		t.Fatalf("a without selected Flow returned command %T, want nil", cmd)
 	}
@@ -2115,7 +2115,7 @@ func TestModel_AKeyTogglesFlowAutoModeFromActiveFlowRow(t *testing.T) {
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("a on selected active Flow row should persist auto-mode toggle")
 	}
@@ -2144,15 +2144,15 @@ func TestModel_AKeyTogglesFlowAutoModeFromActiveFlowPhaseRowAndPreservesSelectio
 		},
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "implementation" {
 		t.Fatalf("selected active Flow phase = %q, want implementation", got)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'a'})})
 	if cmd == nil {
 		t.Fatal("a on selected active Flow phase should persist auto-mode toggle")
 	}
@@ -2198,14 +2198,14 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 	if cmd != nil {
 		t.Fatalf("opening manual merge confirmation returned command %T, want nil", cmd)
 	}
 	if m.Overlay() != ui.OverlayConfirm || !strings.Contains(m.ConfirmPrompt(), "Mark PR #116 as merged?") {
 		t.Fatalf("manual merge confirmation prompt = %q overlay=%d", m.ConfirmPrompt(), m.Overlay())
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("confirming manual merge should return command")
 	}
@@ -2246,14 +2246,14 @@ func TestModel_ShiftMOpensModelPickerOnSelectedFlowRow(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'M'})})
 	if cmd != nil {
 		t.Fatalf("M on selected Flow row returned command %T, want nil", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected Flow row overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+	if view := viewContent(m); !strings.Contains(view, "Choose codex model") {
 		t.Fatalf("M on selected Flow row did not open model picker:\n%s", view)
 	}
 	if called {
@@ -2267,14 +2267,14 @@ func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "merge")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'M'})})
 	if cmd != nil {
 		t.Fatalf("M on selected Flow phase returned command %T, want nil", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected Flow phase overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
+	if view := viewContent(m); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
 		t.Fatalf("M on selected Flow phase did not open model picker:\n%s", view)
 	}
 }
@@ -2304,15 +2304,15 @@ func TestModel_PhaseAgentPickerPersistsWithoutChangingGlobals(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "merge")
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	view := m.View()
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	view := viewContent(m)
 	if !strings.Contains(view, "inherit global settings") || !strings.Contains(view, "Choose agent for phase merge") {
 		t.Fatalf("phase agent picker contents:\n%s", view)
 	}
 	for range 2 {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("phase agent selection returned no persistence command")
 	}
@@ -2323,7 +2323,7 @@ func TestModel_PhaseAgentPickerPersistsWithoutChangingGlobals(t *testing.T) {
 	if m.AgentCommand() != "codex" {
 		t.Fatalf("global agent changed to %q", m.AgentCommand())
 	}
-	if view := m.View(); !strings.Contains(view, "A      claude") || !strings.Contains(view, "M      sonnet-5") {
+	if view := viewContent(m); !strings.Contains(view, "A      claude") || !strings.Contains(view, "M      sonnet-5") {
 		t.Fatalf("phase effective labels were not refreshed:\n%s", view)
 	}
 }
@@ -2360,12 +2360,12 @@ func TestModel_PhaseAgentPickerTargetsExactWhitespaceDuplicate(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, duplicate.PhaseID)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	if view := m.View(); !strings.Contains(view, "> claude") {
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	if view := viewContent(m); !strings.Contains(view, "> claude") {
 		t.Fatalf("picker targeted the wrong normalized duplicate:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("phase agent selection returned no persistence command")
 	}
@@ -2408,19 +2408,19 @@ func TestModel_PhaseAgentPickerRejectsSettleAfterSwitchingExactDuplicate(t *test
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, duplicate.PhaseID)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp}) // codex
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'A'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp}) // codex
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("phase agent selection returned no persistence command")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.SelectedFlowPhaseID(); got != canonical.PhaseID {
 		t.Fatalf("selected phase before settle = %q, want %q", got, canonical.PhaseID)
 	}
 	m, _ = update(m, cmd())
-	if view := m.View(); !strings.Contains(view, "selection changed before agent settings were applied") {
+	if view := viewContent(m); !strings.Contains(view, "selection changed before agent settings were applied") {
 		t.Fatalf("stale exact-duplicate settle was accepted:\n%s", view)
 	}
 	items := m.Flows()
@@ -2442,7 +2442,7 @@ func TestModel_MalformedPhaseAgentStampLabelsAreExplicitlyInvalid(t *testing.T) 
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"A      invalid settings", "M      invalid", "E      effort: invalid"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("malformed phase stamp did not render %q:\n%s", want, view)
@@ -2462,7 +2462,7 @@ func TestModel_MKeyManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "merge")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 	if cmd != nil {
 		t.Fatalf("m on selected phase returned command %T, want nil", cmd)
 	}
@@ -2484,15 +2484,15 @@ func TestModel_MKeyManualMergeNoopsOnActiveFlowPhaseRow(t *testing.T) {
 		},
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "merge"; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "merge" {
 		t.Fatalf("selected active Flow phase = %q, want merge", got)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 	if cmd != nil {
 		t.Fatalf("m on selected active Flow phase returned command %T, want nil", cmd)
 	}
@@ -2516,7 +2516,7 @@ func TestModel_MKeyManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
 	if cmd != nil {
 		t.Fatalf("m on running merge phase returned command %T, want nil", cmd)
 	}
@@ -2545,8 +2545,8 @@ func TestModel_MKeyManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
 		},
 	}), []flowstore.FlowRecord{flow})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("confirming manual merge should return command")
 	}
@@ -2562,8 +2562,8 @@ func TestModel_MKeyManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
 	if mergePhase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(mergePhase.Notes, "missing plan") {
 		t.Fatalf("manual merge failure did not replace recovered flow state: %#v", got[0])
 	}
-	if strings.Contains(m.View(), "m      mark merged") {
-		t.Fatalf("recovered needs_attention Flow should not advertise manual merge:\n%s", m.View())
+	if strings.Contains(viewContent(m), "m      mark merged") {
+		t.Fatalf("recovered needs_attention Flow should not advertise manual merge:\n%s", viewContent(m))
 	}
 }
 
@@ -2583,15 +2583,15 @@ func TestModel_MKeyManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
 		},
 	}), []flowstore.FlowRecord{flow})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'m'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("confirming manual merge should return command")
 	}
 	m, _ = update(m, cmd())
 
-	if strings.Contains(m.View(), "Manual merge Flow") {
-		t.Fatalf("merged Flow should be filtered from active view:\n%s", m.View())
+	if strings.Contains(viewContent(m), "Manual merge Flow") {
+		t.Fatalf("merged Flow should be filtered from active view:\n%s", viewContent(m))
 	}
 }
 
@@ -2606,7 +2606,7 @@ func TestModel_ShiftMManualMergeNoopsOnActiveFlowRow(t *testing.T) {
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'M'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command on selected active Flow row")
 	}
@@ -2622,22 +2622,22 @@ func TestModel_ShiftMOpensModelPickerOnSelectedActiveFlowPhaseRow(t *testing.T) 
 	flow := manualMergeEligibleFlow()
 	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "merge"; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "merge" {
 		t.Fatalf("selected active Flow phase = %q, want merge", got)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'M'})})
 	if cmd != nil {
 		t.Fatalf("M on selected active Flow phase returned command %T, want nil", cmd)
 	}
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("M on selected active Flow phase overlay = %d, want model select", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
+	if view := viewContent(m); !strings.Contains(view, "Choose model for phase merge") || !strings.Contains(view, "inherit global") {
 		t.Fatalf("M on selected active Flow phase did not open model picker:\n%s", view)
 	}
 }
@@ -2646,12 +2646,12 @@ func TestModel_SelectedAwaitingFlowPhaseAdvertisesResetShortcut(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithAwaitingImplementation()})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "x      reset ready") {
-		t.Fatalf("await-session Flow phase should expose reset shortcut:\n%s", m.View())
+		t.Fatalf("await-session Flow phase should expose reset shortcut:\n%s", viewContent(m))
 	}
 	if strings.Contains(view, "r      resume") {
-		t.Fatalf("await-session Flow phase should not expose resume shortcut:\n%s", m.View())
+		t.Fatalf("await-session Flow phase should not expose resume shortcut:\n%s", viewContent(m))
 	}
 }
 
@@ -2659,7 +2659,7 @@ func TestModel_SelectedEndedSessionFlowPhaseAdvertisesResetShortcut(t *testing.T
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithEndedRunningImplementation()})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "implementation:ended-session") {
 		t.Fatalf("ended-session Flow phase should render recovery label:\n%s", view)
 	}
@@ -2689,7 +2689,7 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "implementation:session-mismatch") {
 		t.Fatalf("mismatched selected Flow phase should render session-mismatch:\n%s", view)
 	}
@@ -2701,7 +2701,7 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 	}
 	// The phase carries a launch ID, so x is no longer silent: it probes, and
 	// the probe reports what it found rather than leaving the press unanswered.
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("x on a phase carrying launch IDs should probe for releasable sessions")
 	}
@@ -2732,7 +2732,7 @@ func TestModel_StalledFlowPhaseAdvertisesSessionRelease(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "release session") {
 		t.Fatalf("stalled Flow phase should advertise session release:\n%s", view)
 	}
@@ -2765,7 +2765,7 @@ func TestModel_SelectedLiveSessionFlowPhaseOffersSessionRelease(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if strings.Contains(view, "reset ready") {
 		t.Fatalf("live attached Flow phase should hide reset shortcut:\n%s", view)
 	}
@@ -2773,7 +2773,7 @@ func TestModel_SelectedLiveSessionFlowPhaseOffersSessionRelease(t *testing.T) {
 		t.Fatalf("running Flow phase should not advertise session release:\n%s", view)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("x on a live-session phase should probe for releasable sessions")
 	}
@@ -2785,7 +2785,7 @@ func TestModel_SelectedLiveSessionFlowPhaseOffersSessionRelease(t *testing.T) {
 		t.Fatalf("release finalized before confirmation: %#v", finalized)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("accepting the release confirmation should return a command")
 	}
@@ -2823,7 +2823,7 @@ func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{awaiting})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("opening reset confirmation returned command %T, want nil", cmd)
 	}
@@ -2834,7 +2834,7 @@ func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
 		t.Fatalf("reset called before confirmation: %#v", resetCalls)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("accepting reset confirmation should return reset command")
 	}
@@ -2880,7 +2880,7 @@ func TestModel_XKeyOnEndedSessionFlowPhaseConfirmsAndResets(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{ended})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("opening reset confirmation returned command %T, want nil", cmd)
 	}
@@ -2891,7 +2891,7 @@ func TestModel_XKeyOnEndedSessionFlowPhaseConfirmsAndResets(t *testing.T) {
 		t.Fatalf("reset called before confirmation: %#v", resetCalls)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("accepting reset confirmation should return reset command")
 	}
@@ -2927,8 +2927,8 @@ func TestModel_ResetFlowPhaseRefreshKeepsSelectionAfterPhaseIDNormalization(t *t
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{awaiting})
 	m = selectFlowPhaseByID(t, m, "Implementation")
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("accepting reset confirmation should return reset command")
 	}
@@ -2963,9 +2963,9 @@ func TestModel_XKeyOnResettableFlowPhaseCancelDoesNotPersist(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithAwaitingImplementation()})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if cmd != nil {
 		t.Fatalf("canceling reset confirmation returned command %T, want nil", cmd)
 	}
@@ -2989,8 +2989,8 @@ func TestModel_XKeyOnResettableFlowPhaseReportsResetFailure(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithAwaitingImplementation()})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("accepting reset confirmation should return reset command")
 	}
@@ -3017,11 +3017,11 @@ func TestModel_XKeyIgnoredWhenSelectedFlowPhaseIsNotAwaitingSession(t *testing.T
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	if strings.Contains(m.View(), "reset ready") {
-		t.Fatalf("ready Flow phase should hide reset shortcut:\n%s", m.View())
+	if strings.Contains(viewContent(m), "reset ready") {
+		t.Fatalf("ready Flow phase should hide reset shortcut:\n%s", viewContent(m))
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil || m.Overlay() != ui.OverlayNone {
 		t.Fatalf("x on non-awaiting phase returned cmd=%T overlay=%d", cmd, m.Overlay())
 	}
@@ -3055,10 +3055,10 @@ func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithAwaitingImplementation()}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	if strings.Contains(m.View(), "reset ready") {
-		t.Fatalf("matching running Flow terminal should hide reset shortcut:\n%s", m.View())
+	if strings.Contains(viewContent(m), "reset ready") {
+		t.Fatalf("matching running Flow terminal should hide reset shortcut:\n%s", viewContent(m))
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil || m.Overlay() != ui.OverlayNone {
 		t.Fatalf("x with matching running Flow terminal returned cmd=%T overlay=%d", cmd, m.Overlay())
 	}
@@ -3092,11 +3092,11 @@ func TestModel_EndedSessionResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithEndedRunningImplementation()}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if strings.Contains(view, "reset ready") {
 		t.Fatalf("matching running Flow terminal should hide ended-session reset shortcut:\n%s", view)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil || m.Overlay() != ui.OverlayNone {
 		t.Fatalf("x with matching running Flow terminal returned cmd=%T overlay=%d", cmd, m.Overlay())
 	}
@@ -3144,14 +3144,14 @@ func TestModel_ResetShortcutHiddenAfterLegacyPhaseIDLaunchNormalizes(t *testing.
 		t.Fatalf("selected phase after normalized refresh = %q, want implementation", got)
 	}
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if strings.Contains(view, "reset ready") {
 		t.Fatalf("running normalized Flow terminal should hide reset shortcut:\n%s", view)
 	}
 	if !strings.Contains(view, "   >● running") {
 		t.Fatalf("normalized Flow terminal should mark selected phase active:\n%s", view)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil || m.Overlay() != ui.OverlayNone {
 		t.Fatalf("x with normalized running Flow terminal returned cmd=%T overlay=%d", cmd, m.Overlay())
 	}
@@ -3182,9 +3182,9 @@ func TestModel_XKeyKeepsFlowTerminalFocusCloseBehavior(t *testing.T) {
 		t.Fatal("g on ready Flow should prepare embedded terminal launch")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("terminal x close prompt returned command %T, want nil", cmd)
 	}
@@ -3354,7 +3354,7 @@ func TestModel_PendingTrackedResumeDefersFlowAutoAdvanceUntilItClears(t *testing
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
 	m = selectFlowPhaseByID(t, m, "plan-review")
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pending, manualCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if manualCmd == nil {
 		t.Fatal("manual tracked resume should return a persistence command")
 	}
@@ -3448,7 +3448,7 @@ func TestModel_TrackedResumeAndAutoAdvanceStartEachTerminalOnce(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
 	m = selectFlowPhaseByID(t, m, "plan-review")
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pending, manualCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if manualCmd == nil {
 		t.Fatal("manual resume should return a persistence command")
 	}
@@ -3568,7 +3568,7 @@ func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testi
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
 	m = selectFlowPhaseByID(t, m, "plan-review")
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pending, manualCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if manualCmd == nil {
 		t.Fatal("manual tracked resume should return the authoritative read command")
 	}
@@ -3674,8 +3674,8 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 	if len(updates) != 0 {
 		t.Fatalf("launch updates before exit-triggered refresh = %#v, want none", updates)
 	}
-	if strings.Contains(m.View(), "source output") || model.HasRunningFlowEmbeddedTerminalForPhaseForTest(m, "flow-1", "plan-review") {
-		t.Fatalf("source terminal should be dismissed after exited tick:\n%s", m.View())
+	if strings.Contains(viewContent(m), "source output") || model.HasRunningFlowEmbeddedTerminalForPhaseForTest(m, "flow-1", "plan-review") {
+		t.Fatalf("source terminal should be dismissed after exited tick:\n%s", viewContent(m))
 	}
 
 	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
@@ -4122,16 +4122,16 @@ func TestModel_FlowAutoModeDeferredLaunchWaitsOnFailedSourceTerminal(t *testing.
 	if len(updates) != 0 {
 		t.Fatalf("launch updates = %#v, want none after failed source terminal", updates)
 	}
-	if !strings.Contains(m.View(), "failed output") || !strings.Contains(m.View(), "plan-review failed") {
-		t.Fatalf("failed source terminal should remain visible:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "failed output") || !strings.Contains(viewContent(m), "plan-review failed") {
+		t.Fatalf("failed source terminal should remain visible:\n%s", viewContent(m))
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("closing failed source terminal returned command %T, want nil", cmd)
 	}
-	if strings.Contains(m.View(), "failed output") {
-		t.Fatalf("failed source terminal should be dismissed before refresh:\n%s", m.View())
+	if strings.Contains(viewContent(m), "failed output") {
+		t.Fatalf("failed source terminal should be dismissed before refresh:\n%s", viewContent(m))
 	}
 	m, cmd = update(m, model.FlowResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -4201,8 +4201,8 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 		ListRequest: m.ListRequest(ui.ModeFlows),
 	})
 	sourceTerm.state = "failed"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("closing old failed source terminal returned command %T, want nil", cmd)
 	}
@@ -4289,8 +4289,8 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 	if cmd != nil {
 		t.Fatalf("completion with stale flow terminal returned command %T, want nil", cmd)
 	}
-	if !strings.Contains(m.View(), "old failed output") {
-		t.Fatalf("stale failed terminal should remain visible while it blocks the drain:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "old failed output") {
+		t.Fatalf("stale failed terminal should remain visible while it blocks the drain:\n%s", viewContent(m))
 	}
 	m = model.ClearFlowEmbeddedTerminalsForTest(m)
 	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
@@ -4675,7 +4675,7 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testi
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	request := m.ListRequest(ui.ModeFlows)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("switching to active flows returned nil command, want active flows fetch")
 	}
@@ -4706,24 +4706,24 @@ func TestModel_FlowPhasesCollapsedByDefaultAndToggleWithEnter(t *testing.T) {
 	if m.ExpandedFlowID() != "" {
 		t.Fatalf("expanded flow = %q, want collapsed by default", m.ExpandedFlowID())
 	}
-	if strings.Contains(m.View(), "plan-review:approved") {
-		t.Fatalf("collapsed flow should not render phase detail rows:\n%s", m.View())
+	if strings.Contains(viewContent(m), "plan-review:approved") {
+		t.Fatalf("collapsed flow should not render phase detail rows:\n%s", viewContent(m))
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("toggle phases returned command %T, want nil", cmd)
 	}
 	if got := m.ExpandedFlowID(); got != flow.FlowID {
 		t.Fatalf("expanded flow = %q, want %q", got, flow.FlowID)
 	}
-	if !strings.Contains(m.View(), "plan-review:approved") {
-		t.Fatalf("expanded flow should render phase detail rows:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "plan-review:approved") {
+		t.Fatalf("expanded flow should render phase detail rows:\n%s", viewContent(m))
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.ExpandedFlowID() != "" || strings.Contains(m.View(), "plan-review:approved") {
-		t.Fatalf("second toggle should collapse phase detail rows:\n%s", m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.ExpandedFlowID() != "" || strings.Contains(viewContent(m), "plan-review:approved") {
+		t.Fatalf("second toggle should collapse phase detail rows:\n%s", viewContent(m))
 	}
 }
 
@@ -4749,7 +4749,7 @@ func TestModel_EnterOnSelectedFlowPhaseCollapsesWithoutLaunching(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("enter on selected Flow phase returned command %T, want nil", cmd)
 	}
@@ -4825,7 +4825,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("launch IDs = context %q update %#v", started.LaunchID, launchUpdate)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("headless Flow launch should keep list focus and not forward input: %#v", fakeTerm.writes)
 	}
@@ -4862,7 +4862,7 @@ func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(terms[0].writes) != 1 || terms[0].writes[0] != "z" {
 		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", terms[0].writes)
 	}
@@ -4873,7 +4873,7 @@ func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.
 		FlowPhaseID: "review-loop",
 		Headless:    true,
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if len(terms[0].writes) != 1 {
 		t.Fatalf("headless Flow launch should leave previous terminal writes unchanged, got %#v", terms[0].writes)
 	}
@@ -4913,7 +4913,7 @@ func TestModel_AutoHeadlessFlowLaunchPreservesTerminalFocus(t *testing.T) {
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(terms[0].writes) != 1 || terms[0].writes[0] != "z" {
 		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", terms[0].writes)
 	}
@@ -4925,7 +4925,7 @@ func TestModel_AutoHeadlessFlowLaunchPreservesTerminalFocus(t *testing.T) {
 		Headless:       true,
 		FlowAutoLaunch: true,
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if len(terms[0].writes) != 2 || terms[0].writes[1] != "y" {
 		t.Fatalf("auto headless Flow launch should preserve focused terminal input, writes = %#v", terms[0].writes)
 	}
@@ -5052,16 +5052,16 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 			if strings.HasSuffix(fakeTerm.writes[0], "\r") || strings.HasSuffix(fakeTerm.writes[0], "\n") {
 				t.Fatalf("prefill write should not append submit byte, got %q", fakeTerm.writes[0])
 			}
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 			if len(fakeTerm.writes) != 2 || fakeTerm.writes[1] != "z" {
 				t.Fatalf("interactive Flow launch should focus terminal input and forward z: %#v", fakeTerm.writes)
 			}
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+			m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 			if len(fakeTerm.writes) != 2 {
 				t.Fatalf("terminal close prefix should not forward x: %#v", fakeTerm.writes)
 			}
-			if view := m.View(); !strings.Contains(view, "Terminate embedded terminal?") {
+			if view := viewContent(m); !strings.Contains(view, "Terminate embedded terminal?") {
 				t.Fatalf("ctrl+] x should open terminal close confirmation:\n%s", view)
 			}
 		})
@@ -5141,7 +5141,7 @@ func TestModel_GOnSelectedNonLaunchableFlowPhaseLaunchesFirstReadySibling(t *tes
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("enter on pending selected Flow phase returned command %T, want nil", cmd)
 	}
@@ -5229,8 +5229,8 @@ func repairableFlowForShortcut() flowstore.FlowRecord {
 	}
 }
 
-func repairKey() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}}
+func repairKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: string([]rune{'R'})}
 }
 
 // repairFromKey presses R and settles the launch lifecycle's asynchronous hops.
@@ -5497,10 +5497,10 @@ func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
 				},
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-			if strings.Contains(m.View(), "R      repair") {
-				t.Fatalf("live %s Flow advertised repair:\n%s", status, m.View())
+			if strings.Contains(viewContent(m), "R      repair") {
+				t.Fatalf("live %s Flow advertised repair:\n%s", status, viewContent(m))
 			}
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'R'})})
 			if cmd != nil || starts != 0 || m.TransientError() != "" {
 				t.Fatalf("live %s repair: cmd=%T starts=%d status=%q", status, cmd, starts, m.TransientError())
 			}
@@ -5551,7 +5551,7 @@ func TestModel_RIsNoopForHealthyFlowAndExplainsOccupiedRepairSlot(t *testing.T) 
 			},
 		})
 		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
-		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'R'})})
 		if cmd != nil || starts != 0 || m.TransientError() != "" {
 			t.Fatalf("healthy R result: cmd=%T starts=%d status=%q", cmd, starts, m.TransientError())
 		}
@@ -5615,7 +5615,7 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	m, cmd := update(m, tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
 	if cmd != nil {
 		t.Fatalf("ctrl+j with a launchable phase returned command %T, want nil", cmd)
 	}
@@ -5687,7 +5687,7 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 		},
 	}), []flowstore.FlowRecord{record})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if cmd == nil {
 		t.Fatal("flows-mode h returned nil command")
 	}
@@ -5695,11 +5695,11 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("flows-mode h changed mode to %d, want flows", m.Mode())
 	}
-	if view := m.View(); !strings.Contains(view, "headless off") {
+	if view := viewContent(m); !strings.Contains(view, "headless off") {
 		t.Fatalf("flows-mode h should show headless off:\n%s", view)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'h'})})
 	if cmd == nil {
 		t.Fatal("second flows-mode h returned nil command")
 	}
@@ -5707,7 +5707,7 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("second flows-mode h changed mode to %d, want flows", m.Mode())
 	}
-	if view := m.View(); !strings.Contains(view, "headless on") {
+	if view := viewContent(m); !strings.Contains(view, "headless on") {
 		t.Fatalf("second flows-mode h should show headless on:\n%s", view)
 	}
 	if len(updates) != 2 || updates[0].FlowID != record.FlowID || updates[0].Enabled || !updates[1].Enabled {
@@ -5738,7 +5738,7 @@ func TestModel_LegacyFlowShortcutsDoNotToggleOrLaunch(t *testing.T) {
 			})
 			m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 			if cmd != nil {
 				t.Fatalf("legacy Flow key %q returned command %T, want nil", key, cmd)
 			}
@@ -5757,15 +5757,15 @@ func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
 		flowWithPhaseDetails(),
 		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending, Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhasePending}}},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.ExpandedFlowID() == "" {
 		t.Fatal("expected selected flow to expand")
 	}
 
 	for range flowstore.OrderedPhases(flowWithPhaseDetails().Phases) {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("flow selection = %d, want second flow", got)
 	}
@@ -5792,7 +5792,7 @@ func TestModel_YKeyCopiesSelectedFlowWorktreePath(t *testing.T) {
 		},
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected flow worktree path copy command")
 	}
@@ -5801,9 +5801,9 @@ func TestModel_YKeyCopiesSelectedFlowWorktreePath(t *testing.T) {
 		t.Fatalf("copied flow worktree path = %q, want /dev/alpha-worktrees/flow-1", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	_, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'y'})})
 	if cmd == nil {
 		t.Fatal("expected selected phase to copy parent Flow worktree path")
 	}
@@ -5831,16 +5831,16 @@ func TestModel_YKeyDoesNothingWhenSelectedFlowWorktreePathIsBlank(t *testing.T) 
 		},
 	}})
 
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})}); cmd != nil {
 		t.Fatalf("blank Flow worktree path returned copy command %T, want nil", cmd)
 	}
 	if copied {
 		t.Fatal("blank Flow worktree path should not copy to clipboard")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'y'})}); cmd != nil {
 		t.Fatalf("blank parent Flow worktree path from phase row returned copy command %T, want nil", cmd)
 	}
 	if copied {
@@ -5862,7 +5862,7 @@ func TestModel_CKeyCopiesSelectedFlowID(t *testing.T) {
 		Status: flowstore.StatusInProgress,
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Fatal("expected flow ID copy command")
 	}
@@ -5881,10 +5881,10 @@ func TestModel_CKeyCopiesParentFlowIDFromSelectedPhaseRow(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Fatal("expected selected phase to copy parent Flow ID")
 	}
@@ -5908,7 +5908,7 @@ func TestModel_CKeyCopiesSelectedActiveFlowID(t *testing.T) {
 		Status: flowstore.StatusInProgress,
 	}})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Fatal("expected active Flow ID copy command")
 	}
@@ -5929,10 +5929,10 @@ func TestModel_CKeyCopiesParentActiveFlowIDFromSelectedPhaseRow(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	flow.FlowID = "active-flow"
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})})
 	if cmd == nil {
 		t.Fatal("expected selected active Flow phase to copy parent Flow ID")
 	}
@@ -5952,7 +5952,7 @@ func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
 	})
 
 	m = flowsInRightPane(t, m, nil)
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})}); cmd != nil {
 		t.Fatalf("empty Flow pane returned copy command %T, want nil", cmd)
 	}
 
@@ -5961,12 +5961,12 @@ func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
 		Title:  "Blank flow ID",
 		Status: flowstore.StatusInProgress,
 	}})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})}); cmd != nil {
 		t.Fatalf("blank Flow ID returned copy command %T, want nil", cmd)
 	}
 
 	m = enterActiveFlowsWithRecords(t, m, nil)
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})}); cmd != nil {
 		t.Fatalf("empty active Flow pane returned copy command %T, want nil", cmd)
 	}
 
@@ -5975,7 +5975,7 @@ func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
 		Title:  "Blank active Flow ID",
 		Status: flowstore.StatusInProgress,
 	}})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})}); cmd != nil {
 		t.Fatalf("blank active Flow ID returned copy command %T, want nil", cmd)
 	}
 	if copied {
@@ -6001,7 +6001,7 @@ func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
 		}},
 	})
 
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd == nil {
+	if _, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'c'})}); cmd == nil {
 		t.Fatal("expected non-flow c key to keep open-code command path")
 	} else {
 		_ = cmd()
@@ -6022,7 +6022,7 @@ func TestModel_PKeyOpensSelectedFlowPullRequest(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPullRequestTarget("flow-1", prURL)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if cmd == nil {
 		t.Fatal("p on selected Flow with PR target should return open command")
 	}
@@ -6056,7 +6056,7 @@ func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flowWithPullRequestTarget("flow-1", prURL)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if cmd == nil {
 		t.Fatal("p on selected Active Flow with PR target should return open command")
 	}
@@ -6083,7 +6083,7 @@ func TestModel_IKeyOpensSelectedFlowIssue(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithIssueTarget("flow-1", issueURL)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd == nil {
 		t.Fatal("i on selected Flow with issue target should return open command")
 	}
@@ -6113,7 +6113,7 @@ func TestModel_IKeyOpensSelectedActiveFlowIssue(t *testing.T) {
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flowWithIssueTarget("flow-1", issueURL)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if cmd == nil {
 		t.Fatal("i on selected Active Flow with issue target should return open command")
 	}
@@ -6182,8 +6182,8 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
 				m, _ = update(m, cmd())
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 				return m
 			},
 			check: func(t *testing.T, m model.Model) {
@@ -6202,7 +6202,7 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 				opened = append(opened, url)
 				return nil
 			})
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			_, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 			if cmd != nil {
 				t.Fatalf("i returned command %T, want nil", cmd)
 			}
@@ -6228,12 +6228,12 @@ func TestModel_FlowFilterMatchesIssueMetadata(t *testing.T) {
 		},
 	})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range "#123" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
 		t.Fatalf("filtered flows = %#v, want only flow-1", got)
 	}
@@ -6254,7 +6254,7 @@ func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPullRequestTarget("flow-1", prURL)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 	if cmd == nil {
 		t.Fatal("p on selected Flow with PR target should return open command")
 	}
@@ -6282,7 +6282,7 @@ func TestModel_UppercasePDoesNotOpenSelectedFlowPullRequest(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPullRequestTarget("flow-1", prURL)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'P'})})
 	if cmd != nil {
 		t.Fatalf("uppercase P on selected Flow with PR target returned command %T, want nil", cmd)
 	}
@@ -6343,7 +6343,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 			name: "open modal",
 			setup: func(t *testing.T, openURL func(string) error) model.Model {
 				m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 				if m.Overlay() == ui.OverlayNone {
 					t.Fatal("expected new Flow modal to open")
 				}
@@ -6376,7 +6376,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
 				m, _ = update(m, cmd())
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 				return m
 			},
 		},
@@ -6402,8 +6402,8 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
 				m, _ = update(m, cmd())
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 				return m
 			},
 			check: func(t *testing.T, m model.Model) {
@@ -6436,8 +6436,8 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 					t.Fatal("g should prepare an embedded Flow launch")
 				}
 				m, _ = update(m, cmd())
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+				m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 				return m
 			},
 		},
@@ -6456,7 +6456,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 				opened = append(opened, url)
 				return nil
 			})
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+			m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'p'})})
 			_ = cmd
 			if len(opened) != 0 {
 				t.Fatalf("opened URLs = %#v, want none", opened)
@@ -6518,29 +6518,29 @@ func TestModel_ExpandedFlowArrowKeysSelectPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := m.SelectedFlowPhaseID(); got != "" {
 		t.Fatalf("expanded flow should keep flow row selected, got phase %q", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.FlowSelected(); got != 0 {
 		t.Fatalf("flow selection changed while entering phases: %d", got)
 	}
 	if got := m.SelectedFlowPhaseID(); got != "plan" {
 		t.Fatalf("selected flow phase = %q, want plan", got)
 	}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "   >  completed") {
+	if view := ansi.Strip(viewContent(m)); !strings.Contains(view, "   >  completed") {
 		t.Fatalf("selected phase row should be visually marked:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.SelectedFlowPhaseID(); got != "plan-review" {
 		t.Fatalf("selected flow phase = %q, want plan-review", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.SelectedFlowPhaseID(); got != "" {
 		t.Fatalf("up from first phase should return to flow row, got phase %q", got)
 	}
@@ -6551,15 +6551,15 @@ func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
 		flowWithPhaseDetails(),
 		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending, Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhasePending}}},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.SelectedFlowPhaseID(); got == "" {
 		t.Fatal("expected selected flow phase before changing flows")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("flow selection = %d, want second flow", got)
 	}
@@ -6572,12 +6572,12 @@ func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
 }
 
 func TestModel_SelectedFlowPhasePersistsWhenFocusLeavesBottomPane(t *testing.T) {
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyBackspace},
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyBackspace},
 	} {
 		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 		if got := m.SelectedFlowPhaseID(); got == "" {
 			t.Fatal("expected selected flow phase before leaving right pane")
 		}
@@ -6605,15 +6605,15 @@ func TestModel_ExpandedFlowAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 	})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12 + ui.TerminalChipRows})
 	for i := 0; i < 5; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if got := m.FlowScroll(); got != 2 {
 		t.Fatalf("flow scroll = %d, want 2", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "implementation:ready") {
 		t.Fatalf("expanded flow should scroll phase detail rows into view:\n%s", view)
 	}
@@ -6628,10 +6628,10 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 	)
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10 + ui.TerminalChipRows})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	for i := 0; i < 4; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
 	if got := m.FlowSelected(); got != 0 {
@@ -6640,19 +6640,19 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 	if got := m.FlowScroll(); got != 0 {
 		t.Fatalf("flow scroll = %d, want 0", got)
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "review-loop:pending") {
 		t.Fatalf("expanded flow should scroll within phase detail rows:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	if got := m.FlowScroll(); got != 2 {
 		t.Fatalf("flow scroll should stay at bottom after extra down, got %d", got)
 	}
-	view = m.View()
+	view = viewContent(m)
 	if !strings.Contains(view, "autoreview:pending") {
 		t.Fatalf("expanded flow should stay scrolled to the last phase:\n%s", view)
 	}
@@ -6666,9 +6666,9 @@ func TestModel_SelectedFlowPhaseStaysVisibleAfterResize(t *testing.T) {
 		flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
 	)
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 6; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := m.SelectedFlowPhaseID(); got != "autoreview" {
 		t.Fatalf("selected flow phase = %q, want autoreview", got)
@@ -6676,7 +6676,7 @@ func TestModel_SelectedFlowPhaseStaysVisibleAfterResize(t *testing.T) {
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "autoreview:pending") {
 		t.Fatalf("selected flow phase should stay visible after resize:\n%s", view)
 	}
@@ -6701,11 +6701,11 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 		t.Fatalf("initial Flows() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, cmd = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd focusing repo pane, got %T", cmd)
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("expected flows refetch after repo change")
 	}
@@ -6749,7 +6749,7 @@ func TestModel_FlowListErrorShowsStatus(t *testing.T) {
 		t.Fatal("expected flows fetch command")
 	}
 	m, _ = update(m, flowFetchMsgFromCommand(t, cmd))
-	if got := m.View(); !strings.Contains(got, "failed to load flows") || !strings.Contains(got, "Could not load flows") {
+	if got := viewContent(m); !strings.Contains(got, "failed to load flows") || !strings.Contains(got, "Could not load flows") {
 		t.Fatalf("expected flow load error in view:\n%s", got)
 	}
 }
@@ -6769,7 +6769,7 @@ func TestModel_FlowDeleteRequiresDestructiveMode(t *testing.T) {
 		Status:   flowstore.StatusPending,
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 
 	if cmd != nil {
 		t.Fatalf("d without destructive mode returned command %T, want nil", cmd)
@@ -6791,7 +6791,7 @@ func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) 
 	}
 	m := newTestModel(testRepos(), model.Options{})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{
 		RepoPath: "/dev/alpha",
 		Stashes: []gitquery.Stash{{
@@ -6802,9 +6802,9 @@ func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) 
 		ListRequest: m.ListRequest(ui.ModeStashes),
 	})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if cmd != nil {
 		t.Fatalf("opening active Flow delete confirm returned command %T, want nil", cmd)
 	}
@@ -6849,7 +6849,7 @@ func TestModel_ActiveFlowActionFailureShowsCrossRepoErrorAndRefreshesGlobally(t 
 func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testing.T) {
 	m := newTestModel(testRepos(), model.Options{})
 	m = flowsInRightPane(t, m, nil)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'s'})})
 	m, _ = update(m, model.StashResultMsg{
 		RepoPath: "/dev/alpha",
 		Stashes: []gitquery.Stash{{
@@ -6859,10 +6859,10 @@ func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testin
 		}},
 		ListRequest: m.ListRequest(ui.ModeStashes),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if cmd != nil {
 		t.Fatalf("d with no visible active Flow returned command %T, want nil", cmd)
 	}
@@ -6885,8 +6885,8 @@ func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
 		Title:    "Delete me",
 		Status:   flowstore.StatusPending,
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if cmd != nil {
 		t.Fatalf("opening Flow delete confirm returned command %T, want nil", cmd)
 	}
@@ -6894,7 +6894,7 @@ func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
 		t.Fatalf("expected Flow delete confirm overlay, got %d", m.Overlay())
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 
 	if cmd != nil {
 		t.Fatalf("canceling Flow delete returned command %T, want nil", cmd)
@@ -6930,8 +6930,8 @@ func TestModel_FlowDeleteConfirmDeletesCapturedFlowAndRefreshes(t *testing.T) {
 		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Keep me", Status: flowstore.StatusPending},
 	})
 	m = expandSelectedFlowWithEnter(t, m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 	if cmd != nil {
 		t.Fatalf("opening Flow delete confirm returned command %T, want nil", cmd)
 	}
@@ -6942,7 +6942,7 @@ func TestModel_FlowDeleteConfirmDeletesCapturedFlowAndRefreshes(t *testing.T) {
 		}
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("confirming Flow delete should return command")
 	}
@@ -6984,9 +6984,9 @@ func TestModel_FlowDeleteIgnoresSelectedPhaseRows(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m = selectFlowPhaseByID(t, m, "plan")
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
 
 	if cmd != nil {
 		t.Fatalf("d on selected Flow phase returned command %T, want nil", cmd)
@@ -7020,9 +7020,9 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 			Title:    "Already gone",
 			Status:   flowstore.StatusPending,
 		}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+		_, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 		if cmd == nil {
 			t.Fatal("confirming Flow delete should return command")
 		}
@@ -7127,14 +7127,14 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 	for i := 0; i < 10 && m.SelectedFlowPhaseID() != ""; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if m.SelectedFlowPhaseID() != "" {
 		t.Fatalf("selected Flow phase = %q, want top-level Flow row", m.SelectedFlowPhaseID())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'D'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'d'})})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("confirming Flow delete should return command")
 	}
@@ -7151,8 +7151,8 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	if fakeTerm.State() != "running" {
 		t.Fatalf("embedded terminal state = %q, want running", fakeTerm.State())
 	}
-	if !strings.Contains(m.View(), "flow output") {
-		t.Fatalf("active Flow terminal output disappeared after Flow delete:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "flow output") {
+		t.Fatalf("active Flow terminal output disappeared after Flow delete:\n%s", viewContent(m))
 	}
 }
 
@@ -7174,9 +7174,9 @@ func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 		},
 	}}, ListRequest: m.ListRequest(ui.ModeFlows)})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Review")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("Review"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
 		t.Fatalf("flow search by phase title should keep row, got %#v", got)
 	}
@@ -7198,9 +7198,9 @@ func TestModel_FlowSearchIncludesMergeMetadata(t *testing.T) {
 		},
 	}}, ListRequest: m.ListRequest(ui.ModeFlows)})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("0123456789abcdef")})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune("0123456789abcdef"))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
 		t.Fatalf("flow search by merge commit should keep row, got %#v", got)
 	}
@@ -7230,7 +7230,7 @@ func TestModel_OKeyOnFlowOpensLinkedPlanText(t *testing.T) {
 		UpdatedAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	if cmd == nil {
 		t.Fatal("flows-mode o should return a plan read command for linked plan")
 	}
@@ -7257,7 +7257,7 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 		Status:   flowstore.StatusPending,
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'o'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for unlinked flow")
 	}
@@ -7310,10 +7310,10 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected selected Flow phase resume command")
 	}
@@ -7364,7 +7364,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("Flow phase resume should not prefill embedded terminal, got writes %#v", fakeTerm.writes)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
 		t.Fatalf("interactive Flow phase resume should focus terminal input and forward z: %#v", fakeTerm.writes)
 	}
@@ -7453,7 +7453,7 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForSQLiteWriterInUpdate(t *test
 	updateDone = updateFinished
 	go func() {
 		defer close(updateFinished)
-		next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		next, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		updateResults <- updateResult{model: next, cmd: cmd}
 	}()
 
@@ -7582,11 +7582,11 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 	m = selectFlowPhaseByID(t, m, "Review-Loop")
 
-	pending, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pending, firstCmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if firstCmd == nil {
 		t.Fatal("first resume should return a persistence command")
 	}
-	pendingAfterDuplicate, duplicateCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pendingAfterDuplicate, duplicateCmd := update(pending, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if duplicateCmd != nil {
 		t.Fatal("second resume for the same pending target should not enqueue a command")
 	}
@@ -7616,13 +7616,13 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 	if replayCmd != nil || len(terminalStarts) != 1 || replayed.TransientError() != statusBeforeReplay {
 		t.Fatalf("replayed success changed state: cmd=%T terminals=%#v status=%q", replayCmd, terminalStarts, replayed.TransientError())
 	}
-	replayed, _ = update(replayed, tea.KeyMsg{Type: tea.KeyTab})
-	_, runningTerminalCmd := update(replayed, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	replayed, _ = update(replayed, tea.KeyPressMsg{Code: tea.KeyTab})
+	_, runningTerminalCmd := update(replayed, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if runningTerminalCmd != nil || len(launchUpdates) != 1 || len(terminalStarts) != 1 {
 		t.Fatalf("resume with a running target terminal enqueued work: cmd=%T updates=%#v terminals=%#v", runningTerminalCmd, launchUpdates, terminalStarts)
 	}
 
-	_, retainedPendingCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, retainedPendingCmd := update(pending, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if retainedPendingCmd != nil {
 		t.Fatal("clearing a derived model mutated the retained model's pending request")
 	}
@@ -7651,7 +7651,7 @@ func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testi
 	}
 
 	t.Run("pending resume blocks repair", func(t *testing.T) {
-		pending, resumeCmd := update(newModel(), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		pending, resumeCmd := update(newModel(), tea.KeyPressMsg{Text: string([]rune{'r'})})
 		if resumeCmd == nil {
 			t.Fatal("resume should reserve a persistence command")
 		}
@@ -7672,7 +7672,7 @@ func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testi
 		if !model.FlowLaunchAttemptHeldForTest(pending, record.FlowID) {
 			t.Fatal("repair should hold the Flow through a lifecycle attempt")
 		}
-		_, resumeCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		_, resumeCmd := update(pending, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		if resumeCmd != nil {
 			t.Fatal("phase resume should not reserve persistence while a repair is pending")
 		}
@@ -7720,7 +7720,7 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	// fenced against, so it is what each of these helpers hands back.
 	resumeToPrepared := func(source model.Model) (model.Model, tea.Msg) {
 		t.Helper()
-		pending, readCmd := update(source, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		pending, readCmd := update(source, tea.KeyPressMsg{Text: string([]rune{'r'})})
 		if readCmd == nil {
 			t.Fatal("resume should return the authoritative read command")
 		}
@@ -7736,7 +7736,7 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	if len(terminalStarts) != 1 {
 		t.Fatalf("terminal starts after first success = %#v, want 1", terminalStarts)
 	}
-	firstStarted, _ = update(firstStarted, tea.KeyMsg{Type: tea.KeyTab})
+	firstStarted, _ = update(firstStarted, tea.KeyPressMsg{Code: tea.KeyTab})
 	firstStarted = model.ClearFlowEmbeddedTerminalsForTest(firstStarted)
 	firstStarted, _ = switchTestMode(firstStarted, ui.ModeFlows)
 	firstStarted = selectFlowPhaseByID(t, firstStarted, "implementation")
@@ -7753,7 +7753,7 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	if refreshCmd == nil || !strings.Contains(afterFailure.TransientError(), "failed to mark flow phase resume: state root locked") {
 		t.Fatalf("persistence failure = cmd %T status %q", refreshCmd, afterFailure.TransientError())
 	}
-	retryPending, retryCmd := update(afterFailure, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	retryPending, retryCmd := update(afterFailure, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if retryCmd == nil {
 		t.Fatal("persistence failure should admit a retry")
 	}
@@ -7825,27 +7825,27 @@ func TestModel_TrackedFlowPhaseResumesForIndependentTargetsCompleteOutOfOrder(t 
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowA, flowB})
 	m = selectFlowPhaseByID(t, m, "Review-Loop")
-	pendingA, cmdA := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pendingA, cmdA := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmdA == nil {
 		t.Fatal("target A should return a persistence command")
 	}
 
 	selectTargetB := func(source model.Model) model.Model {
-		next, _ := update(source, tea.KeyMsg{Type: tea.KeyEnter})
+		next, _ := update(source, tea.KeyPressMsg{Code: tea.KeyEnter})
 		if next.ExpandedFlowID() != "" {
 			t.Fatalf("enter on selected target A did not collapse it: expanded=%q", next.ExpandedFlowID())
 		}
-		next, _ = update(next, tea.KeyMsg{Type: tea.KeyDown})
+		next, _ = update(next, tea.KeyPressMsg{Code: tea.KeyDown})
 		if next.FlowSelected() != 1 {
 			t.Fatalf("selected Flow index = %d, want target B", next.FlowSelected())
 		}
 		return selectFlowPhaseByID(t, next, "review-loop")
 	}
-	pendingAB, cmdB := update(selectTargetB(pendingA), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	pendingAB, cmdB := update(selectTargetB(pendingA), tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmdB == nil {
 		t.Fatal("independent target B should remain admissible while target A is pending")
 	}
-	_, retainedBCommand := update(selectTargetB(pendingA), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, retainedBCommand := update(selectTargetB(pendingA), tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if retainedBCommand == nil {
 		t.Fatal("adding target B to a derived model mutated the retained A-only model")
 	}
@@ -7911,7 +7911,7 @@ func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil || persisted || started {
 		t.Fatalf("resume Update sequencing: cmd=%T persisted=%v started=%v", cmd, persisted, started)
 	}
@@ -7945,7 +7945,7 @@ func TestModel_SkippedFlowPhaseWithEndedSessionAdvertisesResume(t *testing.T) {
 	m := flowsInRightPane(t, newTestModel(testRepos(), model.Options{}), []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "r      resume") {
 		t.Fatalf("skipped Flow phase with ended session should expose resume shortcut:\n%s", view)
 	}
@@ -7977,13 +7977,13 @@ func TestModel_FlowPhaseWithUnsupportedProviderDoesNotAdvertiseResume(t *testing
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	if strings.Contains(m.View(), "r      resume") {
-		t.Fatalf("unsupported provider should not advertise Flow phase resume:\n%s", m.View())
+	if strings.Contains(viewContent(m), "r      resume") {
+		t.Fatalf("unsupported provider should not advertise Flow phase resume:\n%s", viewContent(m))
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for unsupported provider")
 	}
@@ -8020,10 +8020,10 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for awaiting latest session")
 	}
@@ -8064,13 +8064,13 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderLiveSession
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	if strings.Contains(m.View(), "r      resume") {
-		t.Fatalf("awaiting latest session with older live session should not advertise resume:\n%s", m.View())
+	if strings.Contains(viewContent(m), "r      resume") {
+		t.Fatalf("awaiting latest session with older live session should not advertise resume:\n%s", viewContent(m))
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for awaiting latest session")
 	}
@@ -8097,7 +8097,7 @@ func TestModel_RKeyOnRunningEndedSessionFlowPhaseDoesNotResume(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithEndedRunningImplementation()})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for running ended-session phase")
 	}
@@ -8129,10 +8129,10 @@ func TestModel_RKeyOnRunningEndedLatestSessionDoesNotResumeWhenOlderSessionIsLiv
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	if strings.Contains(m.View(), "r      resume") {
-		t.Fatalf("running ended latest session should not advertise resume:\n%s", m.View())
+	if strings.Contains(viewContent(m), "r      resume") {
+		t.Fatalf("running ended latest session should not advertise resume:\n%s", viewContent(m))
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for running ended latest session")
 	}
@@ -8176,13 +8176,13 @@ func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testin
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	if !strings.Contains(m.View(), "r      resume") {
-		t.Fatalf("needs_attention phase should advertise Flow phase resume:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "r      resume") {
+		t.Fatalf("needs_attention phase should advertise Flow phase resume:\n%s", viewContent(m))
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected needs_attention phase to resume older valid session")
 	}
@@ -8231,10 +8231,10 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("resume start failure should refresh flows")
 	}
@@ -8287,10 +8287,10 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *te
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
@@ -8342,10 +8342,10 @@ func TestModel_RKeyOnFlowPhaseResumeFailureFlagsPhaseReopenedByStore(t *testing.
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one; the store reopened the phase, so a failed launch must flag it", phaseUpdates)
@@ -8395,10 +8395,10 @@ func TestModel_RKeyOnFlowPhaseResumeFailureUsesNormalizedPersistedPhaseID(t *tes
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one; normalized persisted running phase must override terminal snapshot", phaseUpdates)
@@ -8448,10 +8448,10 @@ func TestModel_RKeyOnFlowPhaseResumeFailurePrefersExactPersistedDuplicate(t *tes
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one; exact persisted running phase must override stale terminal duplicate", phaseUpdates)
@@ -8503,10 +8503,10 @@ func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 0 {
 		t.Fatalf("phase updates = %#v, want none; the store preserved the completed phase, so a failed launch must not regress it", phaseUpdates)
@@ -8556,10 +8556,10 @@ func TestModel_RKeyOnFlowPhaseResumeStartFailureKeepsSkippedPhase(t *testing.T) 
 			},
 		}},
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if cmd == nil {
 		t.Fatal("expected resume launch command")
 	}
@@ -8898,7 +8898,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("headless Flow launch should not prefill embedded terminal, got writes %#v", fakeTerm.writes)
 	}
-	_ = m.View()
+	_ = viewContent(m)
 	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
 	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
@@ -8946,7 +8946,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 	if tickBatch == nil {
 		t.Fatal("embedded launch should schedule repaint tick")
 	}
-	if view := m.View(); !strings.Contains(view, "agent output") {
+	if view := viewContent(m); !strings.Contains(view, "agent output") {
 		t.Fatalf("running Flow terminal should render output before exit:\n%s", view)
 	}
 
@@ -8962,7 +8962,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 		}
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "agent output") || strings.Contains(view, "1 codex implementation exited") {
 		t.Fatalf("exited Flow terminal should auto-close on repaint tick:\n%s", view)
 	}
@@ -8999,14 +8999,14 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	if flowTick == nil {
 		t.Fatal("first Flow terminal should schedule repaint tick")
 	}
-	if view := m.View(); !strings.Contains(view, "flow output") {
+	if view := viewContent(m); !strings.Contains(view, "flow output") {
 		t.Fatalf("running Flow terminal should render output before exit:\n%s", view)
 	}
 	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if sessionTick != nil {
 		t.Fatal("opening a session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -9024,7 +9024,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 		t.Fatal("running session terminal should keep repaint loop alive after Flow auto-close")
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "session output") || !strings.Contains(view, "1 codex feature/session running") {
 		t.Fatalf("running session terminal should remain visible after Flow auto-close:\n%s", view)
 	}
@@ -9062,7 +9062,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 	if sessionTick != nil {
 		t.Fatal("opening an exited session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -9076,7 +9076,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 		}
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "session done") || !strings.Contains(view, "1 codex feature/session exited") {
 		t.Fatalf("exited session terminal should remain visible after Flow auto-close:\n%s", view)
 	}
@@ -9084,9 +9084,9 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 		t.Fatalf("Flow terminal output should not remain after auto-close:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	view = m.View()
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	view = viewContent(m)
 	if strings.Contains(view, "session done") || strings.Contains(view, "1 codex feature/session") {
 		t.Fatalf("exited session terminal should still be dismissible:\n%s", view)
 	}
@@ -9138,7 +9138,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 	if firstTick == nil {
 		t.Fatal("first Flow terminal should schedule repaint tick")
 	}
-	if view := m.View(); !strings.Contains(view, "flow third output") {
+	if view := viewContent(m); !strings.Contains(view, "flow third output") {
 		t.Fatalf("third Flow terminal should be active before auto-close:\n%s", view)
 	}
 
@@ -9155,7 +9155,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 		t.Fatal("remaining running Flow terminals should keep repaint loop alive")
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex implementation running", "2 codex implementation running", "flow third output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("renumbered Flow terminal view missing %q:\n%s", want, view)
@@ -9210,11 +9210,11 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(
 	if tickBatch == nil {
 		t.Fatal("first Flow terminal should schedule repaint tick")
 	}
-	if view := m.View(); !strings.Contains(view, "flow second output") {
+	if view := viewContent(m); !strings.Contains(view, "flow second output") {
 		t.Fatalf("second Flow terminal should be active before auto-close:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	terms[1].state = "exited"
 	gotFollowup := false
 	for _, msg := range runBatchCmd(t, tickBatch) {
@@ -9228,18 +9228,18 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(
 		t.Fatal("remaining running Flow terminal should keep repaint loop alive")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if len(terms[0].writes) != 0 {
 		t.Fatalf("x after active Flow auto-close should stay in command mode, got writes %#v", terms[0].writes)
 	}
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("x after active Flow auto-close should confirm promoted terminal close, got overlay %d", m.Overlay())
 	}
-	if view := m.View(); !strings.Contains(view, "Terminate embedded terminal?") {
+	if view := viewContent(m); !strings.Contains(view, "Terminate embedded terminal?") {
 		t.Fatalf("close confirmation should be visible for promoted Flow terminal:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
-	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if view := viewContent(m); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
 		t.Fatalf("promoted Flow terminal should remain visible after canceling close confirmation:\n%s", view)
 	}
 }
@@ -9286,12 +9286,12 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 	if tickBatch == nil {
 		t.Fatal("first Flow terminal should schedule repaint tick")
 	}
-	if view := m.View(); !strings.Contains(view, "flow second output") {
+	if view := viewContent(m); !strings.Contains(view, "flow second output") {
 		t.Fatalf("second Flow terminal should be active before auto-close:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected terminate confirmation, got %d", m.Overlay())
 	}
@@ -9309,10 +9309,10 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 		t.Fatal("remaining running Flow terminal should keep repaint loop alive")
 	}
 
-	if m.Overlay() == ui.OverlayConfirm || strings.Contains(m.View(), "Terminate embedded terminal?") {
-		t.Fatalf("auto-closing the confirmed Flow terminal should clear stale confirmation:\n%s", m.View())
+	if m.Overlay() == ui.OverlayConfirm || strings.Contains(viewContent(m), "Terminate embedded terminal?") {
+		t.Fatalf("auto-closing the confirmed Flow terminal should clear stale confirmation:\n%s", viewContent(m))
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
 		t.Fatalf("promoted Flow terminal should be visible after auto-close clears confirmation:\n%s", view)
 	}
@@ -9355,7 +9355,7 @@ func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) 
 		}
 	}
 
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "failure output") || !strings.Contains(view, "1 codex implementation failed") {
 		t.Fatalf("failed Flow terminal should remain visible for error review:\n%s", view)
 	}
@@ -9389,16 +9389,16 @@ func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
 		t.Fatal("g should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, ">● in_progress") {
 		t.Fatalf("active selected Flow row should show selection and marker:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view = ansi.Strip(m.View())
+	view = ansi.Strip(viewContent(m))
 	if !strings.Contains(view, "   >● ready") {
 		t.Fatalf("active selected Flow phase should show phase indent, selection, and marker:\n%s", view)
 	}
@@ -9443,9 +9443,9 @@ func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
 				t.Fatal("g should prepare an embedded launch")
 			}
 			m, _ = update(m, cmd())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 
-			view := ansi.Strip(m.View())
+			view := ansi.Strip(viewContent(m))
 			gotMarker := strings.Contains(view, ">● in_progress")
 			if gotMarker != tc.wantMarker {
 				t.Fatalf("state %q marker = %t, want %t:\n%s", tc.state, gotMarker, tc.wantMarker, view)
@@ -9484,16 +9484,16 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 		t.Fatal("g should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, ">● in_progress") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if view := ansi.Strip(viewContent(m)); !strings.Contains(view, ">● in_progress") {
 		t.Fatalf("running terminal should mark selected Flow row before dismissal:\n%s", view)
 	}
 
 	fakeTerm.state = "exited"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if strings.Contains(view, "● in_progress") {
 		t.Fatalf("dismissed terminal should remove active marker:\n%s", view)
 	}
@@ -9543,11 +9543,11 @@ func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T
 		t.Fatal("g should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 	if !strings.Contains(view, " ● in_progress      flow/one") {
 		t.Fatalf("source flow should remain marked:\n%s", view)
 	}
@@ -9597,29 +9597,29 @@ func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t
 		wantHeight,
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	if !m.SearchActive() {
 		t.Fatal("slash should activate search while Flow terminal is visible but list-focused")
 	}
 	requireLatestResize(t, fakeTerm, wantSearchSize)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.SearchActive() {
 		t.Fatal("enter should leave search mode")
 	}
 	requireLatestResize(t, fakeTerm, wantInactiveSize)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	requireLatestResize(t, fakeTerm, wantSearchSize)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.SearchActive() {
 		t.Fatal("escape should leave search mode")
 	}
 	requireLatestResize(t, fakeTerm, wantInactiveSize)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	requireLatestResize(t, fakeTerm, wantSearchSize)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if m.SearchActive() {
 		t.Fatal("empty backspace should leave search mode")
 	}
@@ -9759,9 +9759,9 @@ func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T)
 		},
 	}
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "design-review"; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "design-review" {
 		t.Fatalf("selected active Flow phase = %q, want design-review", got)
@@ -9876,9 +9876,9 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 					t.Fatalf("status = %q, want to contain %q", m.TransientError(), want)
 				}
 			}
-			retained := strings.Contains(m.View(), "agent output")
+			retained := strings.Contains(viewContent(m), "agent output")
 			if retained != tt.wantRetained {
-				t.Fatalf("failed prefill retained=%v, want %v:\n%s", retained, tt.wantRetained, m.View())
+				t.Fatalf("failed prefill retained=%v, want %v:\n%s", retained, tt.wantRetained, viewContent(m))
 			}
 		})
 	}
@@ -9923,8 +9923,8 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("Flow terminal command mode should not forward unknown command bytes: %#v", fakeTerm.writes)
 	}
@@ -9932,24 +9932,24 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 		t.Fatalf("status = %q, want unknown terminal command", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
 		t.Fatalf("ctrl+] in Flow command mode should send a literal ctrl+], writes = %#v", fakeTerm.writes)
 	}
 	before := listRequests(m)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from Flow terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from left pane active pane = %d, want Flow list", m.ActivePane())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'j'})})
 	if len(fakeTerm.writes) != 1 {
 		t.Fatalf("list focus should not forward j to terminal: %#v", fakeTerm.writes)
 	}
@@ -9961,10 +9961,10 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 func TestModel_BackKeysFromFlowListReturnToLeftPaneAndClearSelectedPhase(t *testing.T) {
 	for _, tt := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "backspace", key: tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
@@ -9990,19 +9990,19 @@ func TestModel_BackKeysFromFlowListReturnToLeftPaneAndClearSelectedPhase(t *test
 func TestModel_BackKeysFromActiveFlowsReturnToLeftPaneAndClearSelectedPhase(t *testing.T) {
 	for _, tt := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "backspace", key: tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			flow := flowWithPhaseDetails()
 			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'1'})})
 			m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+				m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			}
 			if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "implementation" {
 				t.Fatalf("selected active Flow phase = %q, want implementation before %s", got, tt.name)
@@ -10028,10 +10028,10 @@ func TestModel_BackKeysFromActiveFlowsReturnToLeftPaneAndClearSelectedPhase(t *t
 func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	for _, tt := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "backspace", key: tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
@@ -10051,8 +10051,8 @@ func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 				t.Fatal("g should prepare an embedded launch")
 			}
 			m, _ = update(m, cmd())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 
 			m, cmd = update(m, tt.key)
 
@@ -10092,7 +10092,7 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if m.ActivePane() != ui.PaneTop {
 		t.Fatalf("backspace with inactive Flow terminal activePane = %d, want top pane", m.ActivePane())
 	}
@@ -10100,8 +10100,8 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 		t.Fatalf("inactive Flow terminal should not receive backspace writes: %#v", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'j'})})
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("returning from backspace should keep Flow list focus, not terminal focus: %#v", fakeTerm.writes)
 	}
@@ -10130,9 +10130,9 @@ func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyF2})
 
 	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("terminal-owned f2 activePane = %d, want right pane", m.ActivePane())
@@ -10181,8 +10181,8 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("terminal command-mode E opened overlay %d", m.Overlay())
 	}
@@ -10194,7 +10194,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 	}
 
 	for _, key := range []rune{'a', 'm', 'M'} {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 		if m.Overlay() != ui.OverlayNone {
 			t.Fatalf("terminal command-mode %c opened overlay %d", key, m.Overlay())
 		}
@@ -10209,8 +10209,8 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 		t.Fatal("terminal command mode should not start manual merge lookup")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'E'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("terminal input-mode E opened overlay %d", m.Overlay())
 	}
@@ -10218,7 +10218,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 		t.Fatalf("terminal input-mode E writes = %#v, want E", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'V'})})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("terminal input-mode V opened overlay %d", m.Overlay())
 	}
@@ -10227,7 +10227,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 	}
 
 	for _, key := range []rune{'a', 'm', 'M'} {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{key})})
 		if m.Overlay() != ui.OverlayNone {
 			t.Fatalf("terminal input-mode %c opened overlay %d", key, m.Overlay())
 		}
@@ -10282,20 +10282,20 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("input-mode command should not be forwarded to terminal: %#v", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(fakeTerm.writes) != 2 || fakeTerm.writes[0] != "z" || fakeTerm.writes[1] != "\r" {
 		t.Fatalf("Flow terminal input mode writes = %#v, want z and enter", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if len(fakeTerm.writes) != 2 {
 		t.Fatalf("command mode should let tab leave focus without writing: %#v", fakeTerm.writes)
 	}
@@ -10303,9 +10303,9 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 		t.Fatalf("tab from command-mode terminal active pane = %d, want left pane", m.ActivePane())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'j'})})
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %d, want Flow list focus", m.Mode())
 	}
@@ -10325,12 +10325,12 @@ func TestModel_FlowTerminalInputModeTabIsForwardedToTerminal(t *testing.T) {
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
 	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
 		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from input-mode Flow terminal active pane = %d, want terminal pane", m.ActivePane())
 	}
@@ -10359,21 +10359,21 @@ func TestModel_FlowTerminalInputModeForwardsCtrlGToAgent(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'i'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\a" {
 		t.Fatalf("input mode should forward ctrl+g to the agent, writes = %#v", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(fakeTerm.writes) != 2 || fakeTerm.writes[1] != "z" {
 		t.Fatalf("ctrl+g should leave the terminal in input mode, writes = %#v", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if len(fakeTerm.writes) != 2 {
 		t.Fatalf("ctrl+] should return to command mode without forwarding, writes = %#v", fakeTerm.writes)
 	}
@@ -10402,8 +10402,8 @@ func TestModel_FlowTerminalCommandModeSendsLiteralCommandKey(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
 		t.Fatalf("ctrl+] in Flow command mode should send a literal ctrl+], writes = %#v", fakeTerm.writes)
 	}
@@ -10431,10 +10431,10 @@ func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 		t.Fatal("g should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
 		t.Fatalf("ctrl+] should send literal byte before tab leaves focus, writes = %#v", fakeTerm.writes)
 	}
@@ -10445,9 +10445,9 @@ func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 		t.Fatalf("tab should not be treated as an unknown terminal command, status = %q", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'j'})})
 	if len(fakeTerm.writes) != 1 {
 		t.Fatalf("list focus should not forward j to terminal: %#v", fakeTerm.writes)
 	}
@@ -10487,25 +10487,25 @@ func TestModel_FlowTerminalFocusCyclesLeftRightWithoutWritingPTY(t *testing.T) {
 	if starts != 3 {
 		t.Fatalf("embedded terminal starts = %d, want 3", starts)
 	}
-	if view := m.View(); !strings.Contains(view, "flow third output") {
+	if view := viewContent(m); !strings.Contains(view, "flow third output") {
 		t.Fatalf("newest Flow terminal should be active before cycling:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if view := m.View(); !strings.Contains(view, "flow second output") || strings.Contains(view, "flow third output") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := viewContent(m); !strings.Contains(view, "flow second output") || strings.Contains(view, "flow third output") {
 		t.Fatalf("left should cycle to previous Flow terminal:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := viewContent(m); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
 		t.Fatalf("left should cycle to previous Flow terminal again:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if view := m.View(); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := viewContent(m); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
 		t.Fatalf("left should wrap to last Flow terminal:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow third output") {
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
+	if view := viewContent(m); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow third output") {
 		t.Fatalf("right should wrap to first Flow terminal:\n%s", view)
 	}
 
@@ -10533,9 +10533,9 @@ func TestModel_FlowTerminalLeftRightNoOpWithOneTerminal(t *testing.T) {
 		Headless:     true,
 	}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyRight})
 
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("single Flow terminal should not receive left/right writes: %#v", fakeTerm.writes)
@@ -10543,7 +10543,7 @@ func TestModel_FlowTerminalLeftRightNoOpWithOneTerminal(t *testing.T) {
 	if got := m.TransientError(); strings.Contains(got, "No embedded terminal") {
 		t.Fatalf("single Flow terminal left/right should not report missing terminal: %q", got)
 	}
-	if view := m.View(); !strings.Contains(view, "only flow output") {
+	if view := viewContent(m); !strings.Contains(view, "only flow output") {
 		t.Fatalf("single Flow terminal should remain active after left/right:\n%s", view)
 	}
 }
@@ -10588,12 +10588,12 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 		t.Fatalf("embedded terminal starts = %d, want 3", starts)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
 	terms[1].state = "exited"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex implementation running", "2 codex implementation running", "flow first output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("renumbered Flow terminal view missing %q:\n%s", want, view)
@@ -10605,8 +10605,8 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 		}
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	if view = m.View(); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	if view = viewContent(m); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
 		t.Fatalf("switching to renumbered Flow terminal 2 should show former third terminal:\n%s", view)
 	}
 }
@@ -10632,7 +10632,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		t.Fatal("g should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
-	if view := m.View(); !strings.Contains(view, "1 codex implementation running") {
+	if view := viewContent(m); !strings.Contains(view, "1 codex implementation running") {
 		t.Fatalf("Flow terminal should start with global tab 1:\n%s", view)
 	}
 
@@ -10640,20 +10640,20 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if view := m.View(); !strings.Contains(view, "2 codex feature/session exited") {
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
+	if view := viewContent(m); !strings.Contains(view, "2 codex feature/session exited") {
 		t.Fatalf("session terminal should use the next global tab number:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if strings.Contains(m.View(), "session output") {
-		t.Fatalf("dismissed session terminal should be removed:\n%s", m.View())
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
+	if strings.Contains(viewContent(m), "session output") {
+		t.Fatalf("dismissed session terminal should be removed:\n%s", viewContent(m))
 	}
 
 	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("Flow terminal should survive session close and global renumbering, missing %q:\n%s", want, view)
@@ -10687,17 +10687,17 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd != nil {
 		t.Fatalf("running session close should open confirmation, got command %T", cmd)
 	}
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected terminate confirmation overlay, got %d", m.Overlay())
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected terminate confirmation command")
 	}
@@ -10712,7 +10712,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 
 	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
-	view := m.View()
+	view := viewContent(m)
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("Flow terminal with matching display number should survive session terminate, missing %q:\n%s", want, view)
@@ -10740,14 +10740,14 @@ func TestModel_FlowListQuitWithRunningEmbeddedTerminalConfirmsAndTerminates(t *t
 	}
 	m, _ = update(m, cmd())
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'q'})})
 	if cmd != nil {
 		t.Fatalf("quit with running flow terminal should open confirmation, got command %T", cmd)
 	}
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected quit confirmation overlay, got %d", m.Overlay())
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected quit confirmation command")
 	}
@@ -10780,8 +10780,8 @@ func TestModel_LeftPaneQuitWithRunningEmbeddedTerminalConfirms(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	m, cmd = update(m, tea.KeyPressMsg{Text: string([]rune{'q'})})
 	if cmd != nil {
 		t.Fatalf("left-pane quit with running terminal should open confirmation, got command %T", cmd)
 	}
@@ -10883,14 +10883,14 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-5", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/five", Branch: "feature/five"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-6", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/six", Branch: "feature/six"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = resumeSavedSessionForTest(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSavedSessionForTest(t, m, tea.KeyPressMsg{Text: string([]rune{'r'})})
 
 	openSessionIndex := func(index int) {
 		t.Helper()
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+		m, _ = update(m, tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'l'})})
 		for range index {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 		}
 		m, _ = selectSavedSessionForTest(t, m)
 	}
@@ -10937,12 +10937,12 @@ func TestModel_FlowSplitListScrollKeepsSelectionVisible(t *testing.T) {
 	m, _ = update(m, cmd())
 
 	for i := 0; i < 3; i++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.FlowSelected() != 3 {
 		t.Fatalf("flow selection = %d, want 3", m.FlowSelected())
 	}
-	view := m.View()
+	view := viewContent(m)
 	if !strings.Contains(view, "flow/delta") {
 		t.Fatalf("selected flow should be visible in the split list:\n%s", view)
 	}
@@ -11074,7 +11074,7 @@ func TestModel_SelectedReadyFlowPhaseAdvertisesLaunchPhaseAction(t *testing.T) {
 		},
 	}})
 
-	view := m.View()
+	view := viewContent(m)
 	if strings.Contains(view, "launch phase") {
 		t.Fatalf("Flow row should not expose phase launch action:\n%s", view)
 	}
@@ -11083,7 +11083,7 @@ func TestModel_SelectedReadyFlowPhaseAdvertisesLaunchPhaseAction(t *testing.T) {
 	}
 
 	m = selectFlowPhaseByID(t, m, "implementation")
-	view = m.View()
+	view = viewContent(m)
 	if !strings.Contains(view, "g      launch next") && !strings.Contains(view, "g: launch next") {
 		t.Fatalf("selected ready Flow phase should expose next launch action:\n%s", view)
 	}
@@ -11105,7 +11105,7 @@ func TestModel_GWithoutReadyFlowPhaseShowsNoLaunchableStatus(t *testing.T) {
 		},
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	if view := m.View(); strings.Contains(view, "launch phase") || strings.Contains(view, "launch next") {
+	if view := viewContent(m); strings.Contains(view, "launch phase") || strings.Contains(view, "launch next") {
 		t.Fatalf("gated selected phase should not expose launch action:\n%s", view)
 	}
 
@@ -11835,7 +11835,7 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 
 	if cmd != nil {
 		t.Fatalf("expected opening new-flow title prompt to return no command, got %T", cmd)
@@ -12037,12 +12037,12 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 		t.Fatalf("prefill completion: active=%d writes=%#v", model.ActiveFlowCreateForTest(m), term.writes)
 	}
 	beforeWrites := len(term.writes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'z'})})
 	if len(term.writes) != beforeWrites+1 || term.writes[len(term.writes)-1] != "z" {
 		t.Fatalf("interactive launch did not focus terminal input: %#v", term.writes)
 	}
-	if !strings.Contains(m.View(), "agent output") {
-		t.Fatalf("embedded Plan Now terminal is not visible:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "agent output") {
+		t.Fatalf("embedded Plan Now terminal is not visible:\n%s", viewContent(m))
 	}
 	record, err := store.Read(started.FlowID)
 	if err != nil {
@@ -12054,9 +12054,9 @@ func TestModel_NewFlowPlanNowRoutesFormThroughProductionLifecycle(t *testing.T) 
 }
 
 func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testing.T) {
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyEsc},
-		{Type: tea.KeyCtrlC},
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyEsc},
+		{Code: 'c', Mod: tea.ModCtrl},
 	} {
 		t.Run(key.String(), func(t *testing.T) {
 			embeddedCalls := 0
@@ -12150,8 +12150,8 @@ func TestModel_NewFlowStaleParkedCreateReleasesRequestAfterRepoChange(t *testing
 		t.Fatal("expected parked Flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	staleMsg := createCmd()
 	if created, ok := staleMsg.(model.FlowCreatedMsg); !ok || created.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged FlowCreatedMsg", staleMsg)
@@ -12182,8 +12182,8 @@ func TestModel_NewFlowStaleParkedCreateFailureReleasesRequestAfterRepoChange(t *
 		t.Fatal("expected parked Flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	staleMsg := createCmd()
 	if failed, ok := staleMsg.(model.FlowCreateFailedMsg); !ok || failed.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged FlowCreateFailedMsg", staleMsg)
@@ -12202,7 +12202,7 @@ func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 
 	if cmd != nil {
 		t.Fatalf("expected no command, got %T", cmd)
@@ -12212,15 +12212,15 @@ func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
 	}
 
 	m = fillNewFlowForm(t, m, "Needs Agent", "Plan now", "main")
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("submit without agent returned command %T, want nil", cmd)
 	}
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("overlay after validation = %d, want form", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "Press A to choose") {
-		t.Fatalf("expected missing-agent guidance in form:\n%s", m.View())
+	if !strings.Contains(viewContent(m), "Press A to choose") {
+		t.Fatalf("expected missing-agent guidance in form:\n%s", viewContent(m))
 	}
 }
 
@@ -12333,20 +12333,20 @@ func submitNewFlowPromptsWithOptions(t *testing.T, m model.Model, title, instruc
 func submitNewFlowPromptsWithCreateOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless, planNow bool) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = openNewFlowForm(t, m, title, instructions, baseRef)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !headless {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !planNow {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+		m, _ = update(m, tea.KeyPressMsg{Code: tea.KeySpace})
 	}
-	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	return update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
 func openNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef string) model.Model {
 	t.Helper()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("overlay = %d, want new Flow form", m.Overlay())
 	}
@@ -12355,20 +12355,20 @@ func openNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef s
 
 func fillNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef string) model.Model {
 	t.Helper()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(title)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune(title))})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	lines := strings.Split(instructions, "\n")
 	for i, line := range lines {
 		if line != "" {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
+			m, _ = update(m, tea.KeyPressMsg{Text: string([]rune(line))})
 		}
 		if i < len(lines)-1 {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+			m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
 		}
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if baseRef != "" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune(baseRef))})
 	}
 	return m
 }

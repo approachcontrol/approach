@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
@@ -19,7 +19,7 @@ import (
 func TestModel_F5WithNoScannerReportsUnavailable(t *testing.T) {
 	m := model.New(testRepos())
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 
 	if cmd == nil {
 		t.Fatal("expected status expiry command without refresh scanner")
@@ -39,8 +39,8 @@ func TestModel_F5DuringModalOrSearchDoesNotRefresh(t *testing.T) {
 	}
 
 	searchModel := newTestModel(testRepos(), opts)
-	searchModel, _ = update(searchModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	searchModel, cmd := update(searchModel, tea.KeyMsg{Type: tea.KeyF5})
+	searchModel, _ = update(searchModel, tea.KeyPressMsg{Text: string([]rune{'/'})})
+	searchModel, cmd := update(searchModel, tea.KeyPressMsg{Code: tea.KeyF5})
 	if cmd != nil {
 		t.Fatal("search f5 should not start refresh command")
 	}
@@ -53,11 +53,11 @@ func TestModel_F5DuringModalOrSearchDoesNotRefresh(t *testing.T) {
 
 	modalModel := newTestModel(testRepos(), opts)
 	modalModel = inRightPane(modalModel)
-	modalModel, _ = update(modalModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	modalModel, _ = update(modalModel, tea.KeyPressMsg{Text: string([]rune{'n'})})
 	if modalModel.Overlay() == ui.OverlayNone {
 		t.Fatal("expected modal to open")
 	}
-	modalModel, cmd = update(modalModel, tea.KeyMsg{Type: tea.KeyF5})
+	modalModel, cmd = update(modalModel, tea.KeyPressMsg{Code: tea.KeyF5})
 	if cmd != nil {
 		t.Fatal("modal f5 should not start refresh command")
 	}
@@ -73,7 +73,7 @@ func TestModel_RepoRefreshFailureLeavesReposAndShowsStatus(t *testing.T) {
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	msgs := runBatchCmd(t, cmd)
 	var failure tea.Msg
 	for _, msg := range msgs {
@@ -109,7 +109,7 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 		},
 	})
 	m, _ = switchTestMode(m, ui.ModeSessions)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	m = selectBravo(m)
 	m, _ = update(m, model.SessionResultMsg{
 		RepoPath:    "/dev/bravo",
@@ -119,7 +119,7 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	scanMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, cmd))
 	m, followup := update(m, scanMsg)
 	if followup != nil {
@@ -156,14 +156,14 @@ func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *
 			{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, cmd := update(m, tea.KeyPressMsg{Text: string([]rune{'x'})})
 	if cmd == nil {
 		t.Fatal("expected initial inline session fetch")
 	}
 	m, _ = update(m, cmd())
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd = update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	if cmd == nil {
 		t.Fatal("expected f5 refresh command")
 	}
@@ -213,7 +213,7 @@ func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *t
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	msgs := immediateTestCommandMessages(cmd)
 	preScanFetch := sessionResultFromMessages(t, msgs, "/dev/alpha")
 	scanMsg := repoRefreshResultFromBatch(t, msgs)
@@ -246,13 +246,13 @@ func TestModel_RepoRefreshKeepsFilterAndHandlesZeroVisibleRepos(t *testing.T) {
 			return []scanner.Repo{{Path: "/dev/delta", DisplayName: "delta"}}, nil
 		},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'/'})})
 	for _, r := range "zzz" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{r})})
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmd := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	scanMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, cmd))
 	m, followup := update(m, scanMsg)
 
@@ -278,7 +278,7 @@ func TestModel_PlanResultPreservesSelectedPlanWhenResultsReorder(t *testing.T) {
 		},
 		ListRequest: m.ListRequest(ui.ModePlans),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.Plans()[m.PlanSelected()].PlanID; got != "plan-2" {
 		t.Fatalf("selected plan before reorder = %q, want plan-2", got)
 	}
@@ -311,7 +311,7 @@ func TestModel_FlowResultPreservesSelectedFlowWhenResultsReorder(t *testing.T) {
 		},
 		ListRequest: m.ListRequest(ui.ModeFlows),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.Flows()[m.FlowSelected()].FlowID; got != "flow-2" {
 		t.Fatalf("selected flow before reorder = %q, want flow-2", got)
 	}
@@ -336,7 +336,7 @@ func TestModel_FlowResultPreservesSelectedFlowWhenResultsReorder(t *testing.T) {
 func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'3'})})
 	stalePlanRequest := m.ListRequest(ui.ModePlans)
 	stalePlan := model.PlanResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -344,10 +344,10 @@ func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testin
 		Plans:       []planstore.PlanRecord{{PlanID: "stale-plan", RepoPath: "/dev/alpha", Title: "Stale"}},
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyPressMsg{Text: string([]rune{'2'})})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = update(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	m, _ = update(m, stalePlan)
 
 	if got := m.Plans(); len(got) != 0 {
@@ -371,9 +371,9 @@ func TestModel_StaleRepoRefreshResultAndFailureIgnored(t *testing.T) {
 	})
 	m, _ = switchTestMode(m, ui.ModeSessions)
 
-	m, cmdA := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmdA := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	msgA := repoRefreshResultFromBatch(t, immediateTestCommandMessages(cmdA))
-	m, cmdB := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	m, cmdB := update(m, tea.KeyPressMsg{Code: tea.KeyF5})
 	msgB := repoRefreshResultFromBatch(t, immediateTestCommandMessages(cmdB))
 
 	m, followup := update(m, msgB)

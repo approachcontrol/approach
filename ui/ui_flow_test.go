@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -434,14 +433,7 @@ func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 }
 
 func TestRender_ActiveFlowsSelectedActiveRowsPreserveSelectionAfterRepoColumn(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
+	forceTrueColor(t)
 
 	flows := []flowstore.FlowRecord{{
 		FlowID:   "flow-1",
@@ -537,14 +529,7 @@ func rawLineContaining(view, needle string) string {
 }
 
 func TestRender_FlowsModeSelectedActiveRowsPreserveSelectionAfterMarker(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
+	forceTrueColor(t)
 
 	flows := []flowstore.FlowRecord{{
 		FlowID: "flow-1",
@@ -682,15 +667,16 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 		FlowHeadless:             true,
 		FlowNextLaunchReady:      true,
 	})
-	if strings.Contains(bar, "n: new flow") {
+	plain := ansi.Strip(bar)
+	if strings.Contains(plain, "n: new flow") {
 		t.Fatalf("active Flow status bar should not expose new flow, got %q", bar)
 	}
 	for _, want := range []string{"enter: phases", "g: launch next", "h: headless on", "o: open", "c: copy id", "y: copy path"} {
-		if !strings.Contains(bar, want) {
+		if !strings.Contains(plain, want) {
 			t.Fatalf("active Flow status bar missing %q, got %q", want, bar)
 		}
 	}
-	if strings.Contains(bar, "c: code") {
+	if strings.Contains(plain, "c: code") {
 		t.Fatalf("active Flow status bar should not expose c: code, got %q", bar)
 	}
 }
@@ -1069,13 +1055,14 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 		FlowPlanLinked:           true,
 		FlowHeadless:             true,
 	})
+	plain := ansi.Strip(bar)
 	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "c: copy id", "y: copy path"} {
-		if !strings.Contains(bar, want) {
+		if !strings.Contains(plain, want) {
 			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
 		}
 	}
 	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase", "c: code"} {
-		if strings.Contains(bar, notWant) {
+		if strings.Contains(plain, notWant) {
 			t.Fatalf("selected flow hint should not include %q, got %q", notWant, bar)
 		}
 	}
@@ -1263,10 +1250,11 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 		FlowNextLaunchReady:      true,
 	})
 
-	enterIndex := strings.Index(bar, "enter: phases")
-	headlessIndex := strings.Index(bar, "h: headless on")
-	agentIndex := strings.Index(bar, "A: codex")
-	backspaceIndex := strings.Index(bar, "bksp: pane")
+	plain := ansi.Strip(bar)
+	enterIndex := strings.Index(plain, "enter: phases")
+	headlessIndex := strings.Index(plain, "h: headless on")
+	agentIndex := strings.Index(plain, "A: codex")
+	backspaceIndex := strings.Index(plain, "bksp: pane")
 	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || backspaceIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}
@@ -1318,7 +1306,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 		FlowPhaseSelected:    true,
 		FlowAutoModeSelected: true,
 	})
-	if !strings.Contains(phaseRow, "a: auto: on") {
+	if !strings.Contains(ansi.Strip(phaseRow), "a: auto: on") {
 		t.Fatalf("selected Flow phase should expose auto-mode on toggle, got %q", phaseRow)
 	}
 }
@@ -1345,7 +1333,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 		FlowPhaseSelected:    true,
 		FlowAutoModeSelected: true,
 	})
-	if !strings.Contains(phaseRow, "a: auto: on") {
+	if !strings.Contains(ansi.Strip(phaseRow), "a: auto: on") {
 		t.Fatalf("compact selected Flow phase should keep auto-mode on toggle, got %q", phaseRow)
 	}
 }
@@ -1655,13 +1643,14 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 		FlowHeadless:        true,
 		FlowNextLaunchReady: true,
 	})
+	plain := ansi.Strip(bar)
 	for _, want := range []string{"h: headless on", "enter: phases", "g: launch next", "bksp: pane"} {
-		if !strings.Contains(bar, want) {
+		if !strings.Contains(plain, want) {
 			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
 		}
 	}
 	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
-		if strings.Contains(bar, notWant) {
+		if strings.Contains(plain, notWant) {
 			t.Fatalf("narrow Flow footer should not include %q: %q", notWant, bar)
 		}
 	}
@@ -2380,13 +2369,14 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 			FlowSelected: 0,
 			FlowHeadless: true}})
 
+	plain := ansi.Strip(view)
 	for _, want := range []string{"plan-review", "changes_requested", "1/3", "enter", "phases", "headless on"} {
-		if !strings.Contains(view, want) {
+		if !strings.Contains(plain, want) {
 			t.Fatalf("flows gate view missing %q:\n%s", want, view)
 		}
 	}
 	for _, notWant := range []string{"headless off", "launch phase", "phase status", "embed phase", "x      phases", "a      launch"} {
-		if strings.Contains(view, notWant) {
+		if strings.Contains(plain, notWant) {
 			t.Fatalf("gated flows view should not advertise %q:\n%s", notWant, view)
 		}
 	}

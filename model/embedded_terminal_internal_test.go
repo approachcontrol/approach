@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/approachcontrol/approach/actions"
@@ -618,7 +618,7 @@ func TestAutoCollapsedRequestedPreferenceRestoresOnlyWhileStillOpen(t *testing.T
 		t.Fatalf("requested-open dock did not restore after growth: requested=%v allocation=%#v", grown.terminalDockVisible, grown.embeddedTerminalDockAllocation())
 	}
 
-	hiddenModel, _ := base.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	hiddenModel, _ := base.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	hidden := hiddenModel.(Model)
 	if hidden.terminalDockVisible {
 		t.Fatal("ctrl+t while auto-collapsed did not store a manual hide")
@@ -749,7 +749,7 @@ func TestCtrlTTogglesTerminalDockOutsideInputMode(t *testing.T) {
 						Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
 					}}}}
 
-			nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+			nextModel, cmd := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 			next := nextModel.(Model)
 			if cmd != nil {
 				t.Fatalf("ctrl+t returned command %T, want nil", cmd)
@@ -782,7 +782,7 @@ func TestCtrlTInTerminalInputModePassesThroughToPTY(t *testing.T) {
 				Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
 			}}}}
 
-	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	nextModel, cmd := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	next := nextModel.(Model)
 	if cmd != nil || !next.terminalDockVisible {
 		t.Fatalf("ctrl+t input passthrough changed dock or returned command: visible=%v cmd=%T", next.terminalDockVisible, cmd)
@@ -807,12 +807,12 @@ func TestTerminalCommandTogglesDockFromInputMode(t *testing.T) {
 				Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
 			}}}}
 
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	nextModel, _ := m.Update(tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 	next := nextModel.(Model)
 	if !next.terminalPrefixActive {
 		t.Fatal("ctrl+] should enter terminal command mode")
 	}
-	nextModel, cmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	nextModel, cmd := next.Update(tea.KeyPressMsg{Text: string([]rune{'t'})})
 	next = nextModel.(Model)
 	if cmd != nil || next.terminalDockVisible || next.terminalFocus != terminalFocusList || next.terminalPrefixActive {
 		t.Fatalf("ctrl+] t result = visible %v focus %d prefix %v cmd %T, want collapsed list focus", next.terminalDockVisible, next.terminalFocus, next.terminalPrefixActive, cmd)
@@ -838,7 +838,7 @@ func TestShowingTerminalDockResizesLiveTerminals(t *testing.T) {
 				Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
 			}}}}
 
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	nextModel, _ := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	next := nextModel.(Model)
 	if !next.terminalDockVisible {
 		t.Fatal("ctrl+t should expand the collapsed dock")
@@ -851,7 +851,7 @@ func TestShowingTerminalDockResizesLiveTerminals(t *testing.T) {
 
 func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
 	m := Model{embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true}}
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	nextModel, _ := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	next := nextModel.(Model)
 	if !next.terminalDockVisible || !strings.Contains(next.status.Text, "No embedded terminals") {
 		t.Fatalf("no-terminal ctrl+t = visible %v status %q", next.terminalDockVisible, next.status.Text)
@@ -868,7 +868,7 @@ func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
 			embeddedTerminals: []embeddedTerminalSlot{{
 				Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
 			}}}}
-	nextModel, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	nextModel, _ = next.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	next = nextModel.(Model)
 	if !next.terminalDockVisible {
 		t.Fatal("ctrl+t should not toggle while list search is active")
@@ -902,7 +902,7 @@ func TestTerminalCommandSessionPickerLoadsStoredSessionsOnDemand(t *testing.T) {
 		return stored, nil
 	})
 
-	next, cmd, consumed := base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	next, cmd, consumed := base.handleFocusedEmbeddedTerminalKey(tea.KeyPressMsg{Text: string([]rune{'l'})})
 	if !consumed || cmd == nil || next.modal.IsOpen() {
 		t.Fatalf("empty cache should defer to on-demand load: consumed %v cmd %v modal %v", consumed, cmd, next.modal.IsOpen())
 	}
@@ -919,7 +919,7 @@ func TestTerminalCommandSessionPickerLoadsStoredSessionsOnDemand(t *testing.T) {
 	}
 
 	base.sessions = newSessionPane().SetItems(stored)
-	next, cmd, consumed = base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	next, cmd, consumed = base.handleFocusedEmbeddedTerminalKey(tea.KeyPressMsg{Text: string([]rune{'l'})})
 	if !consumed || cmd != nil || !next.modal.IsOpen() || next.modal.View().Kind != modal.Select {
 		t.Fatalf("warm cache picker result = consumed %v cmd %v modal %#v", consumed, cmd, next.modal.View())
 	}
@@ -1073,7 +1073,7 @@ func TestNumberedModeKeysRemainAvailableWithSessionTerminalListFocused(t *testin
 					embeddedTerminals: []embeddedTerminalSlot{{
 						Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: internalFakeEmbeddedTerminal{},
 					}}}}
-			nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+			nextModel, _ := m.Update(tea.KeyPressMsg{Text: string([]rune{tt.key})})
 			next := nextModel.(Model)
 			if next.focusedMode() != tt.wantMode {
 				t.Fatalf("key %q mode = %d, want %d", tt.key, next.focusedMode(), tt.wantMode)
@@ -1082,7 +1082,7 @@ func TestNumberedModeKeysRemainAvailableWithSessionTerminalListFocused(t *testin
 	}
 
 	m := Model{topMode: ui.ModeWorktrees, bottomMode: ui.ModeSessions, contentPane: ui.PaneBottom, activePane: ui.PaneRepos, embeddedTerminalState: embeddedTerminalState{terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Number: 1, Terminal: internalFakeEmbeddedTerminal{}}}}}
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	nextModel, _ := m.Update(tea.KeyPressMsg{Text: string([]rune{'3'})})
 	if next := nextModel.(Model); next.focusedMode() != ui.ModeSessions {
 		t.Fatalf("repo-pane numbered key changed mode to %d, want sessions", next.focusedMode())
 	}
@@ -1333,9 +1333,9 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	default:
 	}
 
-	beforeReadyModel, tabCmd := next.Update(tea.KeyMsg{Type: tea.KeyTab})
+	beforeReadyModel, tabCmd := next.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	beforeReady := beforeReadyModel.(Model)
-	beforeReadyModel, keyCmd := beforeReady.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	beforeReadyModel, keyCmd := beforeReady.Update(tea.KeyPressMsg{Text: string([]rune{'z'})})
 	beforeReady = beforeReadyModel.(Model)
 	_, writes = term.snapshot()
 	if tabCmd != nil || keyCmd != nil || len(writes) != 0 || beforeReady.activePane != ui.PaneRepos || beforeReady.terminalFocus != terminalFocusList {
@@ -1838,7 +1838,7 @@ func TestViewMarksRepoWithRunningTerminalByCleanRepoPath(t *testing.T) {
 				},
 			}}}
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(viewContent(m))
 
 	if !strings.Contains(view, " > ● alpha") {
 		t.Fatalf("view should mark repo with running terminal:\n%s", view)
@@ -1998,7 +1998,7 @@ func TestFlowFilterSyncsActiveTerminalToSelectedFlow(t *testing.T) {
 	}
 	m = m.setSearchActive(true)
 
-	next, _ := m.handleSearchKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Bravo")})
+	next, _ := m.handleSearchKey(tea.KeyPressMsg{Text: string([]rune("Bravo"))})
 	m = next.(Model)
 
 	if got := m.selectedFlowID(); got != "flow-2" {
@@ -2331,7 +2331,7 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 				ID:           1,
 			}}}}
 
-	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyPressMsg{Text: string([]rune("d"))}, embeddedTerminalScopeSession)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -2423,7 +2423,7 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 				},
 			}}}
 
-	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyPressMsg{Text: string([]rune("d"))}, embeddedTerminalScopeFlow)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -2477,7 +2477,7 @@ func TestTerminalPrefixDReportsHandoffConstructionFailureAfterDetach(t *testing.
 				ID:       1,
 			}}}}
 
-	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyPressMsg{Text: string([]rune("d"))}, embeddedTerminalScopeSession)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -2520,7 +2520,7 @@ func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
 				ID:       1,
 			}}}}
 
-	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyPressMsg{Text: string([]rune("d"))}, embeddedTerminalScopeSession)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -2564,7 +2564,7 @@ func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
 				ID:       1,
 			}}}}
 
-	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyPressMsg{Text: string([]rune("d"))}, embeddedTerminalScopeSession)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -2596,7 +2596,7 @@ func TestFlowTerminalInputModeDPassesThrough(t *testing.T) {
 				ID:       1,
 			}}}}
 
-	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
+	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyPressMsg{Text: string([]rune("d"))}, embeddedTerminalScopeFlow)
 
 	if !consumed {
 		t.Fatal("terminal input key should be consumed")

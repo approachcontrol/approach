@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
@@ -46,7 +46,7 @@ func TestGenericWorktreeAgentHintUsesCachedReadiness(t *testing.T) {
 	if !m.selectedFlowWorktreeAgentReady() {
 		t.Fatal("eligible cached Flow should advertise the generic agent")
 	}
-	if view := m.View(); !strings.Contains(view, "start agent") {
+	if view := viewContent(m); !strings.Contains(view, "start agent") {
 		t.Fatalf("eligible Flow did not render the generic shortcut:\n%s", view)
 	}
 	m.sessions = m.sessions.SetItems([]sessions.SessionRecord{{FlowID: "  " + record.FlowID + "  ", Status: "active"}})
@@ -63,7 +63,7 @@ func TestGenericWorktreeAgentHintUsesCachedReadiness(t *testing.T) {
 	if m.selectedFlowWorktreeAgentReady() {
 		t.Fatal("running phase should withdraw generic agent readiness")
 	}
-	if view := m.View(); strings.Contains(view, "start agent") {
+	if view := viewContent(m); strings.Contains(view, "start agent") {
 		t.Fatalf("occupied Flow rendered the generic shortcut:\n%s", view)
 	}
 }
@@ -79,7 +79,7 @@ func TestGenericWorktreeAgentReceiptlessPreparationDoesNotAdvertiseOrStart(t *te
 	if m.selectedFlowWorktreeAgentReady() {
 		t.Fatal("receipt-less preparation should not advertise the generic agent")
 	}
-	if view := m.View(); strings.Contains(view, "start agent") {
+	if view := viewContent(m); strings.Contains(view, "start agent") {
 		t.Fatalf("receipt-less preparation rendered the generic shortcut:\n%s", view)
 	}
 	next, cmd := m.handleStartSelectedFlowWorktreeAgent()
@@ -103,7 +103,7 @@ func TestGenericWorktreeAgentClosedFlowDoesNotAdvertiseOrStart(t *testing.T) {
 	if m.selectedFlowWorktreeAgentReady() {
 		t.Fatal("closed Flow should not advertise the generic agent")
 	}
-	if view := m.View(); strings.Contains(view, "start agent") {
+	if view := viewContent(m); strings.Contains(view, "start agent") {
 		t.Fatalf("closed Flow rendered the generic shortcut:\n%s", view)
 	}
 	next, cmd := m.handleStartSelectedFlowWorktreeAgent()
@@ -297,7 +297,7 @@ func TestGenericWorktreeAgentSKeyUsesBothFlowSurfaces(t *testing.T) {
 				m.activeFlows = m.activeFlows.SetItems([]flowstore.FlowRecord{record})
 			}
 
-			next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+			next, cmd := m.handleKey(tea.KeyPressMsg{Text: string([]rune{'s'})})
 			h.drain(next.(Model), cmd, 0)
 			if len(h.launchContexts) != 1 || h.launchContexts[0].FlowID != record.FlowID {
 				t.Fatalf("s launch contexts = %#v", h.launchContexts)

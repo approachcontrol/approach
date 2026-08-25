@@ -158,8 +158,8 @@ the viewport to the cursor line — on terminals too small for the full panel.
 
 | Key | Action |
 |-----|--------|
-| `ctrl+s` | Save the template exactly as typed |
-| `enter` / `alt+enter` | Insert a newline |
+| `ctrl+s` / `ctrl+enter` | Save the template exactly as typed. `ctrl+enter` requires enhanced keyboard reporting. |
+| `enter` / `alt+enter` / `shift+enter` | Insert a newline. `shift+enter` requires enhanced keyboard reporting. |
 | `esc` | Cancel without persisting anything |
 | `home`/`end`, `ctrl+a`/`ctrl+e` | Move to the start or end of the current line |
 | `arrows`, `bksp`, `del` | Move and edit |
@@ -363,8 +363,10 @@ and return to the allocated expanded height when shown or restored.
 Tabbing from a content list into terminal focus enters terminal command mode.
 Commands remain in Approach until `i` returns to terminal input mode; in input
 mode, keys—including Tab, Backspace, and agent shortcuts such as `ctrl+g`—pass
-through to the PTY. `ctrl+]` re-enters command mode. The command-mode keys are
-the same in every view:
+through to the PTY. `ctrl+]` re-enters command mode. On terminals with enhanced
+keyboard reporting, `ctrl+shift+]` writes the literal `0x1d` byte directly
+without entering command mode. The command-mode keys are the same in every
+view:
 
 | Command | Action |
 |---------|--------|
@@ -377,6 +379,12 @@ the same in every view:
 | `x` | Dismiss an exited terminal or confirm termination of a running one |
 | `q` / `esc` | Quit with cleanup |
 | `ctrl+]` | Send a literal `ctrl+]` to the agent |
+
+The portable literal-send fallback is `ctrl+]` followed by `ctrl+]`. Ghostty,
+kitty, WezTerm, foot, and other kitty-keyboard-protocol terminals can use the
+single `ctrl+shift+]` chord instead. Approach requests only Bubble Tea's basic
+key disambiguation support; it does not request release events or other
+extended keyboard flags.
 
 When `tmux` is available at launch time, embedded CLI terminals start inside a
 per-launch tmux session so detach can close Approach's embedded client while the
@@ -921,7 +929,8 @@ basename, plan metadata, issue metadata, PR metadata, phase
 titles/statuses/summaries, and linked session metadata.
 
 Press `n` to create a new Flow with one form for title, multiline instructions
-(`alt+enter` for newlines), and optional base ref plus Headless and Plan Now
+(`alt+enter` for newlines, or `shift+enter` with enhanced keyboard reporting),
+and optional base ref plus Headless and Plan Now
 checkboxes. New Flows use the built-in default phase graph unless
 `[flow].preset` selects a configured custom graph. Plan Now is checked by
 default and immediately launches the first ready root phase after creating the

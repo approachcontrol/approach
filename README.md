@@ -96,6 +96,12 @@ The full key reference and per-view behavior — git subviews, Beads, sessions,
 plans, Flows, embedded terminals, recovery states — is in
 [docs/tui-guide.md](docs/tui-guide.md).
 
+Approach requests Bubble Tea's basic keyboard disambiguation support. Ghostty,
+kitty, WezTerm, foot, and other terminals that implement the kitty keyboard
+protocol can therefore distinguish `shift+enter`, `ctrl+enter`, and
+`ctrl+shift+]`. The existing `alt+enter`, `ctrl+s`, and `ctrl+] ctrl+]`
+fallbacks remain available in terminals that report legacy key sequences.
+
 ### Beads
 
 With the top pane focused, press `2` to enter the selected repository's Beads
