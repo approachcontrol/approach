@@ -72,7 +72,7 @@ type manualLaunchHarness struct {
 
 	startTerminalErr   error
 	startTerminal      EmbeddedTerminal
-	startTerminalCheck func()
+	startTerminalCheck func(actions.AgentLaunchContext)
 	setPhaseErr        error
 	addLaunchIDErr     error
 	planBodyErr        error
@@ -356,7 +356,7 @@ func (h *manualLaunchHarness) options() Options {
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
 			h.launchContexts = append(h.launchContexts, ctx)
 			if h.startTerminalCheck != nil {
-				h.startTerminalCheck()
+				h.startTerminalCheck(ctx)
 			}
 			if h.startTerminalErr != nil {
 				return nil, h.startTerminalErr
@@ -3079,7 +3079,7 @@ func TestEmbeddedTmuxOwnerIdentityIsPreparedBeforeTerminalStarts(t *testing.T) {
 
 	record := manualLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
-	h.startTerminalCheck = func() {
+	h.startTerminalCheck = func(actions.AgentLaunchContext) {
 		if len(h.preparations) != 1 {
 			t.Fatalf("preparations before terminal start = %#v, want one", h.preparations)
 		}
@@ -3108,6 +3108,48 @@ func TestEmbeddedTmuxOwnerIdentityIsPreparedBeforeTerminalStarts(t *testing.T) {
 	}
 	if len(h.activations) != 1 || !h.activations[0].LauncherHandoffComplete {
 		t.Fatalf("activations = %#v", h.activations)
+	}
+}
+
+func TestDirectEmbeddedAgentWaitsForDurablePIDPublication(t *testing.T) {
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	var gate string
+	h.startTerminalCheck = func(ctx actions.AgentLaunchContext) {
+		gate = ctx.DirectStartGate
+		if gate == "" {
+			t.Fatal("direct embedded launch has no start gate")
+		}
+		if _, err := os.Stat(gate); !os.IsNotExist(err) {
+			t.Fatalf("start gate exists before PID publication: %v", err)
+		}
+	}
+	m := h.model()
+	attempt := flowLaunchAttempt{Token: "repair-1", Kind: flowLaunchKindRepair, FlowID: record.FlowID, State: flowLaunchStatePreparing}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	if !ok {
+		t.Fatal("reserve repair attempt")
+	}
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", FlowID: record.FlowID, LaunchID: attempt.Token, FlowRepair: true,
+		RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Embedded: true,
+	}
+	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{Context: ctx, RepoPath: "/dev/alpha"})
+	t.Cleanup(func() { _ = os.Remove(gate) })
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminals = %d, want 1", len(next.embeddedTerminals))
+	}
+	if len(h.preparations) != 1 || !h.preparations[0].LauncherHandoffComplete || h.preparations[0].Transport.Kind != flowstore.UntrackedTransportDirect {
+		t.Fatalf("direct PID preparation = %#v", h.preparations)
+	}
+	if len(h.activations) != 1 || !h.activations[0].LauncherHandoffComplete {
+		t.Fatalf("direct activation = %#v", h.activations)
+	}
+	if _, err := os.Stat(gate); err != nil {
+		t.Fatalf("start gate was not signaled after activation: %v", err)
 	}
 }
 

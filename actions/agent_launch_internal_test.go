@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPageTextBuildsInteractiveLessCommand(t *testing.T) {
@@ -761,6 +762,38 @@ func TestDirectEmbeddedCommandReleasesOwnerAndPreservesAgentExit(t *testing.T) {
 	}
 	if wrapped.Dir != agentCmd.Dir || !slices.Contains(wrapped.Env, "APPROACH_DIRECT_WRAPPER_TEST=1") {
 		t.Fatalf("wrapper lost command environment: dir=%q env=%v", wrapped.Dir, wrapped.Env)
+	}
+}
+
+func TestDirectEmbeddedCommandWaitsForStartGate(t *testing.T) {
+	dir := t.TempDir()
+	gate := filepath.Join(dir, "start.gate")
+	marker := filepath.Join(dir, "agent.ran")
+	agentCmd := exec.Command("sh", "-c", "printf ran > \"$1\"", "agent", marker)
+	wrapped := wrapDirectUntrackedOwnerRelease(agentCmd, AgentLaunchContext{
+		FlowID: "flow-1", LaunchID: "launch-1", FlowRepair: true,
+		Executable: "/usr/bin/true", DirectStartGate: gate,
+	})
+	if err := wrapped.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if wrapped.Process != nil {
+			_ = wrapped.Process.Kill()
+		}
+	})
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("agent ran before durable start signal: %v", err)
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapped.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+		t.Fatalf("agent marker = %q, err=%v", data, err)
 	}
 }
 

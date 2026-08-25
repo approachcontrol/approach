@@ -1292,9 +1292,13 @@ type AgentLaunchContext struct {
 	// failures must not regress the phase to needs_attention.
 	FlowPhaseTerminal bool
 	Embedded          bool
-	Headless          bool
-	Model             string
-	ReasoningEffort   string
+	// DirectStartGate is an internal absent-file gate used by the direct
+	// embedded fallback. Its wrapper waits until Approach durably publishes the
+	// wrapper PID, then removes the gate before executing the agent.
+	DirectStartGate string
+	Headless        bool
+	Model           string
+	ReasoningEffort string
 	// InitialPrompt is canonical launch metadata. It is delivered either as a
 	// provider argv or by embedded PTY prefill, depending on launch mode.
 	InitialPrompt string
@@ -1468,7 +1472,8 @@ release_exe=$1
 state_root=$2
 flow_id=$3
 launch_id=$4
-shift 4
+gate=$5
+shift 5
 release_owner() {
   "$release_exe" untracked-owner-release --state-root "$state_root" --flow-id "$flow_id" --launch-id "$launch_id" >/dev/null 2>&1 || :
 }
@@ -1476,6 +1481,17 @@ trap release_owner EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [ -n "$gate" ]; then
+  waited=0
+  while [ ! -f "$gate" ]; do
+    waited=$((waited + 1))
+    if [ "$waited" -ge 600 ]; then
+      exit 125
+    fi
+    sleep 0.05
+  done
+  rm -f "$gate"
+fi
 "$@"
 exit $?
 `
@@ -1483,7 +1499,7 @@ exit $?
 func wrapDirectUntrackedOwnerRelease(cmd *exec.Cmd, ctx AgentLaunchContext) *exec.Cmd {
 	args := []string{
 		"-c", directOwnerReleaseScript, "approach-direct-agent",
-		approachCommandExecutable(ctx.Executable), ctx.SessionStateRoot, ctx.FlowID, ctx.LaunchID,
+		approachCommandExecutable(ctx.Executable), ctx.SessionStateRoot, ctx.FlowID, ctx.LaunchID, ctx.DirectStartGate,
 	}
 	args = append(args, cmd.Args...)
 	wrapper := exec.Command("/bin/sh", args...)

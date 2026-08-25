@@ -28,6 +28,30 @@ func (m Model) flowLaunchEmbeddedTerminal(flowID, launchID string) (EmbeddedTerm
 	return nil, false
 }
 
+func reserveDirectEmbeddedStartGate() (string, error) {
+	file, err := os.CreateTemp("", "approach-direct-start-*")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if closeErr := file.Close(); closeErr != nil {
+		_ = os.Remove(path)
+		return "", closeErr
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func signalDirectEmbeddedStart(path string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
 // noLaunchableFlowPhaseStatus covers every reason a launch is refused before it
 // reaches preflight: no eligible phase, an occupied Flow, or a live session on
 // the phase. Occupancy deliberately reuses this text so the migration adds no
@@ -1194,6 +1218,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	if attempt.Kind == flowLaunchKindWorktreeAgent && m.tmuxAutofixAgentStillRunning(msg.Record, msg.WorktreePath) {
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, flowWorktreeAgentPendingStatus)
 	}
+	directStartGate := ""
 	if _, durable := untrackedOwnerRole(attempt.Kind); durable && m.launchSeams.PrepareOwnerTransport != nil {
 		if socketName, sessionName, identityErr := actions.EmbeddedTmuxAgentIdentity(ctx); identityErr == nil {
 			activation := flowstore.UntrackedOwnerActivation{
@@ -1209,11 +1234,21 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 				}
 				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
 			}
+		} else if errors.Is(identityErr, actions.ErrEmbeddedTmuxUnavailable) {
+			var err error
+			directStartGate, err = reserveDirectEmbeddedStartGate()
+			if err != nil {
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Reserve direct embedded agent start: "+err.Error())
+			}
+			ctx.DirectStartGate = directStartGate
 		}
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
+		if directStartGate != "" {
+			_ = os.Remove(directStartGate)
+		}
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
 			errText = err.Error()
@@ -1251,7 +1286,14 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 				_, publicationErr = m.launchSeams.ActivateUntrackedOwner(activation)
 				publicationOp = "Activate durable Flow owner"
 			}
+			if publicationErr == nil && directStartGate != "" {
+				publicationErr = signalDirectEmbeddedStart(directStartGate)
+				publicationOp = "Start published direct embedded agent"
+			}
 			if publicationErr != nil {
+				if directStartGate != "" {
+					_ = os.Remove(directStartGate)
+				}
 				activationErr := publicationOp + ": " + publicationErr.Error()
 				if terminalFound {
 					if terminateErr := terminal.Terminate(); terminateErr != nil {
