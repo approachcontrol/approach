@@ -45,7 +45,7 @@ func TestPasteFollowsSearchAndListOwnership(t *testing.T) {
 	}
 }
 
-func TestPasteWritesVerbatimToFocusedEmbeddedTerminal(t *testing.T) {
+func TestPastePreservesBracketedPasteForFocusedEmbeddedTerminal(t *testing.T) {
 	term := &recordingKeyboardTerminal{}
 	m := modelWithModeForTest(Model{
 		width:       120,
@@ -67,7 +67,7 @@ func TestPasteWritesVerbatimToFocusedEmbeddedTerminal(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("terminal paste returned command %T", cmd)
 	}
-	if got, want := term.writes, [][]byte{[]byte("echo α\n")}; !reflect.DeepEqual(got, want) {
+	if got, want := term.writes, [][]byte{[]byte("\x1b[200~echo α\n\x1b[201~")}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("terminal paste writes = %#v, want %#v", got, want)
 	}
 	if next.(Model).terminalPrefixActive {

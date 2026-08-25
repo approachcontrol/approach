@@ -170,7 +170,7 @@ func (m Model) handlePaste(content string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal() {
-		return m.writeToActiveTerminal([]byte(content)), nil
+		return m.writeToActiveTerminal([]byte(embeddedPromptPasteStart + content + embeddedPromptPasteEnd)), nil
 	}
 	if !m.searchActive {
 		return m, nil
