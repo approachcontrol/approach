@@ -829,9 +829,9 @@ func TestCreateFlowLaunchRefusesDeletedFlowIDRetainedByEndedSession(t *testing.T
 		lookupCalls++
 		return listFlowSessions(candidate)
 	}
-	m.launchSeams.CreatePreparation = func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+	m.launchSeams.CreateFlow = func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 		writes++
-		return flowStore.CreatePreparation(record, opts)
+		return flowStore.CreateWithOptions(record, opts)
 	}
 
 	m = h.start(t, m)
