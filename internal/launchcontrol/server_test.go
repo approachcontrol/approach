@@ -145,6 +145,58 @@ func TestControllerRefusesWritesFromRecoveredLaunch(t *testing.T) {
 	}
 }
 
+func TestControllerRefusesWritesFromLaunchThatNoLongerOwnsPhase(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Stale live launch")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	_, endpoint := serveTestController(t, store, root, Registration{
+		FlowID: created.FlowID, PhaseID: "plan", LaunchID: "launch-1", Kind: "phase",
+	})
+	launchPhase(t, store, created.FlowID, "plan", "launch-2")
+
+	client := Client{
+		Endpoint: endpoint.Path, Token: endpoint.Token,
+		LaunchID: "launch-1", FlowID: created.FlowID, PhaseID: "plan",
+	}
+	issueReq, _ := NewRequest(VerbIssueSet, IssueSetPayload{
+		Provider: "github", Number: 99, URL: "https://github.com/o/r/issues/99",
+	})
+	issueResp, err := client.Call(issueReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completeReq, _ := NewRequest(VerbPhaseComplete, PhaseActionPayload{Summary: "late"})
+	completeResp, err := client.Call(completeReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for verb, resp := range map[Verb]Response{
+		VerbIssueSet: issueResp, VerbPhaseComplete: completeResp,
+	} {
+		if resp.OK || !resp.Refused || !strings.Contains(resp.Error, `latest launch is "launch-2"`) {
+			t.Fatalf("stale %s response = %#v", verb, resp)
+		}
+	}
+	record, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Issue.Number != 0 {
+		t.Fatalf("stale launch changed issue metadata = %#v", record.Issue)
+	}
+	if phase, _ := PhaseByID(record, "plan"); phase.Status != flowstore.PhaseRunning || phase.Summary != "" {
+		t.Fatalf("stale launch changed phase = %#v", phase)
+	}
+	log, _ := OpenLog(root, "launch-1")
+	applied, ok, err := log.Applied()
+	if err != nil || !ok || applied.AppliedSeq != 2 || applied.Result != ResultRefused {
+		t.Fatalf("applied marker = %#v, %v", applied, err)
+	}
+	if pending, err := log.Pending(); err != nil || len(pending) != 0 {
+		t.Fatalf("pending = %#v, %v", pending, err)
+	}
+}
+
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

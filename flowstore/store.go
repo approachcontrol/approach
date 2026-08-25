@@ -474,10 +474,12 @@ type Issue struct {
 	URL      string `json:"url,omitempty"`
 }
 
-// PhaseLaunchFence revokes writes from a phase launch removed by recovery.
+// PhaseLaunchFence revokes writes from a phase launch removed by recovery and,
+// when OwnerPhaseID is set, from a launch that no longer owns that phase.
 // Store mutations check it inside the same transaction that persists the write.
 type PhaseLaunchFence struct {
-	LaunchID string
+	LaunchID     string
+	OwnerPhaseID string
 }
 
 // PRUpdate records metadata for the pull request created by a Flow.
@@ -2731,6 +2733,18 @@ func validatePhaseLaunchFence(record FlowRecord, fence PhaseLaunchFence) error {
 		if slices.Contains(phase.RecoveredLaunchIDs, launchID) {
 			return fmt.Errorf("launch %q was recovered and can no longer write", launchID)
 		}
+	}
+	ownerPhaseID := artifacts.NormalizePhaseID(fence.OwnerPhaseID)
+	if ownerPhaseID == "" {
+		return nil
+	}
+	ownerIndex := phaseIndexByID(record.Phases, ownerPhaseID)
+	if ownerIndex < 0 {
+		return fmt.Errorf("owner phase %q not found in flow %q", ownerPhaseID, record.FlowID)
+	}
+	latestLaunchID := strings.TrimSpace(LatestPhaseLaunchID(record.Phases[ownerIndex]))
+	if launchID != latestLaunchID {
+		return fmt.Errorf("launch %q no longer owns phase %q; latest launch is %q", launchID, ownerPhaseID, latestLaunchID)
 	}
 	return nil
 }

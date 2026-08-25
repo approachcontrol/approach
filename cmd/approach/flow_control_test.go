@@ -205,6 +205,51 @@ func TestReplayableWriteFallsBackToLoggedDirectOpenWhenEndpointUnreachable(t *te
 	}
 }
 
+func TestLoggedDirectFallbackRefusesLaunchThatNoLongerOwnsPhase(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"approach", "flow", "create", "--title", "Stale fallback", "--instructions", "x",
+		"--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root,
+	})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	recordLaunch(t, root, created.FlowID, "plan", "launch-2")
+	dead := filepath.Join(t.TempDir(), "dead.sock")
+	getenv := controlEnv(root, dead, "tok", "launch-1", created.FlowID, "plan")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "phase", "complete", "--flow-id", created.FlowID,
+		"--phase-id", "plan", "--summary", "late", "--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv}))
+	if err == nil || !strings.Contains(err.Error(), `latest launch is "launch-2"`) {
+		t.Fatalf("stale fallback completion = %v, want latest-owner refusal", err)
+	}
+	stdout.Reset()
+	err = run([]string{
+		"approach", "flow", "issue", "set", "--flow-id", created.FlowID,
+		"--provider", "github", "--number", "99", "--url", "https://github.com/o/r/issues/99",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv}))
+	if err == nil || !strings.Contains(err.Error(), `latest launch is "launch-2"`) {
+		t.Fatalf("stale fallback issue write = %v, want latest-owner refusal", err)
+	}
+	record := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root})
+	if record.Issue.Number != 0 {
+		t.Fatalf("stale fallback changed issue = %#v", record.Issue)
+	}
+	if phase := phaseByID(record, "plan"); phase.Status != flowstore.PhaseRunning || phase.Summary != "" {
+		t.Fatalf("stale fallback changed phase = %#v", phase)
+	}
+	log, _ := launchcontrol.OpenLog(root, "launch-1")
+	applied, ok, err := log.Applied()
+	if err != nil || !ok || applied.AppliedSeq != 2 || applied.Result != launchcontrol.ResultRefused {
+		t.Fatalf("applied marker = %#v, %v", applied, err)
+	}
+	if pending, err := log.Pending(); err != nil || len(pending) != 0 {
+		t.Fatalf("pending = %#v, %v", pending, err)
+	}
+}
+
 func TestPhaseRecoverFallsBackDirectlyWhenEndpointCannotBeReached(t *testing.T) {
 	root := t.TempDir()
 	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Recover fallback", "--instructions", "x", "--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root})
