@@ -1339,6 +1339,8 @@ func baseKeyBytes(msg tea.KeyPressMsg) []byte {
 	code := msg.Code
 	mod := msg.Mod
 	switch {
+	case code == tea.KeySpace && mod.Contains(tea.ModCtrl):
+		return []byte{0x00}
 	case code == tea.KeyUp && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
 		return []byte("\x1b[1;6A")
 	case code == tea.KeyDown && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):

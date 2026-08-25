@@ -95,6 +95,26 @@ func TestCtrlShiftCloseBracketIsDistinctFromTerminalPrefix(t *testing.T) {
 	}
 }
 
+func TestEmbeddedTerminalSpaceEncodingPreservesControlNUL(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		want []byte
+	}{
+		{name: "space", key: tea.KeyPressMsg{Code: tea.KeySpace}, want: []byte{' '}},
+		{name: "ctrl+space", key: tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl}, want: []byte{0x00}},
+		{name: "alt+ctrl+space", key: tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModAlt | tea.ModCtrl}, want: []byte{0x1b, 0x00}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := keyBytes(tt.key); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("keyBytes(%s) = %#v, want %#v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCtrlEnterDoesNothingAtListFocus(t *testing.T) {
 	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
