@@ -19,6 +19,10 @@ import (
 	"github.com/approachcontrol/approach/internal/flowlease"
 )
 
+// ErrRequestOutcomeIndeterminate means a durable request exists without a
+// durable response and executing it again is unsafe.
+var ErrRequestOutcomeIndeterminate = errors.New("launch control request outcome is indeterminate")
+
 // LaunchLiveness is what the injected probe knows about a launch's session
 // records. It is deliberately not "alive": the sessions store can attest that
 // a record ended, but only positive evidence demotes.
@@ -422,6 +426,9 @@ func (c *Controller) handleRequest(req Request) Response {
 	}
 	resp, event, err := c.applyLogged(req, env)
 	if err != nil {
+		if errors.Is(err, ErrRequestIDCollision) {
+			return refuse(err)
+		}
 		return Response{SchemaVersion: ProtocolSchemaVersion, Error: err.Error()}
 	}
 	if event != nil {
@@ -447,6 +454,17 @@ func (c *Controller) applyLogged(req Request, env RequestEnvelope) (Response, *A
 		return Response{}, nil, err
 	}
 	defer unlock()
+	_, existed, err := log.FindRequest(env)
+	if err != nil {
+		return Response{}, nil, err
+	}
+	completedBefore := false
+	if existed {
+		_, completedBefore, err = log.Response(env.RequestID)
+		if err != nil {
+			return Response{}, nil, err
+		}
+	}
 	resp, err := ApplyLogged(c.store, log, req, env, c.now())
 	if err != nil && resp.SchemaVersion == 0 {
 		return Response{}, nil, err
@@ -456,6 +474,9 @@ func (c *Controller) applyLogged(req Request, env RequestEnvelope) (Response, *A
 		// missing applied marker is recovered by replay; do not tell the
 		// agent the mutation failed, or it may retry a non-replayable verb.
 		c.logf("launch %s: applied marker not written after %s: %v", req.LaunchID, req.Verb, err)
+	}
+	if completedBefore {
+		return resp, nil, nil
 	}
 	return resp, &AppliedEvent{FlowID: req.FlowID, PhaseID: env.PhaseID, LaunchID: req.LaunchID}, nil
 }
@@ -478,13 +499,34 @@ func ApplyLogged(store *flowstore.Store, log *Log, req Request, env RequestEnvel
 		env.Observed = observePhase(store, req.FlowID, env.PhaseID)
 	}
 	env.WrittenAt = now
-	seq, err := log.Append(env)
+	existing, found, err := log.FindRequest(env)
 	if err != nil {
-		return Response{}, fmt.Errorf("record launch request: %w", err)
+		return Response{}, fmt.Errorf("find launch request: %w", err)
+	}
+	seq := existing.Seq
+	if found {
+		resp, completed, err := log.Response(env.RequestID)
+		if err != nil {
+			return Response{}, fmt.Errorf("read launch response: %w", err)
+		}
+		if completed {
+			return resp, nil
+		}
+		if !env.Replayable {
+			return Response{}, fmt.Errorf("%w: request %s was logged without a completed response", ErrRequestOutcomeIndeterminate, env.RequestID)
+		}
+	} else {
+		seq, err = log.Append(env)
+		if err != nil {
+			return Response{}, fmt.Errorf("record launch request: %w", err)
+		}
 	}
 	resp, err := Execute(store, req)
 	if err != nil {
 		return Response{}, err
+	}
+	if err := log.WriteResponse(env.RequestID, resp); err != nil {
+		return resp, fmt.Errorf("record launch response: %w", err)
 	}
 	if err := applyMarkerHook(); err != nil {
 		return resp, err
