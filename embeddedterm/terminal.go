@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -447,11 +448,47 @@ func fitTerminalLine(line string, width int) string {
 }
 
 func splitTerminalRows(rendered string) []string {
+	rendered = normalizeRenderedHyperlinks(rendered)
 	rows := strings.Split(rendered, "\n")
 	if len(rows) > 0 && rows[len(rows)-1] == "" {
 		rows = rows[:len(rows)-1]
 	}
 	return rows
+}
+
+// x/vt currently stores OSC 8 parameters and URIs in reversed fields. Its
+// renderer therefore emits a URI in the parameter slot. Repair that known
+// shape while leaving already-correct OSC 8 sequences alone.
+func normalizeRenderedHyperlinks(rendered string) string {
+	const prefix = "\x1b]8;"
+	var out strings.Builder
+	for {
+		start := strings.Index(rendered, prefix)
+		if start < 0 {
+			out.WriteString(rendered)
+			return out.String()
+		}
+		out.WriteString(rendered[:start])
+		rendered = rendered[start:]
+		end := strings.IndexByte(rendered, '\a')
+		if end < 0 {
+			out.WriteString(rendered)
+			return out.String()
+		}
+		sequence := rendered[:end+1]
+		payload := rendered[len(prefix):end]
+		params, uri, ok := strings.Cut(payload, ";")
+		if ok && looksLikeHyperlinkURI(params) && !looksLikeHyperlinkURI(uri) {
+			sequence = prefix + uri + ";" + params + "\a"
+		}
+		out.WriteString(sequence)
+		rendered = rendered[end+1:]
+	}
+}
+
+func looksLikeHyperlinkURI(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Scheme != ""
 }
 
 func trimBlankTerminalRows(rows []string) []string {

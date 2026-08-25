@@ -295,6 +295,45 @@ func TestTerminalPreservesANSIStyleInVisibleLines(t *testing.T) {
 	}
 }
 
+func TestTerminalPreservesHyperlinksInVisibleLines(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	const target = "https://example.com/pull/8"
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf '\\033]8;;https://example.com/pull/8\\aabcdef\\033]8;;\\a next'"},
+		Width:   20,
+		Height:  3,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+
+	for _, width := range []int{20, 4} {
+		lines := term.VisibleLines(width, 3)
+		got := strings.Join(lines, "\n")
+		if !strings.Contains(got, ansi.SetHyperlink(target)) {
+			t.Fatalf("width %d dropped hyperlink: %q", width, got)
+		}
+		if !strings.Contains(got, ansi.ResetHyperlink()) {
+			t.Fatalf("width %d did not close hyperlink: %q", width, got)
+		}
+		for _, line := range lines {
+			if gotWidth := ansi.StringWidth(line); gotWidth != width {
+				t.Fatalf("line width = %d, want %d: %q", gotWidth, width, line)
+			}
+		}
+	}
+}
+
 func TestTerminalVisibleLinesFitRequestedWidth(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

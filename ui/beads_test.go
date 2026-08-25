@@ -54,7 +54,7 @@ func TestRenderBeadsPaneMarksEpicsAndExpandsSelectedEpicReadyFirst(t *testing.T)
 		ReadyIDs:       map[string]bool{"bd-child-2": true},
 		ReadinessKnown: true,
 	}
-	lines := renderBeadsPane(beads, 0, 0, 80, 5, expansion)
+	lines := renderBeadsPane(beads, 0, 0, 80, 5, expansion, "")
 	plain := ansi.Strip(strings.Join(lines, "\n"))
 	for _, want := range []string{"bd-epic  P1  Parent  [epic]", "bd-child-2  P1  Ready  [ready]", "bd-child-1  P2  Neutral", "bd-task  P2  Ordinary"} {
 		if !strings.Contains(plain, want) {
@@ -78,7 +78,7 @@ func TestRenderBeadRowPreservesEpicMarkerAtNarrowWidths(t *testing.T) {
 		Assignee: "a-very-long-assignee", IssueType: "epic",
 	}
 	for _, selected := range []bool{false, true} {
-		line := renderBeadRow(epic, selected, width, beadRowMarkers{})
+		line := renderBeadRow(epic, selected, width, beadRowMarkers{}, "")
 		plain := ansi.Strip(line)
 		if !strings.Contains(plain, "[epic]") {
 			t.Fatalf("selected=%t narrow row lost epic marker: %q", selected, plain)
@@ -94,7 +94,7 @@ func TestRenderBeadRowPreservesEpicAndAutoMarkersAtMinimumWidth(t *testing.T) {
 
 	const width = 19 // selection prefix plus "  [epic]  [auto]"
 	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "A very long epic title", IssueType: "epic"}
-	line := renderBeadRow(epic, true, width, beadRowMarkers{Auto: true})
+	line := renderBeadRow(epic, true, width, beadRowMarkers{Auto: true}, "")
 	plain := ansi.Strip(line)
 	if !strings.Contains(plain, "[epic]  [auto]") {
 		t.Fatalf("minimum-width row lost persistent markers: %q", plain)
@@ -114,7 +114,7 @@ func TestRenderBeadsPaneShowsProgressionFailureWithoutHidingChildren(t *testing.
 		ReadinessKnown:    true,
 		ProgressionDetail: "database failed\n\x1b]8;;https://example.invalid\aunsafe",
 	}
-	lines := expansionVisualLines(epic, true, 60, expansion)
+	lines := expansionVisualLines(epic, true, 60, expansion, "")
 	plain := ansi.Strip(strings.Join(lines, "\n"))
 	if len(lines) != 3 || !strings.Contains(plain, "bd-child") || !strings.Contains(plain, "Auto-progression unavailable: database failed unsafe") {
 		t.Fatalf("progression warning/children render = %d lines:\n%s", len(lines), plain)
@@ -138,7 +138,7 @@ func TestRenderBeadsPanePreservesReadyMarkerAtNarrowWidths(t *testing.T) {
 		Children: []beadsquery.Bead{child}, ReadyIDs: map[string]bool{child.ID: true},
 		ReadinessKnown: true,
 	}
-	lines := expansionVisualLines(epic, true, width, expansion)
+	lines := expansionVisualLines(epic, true, width, expansion, "")
 	if len(lines) != 2 {
 		t.Fatalf("rendered lines = %d, want parent and child", len(lines))
 	}
@@ -161,7 +161,7 @@ func TestRenderBeadsPaneStylesSelectedExpansionLines(t *testing.T) {
 		Children: []beadsquery.Bead{{ID: "bd-child", Priority: 1, Title: "Child"}},
 		Detail:   "bd ready failed",
 	}
-	selectedLines := expansionVisualLines(epic, true, width, expansion)
+	selectedLines := expansionVisualLines(epic, true, width, expansion, "")
 	plainLines := []string{
 		"     ↳ bd-child  P1  Child",
 		"     Readiness unavailable: bd ready failed",
@@ -176,7 +176,7 @@ func TestRenderBeadsPaneStylesSelectedExpansionLines(t *testing.T) {
 		}
 	}
 
-	unfocusedLines := expansionVisualLines(epic, false, width, expansion)
+	unfocusedLines := expansionVisualLines(epic, false, width, expansion, "")
 	for i, want := range plainLines {
 		if got := unfocusedLines[i+1]; got != want {
 			t.Fatalf("unfocused expansion line %d = %q, want plain %q", i, got, want)
@@ -192,7 +192,7 @@ func TestRenderBeadsPaneEmptyChildrenStillShowsReadinessFailure(t *testing.T) {
 		EpicID: epic.ID, State: BeadExpansionLoaded,
 		Detail: "bd ready failed",
 	}
-	lines := expansionVisualLines(epic, true, 60, expansion)
+	lines := expansionVisualLines(epic, true, 60, expansion, "")
 	plain := ansi.Strip(strings.Join(lines, "\n"))
 	for _, want := range []string{"no direct children", "Readiness unavailable: bd ready failed"} {
 		if !strings.Contains(plain, want) {
@@ -230,7 +230,7 @@ func TestRenderBeadsPaneExpansionStatesAreBoundedAndSanitized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			const width = 48
-			lines := renderBeadsPane([]beadsquery.Bead{epic}, 0, 0, width, 5, tt.expansion)
+			lines := renderBeadsPane([]beadsquery.Bead{epic}, 0, 0, width, 5, tt.expansion, "")
 			plain := ansi.Strip(strings.Join(lines, "\n"))
 			if !strings.Contains(plain, tt.want) {
 				t.Fatalf("render missing %q:\n%s", tt.want, plain)
@@ -241,7 +241,7 @@ func TestRenderBeadsPaneExpansionStatesAreBoundedAndSanitized(t *testing.T) {
 				}
 			}
 			for _, selected := range []bool{false, true} {
-				rendered := len(expansionVisualLines(epic, selected, width, tt.expansion))
+				rendered := len(expansionVisualLines(epic, selected, width, tt.expansion, ""))
 				if got := BeadVisualHeight(epic, tt.expansion); got != rendered {
 					t.Fatalf("selected=%t height = %d, rendered expansion lines = %d", selected, got, rendered)
 				}
@@ -259,7 +259,7 @@ func TestRenderBeadsPaneHaltedEpicReplacesAutoMarkerAndNamesTheCause(t *testing.
 		EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true,
 		ProgressionKnown: true, ProgressionHaltDetail: "bd-epic.1 is blocked",
 	}
-	lines := expansionVisualLines(epic, true, width, expansion)
+	lines := expansionVisualLines(epic, true, width, expansion, "")
 	plain := ansi.Strip(strings.Join(lines, "\n"))
 	if !strings.Contains(plain, "[epic]  [halted]") {
 		t.Fatalf("halted epic row missing marker:\n%s", plain)
@@ -273,7 +273,7 @@ func TestRenderBeadsPaneHaltedEpicReplacesAutoMarkerAndNamesTheCause(t *testing.
 
 	// Halted outranks auto: it is the state that wants the user's attention.
 	expansion.ProgressionEnabled = true
-	both := ansi.Strip(strings.Join(expansionVisualLines(epic, true, width, expansion), "\n"))
+	both := ansi.Strip(strings.Join(expansionVisualLines(epic, true, width, expansion, ""), "\n"))
 	if strings.Contains(both, "[auto]") || !strings.Contains(both, "[halted]") {
 		t.Fatalf("halted row showed the auto marker:\n%s", both)
 	}
@@ -281,7 +281,7 @@ func TestRenderBeadsPaneHaltedEpicReplacesAutoMarkerAndNamesTheCause(t *testing.
 	// The cause precedes a read failure when a projection carries both.
 	expansion.ProgressionEnabled = false
 	expansion.ProgressionDetail = "database failed"
-	ordered := ansi.Strip(strings.Join(expansionVisualLines(epic, true, width, expansion), "\n"))
+	ordered := ansi.Strip(strings.Join(expansionVisualLines(epic, true, width, expansion, ""), "\n"))
 	haltAt := strings.Index(ordered, "Auto-progression halted:")
 	unavailableAt := strings.Index(ordered, "Auto-progression unavailable:")
 	if haltAt < 0 || unavailableAt < 0 || haltAt > unavailableAt {
@@ -294,7 +294,7 @@ func TestRenderBeadsPaneHonorsVisualScrollOffset(t *testing.T) {
 
 	epic := beadsquery.Bead{ID: "bd-epic", Priority: 1, Title: "Parent", IssueType: "epic"}
 	expansion := BeadExpansion{EpicID: epic.ID, State: BeadExpansionLoaded, ReadinessKnown: true, Children: []beadsquery.Bead{{ID: "bd-child-1", Title: "One"}, {ID: "bd-child-2", Title: "Two"}}}
-	lines := renderBeadsPane([]beadsquery.Bead{epic, {ID: "bd-after", Title: "After"}}, -1, 2, 60, 2, expansion)
+	lines := renderBeadsPane([]beadsquery.Bead{epic, {ID: "bd-after", Title: "After"}}, -1, 2, 60, 2, expansion, "")
 	plain := ansi.Strip(strings.Join(lines, "\n"))
 	if strings.Contains(plain, "bd-epic") || strings.Contains(plain, "bd-child-1") || !strings.Contains(plain, "bd-child-2") || !strings.Contains(plain, "bd-after") {
 		t.Fatalf("visual scroll did not slice flattened expansion lines:\n%s", plain)
