@@ -709,11 +709,11 @@ func TestUntrackedFlowTerminalCommandReleasesOwnerAfterAgentExit(t *testing.T) {
 	t.Cleanup(command.cleanup)
 	ctx := AgentLaunchContext{
 		FlowID: "flow-1", LaunchID: "launch-1", FlowAutofix: true,
-		Executable: "/pinned/approach",
+		Executable: "/pinned/approach", SessionStateRoot: "/custom/state root",
 	}
 	configureUntrackedOwnerRelease(command, ctx)
 	got := command.shellCommand()
-	for _, want := range []string{"/pinned/approach", UntrackedOwnerReleaseCommand, "--flow-id 'flow-1'", "--launch-id 'launch-1'", `exit "$status"`} {
+	for _, want := range []string{"/pinned/approach", UntrackedOwnerReleaseCommand, "--state-root '/custom/state root'", "--flow-id 'flow-1'", "--launch-id 'launch-1'", `exit "$status"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("shell command %q does not contain %q", got, want)
 		}

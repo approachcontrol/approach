@@ -1969,6 +1969,7 @@ func configureUntrackedOwnerRelease(command *terminalCommand, ctx AgentLaunchCon
 	switch FlowLaunchRoleOf(ctx) {
 	case RoleRepair, RoleAutofix, RoleWorktreeAgent:
 		command.exitCommand = shellQuote(approachCommandExecutable(ctx.Executable)) + " " + UntrackedOwnerReleaseCommand +
+			" --state-root " + shellQuote(ctx.SessionStateRoot) +
 			" --flow-id " + shellQuote(ctx.FlowID) + " --launch-id " + shellQuote(ctx.LaunchID)
 	}
 }

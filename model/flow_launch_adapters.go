@@ -502,6 +502,7 @@ type flowLaunchSeams struct {
 	SetStartMetadata         func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase                 func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	ClaimUntrackedOwner      func(flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error)
+	PrepareOwnerTransport    func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
 	ActivateUntrackedOwner   func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
 	ReleaseUntrackedOwner    func(flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error)
 	ResolveUntrackedOwner    func(flowstore.FlowRecord) (flowstore.FlowRecord, error)

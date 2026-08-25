@@ -58,6 +58,7 @@ type manualLaunchHarness struct {
 	tmuxLaunchErr error
 	activateErr   error
 	activations   []flowstore.UntrackedOwnerActivation
+	ownerReleases []flowstore.UntrackedOwnerRelease
 	// windowLive answers the tmux live-window probe. Nil means no window is
 	// live, which is what every test that does not care about the probe wants.
 	windowLive func(repoPath string, launchIDs []string) bool
@@ -274,6 +275,7 @@ func (h *manualLaunchHarness) options() Options {
 			return h.persistedFlow(update.FlowID)
 		},
 		ReleaseUntrackedOwner: func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
+			h.ownerReleases = append(h.ownerReleases, update)
 			return h.persistedFlow(update.FlowID)
 		},
 		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
@@ -2378,6 +2380,30 @@ func TestFlowLaunchStaleEventsAreIgnored(t *testing.T) {
 				t.Fatal("stale event caused persistence or a terminal")
 			}
 		})
+	}
+}
+
+func TestStaleClaimedUntrackedOwnerEventReleasesExactClaim(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m, ok := h.model().reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token: "current", Kind: flowLaunchKindRepair, FlowID: record.FlowID,
+	}, flowLaunchStateReading)
+	if !ok {
+		t.Fatal("reserve repair attempt")
+	}
+	next, cmd := m.handleFlowLaunchEvent(flowLaunchEventMsg{
+		Token: "stale", Kind: flowLaunchKindRepair, From: flowLaunchStateReading,
+		FlowID: record.FlowID, Stage: flowLaunchStageRead, UntrackedOwnerClaimed: true,
+	})
+	if cmd != nil {
+		t.Fatal("stale claimed event queued work")
+	}
+	if len(h.ownerReleases) != 1 || h.ownerReleases[0] != (flowstore.UntrackedOwnerRelease{FlowID: record.FlowID, LaunchID: "stale"}) {
+		t.Fatalf("durable owner releases = %#v", h.ownerReleases)
+	}
+	if attempt, held := next.flowLaunchAttempt(record.FlowID); !held || attempt.Token != "current" {
+		t.Fatalf("current attempt = %#v held=%v", attempt, held)
 	}
 }
 

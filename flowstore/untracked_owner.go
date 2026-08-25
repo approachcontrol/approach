@@ -49,6 +49,7 @@ type UntrackedOwner struct {
 	Role        UntrackedOwnerRole      `json:"role"`
 	State       UntrackedOwnerState     `json:"state"`
 	Transport   UntrackedOwnerTransport `json:"transport,omitzero"`
+	LauncherPID int                     `json:"launcher_pid,omitempty"`
 	ReservedAt  time.Time               `json:"reserved_at"`
 	ActivatedAt time.Time               `json:"activated_at,omitempty"`
 	EndedAt     time.Time               `json:"ended_at,omitempty"`
@@ -111,6 +112,9 @@ func (s *Store) ClaimUntrackedOwner(update UntrackedOwnerClaim) (FlowRecord, err
 		owner.LaunchID = strings.TrimSpace(owner.LaunchID)
 		owner.State = UntrackedOwnerReserved
 		owner.Transport = update.Owner.Transport
+		if owner.LauncherPID <= 0 && owner.Transport.Kind == UntrackedTransportLauncher {
+			owner.LauncherPID = owner.Transport.PID
+		}
 		owner.ReservedAt, owner.ActivatedAt, owner.EndedAt = now, time.Time{}, time.Time{}
 		record.UntrackedOwner = &owner
 		return record, nil
@@ -134,8 +138,29 @@ func (s *Store) ReplaceUntrackedOwner(update UntrackedOwnerReplacement) (FlowRec
 		owner := update.Owner
 		owner.LaunchID = strings.TrimSpace(owner.LaunchID)
 		owner.State, owner.Transport = UntrackedOwnerReserved, update.Owner.Transport
+		if owner.LauncherPID <= 0 && owner.Transport.Kind == UntrackedTransportLauncher {
+			owner.LauncherPID = owner.Transport.PID
+		}
 		owner.ReservedAt, owner.ActivatedAt, owner.EndedAt = now, time.Time{}, time.Time{}
 		record.UntrackedOwner = &owner
+		return record, nil
+	})
+}
+
+// PrepareUntrackedOwnerTransport records the exact post-spawn identity while
+// the launcher reservation still owns admission. A failed activation can then
+// remain fail-closed on the real transport instead of only the launcher PID.
+func (s *Store) PrepareUntrackedOwnerTransport(update UntrackedOwnerActivation) (FlowRecord, error) {
+	expected := strings.TrimSpace(update.LaunchID)
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, _ time.Time) (FlowRecord, error) {
+		owner := record.UntrackedOwner
+		if owner == nil || owner.LaunchID != expected || owner.State == UntrackedOwnerEnded {
+			return FlowRecord{}, fmt.Errorf("%w: expected %s", ErrUntrackedOwnerChanged, expected)
+		}
+		if owner.State == UntrackedOwnerLive && owner.Transport != update.Transport {
+			return FlowRecord{}, fmt.Errorf("%w: transport changed for %s", ErrUntrackedOwnerChanged, expected)
+		}
+		owner.Transport = update.Transport
 		return record, nil
 	})
 }

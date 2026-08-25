@@ -571,6 +571,9 @@ func TestGenericWorktreeAgentCancelsWhenCommandChangesAfterReadIsAccepted(t *tes
 	if h.launchReservations != 1 || h.launchReleases != 1 {
 		t.Fatalf("reservation/release = %d/%d", h.launchReservations, h.launchReleases)
 	}
+	if len(h.ownerReleases) != 1 || h.ownerReleases[0].LaunchID != preparedMsg.(flowLaunchEventMsg).Token {
+		t.Fatalf("durable owner releases = %#v", h.ownerReleases)
+	}
 }
 
 func TestGenericWorktreeAgentProtectedRevalidationRejectsFreshOccupancyAndPaths(t *testing.T) {

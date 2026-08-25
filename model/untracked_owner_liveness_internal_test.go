@@ -18,6 +18,8 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 		repo      actions.TransportLiveness
 		embedded  actions.TransportLiveness
 		process   bool
+		state     flowstore.UntrackedOwnerState
+		launcher  int
 		wantEnded bool
 	}{
 		{name: "repo live", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "owner"}, repo: actions.TransportLivenessLive},
@@ -28,12 +30,18 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 		{name: "embedded dead", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportEmbeddedTmux, Socket: "socket", Session: "owner"}, embedded: actions.TransportLivenessDead, wantEnded: true},
 		{name: "reserved launcher live", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42}, process: true},
 		{name: "reserved launcher dead", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42}, wantEnded: true},
+		{name: "reserved pending tmux keeps launcher fence", state: flowstore.UntrackedOwnerReserved, launcher: 42, process: true, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessDead},
+		{name: "reserved pending tmux falls back to exact window", state: flowstore.UntrackedOwnerReserved, launcher: 42, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessLive},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			state := tc.state
+			if state == "" {
+				state = flowstore.UntrackedOwnerLive
+			}
 			record := flowstore.FlowRecord{FlowID: "flow-1", UntrackedOwner: &flowstore.UntrackedOwner{
 				LaunchID: "launch-1", Role: flowstore.UntrackedOwnerRepair,
-				State: flowstore.UntrackedOwnerLive, Transport: tc.transport,
+				State: state, Transport: tc.transport, LauncherPID: tc.launcher,
 			}}
 			releases := 0
 			sessionReads := 0

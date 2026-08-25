@@ -28,7 +28,7 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimUntrackedOwner: %v", err)
 	}
-	if got := claimed.UntrackedOwner; got == nil || got.LaunchID != "launch-1" || got.State != flowstore.UntrackedOwnerReserved || got.ReservedAt.IsZero() || got.Transport.PID != 4242 {
+	if got := claimed.UntrackedOwner; got == nil || got.LaunchID != "launch-1" || got.State != flowstore.UntrackedOwnerReserved || got.ReservedAt.IsZero() || got.Transport.PID != 4242 || got.LauncherPID != 4242 {
 		t.Fatalf("claimed owner = %#v", got)
 	}
 	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{LaunchID: "launch-2", Role: flowstore.UntrackedOwnerRepair}}); !errors.Is(err, flowstore.ErrFlowUntrackedOwned) {
@@ -38,10 +38,18 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 		t.Fatalf("delete active owner error = %v", err)
 	}
 
-	activated, err := store.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
+	activation := flowstore.UntrackedOwnerActivation{
 		FlowID: record.FlowID, LaunchID: "launch-1",
 		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "approach-repo", Window: "launch-1"},
-	})
+	}
+	prepared, err := store.PrepareUntrackedOwnerTransport(activation)
+	if err != nil {
+		t.Fatalf("PrepareUntrackedOwnerTransport: %v", err)
+	}
+	if got := prepared.UntrackedOwner; got.State != flowstore.UntrackedOwnerReserved || got.Transport.Window != "launch-1" || got.LauncherPID != 4242 {
+		t.Fatalf("prepared owner = %#v", got)
+	}
+	activated, err := store.ActivateUntrackedOwner(activation)
 	if err != nil {
 		t.Fatalf("ActivateUntrackedOwner: %v", err)
 	}

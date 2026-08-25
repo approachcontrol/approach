@@ -856,23 +856,27 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 }
 
 // handleFlowLaunchEvent is the only handler for lifecycle-emitted events. A
-// fence mismatch returns without touching anything: no phase write, no
-// terminal, no release, and no status replacement.
+// fence mismatch cannot touch the current attempt, phase, terminal, or status.
+// A stale event that already claimed its own durable owner is the exception:
+// its exact launch ID is released without disturbing the newer fence.
 func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	if msg.Kind == flowLaunchKindCreatePhase {
 		return m.handleCreateFlowLaunchEvent(msg)
 	}
 	want, validStage := flowLaunchStageState(msg.Stage)
 	if !validStage || msg.From != want {
+		m.releaseClaimedUntrackedOwner(msg)
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
 	attempt, ok := m.matchingFlowLaunchAttempt(msg.FlowID, msg.Token, msg.Kind, want)
 	if !ok {
+		m.releaseClaimedUntrackedOwner(msg)
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
 	if msg.Kind == flowLaunchKindSavedSessionResume && (attempt.SessionKey != msg.SessionKey || !msg.SessionKey.valid()) {
+		m.releaseClaimedUntrackedOwner(msg)
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
@@ -920,6 +924,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
 			command = agent.Normalize(command)
 			if command != attempt.Settings.Command || !agent.Supported(command) {
+				m.releaseClaimedUntrackedOwner(msg)
 				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, flowWorktreeAgentChangedStatus), nil
 			}
 			settings.Command = command
@@ -928,6 +933,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		}
 		next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStateReading, flowLaunchStatePreparing)
 		if !ok {
+			m.releaseClaimedUntrackedOwner(msg)
 			return m, nil
 		}
 		m = next.withFlowLaunchAttemptPhase(attempt.FlowID, attempt.Token, msg.PhaseID)
@@ -937,6 +943,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		return m, m.flowLaunchPrepareCmd(msg, settings)
 	case flowLaunchStagePrepared:
 		if msg.LeaseDeferred {
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 			if attempt.Kind == flowLaunchKindAutoPhase {
@@ -948,10 +955,12 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m.setStatus(statusOther, msg.Err), nil
 		}
 		if msg.Skipped {
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token), nil
 		}
 		if msg.Err != "" {
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
 		}
@@ -959,6 +968,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
 			command = agent.Normalize(command)
 			if command != attempt.Settings.Command || !agent.Supported(command) {
+				m.releaseClaimedUntrackedOwner(msg)
 				releaseFlowLaunchReservation(msg.Release)
 				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
 					setStatus(statusOther, flowWorktreeAgentChangedStatus), nil
@@ -992,12 +1002,19 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		case flowLaunchRouteTmux:
 			return m.handoffFlowLaunchTmux(attempt, msg)
 		default:
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath,
 				fmt.Sprintf("unsupported flow launch route %d", msg.Route))
 		}
 	}
 	return m, nil
+}
+
+func (m Model) releaseClaimedUntrackedOwner(msg flowLaunchEventMsg) {
+	if msg.UntrackedOwnerClaimed {
+		m.releaseDurableUntrackedOwner(msg.FlowID, msg.Token)
+	}
 }
 
 // handleAutoFlowLaunchRead splits by stage, not by error class, so no error
@@ -1165,11 +1182,22 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 					transport = identified.untrackedOwnerTransport()
 				}
 			}
-			if _, err := m.launchSeams.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
+			activation := flowstore.UntrackedOwnerActivation{
 				FlowID: attempt.FlowID, LaunchID: attempt.Token,
 				Transport: transport,
-			}); err != nil {
-				activationErr := "Activate durable Flow owner: " + err.Error()
+			}
+			var publicationErr error
+			publicationOp := "Activate durable Flow owner"
+			if m.launchSeams.PrepareOwnerTransport != nil {
+				_, publicationErr = m.launchSeams.PrepareOwnerTransport(activation)
+				publicationOp = "Prepare durable Flow owner transport"
+			}
+			if publicationErr == nil {
+				_, publicationErr = m.launchSeams.ActivateUntrackedOwner(activation)
+				publicationOp = "Activate durable Flow owner"
+			}
+			if publicationErr != nil {
+				activationErr := publicationOp + ": " + publicationErr.Error()
 				if terminalFound {
 					if terminateErr := terminal.Terminate(); terminateErr != nil {
 						m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
@@ -1274,6 +1302,15 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 			Transport: flowstore.UntrackedOwnerTransport{
 				Kind: flowstore.UntrackedTransportRepoTmux, Session: spec.SessionName, Window: spec.WindowName,
 			},
+		}
+		if m.launchSeams.PrepareOwnerTransport != nil {
+			if _, err := m.launchSeams.PrepareOwnerTransport(*activation); err != nil {
+				releaseFlowLaunchReservation(msg.Release)
+				if spec.Launch.Cleanup != nil {
+					spec.Launch.Cleanup()
+				}
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Prepare durable Flow owner transport: "+err.Error())
+			}
 		}
 	}
 	if attempt.Kind == flowLaunchKindAutofix {

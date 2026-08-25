@@ -381,6 +381,7 @@ type Options struct {
 	ReadFlow                  func(flowID string) (flowstore.FlowRecord, error)
 	SetFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	ClaimUntrackedOwner       func(flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error)
+	PrepareOwnerTransport     func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
 	ActivateUntrackedOwner    func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
 	ReleaseUntrackedOwner     func(flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error)
 	SetFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
@@ -1050,6 +1051,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		}
 		return store.ClaimUntrackedOwner(update)
 	}
+	launchSeams.PrepareOwnerTransport = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.PrepareUntrackedOwnerTransport(update)
+	}
 	launchSeams.ActivateUntrackedOwner = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
 		store, err := newFlowStore()
 		if err != nil {
@@ -1067,6 +1075,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if opts.ClaimUntrackedOwner != nil {
 		launchSeams.ClaimUntrackedOwner = opts.ClaimUntrackedOwner
 	}
+	if opts.PrepareOwnerTransport != nil {
+		launchSeams.PrepareOwnerTransport = opts.PrepareOwnerTransport
+	}
 	if opts.ActivateUntrackedOwner != nil {
 		launchSeams.ActivateUntrackedOwner = opts.ActivateUntrackedOwner
 	}
@@ -1077,6 +1088,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if customFlowStorage {
 		if opts.ClaimUntrackedOwner == nil {
 			launchSeams.ClaimUntrackedOwner = func(update flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			}
+		}
+		if opts.PrepareOwnerTransport == nil {
+			launchSeams.PrepareOwnerTransport = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
 				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 			}
 		}
@@ -1106,6 +1122,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	launchSeams.ResolveUntrackedOwner = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 		owner := record.UntrackedOwner
 		if owner == nil || owner.State == flowstore.UntrackedOwnerEnded {
+			return record, nil
+		}
+		if owner.State == flowstore.UntrackedOwnerReserved && owner.LauncherPID > 0 && processAlive(owner.LauncherPID) {
 			return record, nil
 		}
 		liveness := actions.TransportLivenessUnknown
