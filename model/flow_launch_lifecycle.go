@@ -1047,7 +1047,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) releaseClaimedUntrackedOwner(msg flowLaunchEventMsg) {
+func (m *Model) releaseClaimedUntrackedOwner(msg flowLaunchEventMsg) {
 	if msg.UntrackedOwnerClaimed {
 		m.releaseDurableUntrackedOwner(msg.FlowID, msg.Token)
 	}
@@ -1492,9 +1492,26 @@ func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunch
 	return next, flowLaunchFailurePersistCmd(next.launchSeams.SetPhase, update, ctx, errText)
 }
 
-func (m Model) releaseDurableUntrackedOwner(flowID, launchID string) {
-	if m.launchSeams.ReleaseUntrackedOwner != nil {
-		_, _ = m.launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
+func (m *Model) releaseDurableUntrackedOwner(flowID, launchID string) error {
+	flowID, launchID = strings.TrimSpace(flowID), strings.TrimSpace(launchID)
+	if flowID == "" || launchID == "" || m.launchSeams.ReleaseUntrackedOwner == nil {
+		return nil
+	}
+	_, err := m.launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
+	if err == nil || errors.Is(err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(err, flowstore.ErrFlowNotFound) {
+		delete(m.pendingUntrackedOwnerReleases, flowID)
+		return nil
+	}
+	if m.pendingUntrackedOwnerReleases == nil {
+		m.pendingUntrackedOwnerReleases = make(map[string]string)
+	}
+	m.pendingUntrackedOwnerReleases[flowID] = launchID
+	return err
+}
+
+func (m *Model) retryDurableUntrackedOwnerReleases() {
+	for flowID, launchID := range m.pendingUntrackedOwnerReleases {
+		_ = m.releaseDurableUntrackedOwner(flowID, launchID)
 	}
 }
 

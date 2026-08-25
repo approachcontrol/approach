@@ -32,11 +32,11 @@ func (slot Slot) HoldsRepair(flowID string) bool {
 }
 
 func (slot Slot) AutoCloses() bool {
-	return slot.Flow && slot.TerminalPresent && slot.TerminalExited && !slot.WorktreeAgent && !slot.SavedSessionResume
+	return slot.Flow && slot.TerminalPresent && slot.TerminalExited && !slot.SavedSessionResume
 }
 
 // DetachDropsOwnership reports whether removing this slot would discard a
 // deliberately retained in-process owner.
 func (slot Slot) DetachDropsOwnership() bool {
-	return slot.Flow && (slot.WorktreeAgent || slot.SavedSessionResume || slot.FailureRetained)
+	return slot.Flow && (slot.SavedSessionResume || slot.FailureRetained)
 }

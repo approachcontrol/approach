@@ -381,7 +381,7 @@ func TestGenericWorktreeAgentPreservesTerminalFocusAfterNavigationDuringPreparat
 	}
 }
 
-func TestGenericWorktreeAgentRetainedSlotRejectsDetachBeforeCallingTerminal(t *testing.T) {
+func TestGenericWorktreeAgentDetachRetainsDurableOwnership(t *testing.T) {
 	record := genericFlowAgentRecord(t)
 	h := newManualLaunchHarness(t, record)
 	next, cmd := h.model().handleStartSelectedFlowWorktreeAgent()
@@ -390,20 +390,23 @@ func TestGenericWorktreeAgentRetainedSlotRejectsDetachBeforeCallingTerminal(t *t
 	terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t generic"}
 	m.embeddedTerminals[0].Terminal = terminal
 	m.activeTerminalNum = m.embeddedTerminals[0].Number
-	if !m.embeddedTerminals[0].FlowAgent || m.embeddedTerminals[0].DetachPolicy != embeddedTerminalDetachNever {
+	if !m.embeddedTerminals[0].FlowAgent || m.embeddedTerminals[0].DetachPolicy != embeddedTerminalDetachAllowed {
 		t.Fatalf("generic slot policy = %#v", m.embeddedTerminals[0])
 	}
 
 	nextModel, detachCmd := m.handleEmbeddedTerminalDetachPrefix()
-	if detachCmd != nil || terminal.detached {
-		t.Fatalf("nondetachable generic slot detached: cmd=%v detached=%v", detachCmd != nil, terminal.detached)
+	if detachCmd == nil || !terminal.detached {
+		t.Fatalf("generic slot detach: cmd=%v detached=%v", detachCmd != nil, terminal.detached)
 	}
-	if len(nextModel.embeddedTerminals) != 1 || nextModel.embeddedTerminals[0].FlowID != record.FlowID {
-		t.Fatalf("detach refusal changed retained ownership: %#v", nextModel.embeddedTerminals)
+	if len(nextModel.embeddedTerminals) != 0 {
+		t.Fatalf("detached presentation retained a slot: %#v", nextModel.embeddedTerminals)
+	}
+	if len(h.ownerReleases) != 0 {
+		t.Fatalf("detach released durable ownership: %#v", h.ownerReleases)
 	}
 }
 
-func TestGenericWorktreeAgentExitedSlotRetainsOccupancyUntilDismissed(t *testing.T) {
+func TestGenericWorktreeAgentExitedSlotAutoClosesAndReleases(t *testing.T) {
 	record := genericFlowAgentRecord(t)
 	m := Model{embeddedTerminalState: embeddedTerminalState{embeddedTerminals: []embeddedTerminalSlot{
 		{
@@ -416,17 +419,12 @@ func TestGenericWorktreeAgentExitedSlotRetainsOccupancyUntilDismissed(t *testing
 		},
 	}}}
 
-	if m.hasExitedFlowEmbeddedTerminalAutoClose() {
-		t.Fatal("exited generic Flow-agent slot should not schedule automatic dismissal")
+	if !m.hasExitedFlowEmbeddedTerminalAutoClose() {
+		t.Fatal("exited generic Flow-agent slot should schedule automatic dismissal")
 	}
 	m = m.dismissExitedFlowEmbeddedTerminals()
-	if len(m.embeddedTerminals) != 1 || !m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
-		t.Fatalf("exited generic slot lost retained occupancy: %#v", m.embeddedTerminals)
-	}
-
-	m = m.dismissEmbeddedTerminal(m.embeddedTerminals[0].ID)
 	if len(m.embeddedTerminals) != 0 || m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
-		t.Fatalf("explicit dismissal did not release generic occupancy: %#v", m.embeddedTerminals)
+		t.Fatalf("automatic dismissal retained generic presentation: %#v", m.embeddedTerminals)
 	}
 }
 

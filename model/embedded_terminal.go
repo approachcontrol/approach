@@ -1032,7 +1032,7 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 
 func flowEmbeddedTerminalDetachPolicy(ctx actions.AgentLaunchContext) embeddedTerminalDetachPolicy {
 	switch actions.FlowLaunchRoleOf(ctx) {
-	case actions.RoleWorktreeAgent, actions.RoleSavedSessionResume:
+	case actions.RoleSavedSessionResume:
 		return embeddedTerminalDetachNever
 	default:
 		return embeddedTerminalDetachAllowed

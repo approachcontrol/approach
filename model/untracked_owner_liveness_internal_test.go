@@ -95,6 +95,34 @@ func boolInt(value bool) int {
 	return 0
 }
 
+func TestDurableOwnerReleaseFailureIsRetried(t *testing.T) {
+	calls := 0
+	m := Model{launchSeams: flowLaunchSeams{ReleaseUntrackedOwner: func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
+		calls++
+		if update.FlowID != "flow-1" || update.LaunchID != "launch-1" {
+			t.Fatalf("release = %#v", update)
+		}
+		if calls < 3 {
+			return flowstore.FlowRecord{}, errors.New("store busy")
+		}
+		return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+	}}}
+	if err := m.releaseDurableUntrackedOwner("flow-1", "launch-1"); err == nil {
+		t.Fatal("initial release error = nil")
+	}
+	if got := m.pendingUntrackedOwnerReleases["flow-1"]; got != "launch-1" {
+		t.Fatalf("pending release = %q", got)
+	}
+	m.retryDurableUntrackedOwnerReleases()
+	if got := m.pendingUntrackedOwnerReleases["flow-1"]; got != "launch-1" {
+		t.Fatalf("pending release after failed retry = %q", got)
+	}
+	m.retryDurableUntrackedOwnerReleases()
+	if _, pending := m.pendingUntrackedOwnerReleases["flow-1"]; pending || calls != 3 {
+		t.Fatalf("pending=%v calls=%d, want successful third attempt", pending, calls)
+	}
+}
+
 type ownerIdentityRuntime struct {
 	state   embeddedterm.State
 	pid     int

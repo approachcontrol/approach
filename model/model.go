@@ -222,9 +222,13 @@ type Model struct {
 	// never the authority — RepoTmuxSessionAttached is — so it needs no expiry
 	// beyond the result message that clears it.
 	repoTmuxTerminalPending map[string]bool
-	inspectFlowLease        func(string, string) (flowlease.LeaseState, error)
-	leaseInspectInjected    bool
-	tmuxAttachHint          bool
+	// pendingUntrackedOwnerReleases retains exact cleanup failures for retry on
+	// subsequent update-loop activity. One active durable owner can exist per
+	// Flow, so the Flow ID is the natural key.
+	pendingUntrackedOwnerReleases map[string]string
+	inspectFlowLease              func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected          bool
+	tmuxAttachHint                bool
 	embeddedTerminalState
 	autoAdvanceState
 	epicProgressionBaselines map[string]epicProgressionBaseline
@@ -2183,6 +2187,7 @@ func (m Model) activeViewMatches(kind FetchKind, mode ui.Mode, request uint64) b
 // --- Update ---
 
 func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
+	m.retryDurableUntrackedOwnerReleases()
 	flowRefreshWasVisible := m.flowRefreshSurfaceVisible()
 	defer func() {
 		modelNext, ok := next.(Model)
