@@ -497,6 +497,17 @@ func TestModelOptionsFromConfigPassesClipboardOptions(t *testing.T) {
 	}
 }
 
+func TestModelOptionsFromConfigPassesNotificationsEnabled(t *testing.T) {
+	sessionStore, planStore, flowStore := testArtifactStores(t)
+	opts := modelOptionsFromConfig(config.Config{
+		Notifications: config.NotificationsConfig{Enabled: true},
+	}, nil, sessionStore, planStore, flowStore)
+
+	if !opts.NotificationsEnabled {
+		t.Fatal("NotificationsEnabled = false, want true")
+	}
+}
+
 func TestModelOptionsFromConfigPassesFlowPreset(t *testing.T) {
 	sessionStore, planStore, flowStore := testArtifactStores(t)
 	preset := flowstore.Preset{

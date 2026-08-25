@@ -99,6 +99,7 @@ type Model struct {
 	sessions                    pane.Pane[sessions.SessionRecord]
 	plans                       pane.Pane[planstore.PlanRecord]
 	flows                       pane.Pane[flowstore.FlowRecord]
+	notificationsEnabled        bool
 	activeFlowRecords           []flowstore.FlowRecord
 	latestFlowMutations         []cachedFlowMutation
 	pendingFlowHeadlessWrites   []pendingFlowHeadlessWrite
@@ -107,6 +108,7 @@ type Model struct {
 	prBabysitterRecords         []flowstore.FlowRecord
 	prBabysitterFlows           pane.Pane[flowstore.FlowRecord]
 	prBabysitterStatuses        map[string]actions.PullRequestStatus
+	tmuxNotificationWatches     map[string]tmuxNotificationWatch
 	beads                       [beadSubviewCount]beadSubviewState
 	beadExpansion               beadExpansionSnapshot
 	beadExpansionSeq            uint64
@@ -209,8 +211,10 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
+	repoTmuxLaunchStatus      func(string, ...string) (bool, error)
 	repoTmuxSessionAttached   func(string) bool
 	insideMultiplexer         func() bool
+	insideTmux                func() bool
 	// repoTmuxTerminalPending holds the repos whose first tmux-mode terminal
 	// window has been dispatched but has not reported back. It debounces two
 	// launches into one repo seconds apart, where the second would probe
@@ -338,6 +342,7 @@ func agentConfigFromOptions(opts Options) agentConfig {
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
+	NotificationsEnabled      bool
 	AgentCommand              string
 	CodexModel                string
 	ClaudeModel               string
@@ -416,6 +421,10 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
+	// RepoTmuxLaunchStatus distinguishes a confirmed missing window from
+	// an inconclusive tmux probe. Notification sweeps consume watches only on a
+	// successful probe that reports no live window.
+	RepoTmuxLaunchStatus func(repoPath string, launchIDs ...string) (bool, error)
 	// RepoTmuxSessionAttached probes whether a terminal is already watching a
 	// repo's tmux session. It decides whether a tmux-mode launch opens the
 	// repo's first terminal window, and runs only inside a command goroutine.
@@ -423,6 +432,9 @@ type Options struct {
 	// InsideMultiplexer reports whether approach itself runs inside tmux or
 	// Zellij, where tmux mode opens no terminal window of its own.
 	InsideMultiplexer func() bool
+	// InsideTmux reports whether renderer control sequences need tmux DCS
+	// passthrough.
+	InsideTmux func() bool
 	// InspectFlowLease is the cheap non-blocking occupancy seam used by render,
 	// manual admission, and AutoMode. It must never invoke tmux or fork.
 	InspectFlowLease      func(root, flowID string) (flowlease.LeaseState, error)
@@ -919,6 +931,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	repoTmuxLaunchStatus := opts.RepoTmuxLaunchStatus
+	if repoTmuxLaunchStatus == nil {
+		repoTmuxLaunchStatus = actions.RepoTmuxLaunchWindowStatus
+	}
 	repoTmuxSessionAttached := opts.RepoTmuxSessionAttached
 	if repoTmuxSessionAttached == nil {
 		repoTmuxSessionAttached = actions.RepoTmuxSessionAttached
@@ -926,6 +942,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	insideMultiplexer := opts.InsideMultiplexer
 	if insideMultiplexer == nil {
 		insideMultiplexer = actions.InsideMultiplexer
+	}
+	insideTmux := opts.InsideTmux
+	if insideTmux == nil {
+		insideTmux = actions.InsideTmux
 	}
 	leaseInspectInjected := opts.InspectFlowLease != nil
 	inspectFlowLease := opts.InspectFlowLease
@@ -1123,8 +1143,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		repoTmuxLaunchStatus:      repoTmuxLaunchStatus,
 		repoTmuxSessionAttached:   repoTmuxSessionAttached,
 		insideMultiplexer:         insideMultiplexer,
+		insideTmux:                insideTmux,
 		inspectFlowLease:          inspectFlowLease,
 		leaseInspectInjected:      leaseInspectInjected,
 		tmuxAttachHint:            normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
@@ -1134,6 +1156,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchControl:             opts.LaunchControl,
 		reconcileLaunchExit:       opts.ReconcileLaunchExit,
 		sweepLaunches:             opts.SweepLaunches,
+		notificationsEnabled:      opts.NotificationsEnabled,
 		bootstrapHookForRepo:      bootstrapHookForRepo,
 		runBootstrapHook:          runBootstrapHook,
 	}
@@ -2135,6 +2158,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		// Before dismissal, because a dismissed slot is gone from the model
 		// and its exit would never be reported.
 		var cmds []tea.Cmd
+		var notificationCmds []tea.Cmd
+		m, notificationCmds = m.collectEmbeddedExitNotifications()
+		cmds = append(cmds, notificationCmds...)
 		var reconcileCmds []tea.Cmd
 		m, reconcileCmds = m.reconcileExitedFlowEmbeddedTerminals()
 		cmds = append(cmds, reconcileCmds...)
@@ -2490,6 +2516,14 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		}
 	}
 	ctx := msg.LaunchContext
+	var interactiveExitCmd tea.Cmd
+	if !msg.Detached {
+		state, codeKnown := "exited", true
+		if msg.Err != "" {
+			state, codeKnown = "failed", false
+		}
+		interactiveExitCmd = m.notificationCmd(agentExitNotification(ctx.Command, ctx.RepoPath, state, 0, codeKnown))
+	}
 	// A slice-epic launch holds its preparation admission across the spawn, and
 	// its own result is what ends the hold. The exact LaunchID match is what
 	// stops a stale result — from a launch made before a repository or
@@ -2503,7 +2537,8 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
 		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
-			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
+			m, cmd := m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
+			return m, batchNonNil(interactiveExitCmd, cmd)
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	} else if msg.FlowLaunchRelease != nil {
@@ -2513,8 +2548,12 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		return m, nil
 	}
 	if resultErr != "" {
-		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
+		m, cmd := m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
+		return m, batchNonNil(interactiveExitCmd, cmd)
 	} else if msg.Detached {
+		if msg.Tmux {
+			m = m.withTmuxNotificationWatch(ctx)
+		}
 		// Only detached launches carry a status here; an interactive launch's own
 		// status is set before the TTY handover, since this message lands when the
 		// user's session ends rather than when it starts.
@@ -2534,7 +2573,9 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		// An interactive launch's agent has ended with the TTY handed back; a
 		// tracked phase it left running has no result and is reconciled the
 		// same way an embedded terminal's exit is.
-		return m, cmd
+		return m, batchNonNil(interactiveExitCmd, cmd)
+	} else if !msg.Detached {
+		return m, interactiveExitCmd
 	}
 	return m, nil
 }

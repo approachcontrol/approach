@@ -106,6 +106,11 @@ const repoTmuxProbeTimeout = 2 * time.Second
 // so matching on the name alone would report a long-gone agent as live.
 const repoTmuxLiveWindowFormat = "#{window_name} #{pane_dead}"
 
+const (
+	repoTmuxLaunchMarker       = "@approach_launch_id"
+	repoTmuxLaunchMarkerFormat = "#{" + repoTmuxLaunchMarker + "} #{pane_dead}"
+)
+
 // tmuxProbeCommand builds a read-only tmux query. TMUX/ZELLIJ are stripped so a
 // TUI running inside a multiplexer still asks the default server rather than its
 // enclosing one.
@@ -185,6 +190,11 @@ func InsideMultiplexer() bool {
 	return insideMultiplexer(os.Getenv)
 }
 
+// InsideTmux reports whether Approach's current renderer is hosted by tmux.
+func InsideTmux() bool {
+	return os.Getenv("TMUX") != ""
+}
+
 func insideMultiplexer(getenv func(string) string) bool {
 	return getenv("TMUX") != "" || getenv("ZELLIJ") != ""
 }
@@ -193,6 +203,10 @@ func insideMultiplexer(getenv func(string) string) bool {
 // field the launch probe needs.
 func repoTmuxListWindowsArgs(repoPath string) []string {
 	return []string{"list-windows", "-t", tmuxExactWindowTarget(RepoAgentSessionName(repoPath)), "-F", repoTmuxLiveWindowFormat}
+}
+
+func repoTmuxListLaunchMarkersArgs(repoPath string) []string {
+	return []string{"list-windows", "-t", tmuxExactWindowTarget(RepoAgentSessionName(repoPath)), "-F", repoTmuxLaunchMarkerFormat}
 }
 
 // RepoTmuxLaunchWindowLive reports whether any of these launches still has a
@@ -222,6 +236,77 @@ func RepoTmuxLaunchWindowLive(repoPath string, launchIDs ...string) bool {
 		return false
 	}
 	return launchWindowRunningInListing(string(out), suffixes)
+}
+
+// RepoTmuxLaunchWindowStatus reports whether any matching launch window is
+// live and returns an error when tmux could not answer conclusively. Unlike the
+// advisory boolean wrapper, a successful false result is safe to use as exit
+// evidence.
+func RepoTmuxLaunchWindowStatus(repoPath string, launchIDs ...string) (bool, error) {
+	launchIDs = normalizedLaunchIDs(launchIDs)
+	if len(launchIDs) == 0 {
+		return false, errors.New("tmux launch probe requires a matchable launch ID")
+	}
+	if !TmuxAvailable() {
+		return false, errors.New("tmux is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, repoTmuxListLaunchMarkersArgs(repoPath)...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if tmuxLaunchProbeConfirmsAbsence(string(exitErr.Stderr)) {
+				return false, nil
+			}
+		}
+		return false, fmt.Errorf("probe tmux launch window: %w", err)
+	}
+	live, _ := launchMarkerRunningInListing(string(out), launchIDs)
+	return live, nil
+}
+
+func tmuxLaunchProbeConfirmsAbsence(stderr string) bool {
+	stderr = strings.TrimSpace(stderr)
+	return strings.Contains(stderr, "can't find session:") || strings.Contains(stderr, "no server running on")
+}
+
+func normalizedLaunchIDs(launchIDs []string) []string {
+	seen := make(map[string]struct{}, len(launchIDs))
+	normalized := make([]string, 0, len(launchIDs))
+	for _, launchID := range launchIDs {
+		launchID = strings.TrimSpace(launchID)
+		if launchID == "" {
+			continue
+		}
+		if _, ok := seen[launchID]; ok {
+			continue
+		}
+		seen[launchID] = struct{}{}
+		normalized = append(normalized, launchID)
+	}
+	return normalized
+}
+
+func launchMarkerRunningInListing(listing string, launchIDs []string) (live, found bool) {
+	wanted := make(map[string]struct{}, len(launchIDs))
+	for _, launchID := range launchIDs {
+		wanted[launchID] = struct{}{}
+	}
+	for _, line := range strings.Split(listing, "\n") {
+		launchID, dead, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		if _, ok := wanted[launchID]; !ok {
+			continue
+		}
+		found = true
+		if strings.TrimSpace(dead) == "0" {
+			return true, true
+		}
+	}
+	return false, found
 }
 
 // launchWindowRunningInListing scans repoTmuxLiveWindowFormat output for a live
@@ -271,15 +356,29 @@ session=$1
 window=$2
 dir=$3
 cmd=$4
+launch_id=$5
+mark_window() {
+	if tmux set-option -w -t "=$session:=$window" @approach_launch_id "$launch_id"; then
+		return 0
+	fi
+	tmux kill-window -t "=$session:=$window" 2>/dev/null || true
+	return 1
+}
 if tmux has-session -t "=$session" 2>/dev/null; then
 	if tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
-		exit 0
+		mark_window
+		exit $?
 	fi
 fi
 if tmux new-session -d -s "$session" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
-	exit 0
+	mark_window
+	exit $?
 fi
-exec tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd"
+if tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd"; then
+	mark_window
+	exit $?
+fi
+exit 1
 `
 
 // RepoTmuxAgentLaunch builds a CLI agent launch that runs in the repo's tmux
@@ -430,7 +529,7 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	if err != nil {
 		return RepoTmuxAgentSpec{}, err
 	}
-	tmuxCmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", sessionName, windowName, cmd.Dir, termCommand.shellCommand())
+	tmuxCmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", sessionName, windowName, cmd.Dir, termCommand.shellCommand(), ctx.LaunchID)
 	tmuxCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
 	// Without this the script's last attempt — the only one that does not
 	// suppress stderr — writes to /dev/null and every tmux failure reduces to

@@ -103,6 +103,11 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	}
 
 	var cmds []tea.Cmd
+	if m.notificationsEnabled {
+		for _, event := range flowPhaseNotificationEvents(previous, current) {
+			cmds = append(cmds, m.notificationCmd(event))
+		}
+	}
 	var autoCmd tea.Cmd
 	var admittedAutoMerges []string
 	m, autoCmd, admittedAutoMerges = m.prepareAutoFlowPhaseLaunchForRequest(previous, current, msg.Request)

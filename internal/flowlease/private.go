@@ -734,7 +734,7 @@ func runTmuxWindowCreate(spec PrivateSpec, run func(...string) error) error {
 	if hasSessionErr == nil {
 		if err := run("new-window", "-d", "-t", "="+spec.SessionName+":", "-n", spec.WindowName, "-c", spec.CWD,
 			"exec sh "+shellQuote(spec.ScriptPath)); err == nil {
-			return nil
+			return markTmuxLaunchWindow(spec, run)
 		} else if errors.Is(err, errTmuxCommandTimeout) {
 			return err
 		}
@@ -743,11 +743,25 @@ func runTmuxWindowCreate(spec PrivateSpec, run func(...string) error) error {
 	}
 	command := "exec sh " + shellQuote(spec.ScriptPath)
 	if err := run("new-session", "-d", "-s", spec.SessionName, "-n", spec.WindowName, "-c", spec.CWD, command); err == nil {
-		return nil
+		return markTmuxLaunchWindow(spec, run)
 	} else if errors.Is(err, errTmuxCommandTimeout) {
 		return err
 	}
-	return run("new-window", "-d", "-t", "="+spec.SessionName+":", "-n", spec.WindowName, "-c", spec.CWD, command)
+	if err := run("new-window", "-d", "-t", "="+spec.SessionName+":", "-n", spec.WindowName, "-c", spec.CWD, command); err != nil {
+		return err
+	}
+	return markTmuxLaunchWindow(spec, run)
+}
+
+func markTmuxLaunchWindow(spec PrivateSpec, run func(...string) error) error {
+	target, err := ExactWindowTarget(spec.SessionName, spec.WindowName)
+	if err != nil {
+		return err
+	}
+	if err := run("set-option", "-w", "-t", target, "@approach_launch_id", spec.LaunchID); err != nil {
+		return fmt.Errorf("mark tmux launch window: %w", err)
+	}
+	return nil
 }
 
 func inspectLaunchScript(path string) error {

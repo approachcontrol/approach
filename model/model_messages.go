@@ -532,6 +532,8 @@ type FlowPhaseAgentSettingsSetFailedMsg struct {
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
+	// Tmux marks a detached launch whose process runs in a watched tmux window.
+	Tmux bool
 	// FlowLaunchRelease is carried only by a lifecycle-owned tmux start result.
 	// The command must retain the cross-process reservation after it exits until
 	// a matching handoffPending attempt consumes this result.

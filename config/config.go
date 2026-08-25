@@ -22,17 +22,18 @@ var acquireConfigFileLock = artifacts.AcquireFileLock
 
 // Config is approach's parsed configuration file.
 type Config struct {
-	Scan        ScanConfig       `toml:"scan"`
-	Editor      EditorConfig     `toml:"editor"`
-	Terminal    TerminalConfig   `toml:"terminal"`
-	Provider    ProviderConfig   `toml:"provider"`
-	Launch      LaunchConfig     `toml:"launch"`
-	Agent       AgentConfig      `toml:"agent"`
-	FlowPrompts FlowPromptConfig `toml:"flow_prompts"`
-	Flow        FlowConfig       `toml:"flow"`
-	Sessions    SessionsConfig   `toml:"sessions"`
-	Bootstrap   BootstrapConfig  `toml:"bootstrap"`
-	Clipboard   ClipboardConfig  `toml:"clipboard"`
+	Scan          ScanConfig          `toml:"scan"`
+	Editor        EditorConfig        `toml:"editor"`
+	Terminal      TerminalConfig      `toml:"terminal"`
+	Provider      ProviderConfig      `toml:"provider"`
+	Launch        LaunchConfig        `toml:"launch"`
+	Agent         AgentConfig         `toml:"agent"`
+	FlowPrompts   FlowPromptConfig    `toml:"flow_prompts"`
+	Flow          FlowConfig          `toml:"flow"`
+	Sessions      SessionsConfig      `toml:"sessions"`
+	Bootstrap     BootstrapConfig     `toml:"bootstrap"`
+	Clipboard     ClipboardConfig     `toml:"clipboard"`
+	Notifications NotificationsConfig `toml:"notifications"`
 }
 
 const (
@@ -47,6 +48,11 @@ const (
 type ClipboardConfig struct {
 	Method               string `toml:"method"`
 	OSC52MaxPayloadBytes int    `toml:"osc52_max_payload_bytes"`
+}
+
+// NotificationsConfig controls renderer-emitted desktop notifications.
+type NotificationsConfig struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // ScanConfig configures repository discovery.

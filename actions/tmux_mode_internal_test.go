@@ -213,7 +213,7 @@ func tmuxStub(t *testing.T, fail ...string) (dir string, invocations func() []st
 
 func runLaunchScript(t *testing.T, stubDir string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", "sess", "win", stubDir, "agent")
+	cmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", "sess", "win", stubDir, "agent", "launch-1")
 	cmd.Env = append(os.Environ(), "PATH="+stubDir)
 	var stderr boundedBuffer
 	stderr.limit = repoTmuxStderrLimit
@@ -237,12 +237,20 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			// must never reach new-session.
 			name: "reuses an existing session",
 			fail: nil,
-			want: []string{"has-session -t =sess", "new-window -d -t =sess: -n win -c DIR agent"},
+			want: []string{
+				"has-session -t =sess",
+				"new-window -d -t =sess: -n win -c DIR agent",
+				"set-option -w -t =sess:=win @approach_launch_id launch-1",
+			},
 		},
 		{
 			name: "creates the session when absent",
 			fail: []string{"has-session"},
-			want: []string{"has-session -t =sess", "new-session -d -s sess -n win -c DIR agent"},
+			want: []string{
+				"has-session -t =sess",
+				"new-session -d -s sess -n win -c DIR agent",
+				"set-option -w -t =sess:=win @approach_launch_id launch-1",
+			},
 		},
 		{
 			// The session died between the probe and new-window: retry as a
@@ -253,6 +261,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 				"has-session -t =sess",
 				"new-window -d -t =sess: -n win -c DIR agent",
 				"new-session -d -s sess -n win -c DIR agent",
+				"set-option -w -t =sess:=win @approach_launch_id launch-1",
 			},
 		},
 		{
@@ -264,6 +273,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 				"has-session -t =sess",
 				"new-session -d -s sess -n win -c DIR agent",
 				"new-window -d -t =sess: -n win -c DIR agent",
+				"set-option -w -t =sess:=win @approach_launch_id launch-1",
 			},
 		},
 	}
@@ -300,6 +310,22 @@ func TestRepoTmuxLaunchScriptReportsTheFinalFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "new-window refused") {
 		t.Fatalf("expected the final new-window's message, got %q", stderr)
+	}
+}
+
+func TestRepoTmuxLaunchScriptKillsUnmarkedWindow(t *testing.T) {
+	stubDir, invocations := tmuxStub(t, "set-option")
+	_, err := runLaunchScript(t, stubDir)
+	if err == nil {
+		t.Fatal("launch script succeeded without recording the immutable launch marker")
+	}
+	wantSuffix := []string{
+		"set-option -w -t =sess:=win @approach_launch_id launch-1",
+		"kill-window -t =sess:=win",
+	}
+	got := invocations()
+	if len(got) < len(wantSuffix) || strings.Join(got[len(got)-len(wantSuffix):], "|") != strings.Join(wantSuffix, "|") {
+		t.Fatalf("tmux invocations = %#v, want suffix %#v", got, wantSuffix)
 	}
 }
 
@@ -740,6 +766,35 @@ func TestLaunchWindowRunningInListingMatchesAnyOfAPhasesLaunches(t *testing.T) {
 	// window; otherwise a phase with one blank launch ID would never be resettable.
 	if launchWindowRunningInListing(listing, repoTmuxLaunchSuffixes([]string{"", "   "})) {
 		t.Fatal("blank launch IDs must not match any window")
+	}
+}
+
+func TestLaunchMarkerRunningInListingSurvivesWindowRename(t *testing.T) {
+	const launchID = "approach-1700000000000000000-aabbccddeeff"
+	live, found := launchMarkerRunningInListing(launchID+" 0\n", []string{launchID})
+	if !found || !live {
+		t.Fatalf("launch marker match = live %t, found %t, want both true", live, found)
+	}
+	if live, found := launchMarkerRunningInListing("another-launch 0\n", []string{launchID}); live || found {
+		t.Fatalf("foreign marker match = live %t, found %t, want both false", live, found)
+	}
+}
+
+func TestTmuxLaunchProbeConfirmsAbsenceOnlyForMissingSessionOrServer(t *testing.T) {
+	tests := []struct {
+		stderr string
+		want   bool
+	}{
+		{stderr: "can't find session: approach-alpha-1234", want: true},
+		{stderr: "no server running on /tmp/tmux-501/default", want: true},
+		{stderr: "error connecting to /tmp/tmux-501/default (Permission denied)"},
+		{stderr: "probe timed out"},
+		{stderr: ""},
+	}
+	for _, tc := range tests {
+		if got := tmuxLaunchProbeConfirmsAbsence(tc.stderr); got != tc.want {
+			t.Fatalf("tmuxLaunchProbeConfirmsAbsence(%q) = %t, want %t", tc.stderr, got, tc.want)
+		}
 	}
 }
 

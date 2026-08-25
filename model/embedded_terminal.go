@@ -140,6 +140,9 @@ type embeddedTerminalSlot struct {
 	// launch controller, so a slot that stays visible (a failed launch) is
 	// reconciled once, not on every tick.
 	ExitReconciled bool
+	// NotificationReported marks an ended agent process whose desktop
+	// notification has already been emitted.
+	NotificationReported bool
 }
 
 type embeddedSessionPickerSelectedMsg struct {

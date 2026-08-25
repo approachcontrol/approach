@@ -597,6 +597,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 	launchOpts := actions.LaunchOptions{TerminalCommand: cfg.Terminal.Command}
 	flowPreset, _ := resolveConfiguredFlowPreset(cfg, "")
 	return model.Options{
+		NotificationsEnabled:  cfg.Notifications.Enabled,
 		AgentCommand:          cfg.Agent.Command,
 		CodexModel:            cfg.Agent.CodexModel,
 		ClaudeModel:           cfg.Agent.ClaudeModel,

@@ -147,6 +147,7 @@ func (m Model) launchAgentInRepoTmuxSession(ctx actions.AgentLaunchContext, rele
 		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
 	m, launchCmd := m.runAgentLaunchWithStatus(ctx, spec.Launch, release, tmuxLaunchStatus(spec))
+	launchCmd = markTmuxAgentResult(launchCmd)
 	// The session name comes from the spec the launch actually used, so the
 	// terminal can never attach to a name this launch did not create.
 	m, terminalCmd := m.maybeOpenRepoTmuxTerminal(ctx.RepoPath, spec.SessionName)

@@ -400,6 +400,12 @@ sessions created by that embedded launch; detached tmux sessions are no longer
 owned by Approach and are not prompted for on quit. Embedded terminals are not
 restored after Approach restarts.
 
+When `[notifications].enabled = true`, Approach asks the host terminal to send
+a desktop notification when an Approach-launched agent exits and when a Flow
+phase newly becomes completed, blocked, or needs attention. The TUI emits OSC 9
+through its renderer, does not replay outcomes at startup, and does not repeat
+unchanged outcomes. See `docs/config.md` for terminal support and tmux timing.
+
 The global `ctrl+] l` picker applies the same cached-association rule as
 Sessions-pane `r` and the inline worktree list. All three submit one exact
 provider/session-ID lifecycle intent for cached Flow records. An authoritative
