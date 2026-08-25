@@ -15,11 +15,13 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		name          string
 		provider      sessions.Provider
 		reason        string
+		certificate   bool
 		wantCertified bool
 	}{
-		{name: "claude logout", provider: sessions.ProviderClaude, reason: "logout", wantCertified: true},
-		{name: "claude prompt input exit", provider: sessions.ProviderClaude, reason: "prompt_input_exit", wantCertified: true},
-		{name: "claude other", provider: sessions.ProviderClaude, reason: "other", wantCertified: true},
+		{name: "claude logout", provider: sessions.ProviderClaude, reason: "logout", certificate: true, wantCertified: true},
+		{name: "claude prompt input exit", provider: sessions.ProviderClaude, reason: "prompt_input_exit", certificate: true, wantCertified: true},
+		{name: "claude other", provider: sessions.ProviderClaude, reason: "other", certificate: true, wantCertified: true},
+		{name: "legacy claude logout without provenance", provider: sessions.ProviderClaude, reason: "logout"},
 		{name: "claude clear", provider: sessions.ProviderClaude, reason: "clear"},
 		{name: "claude missing reason", provider: sessions.ProviderClaude},
 		{name: "claude unknown reason", provider: sessions.ProviderClaude, reason: "future_reason"},
@@ -30,12 +32,13 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sessionStore, _, _ := testArtifactStores(t)
 			if err := sessionStore.Upsert(sessions.SessionRecord{
-				Provider:  tc.provider,
-				SessionID: "session-1",
-				LaunchID:  "launch-1",
-				Status:    "ended",
-				EndReason: tc.reason,
-				EndedAt:   endedAt,
+				Provider:         tc.provider,
+				SessionID:        "session-1",
+				LaunchID:         "launch-1",
+				Status:           "ended",
+				EndReason:        tc.reason,
+				DeathCertificate: tc.certificate,
+				EndedAt:          endedAt,
 			}); err != nil {
 				t.Fatalf("Upsert() error = %v", err)
 			}
@@ -75,7 +78,7 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		}
 		if err := sessionStore.Upsert(sessions.SessionRecord{
 			Provider: sessions.ProviderClaude, SessionID: "session-2", LaunchID: "launch-1",
-			Status: "ended", EndedAt: endedAt.Add(time.Hour), EndReason: "prompt_input_exit",
+			Status: "ended", EndedAt: endedAt.Add(time.Hour), EndReason: "prompt_input_exit", DeathCertificate: true,
 		}); err != nil {
 			t.Fatalf("Upsert() error = %v", err)
 		}
@@ -100,7 +103,7 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 	t.Run("one live record keeps the launch alive", func(t *testing.T) {
 		sessionStore, _, _ := testArtifactStores(t)
 		for _, record := range []sessions.SessionRecord{
-			{Provider: sessions.ProviderClaude, SessionID: "session-1", LaunchID: "launch-1", Status: "ended", EndedAt: endedAt, EndReason: "logout"},
+			{Provider: sessions.ProviderClaude, SessionID: "session-1", LaunchID: "launch-1", Status: "ended", EndedAt: endedAt, EndReason: "logout", DeathCertificate: true},
 			{Provider: sessions.ProviderClaude, SessionID: "session-2", LaunchID: "launch-1", Status: "last_seen"},
 		} {
 			if err := sessionStore.Upsert(record); err != nil {

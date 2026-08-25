@@ -127,9 +127,11 @@ immediately. A held Flow lease still vetoes the demotion.
 Codex `Stop`, Cursor `stop`, Claude `clear`, blank reasons, unknown reasons,
 and malformed provider events remain session history only. No timestamp can
 turn them into exit evidence. The sweep uses the newest ended provider record
-for a launch and accepts only the same recognized Claude reasons; any active
-record keeps the launch alive. The hook reports a demotion as a stderr warning
-and still exits 0.
+for a launch and accepts only records whose ingestion persisted both the
+recognized Claude reason and an explicit death-certificate bit. Records from
+older builds have no bit and remain non-evidence, even when their stored reason
+matches. Any active record keeps the launch alive. The hook reports a demotion
+as a stderr warning and still exits 0.
 
 `session-hook` loads the normal Approach config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
@@ -241,12 +243,13 @@ terminal's exit, an interactive launch handing the TTY back, the lease
 runner's `exit.json`, or a recognized final Claude `SessionEnd` death
 certificate. Session evidence never demotes while the Flow lease is held. The
 hook and sweep both replay pending writes before demotion. The provider's
-`reason` remains on the record as `end_reason`, and `ended_at` remains in the
-evidence and reconciliation notes for diagnosis, not proof. Claude `clear`,
-blank or unknown reasons, and Codex or Cursor records are never exit evidence,
-regardless of age. A Codex or Cursor launch that exits without a result is
-demoted only by its embedded terminal's exit or the lease runner's
-`exit.json`.
+`reason` remains on the record as `end_reason`, and validated final events set
+`death_certificate`. Legacy records without that bit remain non-evidence.
+`ended_at` remains in the evidence and reconciliation notes for diagnosis, not
+proof. Claude `clear`, blank or unknown reasons, and Codex or Cursor records are
+never exit evidence, regardless of age. A Codex or Cursor launch that exits
+without a result is demoted only by its embedded terminal's exit or the lease
+runner's `exit.json`.
 That exit record and the resulting `phase_result_missing` transition are
 diagnostic evidence when teardown still prevents a phase result or session
 capture. They are not a substitute for the agent awaiting its background work.

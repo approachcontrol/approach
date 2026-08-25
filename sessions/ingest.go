@@ -66,18 +66,20 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 		return SessionRecord{}, fmt.Errorf("%s hook payload has no usable session ID; rejecting session capture", provider)
 	}
 	now := time.Now().UTC()
+	deathCertificate := hookIssuesDeathCertificate(provider, payload)
 	record := SessionRecord{
-		Provider:       provider,
-		SessionID:      sessionID,
-		Status:         statusForPayload(provider, payload),
-		EndReason:      endReasonForPayload(provider, payload),
-		StartedAt:      payload.StartedAt,
-		EndedAt:        payload.EndedAt,
-		CWD:            payload.CWD,
-		Model:          payload.Model,
-		Summary:        summaryForPayload(payload),
-		TranscriptPath: payload.TranscriptPath,
-		CaptureSource:  "hook",
+		Provider:         provider,
+		SessionID:        sessionID,
+		Status:           statusForPayload(provider, payload),
+		EndReason:        endReasonForPayload(provider, payload),
+		DeathCertificate: deathCertificate,
+		StartedAt:        payload.StartedAt,
+		EndedAt:          payload.EndedAt,
+		CWD:              payload.CWD,
+		Model:            payload.Model,
+		Summary:          summaryForPayload(payload),
+		TranscriptPath:   payload.TranscriptPath,
+		CaptureSource:    "hook",
 	}
 	if record.EndedAt.IsZero() && (provider == ProviderClaude || provider == ProviderCursor) {
 		record.EndedAt = now
@@ -141,7 +143,7 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	// After the attach, and with its own store: the hook path holds one Flow
 	// store handle at a time. Only a provider event that certifies process
 	// death reaches the controller.
-	if hookIssuesDeathCertificate(provider, payload) {
+	if record.DeathCertificate {
 		reconcileFlowLaunchExit(record, opts, warnings)
 	}
 	return record, nil
@@ -249,7 +251,7 @@ func endReasonForPayload(provider Provider, payload hookPayload) string {
 // recognized final provider event. Claude's final SessionEnd reasons are the
 // only provider evidence strong enough to reconcile a Flow launch.
 func IsDeathCertificate(record SessionRecord) bool {
-	if record.Provider != ProviderClaude || strings.TrimSpace(record.Status) != "ended" {
+	if !record.DeathCertificate || record.Provider != ProviderClaude || strings.TrimSpace(record.Status) != "ended" {
 		return false
 	}
 	return finalClaudeEndReason(record.EndReason)
