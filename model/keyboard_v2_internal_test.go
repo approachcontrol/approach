@@ -123,6 +123,9 @@ func TestEmbeddedTerminalAltPrintableEncodingUsesKeyCode(t *testing.T) {
 	}{
 		{name: "ascii", key: tea.KeyPressMsg{Code: 'b', Mod: tea.ModAlt}, want: []byte{0x1b, 'b'}},
 		{name: "unicode", key: tea.KeyPressMsg{Code: '☃', Mod: tea.ModAlt}, want: []byte("\x1b☃")},
+		{name: "shifted letter", key: tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt | tea.ModShift}, want: []byte{0x1b, 'A'}},
+		{name: "shifted punctuation", key: tea.KeyPressMsg{Code: '4', Mod: tea.ModAlt | tea.ModShift}, want: []byte{0x1b, '$'}},
+		{name: "reported shifted code", key: tea.KeyPressMsg{Code: '1', ShiftedCode: '¡', Mod: tea.ModAlt | tea.ModShift}, want: []byte("\x1b¡")},
 	}
 
 	for _, tt := range tests {
@@ -131,6 +134,50 @@ func TestEmbeddedTerminalAltPrintableEncodingUsesKeyCode(t *testing.T) {
 				t.Fatalf("keyBytes(%s) = %#v, want %#v", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEmbeddedTerminalCtrlEncodingMatchesLegacyProtocol(t *testing.T) {
+	tests := []struct {
+		name string
+		code rune
+		want byte
+	}{
+		{name: "space", code: tea.KeySpace, want: 0x00},
+		{name: "at", code: '@', want: 0x00},
+		{name: "slash", code: '/', want: 0x1f},
+		{name: "zero", code: '0', want: '0'},
+		{name: "one", code: '1', want: '1'},
+		{name: "two", code: '2', want: 0x00},
+		{name: "three", code: '3', want: 0x1b},
+		{name: "four", code: '4', want: 0x1c},
+		{name: "five", code: '5', want: 0x1d},
+		{name: "six", code: '6', want: 0x1e},
+		{name: "seven", code: '7', want: 0x1f},
+		{name: "eight", code: '8', want: 0x7f},
+		{name: "nine", code: '9', want: '9'},
+		{name: "question", code: '?', want: 0x7f},
+		{name: "left bracket", code: '[', want: 0x1b},
+		{name: "backslash", code: '\\', want: 0x1c},
+		{name: "right bracket", code: ']', want: 0x1d},
+		{name: "caret", code: '^', want: 0x1e},
+		{name: "underscore", code: '_', want: 0x1f},
+		{name: "letter", code: 'a', want: 0x01},
+		{name: "approach ctrl-h delete override", code: 'h', want: 0x7f},
+		{name: "tilde", code: '~', want: 0x1e},
+		{name: "unmapped punctuation", code: ';', want: ';'},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, want := keyBytes(tea.KeyPressMsg{Code: tt.code, Mod: tea.ModCtrl}), []byte{tt.want}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("ctrl+%s bytes = %#v, want %#v", tt.name, got, want)
+			}
+		})
+	}
+
+	if got, want := keyBytes(tea.KeyPressMsg{Code: tea.KeyBackspace, Mod: tea.ModCtrl}), []byte{0x08}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ctrl+backspace bytes = %#v, want %#v", got, want)
 	}
 }
 

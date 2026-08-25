@@ -1341,6 +1341,10 @@ func baseKeyBytes(msg tea.KeyPressMsg) []byte {
 	switch {
 	case code == tea.KeySpace && mod.Contains(tea.ModCtrl):
 		return []byte{0x00}
+	case code == tea.KeyBackspace && mod.Contains(tea.ModCtrl):
+		return []byte{0x08}
+	case code == 'h' && mod.Contains(tea.ModCtrl):
+		return []byte{0x7f}
 	case code == tea.KeyUp && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
 		return []byte("\x1b[1;6A")
 	case code == tea.KeyDown && mod.Contains(tea.ModCtrl) && mod.Contains(tea.ModShift):
@@ -1441,22 +1445,100 @@ func baseKeyBytes(msg tea.KeyPressMsg) []byte {
 		return []byte("\x1b[24~")
 	default:
 		if mod.Contains(tea.ModCtrl) {
-			if code == 'h' {
-				return []byte{0x7f}
+			if b, ok := legacyCtrlByte(code); ok {
+				return []byte{b}
 			}
-			if code == '?' {
-				return []byte{0x7f}
+			if code >= 0x20 && code <= 0x7e {
+				return []byte{byte(code)}
 			}
-			if code >= '@' && code <= '_' {
-				return []byte{byte(code - '@')}
-			}
-			if code >= 'a' && code <= 'z' {
-				return []byte{byte(code-'a') + 1}
-			}
+			return nil
 		}
-		if !mod.Contains(tea.ModCtrl) && unicode.IsPrint(code) {
+		if unicode.IsPrint(code) {
+			if mod.Contains(tea.ModShift) {
+				if msg.ShiftedCode != 0 {
+					code = msg.ShiftedCode
+				} else {
+					code = legacyShiftedCode(code)
+				}
+			}
 			return []byte(string(code))
 		}
 		return nil
+	}
+}
+
+func legacyCtrlByte(code rune) (byte, bool) {
+	switch code {
+	case tea.KeySpace, '@', '2':
+		return 0x00, true
+	case '[', '3':
+		return 0x1b, true
+	case '\\', '4':
+		return 0x1c, true
+	case ']', '5':
+		return 0x1d, true
+	case '^', '~', '6':
+		return 0x1e, true
+	case '_', '/', '7':
+		return 0x1f, true
+	case '?', '8':
+		return 0x7f, true
+	case 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+		'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z':
+		return byte(code-'a') + 1, true
+	case 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+		'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z':
+		return byte(code-'A') + 1, true
+	default:
+		return 0, false
+	}
+}
+
+func legacyShiftedCode(code rune) rune {
+	switch code {
+	case '`':
+		return '~'
+	case '1':
+		return '!'
+	case '2':
+		return '@'
+	case '3':
+		return '#'
+	case '4':
+		return '$'
+	case '5':
+		return '%'
+	case '6':
+		return '^'
+	case '7':
+		return '&'
+	case '8':
+		return '*'
+	case '9':
+		return '('
+	case '0':
+		return ')'
+	case '-':
+		return '_'
+	case '=':
+		return '+'
+	case '[':
+		return '{'
+	case ']':
+		return '}'
+	case '\\':
+		return '|'
+	case ';':
+		return ':'
+	case '\'':
+		return '"'
+	case ',':
+		return '<'
+	case '.':
+		return '>'
+	case '/':
+		return '?'
+	default:
+		return unicode.ToUpper(code)
 	}
 }
