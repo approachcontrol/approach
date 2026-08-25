@@ -179,6 +179,68 @@ func TestReconcileLeaseRunnerExitKeepsEvidenceWhenStoreOpenFails(t *testing.T) {
 	}
 }
 
+func TestReconcileLeaseRunnerExitReportsRejectedReplay(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.Create(flowstore.FlowRecord{
+		Title: "Lease runner replay notice", Instructions: "test", RepoPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const oldLaunchID = "launch-old"
+	next := launchcontrol.RecordBaseline(root, store.AddPhaseLaunchID)
+	if _, err := next(flowstore.PhaseLaunchUpdate{FlowID: created.FlowID, PhaseID: "plan", LaunchID: oldLaunchID}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := launchcontrol.OpenLog(root, oldLaunchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteLaunch(launchcontrol.LaunchInfo{FlowID: created.FlowID, PhaseID: "plan", Kind: "phase"}); err != nil {
+		t.Fatal(err)
+	}
+	req, err := launchcontrol.NewRequest(launchcontrol.VerbPhaseComplete, launchcontrol.PhaseActionPayload{Summary: "stale result"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.FlowID, req.PhaseID, req.LaunchID = created.FlowID, "plan", oldLaunchID
+	unlock, err := log.Lock(launchcontrol.LaunchLockTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, appendErr := log.Append(launchcontrol.RequestEnvelope{
+		RequestID: req.RequestID, FlowID: req.FlowID, PhaseID: req.PhaseID,
+		Verb: req.Verb, Replayable: true, Payload: req.Payload, WrittenBy: launchcontrol.WrittenBySpool,
+	})
+	unlock()
+	if appendErr != nil {
+		t.Fatal(appendErr)
+	}
+	if _, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: created.FlowID, PhaseID: "plan"}); err != nil {
+		t.Fatal(err)
+	}
+	const newLaunchID = "launch-new"
+	if _, err := next(flowstore.PhaseLaunchUpdate{FlowID: created.FlowID, PhaseID: "plan", LaunchID: newLaunchID}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	reconcileLeaseRunnerExit(flowlease.LaunchExit{
+		Root: root, FlowID: created.FlowID, PhaseID: "plan", LaunchID: oldLaunchID,
+		Code: 0, EndedAt: time.Now().UTC(),
+	}, &stderr)
+	for _, want := range []string{"spooled request(s) rejected as phase_result_stale", "launch-new"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+}
+
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 	var stdout bytes.Buffer
 	err := run([]string{"approach", "--version"}, runDeps{

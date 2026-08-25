@@ -946,9 +946,10 @@ func TestLeaseRunnerReportsExitExactlyOnceAfterAgentEnds(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunLeaseRunner(argv[2:], nil, io.Discard, io.Discard, func(exit LaunchExit) {
-			// The lease is still held while the exit is reported.
-			if state, err := Inspect(spec.Root, spec.FlowID); err != nil || state != Held {
-				t.Errorf("Inspect(onExit) = %v, %v, want Held", state, err)
+			// Exit reporting must not keep later launch attempts behind the
+			// runner's Flow lease while reconciliation waits on other locks.
+			if state, err := Inspect(spec.Root, spec.FlowID); err != nil || state != Free {
+				t.Errorf("Inspect(onExit) = %v, %v, want Free", state, err)
 			}
 			exits <- exit
 		})

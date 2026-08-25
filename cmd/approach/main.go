@@ -222,9 +222,9 @@ func untrackedOwnerReleaseCallerMatches(owner flowstore.UntrackedOwner, parentPI
 }
 
 // reconcileLeaseRunnerExit records the process-group exit before opening the
-// Flow store, then reconciles while RunLeaseRunner still holds this Flow's
-// lease. Every failure is diagnostic only: the supervised agent's process
-// result remains RunLeaseRunner's result.
+// Flow store, then reconciles after RunLeaseRunner releases this Flow's lease.
+// Every failure is diagnostic only: the supervised agent's process result
+// remains RunLeaseRunner's result.
 func reconcileLeaseRunnerExit(exit flowlease.LaunchExit, stderr io.Writer) {
 	report := func(format string, args ...any) {
 		fmt.Fprintf(stderr, "approach: reconcile lease-runner exit: "+format+"\n", args...)
@@ -246,9 +246,12 @@ func reconcileLeaseRunnerExit(exit flowlease.LaunchExit, stderr io.Writer) {
 		}
 		return
 	}
-	_, reconcileErr := controller.Reconcile(exit.FlowID, exit.PhaseID, exit.LaunchID, launchcontrol.ExitEvidence{
+	outcome, reconcileErr := controller.Reconcile(exit.FlowID, exit.PhaseID, exit.LaunchID, launchcontrol.ExitEvidence{
 		Source: launchcontrol.SourceLeaseRunnerExit, Code: exit.Code, CodeKnown: true, EndedAt: exit.EndedAt,
 	})
+	for _, notice := range outcome.Notices {
+		report("%s", notice)
+	}
 	if reconcileErr != nil {
 		report("reconcile launch %s: %v", exit.LaunchID, reconcileErr)
 	}
