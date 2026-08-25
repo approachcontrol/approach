@@ -142,6 +142,11 @@ var processAlive = func(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
+// ProcessAlive reports whether pid currently names a running process.
+func ProcessAlive(pid int) bool {
+	return pid > 0 && processAlive(pid)
+}
+
 // Pin identifies the approach binary a launch must invoke.
 type Pin struct {
 	// ExecutablePath is what a launch runs: the cached copy, or the resolved

@@ -193,7 +193,14 @@ func claimUntrackedOwner(seams flowLaunchSeams, flowID, launchID string, kind fl
 	if seams.ClaimUntrackedOwner == nil {
 		return nil
 	}
-	_, err := seams.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: flowID, Owner: flowstore.UntrackedOwner{LaunchID: launchID, Role: role}})
+	_, err := seams.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: flowID, Owner: flowstore.UntrackedOwner{
+		LaunchID: launchID,
+		Role:     role,
+		Transport: flowstore.UntrackedOwnerTransport{
+			Kind: flowstore.UntrackedTransportLauncher,
+			PID:  os.Getpid(),
+		},
+	}})
 	return err
 }
 

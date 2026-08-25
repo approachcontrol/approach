@@ -829,6 +829,17 @@ func TestRepoTmuxLaunchWindowLiveMatchesTheLaunchsOwnWindow(t *testing.T) {
 	}
 }
 
+func TestMissingTmuxTargetLivenessDistinguishesDeadFromUnknown(t *testing.T) {
+	for _, output := range []string{"can't find session: owner", "no server running on /tmp/tmux", "no sessions"} {
+		if got := missingTmuxTargetLiveness(output); got != TransportLivenessDead {
+			t.Fatalf("missingTmuxTargetLiveness(%q) = %v, want dead", output, got)
+		}
+	}
+	if got := missingTmuxTargetLiveness("permission denied"); got != TransportLivenessUnknown {
+		t.Fatalf("permission failure = %v, want unknown", got)
+	}
+}
+
 func TestRepoTmuxAgentLaunchCleanupRemovesScript(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	ctx := tmuxModeContext(t)

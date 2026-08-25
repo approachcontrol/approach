@@ -635,6 +635,9 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 		t.Fatal("expected status path for tmux exit propagation")
 	}
 	socketName := spec.HasSessionCommand.Args[4]
+	if spec.SocketName != socketName {
+		t.Fatalf("socket identity = %q, want %q", spec.SocketName, socketName)
+	}
 	if !strings.HasPrefix(socketName, "approach-agent-") || len(socketName) != len("approach-agent-00000000") {
 		t.Fatalf("socket name = %q, want short hashed approach-agent name", socketName)
 	}

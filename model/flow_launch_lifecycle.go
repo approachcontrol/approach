@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,15 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
+
+func (m Model) flowLaunchEmbeddedTerminal(flowID, launchID string) (EmbeddedTerminal, bool) {
+	for _, slot := range m.embeddedTerminals {
+		if slot.FlowID == flowID && slot.LaunchID == launchID && slot.Terminal != nil {
+			return slot.Terminal, true
+		}
+	}
+	return nil, false
+}
 
 // noLaunchableFlowPhaseStatus covers every reason a launch is refused before it
 // reaches preflight: no eligible phase, an occupied Flow, or a live session on
@@ -1146,9 +1156,17 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	m = next
 	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
 		if m.launchSeams.ActivateUntrackedOwner != nil {
+			transport := flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid()}
+			if terminal, ok := m.flowLaunchEmbeddedTerminal(ctx.FlowID, ctx.LaunchID); ok {
+				if identified, ok := terminal.(interface {
+					untrackedOwnerTransport() flowstore.UntrackedOwnerTransport
+				}); ok {
+					transport = identified.untrackedOwnerTransport()
+				}
+			}
 			if _, err := m.launchSeams.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
 				FlowID: attempt.FlowID, LaunchID: attempt.Token,
-				Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect},
+				Transport: transport,
 			}); err != nil {
 				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Activate durable Flow owner: "+err.Error())
 			}
@@ -1234,6 +1252,20 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 	if err != nil {
 		releaseFlowLaunchReservation(msg.Release)
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
+	}
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable && m.launchSeams.ActivateUntrackedOwner != nil {
+		if _, err := m.launchSeams.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
+			FlowID: attempt.FlowID, LaunchID: attempt.Token,
+			Transport: flowstore.UntrackedOwnerTransport{
+				Kind: flowstore.UntrackedTransportRepoTmux, Session: spec.SessionName, Window: spec.WindowName,
+			},
+		}); err != nil {
+			releaseFlowLaunchReservation(msg.Release)
+			if spec.Launch.Cleanup != nil {
+				spec.Launch.Cleanup()
+			}
+			return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Activate durable Flow owner: "+err.Error())
+		}
 	}
 	if attempt.Kind == flowLaunchKindAutofix {
 		// A phase-untracked launch writes no running phase, so on this route

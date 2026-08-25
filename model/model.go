@@ -427,7 +427,10 @@ type Options struct {
 	// RepoTmuxLaunchStatus distinguishes a confirmed missing window from
 	// an inconclusive tmux probe. Notification sweeps consume watches only on a
 	// successful probe that reports no live window.
-	RepoTmuxLaunchStatus func(repoPath string, launchIDs ...string) (bool, error)
+	RepoTmuxLaunchStatus   func(repoPath string, launchIDs ...string) (bool, error)
+	ProbeRepoTmuxOwner     func(session, window string) actions.TransportLiveness
+	ProbeEmbeddedTmuxOwner func(socket, session string) actions.TransportLiveness
+	ProcessAlive           func(pid int) bool
 	// RepoTmuxSessionAttached probes whether a terminal is already watching a
 	// repo's tmux session. It decides whether a tmux-mode launch opens the
 	// repo's first terminal window, and runs only inside a command goroutine.
@@ -1088,42 +1091,41 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			}
 		}
 	}
+	probeRepoTmuxOwner := opts.ProbeRepoTmuxOwner
+	if probeRepoTmuxOwner == nil {
+		probeRepoTmuxOwner = actions.RepoTmuxWindowLiveness
+	}
+	probeEmbeddedTmuxOwner := opts.ProbeEmbeddedTmuxOwner
+	if probeEmbeddedTmuxOwner == nil {
+		probeEmbeddedTmuxOwner = actions.EmbeddedTmuxSessionLiveness
+	}
+	processAlive := opts.ProcessAlive
+	if processAlive == nil {
+		processAlive = controlplane.ProcessAlive
+	}
 	launchSeams.ResolveUntrackedOwner = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 		owner := record.UntrackedOwner
 		if owner == nil || owner.State == flowstore.UntrackedOwnerEnded {
 			return record, nil
 		}
-		var records []sessions.SessionRecord
-		var err error
-		if launchSeams.ListFlowSessions != nil {
-			records, err = launchSeams.ListFlowSessions(record.FlowID)
-		}
-		if err == nil {
-			ended := false
-			for _, session := range records {
-				if strings.TrimSpace(session.LaunchID) != strings.TrimSpace(owner.LaunchID) {
-					continue
+		liveness := actions.TransportLivenessUnknown
+		switch owner.Transport.Kind {
+		case flowstore.UntrackedTransportRepoTmux:
+			liveness = probeRepoTmuxOwner(owner.Transport.Session, owner.Transport.Window)
+		case flowstore.UntrackedTransportEmbeddedTmux:
+			liveness = probeEmbeddedTmuxOwner(owner.Transport.Socket, owner.Transport.Session)
+		case flowstore.UntrackedTransportLauncher, flowstore.UntrackedTransportDirect:
+			if owner.Transport.PID > 0 {
+				if processAlive(owner.Transport.PID) {
+					liveness = actions.TransportLivenessLive
+				} else {
+					liveness = actions.TransportLivenessDead
 				}
-				if sessions.IsActive(session.Status, session.EndedAt) {
-					return record, nil
-				}
-				ended = true
-			}
-			if ended {
-				return launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: record.FlowID, LaunchID: owner.LaunchID})
 			}
 		}
-		if owner.Transport.Kind == flowstore.UntrackedTransportRepoTmux && repoTmuxLaunchWindowLive != nil {
-			repoPath := strings.TrimSpace(record.WorktreePath)
-			if repoPath == "" {
-				repoPath = strings.TrimSpace(record.RepoPath)
-			}
-			if repoTmuxLaunchWindowLive(repoPath, owner.LaunchID) {
-				return record, nil
-			}
+		if liveness == actions.TransportLivenessDead {
 			return launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: record.FlowID, LaunchID: owner.LaunchID})
 		}
-		// Missing or failed evidence is unknown and remains occupied.
 		return record, nil
 	}
 	launchSeams.ReconcileEpicSuccessor = reconcileEpicSuccessor
@@ -2628,13 +2630,6 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		if resultErr != "" {
 			m, cmd := m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
 			return m, batchNonNil(interactiveExitCmd, cmd)
-		}
-		if _, durable := untrackedOwnerRole(attempt.Kind); durable {
-			if m.launchSeams.ActivateUntrackedOwner != nil {
-				if _, err := m.launchSeams.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{FlowID: ctx.FlowID, LaunchID: ctx.LaunchID, Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Window: ctx.LaunchID}}); err != nil {
-					return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, "Activate durable Flow owner: "+err.Error())
-				}
-			}
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	} else if msg.FlowLaunchRelease != nil {

@@ -19,6 +19,8 @@ type commandRunner func(*exec.Cmd) error
 type TmuxBackedTerminal struct {
 	term        *Terminal
 	target      string
+	socketName  string
+	sessionName string
 	owned       bool
 	killCommand *exec.Cmd
 	cleanup     func()
@@ -74,6 +76,8 @@ func startTmuxBackedAgent(ctx context.Context, spec actions.EmbeddedTmuxAgentSpe
 	t := &TmuxBackedTerminal{
 		term:        term,
 		target:      target,
+		socketName:  spec.SocketName,
+		sessionName: spec.SessionName,
 		owned:       owned,
 		killCommand: spec.KillSessionCommand,
 		cleanup:     spec.Cleanup,
@@ -82,6 +86,9 @@ func startTmuxBackedAgent(ctx context.Context, spec actions.EmbeddedTmuxAgentSpe
 	go t.monitor()
 	return t, nil
 }
+
+func (t *TmuxBackedTerminal) SocketName() string  { return t.socketName }
+func (t *TmuxBackedTerminal) SessionName() string { return t.sessionName }
 
 func runCommand(cmd *exec.Cmd) error {
 	out, err := cmd.CombinedOutput()

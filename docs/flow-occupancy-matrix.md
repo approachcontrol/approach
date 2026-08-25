@@ -41,11 +41,14 @@ the Flow store, the session store, or the lease file at the moment of the call.
 
 S17 replaces the in-process tmux registry as authority. Every authoritative
 launch read checks it before admitting tracked phases, resumes, repair, autofix,
-generic worktree agents, saved-session resumes, or AutoMode work. Session state
-and the exact repo-tmux window supply liveness evidence. Missing or failed
-evidence stays occupied. Only an ended matching session or a missing exact tmux
-window permits an identity-fenced release. Cached footer and drain queries do
-not probe processes or walk stores.
+generic worktree agents, saved-session resumes, or AutoMode work. A reservation
+stores the launcher's PID until activation replaces it with the exact transport:
+repo-tmux session/window, isolated embedded-tmux socket/session, or direct child
+PID. Probes return live, dead, or unknown. Missing tools, timeouts, and probe
+errors stay occupied; only proven death permits an identity-fenced release.
+Provider hooks are not exit evidence because Codex Stop is a turn boundary and
+Claude SessionEnd can be `/clear`. Cached footer and drain queries do not probe
+processes or walk stores.
 
 Two composites are built from the above and are what most consumers actually
 call:

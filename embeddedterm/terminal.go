@@ -147,6 +147,15 @@ type Terminal struct {
 	finalRows   []string
 }
 
+// ProcessID identifies the command attached to this terminal. It is used only
+// for liveness checks after the Model that started the process has gone away.
+func (t *Terminal) ProcessID() int {
+	if t == nil || t.cmd == nil || t.cmd.Process == nil {
+		return 0
+	}
+	return t.cmd.Process.Pid
+}
+
 func (t *Terminal) State() State {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -26,6 +26,7 @@ const (
 type UntrackedTransportKind string
 
 const (
+	UntrackedTransportLauncher     UntrackedTransportKind = "launcher_process"
 	UntrackedTransportRepoTmux     UntrackedTransportKind = "repo_tmux"
 	UntrackedTransportEmbeddedTmux UntrackedTransportKind = "embedded_tmux"
 	UntrackedTransportDirect       UntrackedTransportKind = "direct_embedded"
@@ -35,6 +36,7 @@ const (
 // whether an owner may be reclaimed. Only the fields used by Kind are set.
 type UntrackedOwnerTransport struct {
 	Kind    UntrackedTransportKind `json:"kind"`
+	Socket  string                 `json:"socket,omitempty"`
 	Session string                 `json:"session,omitempty"`
 	Window  string                 `json:"window,omitempty"`
 	PID     int                    `json:"pid,omitempty"`
@@ -108,7 +110,7 @@ func (s *Store) ClaimUntrackedOwner(update UntrackedOwnerClaim) (FlowRecord, err
 		owner := update.Owner
 		owner.LaunchID = strings.TrimSpace(owner.LaunchID)
 		owner.State = UntrackedOwnerReserved
-		owner.Transport = UntrackedOwnerTransport{}
+		owner.Transport = update.Owner.Transport
 		owner.ReservedAt, owner.ActivatedAt, owner.EndedAt = now, time.Time{}, time.Time{}
 		record.UntrackedOwner = &owner
 		return record, nil
@@ -131,7 +133,7 @@ func (s *Store) ReplaceUntrackedOwner(update UntrackedOwnerReplacement) (FlowRec
 		}
 		owner := update.Owner
 		owner.LaunchID = strings.TrimSpace(owner.LaunchID)
-		owner.State, owner.Transport = UntrackedOwnerReserved, UntrackedOwnerTransport{}
+		owner.State, owner.Transport = UntrackedOwnerReserved, update.Owner.Transport
 		owner.ReservedAt, owner.ActivatedAt, owner.EndedAt = now, time.Time{}, time.Time{}
 		record.UntrackedOwner = &owner
 		return record, nil

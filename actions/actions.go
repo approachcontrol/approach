@@ -1224,6 +1224,7 @@ var ErrEmbeddedTmuxUnavailable = errors.New("tmux is not available for embedded 
 // EmbeddedTmuxAgentSpec describes a CLI agent launch that runs inside a tmux
 // session while approach embeds only an attached tmux client.
 type EmbeddedTmuxAgentSpec struct {
+	SocketName         string
 	SessionName        string
 	ScriptPath         string
 	StatusPath         string
@@ -1472,6 +1473,7 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 	socketName := tmuxSocketName(sessionName)
 	tmuxArgs := isolatedTmuxArgs(socketName)
 	spec := EmbeddedTmuxAgentSpec{
+		SocketName:         socketName,
 		SessionName:        sessionName,
 		ScriptPath:         termCommand.scriptPath,
 		StatusPath:         termCommand.statusPath,

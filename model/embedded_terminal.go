@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/approachcontrol/approach/cursorstream"
 	"github.com/approachcontrol/approach/embeddedterm"
 	"github.com/approachcontrol/approach/flowownership"
+	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -279,6 +281,22 @@ func (t realEmbeddedTerminal) Wait(ctx context.Context) error {
 	return t.term.Wait(ctx)
 }
 func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
+func (t realEmbeddedTerminal) untrackedOwnerTransport() flowstore.UntrackedOwnerTransport {
+	if tmuxTerm, ok := t.term.(interface {
+		SocketName() string
+		SessionName() string
+	}); ok {
+		return flowstore.UntrackedOwnerTransport{
+			Kind:    flowstore.UntrackedTransportEmbeddedTmux,
+			Socket:  tmuxTerm.SocketName(),
+			Session: tmuxTerm.SessionName(),
+		}
+	}
+	if direct, ok := t.term.(interface{ ProcessID() int }); ok {
+		return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: direct.ProcessID()}
+	}
+	return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid()}
+}
 func (t realEmbeddedTerminal) Detach() error {
 	detachable, ok := t.term.(interface{ Detach() error })
 	if !ok {
@@ -1126,7 +1144,7 @@ func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason em
 		} else {
 			removed = true
 			if strings.TrimSpace(slot.FlowID) != "" && strings.TrimSpace(slot.LaunchID) != "" && reason != embeddedTerminalRemovalDetach &&
-				(reason == embeddedTerminalRemovalTerminate || slot.Terminal == nil || slot.Terminal.State() == "exited") {
+				(reason == embeddedTerminalRemovalTerminate || slot.Terminal == nil || slot.Terminal.State() == "exited" || slot.Terminal.State() == "terminated") {
 				m.releaseDurableUntrackedOwner(slot.FlowID, slot.LaunchID)
 			}
 			m = m.recordRepairTerminalRemoval(slot, reason)

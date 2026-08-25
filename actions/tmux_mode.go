@@ -111,6 +111,16 @@ const (
 	repoTmuxLaunchMarkerFormat = "#{" + repoTmuxLaunchMarker + "} #{pane_dead}"
 )
 
+// TransportLiveness is the result of an authoritative transport probe.
+// Unknown must remain occupied; only Dead permits reclaiming durable ownership.
+type TransportLiveness uint8
+
+const (
+	TransportLivenessUnknown TransportLiveness = iota
+	TransportLivenessLive
+	TransportLivenessDead
+)
+
 // tmuxProbeCommand builds a read-only tmux query. TMUX/ZELLIJ are stripped so a
 // TUI running inside a multiplexer still asks the default server rather than its
 // enclosing one.
@@ -307,6 +317,61 @@ func launchMarkerRunningInListing(listing string, launchIDs []string) (live, fou
 		}
 	}
 	return false, found
+}
+
+// RepoTmuxWindowLiveness probes one persisted repo-tmux window identity.
+func RepoTmuxWindowLiveness(sessionName, windowName string) TransportLiveness {
+	sessionName, windowName = strings.TrimSpace(sessionName), strings.TrimSpace(windowName)
+	if sessionName == "" || windowName == "" || !TmuxAvailable() {
+		return TransportLivenessUnknown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "list-windows", "-t", tmuxExactWindowTarget(sessionName), "-F", repoTmuxLiveWindowFormat).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return TransportLivenessUnknown
+		}
+		return missingTmuxTargetLiveness(string(out))
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		name, dead, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if ok && name == windowName {
+			if dead == "0" {
+				return TransportLivenessLive
+			}
+			return TransportLivenessDead
+		}
+	}
+	return TransportLivenessDead
+}
+
+// EmbeddedTmuxSessionLiveness probes one isolated socket and session identity.
+func EmbeddedTmuxSessionLiveness(socketName, sessionName string) TransportLiveness {
+	socketName, sessionName = strings.TrimSpace(socketName), strings.TrimSpace(sessionName)
+	if socketName == "" || sessionName == "" || !TmuxAvailable() {
+		return TransportLivenessUnknown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "-f", "/dev/null", "-L", socketName, "has-session", "-t", tmuxExactTarget(sessionName)).CombinedOutput()
+	if err == nil {
+		return TransportLivenessLive
+	}
+	if ctx.Err() != nil {
+		return TransportLivenessUnknown
+	}
+	return missingTmuxTargetLiveness(string(out))
+}
+
+func missingTmuxTargetLiveness(output string) TransportLiveness {
+	output = strings.ToLower(strings.TrimSpace(output))
+	for _, marker := range []string{"can't find session", "no server running", "no sessions"} {
+		if strings.Contains(output, marker) {
+			return TransportLivenessDead
+		}
+	}
+	return TransportLivenessUnknown
 }
 
 // launchWindowRunningInListing scans repoTmuxLiveWindowFormat output for a live
