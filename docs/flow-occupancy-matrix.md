@@ -98,11 +98,11 @@ values.
 | Worktree-agent prepare | `model/flow_launch_generic_agent.go:244`, `:263`, `:267` | S1/S2 under the reservation, then S13 and S10∨S11 again |
 | Create sessions read | `model/flow_launch_create.go:468` | S13 whole-Flow (any record at all, then any active one) |
 | Saved-session Flow read | `model/flow_launch_saved_session_resume.go:170` `validateSavedSessionResumeFlow` (`:184`) | S10 (`:192`), S11 (`:195`), S13 (`:200`) |
-| Generic prepare (tracked) | `model/flow_launch_lifecycle.go:801` | S1/S2 under the cross-process reservation |
+| Generic prepare (tracked) | `model/flow_launch_lifecycle.go:801` | S1/S2 and S17 under the cross-process reservation |
 | Repair prepare | `model/flow_launch_repair.go:379` | S1/S2 under repair's own reservation |
 | Autofix prepare | `model/flow_launch_autofix.go:330` | S1/S2 under the reservation |
-| Resume prepare | `model/flow_launch_resume.go:325` | S1/S2 under the reservation |
-| Saved-session prepare | `model/flow_launch_saved_session_resume.go:248` | S1/S2 under the reservation |
+| Resume prepare | `model/flow_launch_resume.go:325` | S1/S2 and S17 under the reservation |
+| Saved-session prepare | `model/flow_launch_saved_session_resume.go:248` | S1/S2 and S17 under the reservation |
 | Saved-session slot recheck | `model/flow_launch_lifecycle.go:889` | S6 |
 | Install backstop | `model/flow_launch_lifecycle.go:1269` `flowLaunchEmbeddedBackstop` | S6, S7, per kind — see §4.2 |
 

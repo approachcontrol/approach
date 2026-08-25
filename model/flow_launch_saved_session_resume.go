@@ -249,7 +249,7 @@ func (m Model) savedSessionFlowLaunchPrepareCmd(
 			event.Err = err.Error()
 			return event
 		}
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+		if occupied, inspectErr := m.trackedFlowReservedOccupied(msg.FlowID); inspectErr != nil {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(inspectErr)

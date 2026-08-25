@@ -461,15 +461,51 @@ func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
 	}
 	verdict := flowownership.Evaluate(flowownership.Sources{
 		Lease: flowOccupancyLeaseInspector{
-			root:     m.sessionStateRoot,
-			injected: m.leaseInspectInjected,
-			inspect:  m.inspectFlowLease,
+			root: m.sessionStateRoot, injected: m.leaseInspectInjected, inspect: m.inspectFlowLease,
 		},
 	}, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
-			Role:  actions.RoleTrackedPhase,
-			Stage: flowownership.StageReserved,
+			Role: actions.RoleTrackedPhase, Stage: flowownership.StageLeasePreflight,
+		},
+	})
+	if err := verdict.Err(); err != nil {
+		return false, err
+	}
+	return verdict.Occupied(), nil
+}
+
+// trackedFlowReservedOccupied rechecks both cross-process ownership forms
+// while the caller holds the shared launch reservation. The earlier
+// authoritative read is intentionally insufficient: an untracked owner can be
+// claimed between that read and this lock acquisition.
+func (m Model) trackedFlowReservedOccupied(flowID string) (bool, error) {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false, nil
+	}
+	if m.launchSeams.ReadFlow == nil {
+		return false, errors.New("Flow reader is unavailable")
+	}
+	record, err := m.launchSeams.ReadFlow(flowID)
+	if err != nil {
+		return false, err
+	}
+	if m.launchSeams.ResolveUntrackedOwner != nil {
+		record, err = m.launchSeams.ResolveUntrackedOwner(record)
+		if err != nil {
+			return false, err
+		}
+	}
+	verdict := flowownership.Evaluate(flowownership.Sources{
+		Flows: flowOccupancyAuthoritativeFlow{record: record},
+		Lease: flowOccupancyLeaseInspector{
+			root: m.sessionStateRoot, injected: m.leaseInspectInjected, inspect: m.inspectFlowLease,
+		},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role: actions.RoleTrackedPhase, Stage: flowownership.StageReserved,
 		},
 	})
 	if err := verdict.Err(); err != nil {
@@ -829,7 +865,7 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			return event
 		}
 		event.Release = release
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+		if occupied, inspectErr := m.trackedFlowReservedOccupied(msg.FlowID); inspectErr != nil {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(inspectErr)

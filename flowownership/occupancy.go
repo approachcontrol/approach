@@ -41,6 +41,9 @@ const (
 	// StageAuthoritative runs inside a tea.Cmd read stage and may read the Flow
 	// store and the session store.
 	StageAuthoritative
+	// StageLeasePreflight is the lease-only check before a lifecycle has enough
+	// authoritative Flow context to enter its reservation-protected recheck.
+	StageLeasePreflight
 	// StageReserved runs under the cross-process launch reservation and
 	// re-inspects the lease before anything is written.
 	StageReserved
@@ -72,6 +75,8 @@ func (stage Stage) String() string {
 		return "autoAdvance"
 	case StageAuthoritative:
 		return "authoritative"
+	case StageLeasePreflight:
+		return "leasePreflight"
 	case StageReserved:
 		return "reserved"
 	case StageInstall:
@@ -208,10 +213,11 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	{Role: actions.RoleAutofix, Stage: StageAuthoritative}:            {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
 	{Role: actions.RoleWorktreeAgent, Stage: StageAuthoritative}:      {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
 	{Role: actions.RoleSavedSessionResume, Stage: StageAuthoritative}: {sources: readFlowStore | readSessionStore, freshness: allowAuthoritative},
+	{Role: actions.RoleTrackedPhase, Stage: StageLeasePreflight}:      {sources: readLease, freshness: allowAuthoritative},
 
 	// Matrix section 2.2: prepare stages recheck under the reservation.
-	{Role: actions.RoleTrackedPhase, Stage: StageReserved}:       {sources: readLease, freshness: allowAuthoritative},
-	{Role: actions.RolePhaseResume, Stage: StageReserved}:        {sources: readLease, freshness: allowAuthoritative},
+	{Role: actions.RoleTrackedPhase, Stage: StageReserved}:       {sources: readLease | readFlowStore, freshness: allowAuthoritative},
+	{Role: actions.RolePhaseResume, Stage: StageReserved}:        {sources: readLease | readFlowStore, freshness: allowAuthoritative},
 	{Role: actions.RoleRepair, Stage: StageReserved}:             {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
 	{Role: actions.RoleAutofix, Stage: StageReserved}:            {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
 	{Role: actions.RoleWorktreeAgent, Stage: StageReserved}:      {sources: readLease | readFlowStore | readSessionStore, freshness: allowAuthoritative},
@@ -769,6 +775,10 @@ func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy,
 	if untrackedOwnerActive(record.UntrackedOwner) {
 		return Verdict{holder: HolderUntrackedOwner}
 	}
+	if query.Purpose.Stage == StageReserved &&
+		(query.Purpose.Role == actions.RoleTrackedPhase || query.Purpose.Role == actions.RolePhaseResume) {
+		return Free()
+	}
 	if query.Purpose.Stage == StageAutoAdvance {
 		candidate := artifacts.NormalizePhaseID(query.PhaseID)
 		for _, phase := range record.Phases {
@@ -991,7 +1001,7 @@ func resolveFreshness(stage Stage, freshness Freshness) (Freshness, bool) {
 		switch stage {
 		case StagePreview, StageFooter, StageAutoAdvance, StageDrain, StageDrainControl:
 			return FreshnessCached, true
-		case StageAdmission, StageAuthoritative, StageReserved, StageInstall, StageSessionRelease:
+		case StageAdmission, StageAuthoritative, StageLeasePreflight, StageReserved, StageInstall, StageSessionRelease:
 			return FreshnessAuthoritative, true
 		default:
 			return FreshnessDefault, false

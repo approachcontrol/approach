@@ -706,8 +706,8 @@ func TestManualFlowLaunchUsesAuthoritativePhaseSettingsWhenCacheIsStale(t *testi
 
 	m = h.launch(m)
 
-	if h.readFlowCalls != 1 {
-		t.Fatalf("authoritative Flow reads = %d, want 1", h.readFlowCalls)
+	if h.readFlowCalls != 2 {
+		t.Fatalf("authoritative Flow reads = %d, want read plus reservation-protected recheck", h.readFlowCalls)
 	}
 	if len(h.launchContexts) != 1 {
 		t.Fatalf("embedded launches = %d, want 1; status=%q", len(h.launchContexts), m.status.Text)
@@ -729,8 +729,8 @@ func TestAutoFlowLaunchUsesAuthoritativePhaseStampOverUnsupportedGlobal(t *testi
 
 	m = h.autoDrain(m, record)
 
-	if h.readFlowCalls != 1 {
-		t.Fatalf("authoritative Flow reads = %d, want 1", h.readFlowCalls)
+	if h.readFlowCalls != 2 {
+		t.Fatalf("authoritative Flow reads = %d, want read plus reservation-protected recheck", h.readFlowCalls)
 	}
 	if len(h.launchContexts) != 1 {
 		t.Fatalf("embedded launches = %d, want 1; status=%q", len(h.launchContexts), m.status.Text)
@@ -738,6 +738,41 @@ func TestAutoFlowLaunchUsesAuthoritativePhaseStampOverUnsupportedGlobal(t *testi
 	ctx := h.launchContexts[0]
 	if ctx.Command != agent.CommandClaude || ctx.Model != agent.ModelClaudeSonnet5 {
 		t.Fatalf("launch settings = %#v, want authoritative Claude stamp", ctx)
+	}
+}
+
+func TestTrackedLaunchRechecksDurableOwnerUnderReservation(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	reads := 0
+	opts := h.options()
+	opts.ProbeRepoTmuxOwner = func(string, string) actions.TransportLiveness { return actions.TransportLivenessLive }
+	opts.ReadFlow = func(string) (flowstore.FlowRecord, error) {
+		reads++
+		if reads == 1 {
+			return record, nil
+		}
+		occupied := record
+		occupied.UntrackedOwner = &flowstore.UntrackedOwner{
+			LaunchID: "repair-between-read-and-reserve", Role: flowstore.UntrackedOwnerRepair, State: flowstore.UntrackedOwnerLive,
+			Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "repair"},
+		}
+		return occupied, nil
+	}
+	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+	m = h.launch(m)
+
+	if reads != 2 {
+		t.Fatalf("authoritative reads = %d, want initial read plus reserved recheck", reads)
+	}
+	if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 || len(h.tmuxContexts) != 0 {
+		t.Fatalf("durably occupied Flow mutated or launched: updates=%#v embedded=%#v tmux=%#v", h.launchUpdates, h.launchContexts, h.tmuxContexts)
+	}
+	if h.launchReservations != 1 || h.launchReleases != 1 {
+		t.Fatalf("reservation/release = %d/%d, want exact protected refusal", h.launchReservations, h.launchReleases)
+	}
+	if m.flowLaunchAttemptOccupied(record.FlowID) {
+		t.Fatal("reserved durable-owner refusal retained the lifecycle attempt")
 	}
 }
 

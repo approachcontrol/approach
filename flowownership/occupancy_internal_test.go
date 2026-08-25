@@ -506,6 +506,8 @@ func TestPhaseResumeAuthoritativeOccupancyRemainsPhaseScopedWithSessionExemption
 
 func TestReservedAuthoritativePurposesCheckLeaseBeforeStores(t *testing.T) {
 	for _, role := range []actions.FlowLaunchRole{
+		actions.RoleTrackedPhase,
+		actions.RolePhaseResume,
 		actions.RoleRepair,
 		actions.RoleAutofix,
 		actions.RoleWorktreeAgent,
@@ -522,6 +524,25 @@ func TestReservedAuthoritativePurposesCheckLeaseBeforeStores(t *testing.T) {
 			})
 			if verdict.Holder() != HolderPeerLease || verdict.Err() != nil {
 				t.Fatalf("verdict = (%v, %v), want peer lease", verdict.Holder(), verdict.Err())
+			}
+		})
+	}
+}
+
+func TestTrackedReservedPurposesRecheckDurableOwnerAfterFreeLease(t *testing.T) {
+	for _, role := range []actions.FlowLaunchRole{actions.RoleTrackedPhase, actions.RolePhaseResume} {
+		t.Run(role.String(), func(t *testing.T) {
+			verdict := Evaluate(Sources{
+				Lease: &leaseFixture{t: t, wantFlowID: "flow-1"},
+				Flows: &flowReaderFixture{t: t, wantFlowID: "flow-1", record: flowstore.FlowRecord{
+					FlowID: "flow-1",
+					UntrackedOwner: &flowstore.UntrackedOwner{
+						LaunchID: "repair-1", Role: flowstore.UntrackedOwnerRepair, State: flowstore.UntrackedOwnerLive,
+					},
+				}},
+			}, Query{FlowID: "flow-1", Purpose: Purpose{Role: role, Stage: StageReserved}})
+			if verdict.Holder() != HolderUntrackedOwner || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %v), want durable untracked owner", verdict.Holder(), verdict.Err())
 			}
 		})
 	}
@@ -785,7 +806,7 @@ func TestAdvisoryFailsClosedForInvalidQueriesAndMissingCaches(t *testing.T) {
 func TestPurposeValidRegistry(t *testing.T) {
 	validStages := map[actions.FlowLaunchRole][]Stage{
 		actions.RoleNone:               {StagePreview, StageFooter, StageSessionRelease},
-		actions.RoleTrackedPhase:       {StagePreview, StageFooter, StageAdmission, StageAutoAdvance, StageAuthoritative, StageReserved, StageInstall, StageDrain, StageDrainControl},
+		actions.RoleTrackedPhase:       {StagePreview, StageFooter, StageAdmission, StageAutoAdvance, StageAuthoritative, StageLeasePreflight, StageReserved, StageInstall, StageDrain, StageDrainControl},
 		actions.RoleCreatePhase:        {StageAdmission, StageAuthoritative, StageInstall},
 		actions.RolePhaseResume:        {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 		actions.RoleRepair:             {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
