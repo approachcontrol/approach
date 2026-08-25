@@ -2,10 +2,12 @@ package actions
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -35,6 +37,28 @@ type envVar struct {
 
 type lookPathFunc func(string) (string, error)
 type getenvFunc func(string) string
+
+const (
+	ClipboardMethodAuto   = "auto"
+	ClipboardMethodSystem = "system"
+	ClipboardMethodOSC52  = "osc52"
+
+	DefaultOSC52MaxPayloadBytes = 100_000
+)
+
+// ClipboardOptions selects the clipboard transport and bounds encoded OSC 52 payloads.
+type ClipboardOptions struct {
+	Method               string
+	OSC52MaxPayloadBytes int
+}
+
+type clipboardDeps struct {
+	goos         string
+	lookPath     lookPathFunc
+	getenv       getenvFunc
+	runSystem    func(commandSpec, string) error
+	openTerminal func() (io.WriteCloser, error)
+}
 
 // CommandRunner executes a command and returns stdout, stderr, and the command error.
 type CommandRunner interface {
@@ -1014,15 +1038,87 @@ func DropStash(repoPath string, index int) error {
 	return runGit(repoPath, "stash", "drop", ref)
 }
 
-// CopyToClipboard copies text to the system clipboard.
+// CopyToClipboard copies text using the native clipboard when available and
+// otherwise falls back to OSC 52.
 func CopyToClipboard(text string) error {
-	spec, err := selectClipboardCommand(runtime.GOOS, exec.LookPath)
+	return CopyToClipboardWithOptions(text, ClipboardOptions{
+		Method:               ClipboardMethodAuto,
+		OSC52MaxPayloadBytes: DefaultOSC52MaxPayloadBytes,
+	})
+}
+
+// CopyToClipboardWithOptions copies text using the configured clipboard transport.
+func CopyToClipboardWithOptions(text string, opts ClipboardOptions) error {
+	return copyToClipboardWithOptions(text, opts, clipboardDeps{
+		goos:     runtime.GOOS,
+		lookPath: exec.LookPath,
+		getenv:   os.Getenv,
+		runSystem: func(spec commandSpec, text string) error {
+			cmd := exec.Command(spec.name, spec.args...)
+			cmd.Stdin = strings.NewReader(text)
+			return cmd.Run()
+		},
+		openTerminal: func() (io.WriteCloser, error) {
+			return os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+		},
+	})
+}
+
+func copyToClipboardWithOptions(text string, opts ClipboardOptions, deps clipboardDeps) error {
+	method := opts.Method
+	if method == "" {
+		method = ClipboardMethodAuto
+	}
+	if method == ClipboardMethodSystem || method == ClipboardMethodAuto {
+		spec, err := selectClipboardCommand(deps.goos, deps.lookPath)
+		if err == nil {
+			if err := deps.runSystem(spec, text); err != nil {
+				return fmt.Errorf("run clipboard command %s: %w", spec.name, err)
+			}
+			return nil
+		}
+		if method == ClipboardMethodSystem {
+			return err
+		}
+	}
+	if method != ClipboardMethodOSC52 && method != ClipboardMethodAuto {
+		return fmt.Errorf("unknown clipboard method %q", opts.Method)
+	}
+
+	sequence, err := buildOSC52Sequence(text, opts.OSC52MaxPayloadBytes, deps.getenv("TMUX") != "")
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(spec.name, spec.args...)
-	cmd.Stdin = strings.NewReader(text)
-	return cmd.Run()
+	terminal, err := deps.openTerminal()
+	if err != nil {
+		return fmt.Errorf("open controlling terminal for OSC 52: %w", err)
+	}
+	n, writeErr := terminal.Write(sequence)
+	if writeErr == nil && n != len(sequence) {
+		writeErr = io.ErrShortWrite
+	}
+	closeErr := terminal.Close()
+	if writeErr != nil {
+		writeErr = fmt.Errorf("write OSC 52 sequence to controlling terminal: %w", writeErr)
+	}
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close controlling terminal after OSC 52 write: %w", closeErr)
+	}
+	return errors.Join(writeErr, closeErr)
+}
+
+func buildOSC52Sequence(text string, maxPayloadBytes int, tmux bool) ([]byte, error) {
+	payload := base64.StdEncoding.EncodeToString([]byte(text))
+	if maxPayloadBytes > 0 && len(payload) > maxPayloadBytes {
+		return nil, fmt.Errorf("OSC 52 encoded payload is %d bytes, limit is %d bytes", len(payload), maxPayloadBytes)
+	}
+
+	sequence := "\x1b]52;c;" + payload + "\x1b\\"
+	if !tmux {
+		return []byte(sequence), nil
+	}
+	sequence = strings.ReplaceAll(sequence, "\x1b", "\x1b\x1b")
+	return []byte("\x1bPtmux;" + sequence + "\x1b\\"), nil
 }
 
 // OpenURL opens an absolute http(s) URL in the system browser.

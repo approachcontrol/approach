@@ -26,6 +26,8 @@ exist:
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
 | Plan editor command | `[editor].command` | `EDITOR` | unset |
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
+| Clipboard method | none | `[clipboard].method` | `auto` |
+| OSC 52 encoded payload limit | none | `[clipboard].osc52_max_payload_bytes` | `100000` bytes |
 | Coding agent | none | `[agent].command` | unset |
 | Agent launch backend | none | `[launch].backend` | `embedded` |
 | Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
@@ -59,6 +61,10 @@ command = "code"
 
 [terminal]
 command = "wezterm start"
+
+[clipboard]
+method = "auto"
+osc52_max_payload_bytes = 100000
 
 [provider]
 name = "github"
@@ -217,6 +223,27 @@ a separate Ghostty app instance rather than a window in the running one.
 Ghostty accepts any of its config keys as flags, so
 `command = "ghostty --wait-after-command=true"` keeps windows open after a
 launched agent exits instead of closing before the output can be read.
+
+### `[clipboard]`
+
+Controls how copy actions write to the clipboard.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `method` | string | `auto` tries the platform clipboard command first and uses OSC 52 only when no supported command is installed. `system` requires a platform command. `osc52` writes directly to the controlling terminal. Values are case-insensitive and surrounding whitespace is ignored. |
+| `osc52_max_payload_bytes` | integer | Maximum Base64-encoded OSC 52 payload size. The default is `100000`. `0` removes the limit. Negative values fail startup. Oversized copies fail without truncation or a partial terminal write. |
+
+On macOS, the system method uses `pbcopy`. On Linux it tries `wl-copy`, then
+`xclip`, then `xsel`. If Approach finds a native command but that command fails,
+`auto` reports the failure instead of switching transports.
+
+OSC 52 asks the terminal hosting Approach to set its clipboard. The terminal
+must support OSC 52 and permit clipboard writes in its security settings. Over
+SSH, that means the local hosting terminal, not the remote machine. Inside tmux,
+Approach emits tmux's passthrough form. Configure tmux to permit passthrough and
+clipboard writes, for example with `set -g allow-passthrough on` and
+`set -g set-clipboard on`. Approach sends one complete clipboard update and
+never splits or truncates the copied text.
 
 ### `[provider]`
 
