@@ -53,3 +53,35 @@ func TestSQLiteV7MigrationBackfillsAndFencesUntrackedOwner(t *testing.T) {
 		t.Fatalf("older writer delete error=%v", err)
 	}
 }
+
+func TestSQLiteReadsRejectUntrackedOwnerProjectionMismatch(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(StoreOptions{Root: root, Role: RoleWriter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record, err := store.Create(FlowRecord{Title: "owner projection", Instructions: "test", RepoPath: filepath.Join(root, "repo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimUntrackedOwner(UntrackedOwnerClaim{FlowID: record.FlowID, Owner: UntrackedOwner{
+		LaunchID: "launch-live", Role: UntrackedOwnerAutofix,
+		Transport: UntrackedOwnerTransport{Kind: UntrackedTransportLauncher, PID: 4242, ProcessToken: "birth-4242"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	db := store.backend.(*sqliteBackend).db
+	if _, err := db.Exec("DROP TRIGGER guard_untracked_owner_update"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE flows SET untracked_owner_launch_id='' WHERE flow_id=?", record.FlowID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Read(record.FlowID); err == nil || !strings.Contains(err.Error(), "untracked_owner_launch_id projection") {
+		t.Fatalf("Read(projection mismatch) error = %v", err)
+	}
+	if _, err := store.List(FlowFilter{}); err == nil || !strings.Contains(err.Error(), "untracked_owner_launch_id projection") {
+		t.Fatalf("List(projection mismatch) error = %v", err)
+	}
+}

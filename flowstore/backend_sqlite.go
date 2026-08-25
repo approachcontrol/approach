@@ -1053,20 +1053,20 @@ func (b *sqliteBackend) get(flowID string) (storedFlow, bool, error) {
 		return storedFlow{}, false, err
 	}
 	return queryStoredFlow(b.db.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows WHERE flow_id = ?", flowID,
 	), flowID)
 }
 
 func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (storedFlow, bool, error) {
-	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string
 	var record []byte
-	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &untrackedOwnerLaunchID, &record); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storedFlow{}, false, nil
 		}
 		return storedFlow{}, false, fmt.Errorf("read flow %q row: %w", requestedID, err)
 	}
-	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID, record)
 	if err != nil {
 		return storedFlow{}, false, err
 	}
@@ -1074,7 +1074,7 @@ func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (s
 }
 
 func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
-	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows"
+	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows"
 	var args []any
 	if filter.RepoPath != "" {
 		query += " WHERE repo_path = ?"
@@ -1088,13 +1088,13 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 	flows := make([]storedFlow, 0)
 	partial := &PartialListError{}
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string
 		var record []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &untrackedOwnerLaunchID, &record); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan flow list row: %w", err)
 		}
-		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID, record)
 		if err != nil {
 			partial.Entries = append(partial.Entries, PartialListEntry{FlowID: flowID, Cause: err})
 			continue
@@ -1193,7 +1193,7 @@ type sqliteSession struct {
 
 func (s sqliteSession) get() (storedFlow, bool, error) {
 	return queryStoredFlow(s.tx.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", s.flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows WHERE flow_id = ?", s.flowID,
 	), s.flowID)
 }
 
@@ -1210,7 +1210,7 @@ func (s sqliteSession) exists() (bool, error) {
 // and reopen the race the guard exists to close.
 func (s sqliteSession) beadLinkedFlows(repoPath string) ([]beadFlowCandidate, error) {
 	rows, err := s.tx.Query(`
-SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record
+SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record
 FROM flows
 WHERE repo_path = ? AND bead_id <> '' AND flow_id <> ?
 ORDER BY updated_at DESC, flow_id ASC`, filepath.Clean(repoPath), s.flowID)
@@ -1220,13 +1220,13 @@ ORDER BY updated_at DESC, flow_id ASC`, filepath.Clean(repoPath), s.flowID)
 	defer func() { _ = rows.Close() }()
 	flows := make([]beadFlowCandidate, 0)
 	for rows.Next() {
-		var flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string
 		var record []byte
-		if err := rows.Scan(&flowID, &rowRepoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+		if err := rows.Scan(&flowID, &rowRepoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &untrackedOwnerLaunchID, &record); err != nil {
 			return nil, fmt.Errorf("scan bead-linked flow row: %w", err)
 		}
 		candidate := beadFlowCandidate{flowID: flowID, beadID: beadID}
-		decoded, err := decodeStoredFlowWithPreparation(flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+		decoded, err := decodeStoredFlowWithPreparation(flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID, record)
 		if err != nil {
 			// Reported, not fatal and not dropped — see the interface
 			// contract. The bead_id projection above is what lets the store

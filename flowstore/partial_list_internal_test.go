@@ -309,6 +309,7 @@ type fakeFlowListRow struct {
 	epicID           string
 	preparedAt       string
 	preparationNonce string
+	ownerLaunchID    string
 	record           []byte
 	scanErr          error
 }
@@ -341,7 +342,8 @@ func (r *fakeFlowListRows) Scan(dest ...any) error {
 	*dest[5].(*string) = row.epicID
 	*dest[6].(*string) = row.preparedAt
 	*dest[7].(*string) = row.preparationNonce
-	*dest[8].(*[]byte) = row.record
+	*dest[8].(*string) = row.ownerLaunchID
+	*dest[9].(*[]byte) = row.record
 	return nil
 }
 
@@ -363,6 +365,7 @@ func fakeListRowForRecord(t *testing.T, record FlowRecord) fakeFlowListRow {
 		epicID:           projection.epicID,
 		preparedAt:       projection.preparedAt,
 		preparationNonce: projection.preparationNonce,
+		ownerLaunchID:    projection.untrackedOwnerLaunchID,
 		record:           data,
 	}
 }

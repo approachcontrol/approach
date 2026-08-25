@@ -276,10 +276,10 @@ func patchStoredFlowPhaseAgentSettings(data []byte, update phaseAgentSettingsSav
 }
 
 func decodeStoredFlow(flowID, repoPath, status, updatedAt, beadID, epicID string, data []byte) (storedFlow, error) {
-	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", "", data)
+	return decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, "", "", "", data)
 }
 
-func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string, data []byte) (storedFlow, error) {
+func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string, data []byte) (storedFlow, error) {
 	var dto storedFlowDTO
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
@@ -326,6 +326,13 @@ func decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID
 	}
 	if dto.PreparationNonce != preparationNonce {
 		return storedFlow{}, fmt.Errorf("flow %q preparation_nonce projection %q disagrees with record %q", flowID, preparationNonce, dto.PreparationNonce)
+	}
+	recordOwnerLaunchID := ""
+	if record.UntrackedOwner != nil {
+		recordOwnerLaunchID = record.UntrackedOwner.LaunchID
+	}
+	if recordOwnerLaunchID != untrackedOwnerLaunchID {
+		return storedFlow{}, fmt.Errorf("flow %q untracked_owner_launch_id projection %q disagrees with record %q", flowID, untrackedOwnerLaunchID, recordOwnerLaunchID)
 	}
 	if record.PreparedAt != nil && (record.PreparedAt.Before(record.CreatedAt) || record.PreparedAt.After(record.UpdatedAt)) {
 		return storedFlow{}, fmt.Errorf("flow %q prepared_at must be between created_at and updated_at", flowID)
