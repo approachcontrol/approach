@@ -727,6 +727,10 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close flow database schema object rows: %w", err)
 	}
+	return validateSQLiteSchemaObjectSet(objects, version)
+}
+
+func validateSQLiteSchemaObjectSet(objects []string, version int64) error {
 	want := []string{
 		"index:idx_flows_repo_updated:flows",
 		"index:idx_flows_status_updated:flows",
@@ -756,8 +760,10 @@ func validateSQLiteSchemaObjects(db *sql.DB, version int64) error {
 				}
 			}
 		}
-		sort.Strings(want)
 	}
+	objects = append([]string(nil), objects...)
+	sort.Strings(objects)
+	sort.Strings(want)
 	if !equalStrings(objects, want) {
 		return fmt.Errorf("flow database has incompatible schema objects: got %v, want %v", objects, want)
 	}

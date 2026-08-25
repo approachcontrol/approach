@@ -216,6 +216,50 @@ func TestFlowLeavesWithAnotherStateRootBypassTheEndpoint(t *testing.T) {
 	}
 }
 
+func TestFlowLeavesWithAnotherStateRootDoNotInheritLaunchOwnership(t *testing.T) {
+	controllerRoot := t.TempDir()
+	repoPath := filepath.Join(controllerRoot, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Proxied", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", controllerRoot})
+	recordLaunch(t, controllerRoot, created.FlowID, "plan", "launch-1")
+	_, endpoint := controllerFor(t, controllerRoot, created.FlowID, "plan", "launch-1")
+
+	scratch := t.TempDir()
+	scratchStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: scratch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scratchStore.Create(flowstore.FlowRecord{
+		FlowID:       created.FlowID,
+		Title:        "Scratch",
+		Instructions: "x",
+		RepoPath:     filepath.Join(scratch, "repo"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := scratchStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	getenv := controlEnv(controllerRoot, endpoint.Path, endpoint.Token, "launch-1", created.FlowID, "plan")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"approach", "flow", "phase", "set", "--flow-id", created.FlowID, "--phase-id", "plan", "--status", "completed", "--summary", "scratch only", "--state-root", scratch}, noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv})); err != nil {
+		t.Fatalf("scratch write: %v (%s)", err, stderr.String())
+	}
+
+	scratchRecord := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", scratch})
+	if phase := phaseByID(scratchRecord, "plan"); phase.Status != flowstore.PhaseCompleted || phase.Summary != "scratch only" {
+		t.Fatalf("scratch phase = %#v", phase)
+	}
+	liveRecord := mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", controllerRoot})
+	if phase := phaseByID(liveRecord, "plan"); phase.Status != flowstore.PhaseRunning || phase.Summary != "" {
+		t.Fatalf("live phase = %#v", phase)
+	}
+	log, _ := launchcontrol.OpenLog(controllerRoot, "launch-1")
+	if requests, _ := log.Requests(); len(requests) != 0 {
+		t.Fatalf("scratch write was logged against the launch: %#v", requests)
+	}
+}
+
 func TestReplayableWriteFallsBackToLoggedDirectOpenWhenEndpointUnreachable(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

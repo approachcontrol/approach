@@ -282,6 +282,85 @@ func TestReplayAppliesSpooledBatchInOrderRegardlessOfObservedTimestamps(t *testi
 	}
 }
 
+func TestReplayCrossPhaseRequestUsesLaunchOwnerPhaseFence(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Cross-phase replay")
+	completePhase(t, store, created.FlowID, "plan", "")
+	completePhase(t, store, created.FlowID, "plan-review", flowstore.OutcomeApproved)
+	launchWithBaseline(t, store, root, created.FlowID, "implementation", "launch-1")
+
+	req := mustRequest(t, VerbPhaseSet, created.FlowID, "plan-review", "launch-1", PhaseSetPayload{
+		Status: string(flowstore.PhaseCompleted), Outcome: flowstore.OutcomeApproved, Notes: "cross-phase",
+	})
+	spool(t, root, req)
+
+	report := newTestController(t, store, root).Sweep()
+	if report.Replayed != 1 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan-review")
+	if phase.Status != flowstore.PhaseCompleted || phase.Notes != "cross-phase" {
+		t.Fatalf("target phase = %#v", phase)
+	}
+}
+
+func TestReplayCrossPhaseRequestChecksTargetPhaseState(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Cross-phase target state")
+	completePhase(t, store, created.FlowID, "plan", "")
+	completePhase(t, store, created.FlowID, "plan-review", flowstore.OutcomeApproved)
+	launchWithBaseline(t, store, root, created.FlowID, "implementation", "launch-1")
+
+	req := mustRequest(t, VerbPhaseSet, created.FlowID, "plan-review", "launch-1", PhaseSetPayload{
+		Status: string(flowstore.PhaseRunning),
+	})
+	spool(t, root, req)
+
+	report := newTestController(t, store, root).Sweep()
+	if report.Replayed != 1 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan-review")
+	if phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("target phase = %#v", phase)
+	}
+}
+
+func TestReplayCrossPhaseSavedResponseReadsLaunchOwnerFromFlow(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Cross-phase saved response")
+	completePhase(t, store, created.FlowID, "plan", "")
+	completePhase(t, store, created.FlowID, "plan-review", flowstore.OutcomeApproved)
+	launchWithBaseline(t, store, root, created.FlowID, "implementation", "launch-1")
+
+	original := applyMarkerHook
+	applyMarkerHook = func() error { return errors.New("crash before applied.json") }
+	t.Cleanup(func() { applyMarkerHook = original })
+	req := mustRequest(t, VerbPhaseComplete, created.FlowID, "plan-review", "launch-1", PhaseActionPayload{
+		Outcome: flowstore.OutcomeApproved, Summary: "cross-phase",
+	})
+	log, _ := OpenLog(root, "launch-1")
+	unlock, _ := log.Lock(time.Second)
+	_, err := ApplyLogged(store, log, req, mustEnvelope(t, req, WrittenByController), time.Now())
+	unlock()
+	applyMarkerHook = original
+	if err == nil || !strings.Contains(err.Error(), "crash before applied.json") {
+		t.Fatalf("ApplyLogged error = %v", err)
+	}
+
+	report := newTestController(t, store, root).Sweep()
+	if report.Replayed != 1 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	if pending, err := log.Pending(); err != nil || len(pending) != 0 {
+		t.Fatalf("pending = %#v, %v", pending, err)
+	}
+	applied, ok, err := log.Applied()
+	if err != nil || !ok || applied.Status != string(flowstore.PhaseRunning) {
+		t.Fatalf("applied = %#v, %v, %v", applied, ok, err)
+	}
+}
+
 func TestReplayRejectsBatchWhenPhaseRelaunchedUnderNewerLaunch(t *testing.T) {
 	store, root := newTestStore(t)
 	created := createFlow(t, store, "Newer Launch")
