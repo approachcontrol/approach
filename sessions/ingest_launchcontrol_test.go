@@ -169,6 +169,21 @@ func TestIngestHookCertificateRespectsLaunchWideLiveness(t *testing.T) {
 		seed func(t *testing.T, root string, flow flowstore.FlowRecord)
 	}{
 		{
+			name: "newer clear for same session",
+			seed: func(t *testing.T, root string, flow flowstore.FlowRecord) {
+				t.Helper()
+				if _, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+					"session_id": "claude-flow-1",
+					"cwd": `+quoteJSON(flow.WorktreePath)+`,
+					"hook_event_name": "SessionEnd",
+					"reason": "clear",
+					"timestamp": "2026-06-06T14:20:00Z"
+				}`)), sessions.IngestOptions{Env: launchEnv(root, flow, "launch-flow-1")}); err != nil {
+					t.Fatalf("seed clear IngestHook() error = %v", err)
+				}
+			},
+		},
+		{
 			name: "newer clear",
 			seed: func(t *testing.T, root string, flow flowstore.FlowRecord) {
 				t.Helper()

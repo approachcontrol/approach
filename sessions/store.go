@@ -543,6 +543,9 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	incoming.Provider = existing.Provider
 	incoming.SessionID = existing.SessionID
 	newerLaunch := incoming.LaunchID != "" && incoming.LaunchID != existing.LaunchID
+	incomingEventTime := sortTime(incoming)
+	existingEventTime := sortTime(existing)
+	olderEvent := !newerLaunch && !incomingEventTime.IsZero() && !existingEventTime.IsZero() && incomingEventTime.Before(existingEventTime)
 	if incoming.SchemaVersion == 0 {
 		incoming.SchemaVersion = existing.SchemaVersion
 	}
@@ -571,6 +574,10 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	preserveBlank(&incoming.CaptureSource, existing.CaptureSource)
 	if existing.Status == "ended" && !newerLaunch {
 		incoming.Status = "ended"
+	}
+	if olderEvent {
+		incoming.EndReason = existing.EndReason
+		incoming.DeathCertificate = existing.DeathCertificate
 	}
 	incoming.StartedAt = earliestNonzero(existing.StartedAt, incoming.StartedAt)
 	incoming.LastSeenAt = latestTime(existing.LastSeenAt, incoming.LastSeenAt)
