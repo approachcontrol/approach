@@ -301,6 +301,9 @@ func TestRetainPinSerializesAcrossProcesses(t *testing.T) {
 }
 
 func TestMaterializeDoesNotPublishWithoutCacheLease(t *testing.T) {
+	originalTimeout := cacheMutationLeaseTimeout
+	cacheMutationLeaseTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { cacheMutationLeaseTimeout = originalTimeout })
 	source := stubExecutable(t, "contended-materialization")
 	root := t.TempDir()
 	cacheDir := filepath.Join(root, cacheDirName)
@@ -330,11 +333,46 @@ func TestMaterializeDoesNotPublishWithoutCacheLease(t *testing.T) {
 	}
 }
 
+func TestRetainPinWaitsForOrdinaryCacheWork(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, cacheDirName)
+	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+		t.Fatalf("create cache directory: %v", err)
+	}
+	release, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("acquire cache lease: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- RetainPin(root, "launch-waits", strings.Repeat("a", 64))
+	}()
+	select {
+	case err := <-result:
+		release()
+		t.Fatalf("RetainPin returned before ordinary cache work finished: %v", err)
+	case <-time.After(cacheSweepLeaseTimeout + 100*time.Millisecond):
+	}
+	release()
+	if err := <-result; err != nil {
+		t.Fatalf("RetainPin after cache work: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, pinsDirName, "launch-waits")); err != nil {
+		t.Fatalf("stat retained claim: %v", err)
+	}
+}
+
 func TestRetainPinContentionHelper(t *testing.T) {
 	root := os.Getenv("APPROACH_TEST_RETAIN_PIN_ROOT")
 	if root == "" {
 		t.Skip("helper process only")
 	}
+	cacheMutationLeaseTimeout = 25 * time.Millisecond
 	err := RetainPin(root, "launch-contended", strings.Repeat("a", 64))
 	if err == nil || !strings.Contains(err.Error(), "launch binary cache lease") || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("RetainPin() error = %v, want named cache lease timeout", err)
@@ -535,6 +573,9 @@ func TestRefreshPinSerializesWithClaimExpiry(t *testing.T) {
 }
 
 func TestReleasePinReturnsNamedErrorOnLeaseContention(t *testing.T) {
+	originalTimeout := cacheMutationLeaseTimeout
+	cacheMutationLeaseTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { cacheMutationLeaseTimeout = originalTimeout })
 	root := t.TempDir()
 	cacheDir := filepath.Join(root, cacheDirName)
 	pinsDir := filepath.Join(cacheDir, pinsDirName)

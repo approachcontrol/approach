@@ -101,14 +101,22 @@ const (
 // re-derives that.
 const pinClaimMaxAge = 30 * 24 * time.Hour
 
-// cacheLeaseTimeout bounds claim and sweep contention. Claim callers receive a
-// descriptive error; retention treats the same error as a reason to skip the
-// best-effort sweep.
-const cacheLeaseTimeout = 250 * time.Millisecond
+const (
+	// cacheSweepLeaseTimeout keeps retention best-effort under contention.
+	cacheSweepLeaseTimeout = 250 * time.Millisecond
+	// defaultCacheMutationLeaseTimeout exceeds the longest runnability probe a
+	// materializer can hold the lease through, so ordinary cache work cannot
+	// make a launch or keep-alive silently lose its claim.
+	defaultCacheMutationLeaseTimeout = 15 * time.Second
+)
 
 // timeNow is time.Now, replaced in tests so claim expiry can be exercised
 // without sleeping.
 var timeNow = time.Now
+
+// cacheMutationLeaseTimeout is replaced in contention tests so they exercise
+// the public error without waiting for the production budget.
+var cacheMutationLeaseTimeout = defaultCacheMutationLeaseTimeout
 
 // These cache-operation hooks are deterministic test seams. Production leaves
 // them as no-ops.
@@ -363,14 +371,14 @@ func withCacheLease(root string, operation func(cacheDir string) error) error {
 	if err != nil {
 		return err
 	}
-	return withCacheDirLease(cacheDir, operation)
+	return withCacheDirLease(cacheDir, cacheMutationLeaseTimeout, operation)
 }
 
-func withCacheDirLease(cacheDir string, operation func(cacheDir string) error) error {
+func withCacheDirLease(cacheDir string, timeout time.Duration, operation func(cacheDir string) error) error {
 	release, err := artifacts.AcquireFileLockNoFollow(
 		filepath.Join(cacheDir, cacheLeaseFileName),
 		"launch binary cache lease",
-		cacheLeaseTimeout,
+		timeout,
 	)
 	if err != nil {
 		return err
@@ -452,7 +460,7 @@ func materialize(root, source, digest string) (string, error) {
 		return "", err
 	}
 	target := filepath.Join(cacheDir, cachedBinaryName(digest))
-	err = withCacheDirLease(cacheDir, func(cacheDir string) error {
+	err = withCacheDirLease(cacheDir, cacheMutationLeaseTimeout, func(cacheDir string) error {
 		if !reusable(target, digest) {
 			if err := copyExecutable(source, target, digest); err != nil {
 				return err
@@ -620,7 +628,7 @@ func copyExecutable(source, target, expected string) error {
 // disk cost for an outage.
 func sweepCache(cacheDir, keep string) {
 	sweepCacheStarted()
-	_ = withCacheDirLease(cacheDir, func(cacheDir string) error {
+	_ = withCacheDirLease(cacheDir, cacheSweepLeaseTimeout, func(cacheDir string) error {
 		sweepCacheLeaseAcquired()
 		sweepCacheUnlocked(cacheDir, keep)
 		return nil
