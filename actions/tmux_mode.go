@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -347,6 +348,20 @@ func RepoTmuxWindowLiveness(sessionName, windowIdentity string) TransportLivenes
 	return repoTmuxOwnerLivenessInListing(string(out), windowIdentity)
 }
 
+// RepoTmuxWindowOwnsProcess reports whether pid is the pane shell for one
+// exact repo-tmux window. The post-exit owner callback is a child of that shell;
+// an agent process deeper in the pane is not.
+func RepoTmuxWindowOwnsProcess(sessionName, windowIdentity string, pid int) bool {
+	sessionName, windowIdentity = strings.TrimSpace(sessionName), strings.TrimSpace(windowIdentity)
+	if sessionName == "" || windowIdentity == "" || pid <= 0 || !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "list-panes", "-t", tmuxExactWindowTarget(sessionName)+windowIdentity, "-F", "#{pane_pid}").Output()
+	return err == nil && listingContainsPID(string(out), pid)
+}
+
 func repoTmuxOwnerLivenessInListing(listing, windowIdentity string) TransportLiveness {
 	for _, line := range strings.Split(listing, "\n") {
 		fields := strings.Split(strings.TrimSpace(line), "\t")
@@ -377,6 +392,29 @@ func EmbeddedTmuxSessionLiveness(socketName, sessionName string) TransportLivene
 		return TransportLivenessUnknown
 	}
 	return missingTmuxTargetLiveness(string(out))
+}
+
+// EmbeddedTmuxSessionOwnsProcess is the isolated-socket counterpart to
+// RepoTmuxWindowOwnsProcess.
+func EmbeddedTmuxSessionOwnsProcess(socketName, sessionName string, pid int) bool {
+	socketName, sessionName = strings.TrimSpace(socketName), strings.TrimSpace(sessionName)
+	if socketName == "" || sessionName == "" || pid <= 0 || !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "-f", "/dev/null", "-L", socketName, "list-panes", "-t", tmuxExactTarget(sessionName), "-F", "#{pane_pid}").Output()
+	return err == nil && listingContainsPID(string(out), pid)
+}
+
+func listingContainsPID(listing string, pid int) bool {
+	want := strconv.Itoa(pid)
+	for _, line := range strings.Split(listing, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func missingTmuxTargetLiveness(output string) TransportLiveness {

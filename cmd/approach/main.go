@@ -41,6 +41,7 @@ type runDeps struct {
 	loadConfig              func() (config.Config, error)
 	getenv                  func(string) string
 	getwd                   func() (string, error)
+	getppid                 func() int
 	scan                    func(scanner.ScanOptions) ([]scanner.Repo, error)
 	startProgram            func([]scanner.Repo, config.Config) error
 	startProgramWithOptions func([]scanner.Repo, startProgramOptions) error
@@ -190,11 +191,39 @@ func runUntrackedOwnerRelease(args []string, deps runDeps) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
+	record, err := store.Read(*flowID)
+	if errors.Is(err, flowstore.ErrFlowNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owner := record.UntrackedOwner
+	if owner == nil || owner.LaunchID != strings.TrimSpace(*launchID) || owner.State == flowstore.UntrackedOwnerEnded {
+		return nil
+	}
+	if !untrackedOwnerReleaseCallerMatches(*owner, deps.getppid()) {
+		return errors.New("untracked owner release caller does not match the owning transport")
+	}
 	_, err = store.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: *flowID, LaunchID: *launchID})
 	if errors.Is(err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(err, flowstore.ErrFlowNotFound) {
 		return nil
 	}
 	return err
+}
+
+func untrackedOwnerReleaseCallerMatches(owner flowstore.UntrackedOwner, parentPID int) bool {
+	switch owner.Transport.Kind {
+	case flowstore.UntrackedTransportDirect:
+		identity, alive := controlplane.ProcessIdentity(parentPID)
+		return parentPID == owner.Transport.PID && alive && owner.Transport.ProcessToken != "" && identity == owner.Transport.ProcessToken
+	case flowstore.UntrackedTransportRepoTmux:
+		return actions.RepoTmuxWindowOwnsProcess(owner.Transport.Session, owner.Transport.Window, parentPID)
+	case flowstore.UntrackedTransportEmbeddedTmux:
+		return actions.EmbeddedTmuxSessionOwnsProcess(owner.Transport.Socket, owner.Transport.Session, parentPID)
+	default:
+		return false
+	}
 }
 
 // truthyEnv accepts the spellings a shell script is likely to use for an
@@ -324,6 +353,9 @@ func fillRunDeps(deps runDeps) runDeps {
 	}
 	if deps.getwd == nil {
 		deps.getwd = os.Getwd
+	}
+	if deps.getppid == nil {
+		deps.getppid = os.Getppid
 	}
 	if deps.scan == nil {
 		deps.scan = scanner.Scan

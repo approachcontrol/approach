@@ -52,9 +52,13 @@ func TestUntrackedOwnerReleaseCommandEndsExactOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	processToken, alive := controlplane.ProcessIdentity(os.Getpid())
+	if !alive || processToken == "" {
+		t.Fatal("current process identity unavailable")
+	}
 	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{
 		LaunchID: "launch-1", Role: flowstore.UntrackedOwnerAutofix,
-		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: os.Getpid(), ProcessToken: "birth-current"},
+		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid(), ProcessToken: processToken},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,8 +66,20 @@ func TestUntrackedOwnerReleaseCommandEndsExactOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = run([]string{"approach", actions.UntrackedOwnerReleaseCommand, "--state-root", root, "--flow-id", record.FlowID, "--launch-id", "launch-1"}, runDeps{
+	args := []string{"approach", actions.UntrackedOwnerReleaseCommand, "--state-root", root, "--flow-id", record.FlowID, "--launch-id", "launch-1"}
+	err = run(args, runDeps{
 		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		getppid:    os.Getppid,
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("agent-child release error = %v, want caller rejection", err)
+	}
+
+	err = run(args, runDeps{
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		getppid:    os.Getpid,
 		stdout:     &bytes.Buffer{},
 		stderr:     &bytes.Buffer{},
 	})
