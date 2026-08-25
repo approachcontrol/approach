@@ -39,6 +39,10 @@ func TestSQLiteSchemaObjectsAcceptEquivalentObjectsInAnyOrder(t *testing.T) {
 	objectsByVersion[7] = append(slices.Clone(objectsByVersion[6]),
 		"trigger:guard_recovered_launch_state_update:flows",
 	)
+	objectsByVersion[8] = append(slices.Clone(objectsByVersion[7]),
+		"trigger:guard_untracked_owner_delete:flows",
+		"trigger:guard_untracked_owner_update:flows",
+	)
 
 	for version := int64(1); version <= databaseSchemaVersion; version++ {
 		objects := slices.Clone(objectsByVersion[version])
@@ -58,6 +62,8 @@ func TestSQLiteSchemaObjectsRequireAnExactSet(t *testing.T) {
 		"trigger:guard_linked_flow_record_update:flows",
 		"trigger:guard_epic_progression_done_record_update:epic_progressions",
 		"trigger:guard_epic_progression_done_insert:epic_progressions",
+		"trigger:guard_untracked_owner_delete:flows",
+		"trigger:guard_untracked_owner_update:flows",
 		"table:flows:flows",
 		"table:epic_progressions:epic_progressions",
 		"index:idx_flows_updated:flows",
