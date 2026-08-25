@@ -1473,8 +1473,13 @@ state_root=$2
 flow_id=$3
 launch_id=$4
 gate=$5
+gate_dir=${gate%/*}
 shift 5
 release_owner() {
+	if [ -n "$gate" ]; then
+		rm -f "$gate"
+		rmdir "$gate_dir" 2>/dev/null || :
+	fi
   "$release_exe" untracked-owner-release --state-root "$state_root" --flow-id "$flow_id" --launch-id "$launch_id" >/dev/null 2>&1 || :
 }
 trap release_owner EXIT
@@ -1491,6 +1496,8 @@ if [ -n "$gate" ]; then
     sleep 0.05
   done
   rm -f "$gate"
+  rmdir "$gate_dir" 2>/dev/null || :
+  gate=
 fi
 "$@"
 exit $?

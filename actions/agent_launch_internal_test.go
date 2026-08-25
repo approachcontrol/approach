@@ -767,7 +767,11 @@ func TestDirectEmbeddedCommandReleasesOwnerAndPreservesAgentExit(t *testing.T) {
 
 func TestDirectEmbeddedCommandWaitsForStartGate(t *testing.T) {
 	dir := t.TempDir()
-	gate := filepath.Join(dir, "start.gate")
+	gateDir := filepath.Join(dir, "gate")
+	if err := os.Mkdir(gateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gate := filepath.Join(gateDir, "start.gate")
 	marker := filepath.Join(dir, "agent.ran")
 	agentCmd := exec.Command("sh", "-c", "printf ran > \"$1\"", "agent", marker)
 	wrapped := wrapDirectUntrackedOwnerRelease(agentCmd, AgentLaunchContext{

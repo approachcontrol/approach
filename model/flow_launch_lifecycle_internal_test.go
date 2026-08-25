@@ -3125,6 +3125,13 @@ func TestDirectEmbeddedAgentWaitsForDurablePIDPublication(t *testing.T) {
 		if _, err := os.Stat(gate); !os.IsNotExist(err) {
 			t.Fatalf("start gate exists before PID publication: %v", err)
 		}
+		info, err := os.Stat(filepath.Dir(gate))
+		if err != nil {
+			t.Fatalf("stat start gate directory: %v", err)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Fatalf("start gate directory mode = %v, want 0700", info.Mode().Perm())
+		}
 	}
 	m := h.model()
 	attempt := flowLaunchAttempt{Token: "repair-1", Kind: flowLaunchKindRepair, FlowID: record.FlowID, State: flowLaunchStatePreparing}
@@ -3138,7 +3145,7 @@ func TestDirectEmbeddedAgentWaitsForDurablePIDPublication(t *testing.T) {
 		RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Embedded: true,
 	}
 	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{Context: ctx, RepoPath: "/dev/alpha"})
-	t.Cleanup(func() { _ = os.Remove(gate) })
+	t.Cleanup(func() { cleanupDirectEmbeddedStartGate(gate) })
 	if len(next.embeddedTerminals) != 1 {
 		t.Fatalf("embedded terminals = %d, want 1", len(next.embeddedTerminals))
 	}

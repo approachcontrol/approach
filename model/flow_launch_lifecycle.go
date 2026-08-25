@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,19 +30,11 @@ func (m Model) flowLaunchEmbeddedTerminal(flowID, launchID string) (EmbeddedTerm
 }
 
 func reserveDirectEmbeddedStartGate() (string, error) {
-	file, err := os.CreateTemp("", "approach-direct-start-*")
+	dir, err := os.MkdirTemp("", "approach-direct-start-*")
 	if err != nil {
 		return "", err
 	}
-	path := file.Name()
-	if closeErr := file.Close(); closeErr != nil {
-		_ = os.Remove(path)
-		return "", closeErr
-	}
-	if err := os.Remove(path); err != nil {
-		return "", err
-	}
-	return path, nil
+	return filepath.Join(dir, "start"), nil
 }
 
 func signalDirectEmbeddedStart(path string) error {
@@ -50,6 +43,14 @@ func signalDirectEmbeddedStart(path string) error {
 		return err
 	}
 	return file.Close()
+}
+
+func cleanupDirectEmbeddedStartGate(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = os.Remove(path)
+	_ = os.Remove(filepath.Dir(path))
 }
 
 // noLaunchableFlowPhaseStatus covers every reason a launch is refused before it
@@ -1247,7 +1248,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
 		if directStartGate != "" {
-			_ = os.Remove(directStartGate)
+			cleanupDirectEmbeddedStartGate(directStartGate)
 		}
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
@@ -1292,7 +1293,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 			}
 			if publicationErr != nil {
 				if directStartGate != "" {
-					_ = os.Remove(directStartGate)
+					cleanupDirectEmbeddedStartGate(directStartGate)
 				}
 				activationErr := publicationOp + ": " + publicationErr.Error()
 				if terminalFound {
