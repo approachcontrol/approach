@@ -149,6 +149,67 @@ func TestReconcileReplaysFirstAndDoesNotDemoteALandedResult(t *testing.T) {
 	}
 }
 
+func TestReconcileLeaseRunnerExitBypassesOwnLeaseForExactLaunch(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Lease Runner Exit")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	c := newTestController(t, store, root, func(o *Options) { o.InspectLease = heldLease })
+
+	outcome, err := c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{
+		Source: SourceLeaseRunnerExit, Code: 7, CodeKnown: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Action != ActionDemoted || outcome.Status != string(flowstore.PhaseNeedsAttention) {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(phase.Notes, "exited (lease_runner_exit, exit code 7)") {
+		t.Fatalf("phase = %#v", phase)
+	}
+}
+
+func TestReconcileLeaseRunnerExitReplaysResultBeforeDemotion(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Lease Runner Replay")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	spool(t, root, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-1", PhaseActionPayload{Summary: "landed"}))
+	c := newTestController(t, store, root, func(o *Options) { o.InspectLease = heldLease })
+
+	outcome, err := c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{
+		Source: SourceLeaseRunnerExit, Code: 0, CodeKnown: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Action != ActionNone || outcome.Replayed != 1 || outcome.Status != string(flowstore.PhaseCompleted) {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+}
+
+func TestReconcileLeaseRunnerExitCannotDemoteNewerLaunch(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Lease Runner Stale")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-2")
+	c := newTestController(t, store, root, func(o *Options) { o.InspectLease = heldLease })
+
+	outcome, err := c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{
+		Source: SourceLeaseRunnerExit, Code: 1, CodeKnown: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Action != ActionNone || outcome.Status != string(flowstore.PhaseRunning) {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Status != flowstore.PhaseRunning || flowstore.LatestPhaseLaunchID(phase) != "launch-2" {
+		t.Fatalf("phase = %#v", phase)
+	}
+}
+
 func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testing.T) {
 	store, root := newTestStore(t)
 	created := createFlow(t, store, "Terminal Exit")

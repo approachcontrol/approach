@@ -16,6 +16,7 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
+	"github.com/approachcontrol/approach/internal/launchcontrol"
 	"github.com/approachcontrol/approach/internal/version"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
@@ -98,6 +99,83 @@ func TestUntrackedOwnerReleaseCommandEndsExactOwner(t *testing.T) {
 	}
 	if got.UntrackedOwner == nil || got.UntrackedOwner.State != flowstore.UntrackedOwnerEnded {
 		t.Fatalf("owner = %#v, want ended", got.UntrackedOwner)
+	}
+}
+
+func TestReconcileLeaseRunnerExitImmediatelyDemotesWhileLeaseHeld(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.Create(flowstore.FlowRecord{
+		Title: "Lease runner exit", Instructions: "test", RepoPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const launchID = "launch-runner-exit"
+	next := launchcontrol.RecordBaseline(root, store.AddPhaseLaunchID)
+	if _, err := next(flowstore.PhaseLaunchUpdate{FlowID: created.FlowID, PhaseID: "plan", LaunchID: launchID}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := launchcontrol.OpenLog(root, launchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteLaunch(launchcontrol.LaunchInfo{FlowID: created.FlowID, PhaseID: "plan", Kind: "phase"}); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := flowlease.Acquire(root, created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+
+	var stderr bytes.Buffer
+	reconcileLeaseRunnerExit(flowlease.LaunchExit{
+		Root: root, FlowID: created.FlowID, PhaseID: "plan", LaunchID: launchID,
+		Code: 0, EndedAt: time.Now().UTC(),
+	}, &stderr)
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase := phaseByID(read, "plan")
+	if phase.Status != flowstore.PhaseNeedsAttention || phase.Outcome != launchcontrol.ReasonPhaseResultMissing {
+		t.Fatalf("phase = %#v", phase)
+	}
+}
+
+func TestReconcileLeaseRunnerExitKeepsEvidenceWhenStoreOpenFails(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "approach.db"), []byte("not sqlite"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endedAt := time.Date(2026, 8, 25, 17, 0, 0, 0, time.UTC)
+	exit := flowlease.LaunchExit{
+		Root: root, FlowID: "flow-1", PhaseID: "Plan", LaunchID: "launch-store-failure",
+		Code: 137, Signaled: true, EndedAt: endedAt,
+	}
+	var stderr bytes.Buffer
+	reconcileLeaseRunnerExit(exit, &stderr)
+	if !strings.Contains(stderr.String(), "approach: reconcile lease-runner exit: open Flow store:") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	log, err := launchcontrol.OpenLog(root, exit.LaunchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, ok, err := log.Exit()
+	if err != nil || !ok {
+		t.Fatalf("Exit() = %#v, %v, %v", record, ok, err)
+	}
+	if record.FlowID != exit.FlowID || record.PhaseID != "plan" || record.ExitCode != 137 || !record.Signaled || !record.EndedAt.Equal(endedAt) || record.Source != string(launchcontrol.SourceLeaseRunnerExit) {
+		t.Fatalf("exit.json = %#v", record)
 	}
 }
 
