@@ -236,7 +236,7 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 	if !errors.Is(err, actions.ErrEmbeddedTmuxUnavailable) {
 		return nil, err
 	}
-	cmd, err := actions.AgentCommand(ctx)
+	cmd, err := actions.DirectEmbeddedAgentCommand(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 }
 
 func startStreamJSONTerminal(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
-	cmd, err := actions.AgentCommand(ctx)
+	cmd, err := actions.DirectEmbeddedAgentCommand(ctx)
 	if err != nil {
 		return nil, err
 	}

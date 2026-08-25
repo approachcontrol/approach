@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -727,6 +728,39 @@ func TestUntrackedFlowTerminalCommandReleasesOwnerAfterAgentExit(t *testing.T) {
 	configureUntrackedOwnerRelease(tracked, AgentLaunchContext{FlowID: "flow-1", LaunchID: "launch-2", FlowLaunchTracked: true, FlowPhaseID: "implementation"})
 	if strings.Contains(tracked.shellCommand(), UntrackedOwnerReleaseCommand) {
 		t.Fatalf("tracked launch received untracked release callback: %q", tracked.shellCommand())
+	}
+}
+
+func TestDirectEmbeddedCommandReleasesOwnerAndPreservesAgentExit(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "release.log")
+	releaseExecutable := filepath.Join(dir, "approach")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(releaseExecutable, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentCmd := exec.Command("sh", "-c", "exit 7")
+	agentCmd.Dir = dir
+	agentCmd.Env = append(os.Environ(), "APPROACH_DIRECT_WRAPPER_TEST=1")
+	wrapped := wrapDirectUntrackedOwnerRelease(agentCmd, AgentLaunchContext{
+		FlowID: "flow-1", LaunchID: "launch-1", FlowRepair: true,
+		Executable: releaseExecutable, SessionStateRoot: "/custom/state root",
+	})
+	err := wrapped.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("wrapped exit = %v, want agent status 7", err)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "untracked-owner-release\n--state-root\n/custom/state root\n--flow-id\nflow-1\n--launch-id\nlaunch-1\n"
+	if string(logged) != want {
+		t.Fatalf("release argv = %q, want %q", logged, want)
+	}
+	if wrapped.Dir != agentCmd.Dir || !slices.Contains(wrapped.Env, "APPROACH_DIRECT_WRAPPER_TEST=1") {
+		t.Fatalf("wrapper lost command environment: dir=%q env=%v", wrapped.Dir, wrapped.Env)
 	}
 }
 

@@ -1445,6 +1445,53 @@ func AgentCommand(ctx AgentLaunchContext) (*exec.Cmd, error) {
 	return cmd, err
 }
 
+// DirectEmbeddedAgentCommand builds a direct PTY/stream command whose outer
+// process releases an exact durable phase-untracked owner on exit. Tmux and
+// external-terminal transports install the same callback in their scripts;
+// direct embedded processes need their own wrapper because the launching TUI
+// may crash before it observes process completion.
+func DirectEmbeddedAgentCommand(ctx AgentLaunchContext) (*exec.Cmd, error) {
+	cmd, err := AgentCommand(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch FlowLaunchRoleOf(ctx) {
+	case RoleRepair, RoleAutofix, RoleWorktreeAgent:
+		return wrapDirectUntrackedOwnerRelease(cmd, ctx), nil
+	default:
+		return cmd, nil
+	}
+}
+
+const directOwnerReleaseScript = `
+release_exe=$1
+state_root=$2
+flow_id=$3
+launch_id=$4
+shift 4
+release_owner() {
+  "$release_exe" untracked-owner-release --state-root "$state_root" --flow-id "$flow_id" --launch-id "$launch_id" >/dev/null 2>&1 || :
+}
+trap release_owner EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+"$@"
+exit $?
+`
+
+func wrapDirectUntrackedOwnerRelease(cmd *exec.Cmd, ctx AgentLaunchContext) *exec.Cmd {
+	args := []string{
+		"-c", directOwnerReleaseScript, "approach-direct-agent",
+		approachCommandExecutable(ctx.Executable), ctx.SessionStateRoot, ctx.FlowID, ctx.LaunchID,
+	}
+	args = append(args, cmd.Args...)
+	wrapper := exec.Command("/bin/sh", args...)
+	wrapper.Dir = cmd.Dir
+	wrapper.Env = cmd.Env
+	return wrapper
+}
+
 // EmbeddedTmuxAgentCommand builds the tmux lifecycle commands for a detachable
 // embedded CLI agent launch. It does not start tmux.
 func EmbeddedTmuxAgentCommand(ctx AgentLaunchContext) (EmbeddedTmuxAgentSpec, error) {
