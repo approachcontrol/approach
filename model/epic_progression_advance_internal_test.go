@@ -54,7 +54,7 @@ func TestEpicProgressionAdvanceUsesReadyOrderAndSkipsExactLinkedChildren(t *test
 	linked := progressionAdvanceFlow("linked-a", repo, "epic.a", epic, flowstore.StatusCompleted)
 	beadQueries := 0
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -107,7 +107,7 @@ func TestEpicProgressionAdvanceUsesReadableFlowsFromPartialList(t *testing.T) {
 	partial := testPartialList("unreadable-flow")
 
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -148,7 +148,7 @@ func TestEpicProgressionAdvanceKeepsFatalFlowListFailureRetryable(t *testing.T) 
 	setCalls, haltCalls := 0, 0
 
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -192,7 +192,7 @@ func TestEpicProgressionAdvanceSkipsAnEpicWhoseChildIsAlreadyInFlight(t *testing
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
 			key: {SourceFlowID: source.FlowID, ChildID: "epic.b", FlowID: "flow-b"},
 		},
@@ -225,9 +225,9 @@ func TestEpicProgressionAdvanceRotatesRetryingEpics(t *testing.T) {
 	secondTerminal.Status = flowstore.StatusCompleted
 
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{
-			firstKey:  firstSource,
-			secondKey: secondSource,
+		epicProgressionBaselines: map[string]epicProgressionBaseline{
+			firstKey:  progressionBaselineForTest(firstSource),
+			secondKey: progressionBaselineForTest(secondSource),
 		},
 		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{}, false, errors.New("store unavailable for " + key.EpicID)
@@ -273,10 +273,13 @@ func TestEpicProgressionRuntimeBaselineLifecycle(t *testing.T) {
 	})
 
 	t.Run("non terminal observation refreshes exact baseline", func(t *testing.T) {
-		m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source}, autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
+		m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)}, autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
 		next, _ := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{nonSuccess}, Request: 1})
 		if next.epicProgressionBaselines[key].Title != "refreshed" {
 			t.Fatalf("baseline = %#v", next.epicProgressionBaselines[key])
+		}
+		if got, want := next.epicProgressionBaselines[key].Activation, progressionBaselineForTest(source).Activation; !got.Equal(want) {
+			t.Fatalf("activation changed from %s to %s during refresh", want, got)
 		}
 	})
 
@@ -289,7 +292,7 @@ func TestEpicProgressionRuntimeBaselineLifecycle(t *testing.T) {
 		{name: "missing tracked flow", msg: AutoAdvanceResultMsg{Flows: nil, Request: 1}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source}, autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
+			m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)}, autoAdvanceState: autoAdvanceState{autoAdvanceInFlight: 1}}
 			next, _ := updateFlowRefreshTest(m, tt.msg)
 			if next.epicProgressionBaselines[key].FlowID != source.FlowID {
 				t.Fatalf("baseline changed: %#v", next.epicProgressionBaselines)
@@ -315,11 +318,12 @@ func TestEpicProgressionAdvanceChecksAuthoritativeStateBeforeSideEffects(t *test
 		{name: "disabled", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic}},
 		{name: "done", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Done: true}},
 		{name: "halted", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Halt: &flowstore.EpicProgressionHalt{ChildBeadID: "epic.a", Status: flowstore.StatusBlocked, Message: "halted"}}},
+		{name: "new activation", found: true, progression: flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true, UpdatedAt: progressionBaselineForTest(source).Activation.Add(time.Minute)}},
 		{name: "unreadable", err: errors.New("corrupt row"), wantBaseline: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sideEffects := 0
-			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+			m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					return tt.progression, tt.found, tt.err
 				},
@@ -365,10 +369,11 @@ func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 		{name: "write error reread halted", setErr: errors.New("write"), readFound: true, readHalt: true, wantStatus: "no longer active"},
 		{name: "write error reread enabled", setErr: errors.New("write"), readFound: true, readEnabled: true, wantBaseline: true, wantStatus: "Could not disable"},
 		{name: "write error reread error", setErr: errors.New("write"), readErr: errors.New("read"), wantStatus: "Could not confirm"},
+		{name: "stale activation", setErr: flowstore.ErrEpicProgressionActivationChanged, wantStatus: "no longer active"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			reads := 0
-			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+			m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					reads++
 					if reads == 1 {
@@ -384,7 +389,7 @@ func TestEpicProgressionExhaustionReconciliationMatrix(t *testing.T) {
 				listReadyBeads:    func(string) ([]beadsquery.Bead, error) { return nil, nil },
 				listFlows:         func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 				setEpicProgression: func(update flowstore.EpicProgressionUpdate) (flowstore.EpicProgression, error) {
-					if update.Enabled || !update.Done {
+					if update.Enabled || !update.Done || !update.ExpectedActivation.Equal(progressionBaselineForTest(source).Activation) {
 						t.Fatalf("exhaustion update = %#v, want enabled=false done=true", update)
 					}
 					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic}, tt.setErr
@@ -407,7 +412,7 @@ func TestEpicProgressionPreparationAdmissionIsSingleFlightAndStaleResultFenced(t
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
-	m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+	m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -471,7 +476,7 @@ func TestEpicProgressionSelectionScopeDoesNotSuppressOtherRepositoryLink(t *test
 	source := progressionAdvanceFlow("flow-a", repo, "epic.a", epic, flowstore.StatusPending)
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
-	m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+	m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -505,7 +510,7 @@ func TestEpicProgressionExhaustionReportsAllReadyChildrenAlreadyLinked(t *testin
 	terminal := cloneFlowRecord(source)
 	terminal.Status = flowstore.StatusCompleted
 	linked := progressionAdvanceFlow("flow-b", repo, "epic.b", epic, flowstore.StatusPending)
-	m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+	m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -624,7 +629,7 @@ func TestEpicProgressionSelectionMatchesBeadSlotGuard(t *testing.T) {
 			terminal := cloneFlowRecord(source)
 			terminal.Status = flowstore.StatusCompleted
 			existing := tt.existing()
-			m := Model{epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+			m := Model{epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 				readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 					return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 				},
@@ -686,7 +691,7 @@ func TestEpicProgressionBeadSlotRefusalConvergesAcrossPasses(t *testing.T) {
 	}
 	passes := []pass{}
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -751,7 +756,7 @@ func TestEpicProgressionAdvanceClosesMergedChildBeadBeforeReadyQuery(t *testing.
 	// whole point: a close that lands after the query selects nothing.
 	ready := []beadsquery.Bead{}
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -802,7 +807,7 @@ func TestEpicProgressionAdvanceDoesNotCloseUnmergedChildBead(t *testing.T) {
 
 	closes := 0
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},
@@ -840,7 +845,7 @@ func TestEpicProgressionAdvanceCloseFailureIsRetryable(t *testing.T) {
 	queries := 0
 	setProgressionCalls := 0
 	m := Model{
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: source},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(source)},
 		readEpicProgression: func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: repo, EpicID: epic, Enabled: true}, true, nil
 		},

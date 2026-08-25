@@ -2,12 +2,86 @@ package flowstore
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestEpicProgressionObservedActivationFencesEveryProgressionEdge(t *testing.T) {
+	now := time.Date(2026, 8, 25, 14, 0, 0, 0, time.UTC)
+	store, err := NewStore(StoreOptions{Root: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	key := EpicProgressionKey{RepoPath: repo, EpicID: "epic"}
+	activationA, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key}); err != nil {
+		t.Fatal(err)
+	}
+	activationB, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activationB.UpdatedAt.Equal(activationA.UpdatedAt) {
+		t.Fatal("disable and re-enable retained the activation timestamp")
+	}
+
+	link := BeadLink{ID: "epic.2", EpicID: key.EpicID}
+	flow, finalizer, err := store.CreatePreparation(FlowRecord{
+		FlowID: "prepared", RepoPath: repo, Title: "Prepared", Instructions: "Test.", Bead: link,
+	}, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStartMetadata(StartMetadataUpdate{
+		FlowID: flow.FlowID, WorktreePath: filepath.Join(t.TempDir(), "worktree"), Branch: "flow/prepared",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finalizer.Finalize(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	assertActivationBUntouched := func(op string) {
+		t.Helper()
+		got, found, readErr := store.ReadEpicProgression(key)
+		if readErr != nil || !found || !reflect.DeepEqual(got, activationB) {
+			t.Fatalf("%s changed activation B: got %#v, found %t, err %v; want %#v", op, got, found, readErr, activationB)
+		}
+	}
+
+	halt := EpicProgressionHalt{ChildBeadID: "epic.1", Status: StatusBlocked, Message: "stale child blocked"}
+	if _, err := store.HaltEpicProgression(EpicProgressionHaltUpdate{
+		Key: key, Halt: halt, ExpectedActivation: activationA.UpdatedAt,
+	}); !errors.Is(err, ErrEpicProgressionActivationChanged) {
+		t.Fatalf("stale halt error = %v, want activation changed", err)
+	}
+	assertActivationBUntouched("stale halt")
+
+	if _, err := store.SetEpicProgression(EpicProgressionUpdate{
+		Key: key, Done: true, ExpectedActivation: activationA.UpdatedAt,
+	}); !errors.Is(err, ErrEpicProgressionActivationChanged) {
+		t.Fatalf("stale completion error = %v, want activation changed", err)
+	}
+	assertActivationBUntouched("stale completion")
+
+	result, err := store.ReconcileEpicProgressionSuccessor(EpicProgressionSuccessorUpdate{
+		FlowID: flow.FlowID, Key: key, Bead: link, ExpectedActivation: activationA.UpdatedAt,
+	})
+	if err != nil || result.Outcome != EpicProgressionSuccessorInactive {
+		t.Fatalf("stale successor result = %#v, err %v; want inactive", result, err)
+	}
+	assertActivationBUntouched("stale successor reconciliation")
+}
 
 func TestEpicProgressionCodecRejectsInvalidHaltStates(t *testing.T) {
 	stamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -130,7 +204,7 @@ func TestEpicProgressionSerializedWriterOrdersDoneAndManualOff(t *testing.T) {
 			}
 			resultCh := make(chan writeResult, 1)
 			go func() {
-				progression, err := second.SetEpicProgression(EpicProgressionUpdate{Key: key, Done: tt.queuedDone})
+				progression, err := second.SetEpicProgression(EpicProgressionUpdate{Key: key, Done: tt.queuedDone, ExpectedActivation: active.UpdatedAt})
 				resultCh <- writeResult{progression: progression, err: err}
 			}()
 			<-started
@@ -172,7 +246,7 @@ func TestEpicProgressionDoneRejectsAuthoritativeHaltAndSuccessorTreatsDoneInacti
 	if _, err := backend.db.Exec("INSERT INTO epic_progressions(repo_path, epic_id, enabled, updated_at, record) VALUES(?, ?, 0, ?, ?)", key.RepoPath, key.EpicID, updatedAt, data); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Done: true}); err == nil {
+	if _, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: halted.UpdatedAt}); err == nil {
 		t.Fatal("halted -> done succeeded")
 	}
 	got, found, err := store.ReadEpicProgression(key)
@@ -184,12 +258,12 @@ func TestEpicProgressionDoneRejectsAuthoritativeHaltAndSuccessorTreatsDoneInacti
 	if err != nil || !active.Enabled || active.Done || active.Halt != nil {
 		t.Fatalf("enable halted = %#v, err %v", active, err)
 	}
-	done, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Done: true})
+	done, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: active.UpdatedAt})
 	if err != nil || !done.Done {
 		t.Fatalf("active -> done = %#v, err %v", done, err)
 	}
 	result, err := store.ReconcileEpicProgressionSuccessor(EpicProgressionSuccessorUpdate{
-		FlowID: "absent-flow", Key: key, Bead: BeadLink{ID: "epic.2", EpicID: key.EpicID},
+		FlowID: "absent-flow", Key: key, Bead: BeadLink{ID: "epic.2", EpicID: key.EpicID}, ExpectedActivation: done.UpdatedAt,
 	})
 	if err != nil || result.Outcome != EpicProgressionSuccessorInactive || !result.Progression.Done {
 		t.Fatalf("done successor reconciliation = %#v, err %v", result, err)
@@ -282,7 +356,7 @@ func TestReconcileEpicProgressionSuccessorHaltedPrecedesFlowState(t *testing.T) 
 
 	for _, flowID := range []string{"absent", flow.FlowID} {
 		result, err := store.ReconcileEpicProgressionSuccessor(EpicProgressionSuccessorUpdate{
-			FlowID: flowID, Key: key, Bead: link,
+			FlowID: flowID, Key: key, Bead: link, ExpectedActivation: halted.UpdatedAt,
 		})
 		if err != nil || result.Outcome != EpicProgressionSuccessorInactive {
 			t.Fatalf("flow %q result = %#v, err %v; want inactive", flowID, result, err)
@@ -384,12 +458,13 @@ func TestHaltEpicProgressionWritesDisabledProjectionAndStaysInactive(t *testing.
 		t.Fatal(err)
 	}
 
-	if _, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Enabled: true}); err != nil {
+	active, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Enabled: true})
+	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
 	halt := EpicProgressionHalt{ChildBeadID: "epic.1", Status: StatusNeedsAttention, Message: "child Flow flow-1 halted auto-progression"}
-	halted, err := store.HaltEpicProgression(EpicProgressionHaltUpdate{Key: key, Halt: halt})
+	halted, err := store.HaltEpicProgression(EpicProgressionHaltUpdate{Key: key, Halt: halt, ExpectedActivation: active.UpdatedAt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +480,7 @@ func TestHaltEpicProgressionWritesDisabledProjectionAndStaysInactive(t *testing.
 		t.Fatalf("enabled projection after halt = %d, want 0", enabled)
 	}
 
-	result, err := store.ReconcileEpicProgressionSuccessor(EpicProgressionSuccessorUpdate{FlowID: flow.FlowID, Key: key, Bead: link})
+	result, err := store.ReconcileEpicProgressionSuccessor(EpicProgressionSuccessorUpdate{FlowID: flow.FlowID, Key: key, Bead: link, ExpectedActivation: halted.UpdatedAt})
 	if err != nil || result.Outcome != EpicProgressionSuccessorInactive {
 		t.Fatalf("halted successor reconciliation = %#v, err %v; want inactive", result, err)
 	}

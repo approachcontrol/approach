@@ -90,7 +90,7 @@ func (m Model) applyEpicProgressionSuccessor(attempt flowLaunchAttempt, msg flow
 	switch msg.Successor.Outcome {
 	case flowstore.EpicProgressionSuccessorAccepted:
 		if m.epicProgressionBaselines == nil {
-			m.epicProgressionBaselines = make(map[string]flowstore.FlowRecord)
+			m.epicProgressionBaselines = make(map[string]epicProgressionBaseline)
 		}
 		if m.epicProgressionBaselineMinimumRequests == nil {
 			m.epicProgressionBaselineMinimumRequests = make(map[string]uint64)
@@ -99,7 +99,7 @@ func (m Model) applyEpicProgressionSuccessor(attempt flowLaunchAttempt, msg flow
 		// prepared and pending. Installing it here rather than after the launch
 		// keeps the advance edge level-triggered on a record that exists, and a
 		// launch that then fails tears this baseline down through the halt.
-		m.epicProgressionBaselines[key] = cloneFlowRecord(msg.Record)
+		m.epicProgressionBaselines[key] = epicProgressionBaseline{FlowRecord: cloneFlowRecord(msg.Record), Activation: msg.Successor.Progression.UpdatedAt}
 		m.epicProgressionBaselineMinimumRequests[key] = m.autoAdvanceRequestSeq + 1
 		delete(m.epicProgressionOwnedSuccessors, key)
 		return m, nil, false
@@ -160,7 +160,7 @@ func (m Model) failEpicProgressionCreate(create flowLaunchCreateRequest, flowID,
 		Status:      flowstore.StatusBlocked,
 		Message:     epicProgressionLaunchFailureMessage(flowID, cause),
 	}
-	return m, m.haltEpicProgressionCauseCmd(request, repoPath, epicID, halt)
+	return m, m.haltEpicProgressionCauseCmd(request, repoPath, epicID, baseline.Activation, halt)
 }
 
 // epicProgressionLaunchFailureMessage is rendered verbatim beside the child by
@@ -185,11 +185,12 @@ func (m Model) requestEpicProgressionChildLaunch(msg epicProgressionAdvanceResul
 	childID := strings.TrimSpace(msg.owned.ChildID)
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
 	create := flowLaunchCreateRequest{
-		Presentation: flowLaunchCreatePresentation{Origin: flowLaunchOriginEpicProgression, Request: msg.request},
-		RepoPath:     msg.repoPath,
-		Title:        childID + ": " + strings.TrimSpace(msg.childTitle),
-		Instructions: epicProgressionChildInstructions(childID),
-		Bead:         flowstore.BeadLink{ID: childID, EpicID: msg.epicID},
+		Presentation:   flowLaunchCreatePresentation{Origin: flowLaunchOriginEpicProgression, Request: msg.request},
+		RepoPath:       msg.repoPath,
+		EpicActivation: msg.activation,
+		Title:          childID + ": " + strings.TrimSpace(msg.childTitle),
+		Instructions:   epicProgressionChildInstructions(childID),
+		Bead:           flowstore.BeadLink{ID: childID, EpicID: msg.epicID},
 		// Progression children are unattended by construction: nothing focuses
 		// their terminal and no one types into it, so the record is written
 		// headless and its phases run with AutoMode, which the store enables on

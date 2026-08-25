@@ -223,7 +223,7 @@ type Model struct {
 	tmuxAttachHint          bool
 	embeddedTerminalState
 	autoAdvanceState
-	epicProgressionBaselines map[string]flowstore.FlowRecord
+	epicProgressionBaselines map[string]epicProgressionBaseline
 
 	epicProgressionBaselineMinimumRequests map[string]uint64
 

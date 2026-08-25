@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -38,10 +39,12 @@ func newProgressionLaunchFixture(t *testing.T, outcome flowstore.EpicProgression
 		source:  progressionAdvanceFlow("flow-source", progressionLaunchRepo, "epic.a", progressionLaunchEpic, flowstore.StatusCompleted),
 	}
 	m := h.model(t)
+	confirmedActivation := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
 	m.launchSeams.ReconcileEpicSuccessor = func(update flowstore.EpicProgressionSuccessorUpdate) (flowstore.EpicProgressionSuccessorResult, error) {
 		h.order = append(h.order, "reconcile:"+update.FlowID)
 		if update.FlowID != h.record.FlowID || update.Bead != h.record.Bead ||
-			update.Key != (flowstore.EpicProgressionKey{RepoPath: progressionLaunchRepo, EpicID: progressionLaunchEpic}) {
+			update.Key != (flowstore.EpicProgressionKey{RepoPath: progressionLaunchRepo, EpicID: progressionLaunchEpic}) ||
+			!update.ExpectedActivation.Equal(progressionBaselineForTest(fixture.source).Activation) {
 			t.Fatalf("successor reconciliation = %#v", update)
 		}
 		if h.record.PreparedAt == nil {
@@ -50,7 +53,7 @@ func newProgressionLaunchFixture(t *testing.T, outcome flowstore.EpicProgression
 		if reconcileErr != nil {
 			return flowstore.EpicProgressionSuccessorResult{Outcome: flowstore.EpicProgressionSuccessorRetryable}, reconcileErr
 		}
-		return flowstore.EpicProgressionSuccessorResult{Outcome: outcome, Flow: h.record}, nil
+		return flowstore.EpicProgressionSuccessorResult{Outcome: outcome, Flow: h.record, Progression: flowstore.EpicProgression{UpdatedAt: confirmedActivation}}, nil
 	}
 	m.haltEpicProgression = func(update flowstore.EpicProgressionHaltUpdate) (flowstore.EpicProgression, error) {
 		fixture.halted++
@@ -61,7 +64,7 @@ func newProgressionLaunchFixture(t *testing.T, outcome flowstore.EpicProgression
 	m.readEpicProgression = func(flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 		return flowstore.EpicProgression{RepoPath: progressionLaunchRepo, EpicID: progressionLaunchEpic, Enabled: true}, true, nil
 	}
-	m.epicProgressionBaselines = map[string]flowstore.FlowRecord{fixture.key: fixture.source}
+	m.epicProgressionBaselines = map[string]epicProgressionBaseline{fixture.key: progressionBaselineForTest(fixture.source)}
 	m.epicProgressionBaselineMinimumRequests = map[string]uint64{}
 	m.epicProgressionOwnedSuccessors = map[string]epicProgressionOwnedSuccessor{}
 
@@ -87,6 +90,7 @@ func (f *progressionLaunchFixture) admit(t *testing.T, m Model) (Model, tea.Cmd)
 		},
 		RepoPath: progressionLaunchRepo, Title: "New Flow", Instructions: "Write the plan.",
 		Bead: f.harness.record.Bead, BaseRef: "main", Headless: true,
+		EpicActivation: m.epicProgressionBaselines[f.key].Activation,
 	}
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(""))
 	next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
@@ -157,7 +161,7 @@ func TestProgressionCreateLaunchesTheFirstPhaseAndOwnsItsSuccessor(t *testing.T)
 	if reconcileAt, launchAt := strings.Index(joined, "reconcile:"), strings.Index(joined, "launch-id:"); reconcileAt < 0 || launchAt < 0 || reconcileAt > launchAt {
 		t.Fatalf("order = %#v, want reconciliation before the first phase is made running", h.order)
 	}
-	if got := m.epicProgressionBaselines[fixture.key]; got.FlowID != h.record.FlowID {
+	if got := m.epicProgressionBaselines[fixture.key]; got.FlowID != h.record.FlowID || !got.Activation.Equal(time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)) {
 		t.Fatalf("baseline = %#v, want the accepted child", got)
 	}
 	if got := m.epicProgressionBaselineMinimumRequests[fixture.key]; got != m.autoAdvanceRequestSeq+1 {

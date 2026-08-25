@@ -13,6 +13,14 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
+func progressionBaselineForTest(flow flowstore.FlowRecord) epicProgressionBaseline {
+	activation := flow.UpdatedAt
+	if activation.IsZero() {
+		activation = time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	}
+	return epicProgressionBaseline{FlowRecord: flow, Activation: activation}
+}
+
 func TestEpicProgressionRetryRelevantIgnoresConsumedSuccessfulMarkers(t *testing.T) {
 	stamp := time.Date(2026, 8, 14, 16, 0, 0, 0, time.UTC)
 	base := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusPending, PreparedAt: &stamp, ProgressionClaim: true}
@@ -109,7 +117,7 @@ func TestEpicProgressionToggleReconcilesRuntimeBaselineBeforeReservationRelease(
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			baselines := map[string]flowstore.FlowRecord{key: oldFlow}
+			baselines := map[string]epicProgressionBaseline{key: progressionBaselineForTest(oldFlow)}
 			owned := map[string]epicProgressionOwnedSuccessor{key: {SourceFlowID: oldFlow.FlowID, ChildID: "epic.2", FlowID: "owned-flow"}}
 			m := Model{
 				beadExpansion:                  beadExpansionSnapshot{target: beadExpansionTarget{token: 99}},
@@ -152,7 +160,7 @@ func TestDisableEpicProgressionConfirmedActivePreservesRuntimeBaseline(t *testin
 		readEpicProgression: func(key flowstore.EpicProgressionKey) (flowstore.EpicProgression, bool, error) {
 			return flowstore.EpicProgression{RepoPath: key.RepoPath, EpicID: key.EpicID, Enabled: true}, true, nil
 		},
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: baseline},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(baseline)},
 		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
 			key: {SourceFlowID: baseline.FlowID, ChildID: "epic.2", FlowID: "owned-flow"},
 		},
@@ -322,7 +330,7 @@ func TestStaleEpicProgressionToggleOwnerCannotMutateNewerRuntimeState(t *testing
 	m := Model{
 		flowPreparationAdmission: true,
 		flowPreparationOwner:     flowPreparationOwner{Kind: flowPreparationEpicToggle, Token: 2},
-		epicProgressionBaselines: map[string]flowstore.FlowRecord{key: baseline},
+		epicProgressionBaselines: map[string]epicProgressionBaseline{key: progressionBaselineForTest(baseline)},
 		epicProgressionOwnedSuccessors: map[string]epicProgressionOwnedSuccessor{
 			key: owned,
 		},

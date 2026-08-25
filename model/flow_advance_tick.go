@@ -174,7 +174,7 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 		// this design already accepts.
 		switch {
 		case epicProgressionSuccessTerminal(observed):
-			if epicProgressionSuccessTerminal(baseline) {
+			if epicProgressionSuccessTerminal(baseline.FlowRecord) {
 				continue
 			}
 			if owned, ok := m.epicProgressionOwnedSuccessors[key]; ok && owned.SourceFlowID == baseline.FlowID {
@@ -192,7 +192,7 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 				return m, cmd
 			}
 		case epicProgressionFailureTerminal(observed):
-			if epicProgressionFailureTerminal(baseline) {
+			if epicProgressionFailureTerminal(baseline.FlowRecord) {
 				continue
 			}
 			// The halt tuple is composed from the observed record, never from
@@ -205,7 +205,8 @@ func (m Model) prepareEpicProgressionAdvance(current []flowstore.FlowRecord, req
 				return m, cmd
 			}
 		default:
-			m.epicProgressionBaselines[key] = cloneFlowRecord(observed)
+			baseline.FlowRecord = cloneFlowRecord(observed)
+			m.epicProgressionBaselines[key] = baseline
 		}
 	}
 	return m, nil

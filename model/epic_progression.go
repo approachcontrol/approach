@@ -1,9 +1,11 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -58,6 +60,11 @@ type epicProgressionOwnedSuccessor struct {
 	FlowID       string
 }
 
+type epicProgressionBaseline struct {
+	flowstore.FlowRecord
+	Activation time.Time
+}
+
 type epicProgressionAdvanceRequest struct {
 	Request      uint64
 	OwnerToken   uint64
@@ -87,6 +94,7 @@ type epicProgressionAdvanceResultMsg struct {
 	repoPath     string
 	epicID       string
 	sourceFlowID string
+	activation   time.Time
 	disposition  epicProgressionAdvanceDisposition
 	// owned and childTitle are selection-only: the chosen child and its Bead
 	// title, carried to the create-then-launch intent that follows.
@@ -156,7 +164,7 @@ func (m Model) releaseFlowPreparation(kind flowPreparationKind, token uint64) Mo
 	return m
 }
 
-func (m Model) startEpicProgressionAdvance(epicKey string, baseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
+func (m Model) startEpicProgressionAdvance(epicKey string, baseline epicProgressionBaseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
 	var ownerToken uint64
 	var admitted bool
 	m, ownerToken, admitted = m.acquireFlowPreparation(flowPreparationEpicAdvance)
@@ -177,7 +185,7 @@ func (m Model) startEpicProgressionAdvance(epicKey string, baseline, observed fl
 // successor reconciliation and its first phase — belongs to the create-phase
 // launch pipeline the selection is handed to, so the whole advance is one
 // admitted launch attempt rather than a preparation plus a later start.
-func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, baseline, observed flowstore.FlowRecord) tea.Cmd {
+func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, baseline epicProgressionBaseline, observed flowstore.FlowRecord) tea.Cmd {
 	readProgression := m.readEpicProgression
 	closeBead := m.closeBead
 	listChildren := m.listChildrenBeads
@@ -190,7 +198,7 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 	result := func(disposition epicProgressionAdvanceDisposition, status string) epicProgressionAdvanceResultMsg {
 		return epicProgressionAdvanceResultMsg{
 			request: request.Request, ownerToken: request.OwnerToken, epicKey: request.EpicKey,
-			repoPath: repoPath, epicID: epicID, sourceFlowID: request.SourceFlowID,
+			repoPath: repoPath, epicID: epicID, sourceFlowID: request.SourceFlowID, activation: baseline.Activation,
 			disposition: disposition, degradation: degradation, status: status,
 		}
 	}
@@ -200,7 +208,8 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 		if err != nil {
 			return result(epicProgressionAdvanceRetryable, fmt.Sprintf("Could not confirm auto-progression state for epic %s: %v", epicID, err))
 		}
-		if !found || !progression.Enabled || progression.Done || progression.Halt != nil {
+		if !found || !progression.Enabled || progression.Done || progression.Halt != nil ||
+			(!progression.UpdatedAt.IsZero() && !progression.UpdatedAt.Equal(baseline.Activation)) {
 			return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
 		}
 
@@ -302,9 +311,12 @@ func (m Model) advanceEpicProgressionCmd(request epicProgressionAdvanceRequest, 
 			if intersection > 0 && linked == intersection {
 				status = fmt.Sprintf("Auto-progression complete for epic %s; every ready child already has a Flow", epicID)
 			}
-			_, doneErr := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false, Done: true})
+			_, doneErr := setProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: false, Done: true, ExpectedActivation: baseline.Activation})
 			if doneErr == nil {
 				return result(epicProgressionAdvanceExhausted, status)
+			}
+			if errors.Is(doneErr, flowstore.ErrEpicProgressionActivationChanged) {
+				return result(epicProgressionAdvanceInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
 			}
 			authoritative, stillFound, readErr := readProgression(key)
 			if readErr != nil {
@@ -351,7 +363,7 @@ func progressionMergedChildClose(observed flowstore.FlowRecord) (string, string,
 	return beadID, reason, true
 }
 
-func (m Model) startEpicProgressionHalt(epicKey string, baseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
+func (m Model) startEpicProgressionHalt(epicKey string, baseline epicProgressionBaseline, observed flowstore.FlowRecord) (Model, tea.Cmd) {
 	var ownerToken uint64
 	var admitted bool
 	m, ownerToken, admitted = m.acquireFlowPreparation(flowPreparationEpicHalt)
@@ -371,13 +383,13 @@ func (m Model) startEpicProgressionHalt(epicKey string, baseline, observed flows
 		Status:      epicProgressionResolvedStatus(observed),
 		Message:     fmt.Sprintf("child Flow %s halted auto-progression", strings.TrimSpace(observed.FlowID)),
 	}
-	return m, m.haltEpicProgressionCauseCmd(request, filepath.Clean(observed.RepoPath), strings.TrimSpace(observed.Bead.EpicID), halt)
+	return m, m.haltEpicProgressionCauseCmd(request, filepath.Clean(observed.RepoPath), strings.TrimSpace(observed.Bead.EpicID), baseline.Activation, halt)
 }
 
 // haltEpicProgressionCauseCmd persists one already-composed halt tuple. Both
 // halt edges — a failed child and a child that could not launch at all — share
 // it, so neither can invent its own announcement or its own retry rules.
-func (m Model) haltEpicProgressionCauseCmd(request epicProgressionHaltRequest, repoPath, epicID string, halt flowstore.EpicProgressionHalt) tea.Cmd {
+func (m Model) haltEpicProgressionCauseCmd(request epicProgressionHaltRequest, repoPath, epicID string, activation time.Time, halt flowstore.EpicProgressionHalt) tea.Cmd {
 	haltProgression := m.haltEpicProgression
 	readProgression := m.readEpicProgression
 	result := func(disposition epicProgressionHaltDisposition, status string) epicProgressionHaltResultMsg {
@@ -389,7 +401,7 @@ func (m Model) haltEpicProgressionCauseCmd(request epicProgressionHaltRequest, r
 	}
 	return func() tea.Msg {
 		key := flowstore.EpicProgressionKey{RepoPath: repoPath, EpicID: epicID}
-		persisted, err := haltProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
+		persisted, err := haltProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt, ExpectedActivation: activation})
 		if err == nil {
 			// Halt is sticky, so an already-halted row keeps its first cause and
 			// this attempt's tuple is discarded. Announce what the store retained,
@@ -399,6 +411,9 @@ func (m Model) haltEpicProgressionCauseCmd(request epicProgressionHaltRequest, r
 				cause = *persisted.Halt
 			}
 			return result(epicProgressionHaltPersisted, epicProgressionHaltStatus(epicID, cause))
+		}
+		if errors.Is(err, flowstore.ErrEpicProgressionActivationChanged) {
+			return result(epicProgressionHaltInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
 		}
 		authoritative, found, readErr := readProgression(key)
 		if readErr != nil {
@@ -410,7 +425,7 @@ func (m Model) haltEpicProgressionCauseCmd(request epicProgressionHaltRequest, r
 			// tuple rather than the generic inactive line.
 			return result(epicProgressionHaltPersisted, epicProgressionHaltStatus(epicID, *authoritative.Halt))
 		}
-		if found && authoritative.Enabled && !authoritative.Done {
+		if found && authoritative.Enabled && !authoritative.Done && authoritative.UpdatedAt.Equal(activation) {
 			return result(epicProgressionHaltRetryable, fmt.Sprintf("Could not halt auto-progression for epic %s: %v", epicID, err))
 		}
 		return result(epicProgressionHaltInactive, fmt.Sprintf("Auto-progression for epic %s is no longer active", epicID))
@@ -990,12 +1005,12 @@ func (m Model) handleEpicProgressionToggleResult(msg epicProgressionToggleResult
 		switch msg.baselineDisposition {
 		case epicProgressionBaselineReplace:
 			if m.epicProgressionBaselines == nil {
-				m.epicProgressionBaselines = make(map[string]flowstore.FlowRecord)
+				m.epicProgressionBaselines = make(map[string]epicProgressionBaseline)
 			}
 			if m.epicProgressionBaselineMinimumRequests == nil {
 				m.epicProgressionBaselineMinimumRequests = make(map[string]uint64)
 			}
-			m.epicProgressionBaselines[key] = msg.flow
+			m.epicProgressionBaselines[key] = epicProgressionBaseline{FlowRecord: msg.flow, Activation: msg.progression.UpdatedAt}
 			m.epicProgressionBaselineMinimumRequests[key] = m.autoAdvanceRequestSeq + 1
 			delete(m.epicProgressionOwnedSuccessors, key)
 		case epicProgressionBaselineRemove:

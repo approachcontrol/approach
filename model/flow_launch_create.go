@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -28,13 +29,14 @@ type flowLaunchCreatePresentation struct {
 // Presentation and RepoPath together are its source-aware presentation fence;
 // the remaining fields are immutable request-time snapshots.
 type flowLaunchCreateRequest struct {
-	Presentation flowLaunchCreatePresentation
-	RepoPath     string
-	Title        string
-	Instructions string
-	Bead         flowstore.BeadLink
-	BaseRef      string
-	Headless     bool
+	Presentation   flowLaunchCreatePresentation
+	RepoPath       string
+	Title          string
+	Instructions   string
+	Bead           flowstore.BeadLink
+	BaseRef        string
+	Headless       bool
+	EpicActivation time.Time
 }
 
 // flowLaunchCreateRequestedMsg keeps the form thin: it carries intent and the
@@ -691,9 +693,10 @@ func reconcileCreatedEpicSuccessor(seams flowLaunchSeams, attempt flowLaunchAtte
 	}
 	create := attempt.Create
 	result, err := seams.ReconcileEpicSuccessor(flowstore.EpicProgressionSuccessorUpdate{
-		FlowID: attempt.FlowID,
-		Key:    flowstore.EpicProgressionKey{RepoPath: create.RepoPath, EpicID: create.Bead.EpicID},
-		Bead:   create.Bead,
+		FlowID:             attempt.FlowID,
+		Key:                flowstore.EpicProgressionKey{RepoPath: create.RepoPath, EpicID: create.Bead.EpicID},
+		Bead:               create.Bead,
+		ExpectedActivation: create.EpicActivation,
 	})
 	if err != nil {
 		return result, err.Error()
