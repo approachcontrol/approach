@@ -255,7 +255,7 @@ func TestRender_PromptEditorClampsWithoutDrawingOutOfBounds(t *testing.T) {
 func TestRender_PromptEditorHintKeysSurviveClamping(t *testing.T) {
 	value := "template"
 	view := ansi.Strip(Render(editorParams(40, 12, value, 8)))
-	for _, want := range []string{"ctrl+s", "^M", "esc"} {
+	for _, want := range []string{"ctrl+s", "esc", "enter"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in the 40x12 hint row:\n%s", want, view)
 		}

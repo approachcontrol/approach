@@ -27,7 +27,7 @@ const (
 // panel's content column so all three keys survive a clamped panel.
 var promptEditorHints = []string{
 	"ctrl+s/ctrl+enter: save   enter: newline   esc: cancel",
-	"ctrl+s/^M save esc cancel",
+	"ctrl+s save esc cancel enter nl",
 	"^s save ^[ cancel",
 }
 
