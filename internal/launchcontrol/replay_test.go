@@ -77,6 +77,49 @@ func TestReplayCase1MarksAppliedWhenCommitLandedButMarkerDidNot(t *testing.T) {
 	}
 }
 
+func TestReplayMarksSavedNonReplayableResponseAppliedWithoutExecutingAgain(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Saved restart")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseBlocked,
+		Outcome: flowstore.OutcomeBlocked, Notes: "waiting",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestController(t, store, root)
+	original := applyMarkerHook
+	applyMarkerHook = func() error { return errors.New("crash before applied.json") }
+	req := mustRequest(t, VerbPhaseRestart, created.FlowID, "plan", "launch-1", PhaseRestartPayload{Notes: "retry"})
+	log, _ := OpenLog(root, "launch-1")
+	unlock, _ := log.Lock(time.Second)
+	want, err := ApplyLogged(store, log, req, mustEnvelope(t, req, WrittenByController), time.Now())
+	unlock()
+	applyMarkerHook = original
+	if err == nil || !strings.Contains(err.Error(), "crash before applied.json") {
+		t.Fatalf("ApplyLogged error = %v", err)
+	}
+	if !want.OK || phaseOf(t, store, created.FlowID, "plan").Status != flowstore.PhaseRunning {
+		t.Fatalf("restart did not land: response = %#v", want)
+	}
+
+	report := c.Sweep()
+	if report.Replayed != 1 {
+		t.Fatalf("sweep = %#v", report)
+	}
+	got, ok, err := log.Response(req.RequestID)
+	if err != nil || !ok || got.OK != want.OK || got.Error != want.Error || got.Refused != want.Refused || got.Warning != want.Warning || !equalJSON(got.Result, want.Result) {
+		t.Fatalf("saved response = %#v, %v, %v; want %#v", got, ok, err, want)
+	}
+	applied, ok, err := log.Applied()
+	if err != nil || !ok || applied.AppliedSeq != 1 || applied.Status != string(flowstore.PhaseRunning) || applied.Result != ResultApplied {
+		t.Fatalf("applied = %#v, %v, %v", applied, ok, err)
+	}
+	if rejected, ok, err := log.Rejected(); err != nil || ok {
+		t.Fatalf("rejected = %#v, %v, %v", rejected, ok, err)
+	}
+}
+
 func TestReplayAppliesSpooledBatchInOrderRegardlessOfObservedTimestamps(t *testing.T) {
 	store, root := newTestStore(t)
 	created := createFlow(t, store, "Batch")

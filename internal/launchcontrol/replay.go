@@ -34,19 +34,21 @@ func identityOf(phase flowstore.FlowPhase) phaseIdentity {
 // replayLocked replays a launch's pending requests. The caller holds both the
 // in-process launch lock and the file lock.
 //
-// Three cases, decided per request in sequence order once the latest-launch
+// Four cases, decided per request in sequence order once the latest-launch
 // gate has passed for the launch as a whole:
 //
-//  1. the live phase already shows the request's target — a request that was
+//  1. a durable response proves the request completed before its applied
+//     marker was written, so the marker is advanced without executing again;
+//  2. the live phase already shows the request's target — a request that was
 //     applied but never marked — so it is marked applied and nothing is written;
-//  2. the live status equals the comparison state (applied.json's status, else
+//  3. the live status equals the comparison state (applied.json's status, else
 //     baseline.json's) — nothing else has moved the phase since this launch
 //     last touched it — so the request is applied through Execute;
-//  3. anything else — the phase moved underneath the launch — so the whole
+//  4. anything else — the phase moved underneath the launch — so the whole
 //     remaining batch is rejected as phase_result_stale, and only a phase that
 //     is still `running` under this launch is demoted, loudly.
 //
-// A refusal that case 2 admitted is a client error (request_invalid), not
+// A refusal that case 3 admitted is a client error (request_invalid), not
 // staleness: it is recorded and skipped, and never demotes.
 func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 	result := ReplayResult{LaunchID: log.LaunchID()}
@@ -130,6 +132,25 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 	}
 
 	for i, env := range pending {
+		resp, completed, err := log.Response(env.RequestID)
+		if err != nil {
+			return result, err
+		}
+		if completed {
+			appliedResult := ResultApplied
+			if !resp.OK {
+				appliedResult = ResultRefused
+			}
+			if err := log.WriteApplied(AppliedState{
+				AppliedSeq: env.Seq, Status: live.Status, Result: appliedResult,
+				ObservedUpdatedAt: phase.UpdatedAt, AppliedAt: now,
+			}); err != nil {
+				return result, err
+			}
+			result.Applied++
+			comparison = live.Status
+			continue
+		}
 		if !env.Replayable {
 			notice("launch %s: request %d (%s) is not replayable and was dropped", log.LaunchID(), env.Seq, env.Verb)
 			if err := rejectBatch([]RequestEnvelope{env}, ReasonRequestInvalid, "", live.Status, "verb is not replayable"); err != nil {
