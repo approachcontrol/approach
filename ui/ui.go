@@ -4835,7 +4835,7 @@ func formDialogPanel(form FormView, width, height int) ([]string, int, int) {
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(clearDarkTheme.activeBorder).
-		Width(contentWidth + 2).
+		Width(contentWidth + 4).
 		Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	top := (height - len(panelLines)) / 2
@@ -5058,7 +5058,7 @@ func renderInputDialog(params inputRenderParams, width, height int) []string {
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(clearDarkTheme.activeBorder).
-		Width(contentWidth + 2).
+		Width(contentWidth + 4).
 		Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	top := (height - len(panelLines)) / 2

@@ -224,6 +224,50 @@ func TestRenderInputDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
 	}
 }
 
+func TestBorderedDialogsPreserveIntendedOuterWidth(t *testing.T) {
+	const (
+		terminalWidth = 72
+		wantWidth     = terminalWidth - 4
+	)
+	tests := []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name: "form",
+			lines: func() []string {
+				lines, _, _ := formDialogPanel(FormView{
+					Title:  "New repo",
+					Fields: []FormField{{ID: "name", Kind: FormText, Label: "Repo name"}},
+				}, terminalWidth, 12)
+				return lines
+			}(),
+		},
+		{
+			name: "input",
+			lines: renderInputDialog(inputRenderParams{
+				prompt:      "Create worktree from",
+				placeholder: WorktreeInputPlaceholder,
+			}, terminalWidth, 12),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotWidth := 0
+			for _, line := range tt.lines {
+				lineWidth := lipgloss.Width(strings.TrimSpace(ansi.Strip(line)))
+				if lineWidth > gotWidth {
+					gotWidth = lineWidth
+				}
+			}
+			if gotWidth != wantWidth {
+				t.Fatalf("dialog width = %d, want %d", gotWidth, wantWidth)
+			}
+		})
+	}
+}
+
 func TestStatusBar_IndicatorLegendSpacing(t *testing.T) {
 	bar := ansi.Strip(RenderStatusBar(120, 2, 0, PaneTop, true, false, false))
 	for _, pair := range [][2]string{
