@@ -2993,7 +2993,7 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	for i := 0; i < height; i++ {
 		idx := scroll + i
 		if idx < len(repos) {
-			name := terminalSafeSingleLine(repos[idx].DisplayName)
+			name := terminalSafeHyperlinkLabel(repos[idx].DisplayName)
 			activeRepo := repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path)
 			activityMarker := ""
 			if showActivityColumn {
@@ -3029,7 +3029,7 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRes
 	lines = append(lines, restoreHint)
 	if selected >= 0 && selected < len(repos) {
 		target := fileHyperlinkTarget(repos[selected].Path)
-		for _, r := range terminalSafeSingleLine(repos[selected].DisplayName) {
+		for _, r := range terminalSafeHyperlinkLabel(repos[selected].DisplayName) {
 			if len(lines) >= height {
 				break
 			}
@@ -3129,7 +3129,7 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 		var locationLabel string
 		if row.WorktreePath != "" {
-			worktreePath := terminalSafeSingleLine(row.WorktreePath)
+			worktreePath := terminalSafeHyperlinkLabel(row.WorktreePath)
 			if repoPath != "" && row.WorktreePath == repoPath {
 				locationLabel = " " + hyperlink(rootStyle.Render("[root]"), fileHyperlinkTarget(row.WorktreePath))
 			} else {
@@ -3189,7 +3189,7 @@ func renderSelectedBranchRow(row gitquery.BranchRow, repoPath string, width int)
 		if repoPath != "" && row.WorktreePath == repoPath {
 			line += hyperlink(selectedSegment(rootStyle, "[root]"), fileHyperlinkTarget(row.WorktreePath))
 		} else {
-			worktreePath := terminalSafeSingleLine(row.WorktreePath)
+			worktreePath := terminalSafeHyperlinkLabel(row.WorktreePath)
 			line += hyperlink(selectedSegment(commitStyle, fmt.Sprintf("[%s]", worktreePath)), fileHyperlinkTarget(row.WorktreePath))
 		}
 	}
@@ -3305,6 +3305,11 @@ func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, heigh
 }
 
 func terminalSafeSingleLine(text string) string {
+	text = terminalSafeHyperlinkLabel(text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func terminalSafeHyperlinkLabel(text string) string {
 	text = ansi.Strip(text)
 	text = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -3312,7 +3317,7 @@ func terminalSafeSingleLine(text string) string {
 		}
 		return r
 	}, text)
-	return strings.Join(strings.Fields(text), " ")
+	return text
 }
 
 func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width, height int) []string {
@@ -3332,7 +3337,7 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		if worktree == "." || worktree == string(filepath.Separator) {
 			worktree = ""
 		}
-		worktree = terminalSafeSingleLine(worktree)
+		worktree = terminalSafeHyperlinkLabel(worktree)
 		summary := sessionSummaryDisplayText(record.Summary)
 		line := formatSessionColumns("   ",
 			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
@@ -3782,7 +3787,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		updated := flowUpdatedLabel(record)
 		repo := ""
 		if showRepo {
-			repo = terminalSafeSingleLine(flowRepoLabel(record, repoDisplayNames))
+			repo = terminalSafeHyperlinkLabel(flowRepoLabel(record, repoDisplayNames))
 		}
 		branch := record.Branch
 		if branch == "" {
@@ -3792,7 +3797,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				branch = "missing-worktree"
 			}
 		}
-		branch = terminalSafeSingleLine(branch)
+		branch = terminalSafeHyperlinkLabel(branch)
 		rowSelected := i == selected && selectedPhaseID == ""
 		statusCell := statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
 		targets := flowRowHyperlinkTargets{
@@ -4269,7 +4274,7 @@ func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scr
 			rootLabel = " " + rootStyle.Render("[root]")
 		}
 
-		path := " " + hyperlink(commitStyle.Render(terminalSafeSingleLine(wt.Path)), fileHyperlinkTarget(wt.Path))
+		path := " " + hyperlink(commitStyle.Render(terminalSafeHyperlinkLabel(wt.Path)), fileHyperlinkTarget(wt.Path))
 
 		line := "   " + name + indicators + rootLabel + path
 		if i == selected {
@@ -4364,7 +4369,7 @@ func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
 		line += selectedSegment(rootStyle, "[root]")
 	}
 	line += selectedStyle.Render(" ")
-	line += hyperlink(selectedSegment(commitStyle, terminalSafeSingleLine(wt.Path)), fileHyperlinkTarget(wt.Path))
+	line += hyperlink(selectedSegment(commitStyle, terminalSafeHyperlinkLabel(wt.Path)), fileHyperlinkTarget(wt.Path))
 	return renderSelectedRow(line, width)
 }
 

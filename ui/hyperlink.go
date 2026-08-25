@@ -18,7 +18,7 @@ func hyperlink(label, target string) string {
 }
 
 func hyperlinkColumn(label, target string, width int, style lipgloss.Style) string {
-	label = terminalSafeSingleLine(label)
+	label = terminalSafeHyperlinkLabel(label)
 	label = truncateToWidth(label, width)
 	cell := hyperlink(style.Render(label), target)
 	if padding := width - ansi.StringWidth(label); padding > 0 {

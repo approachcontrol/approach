@@ -334,6 +334,84 @@ func TestTerminalPreservesHyperlinksInVisibleLines(t *testing.T) {
 	}
 }
 
+func TestTerminalPreservesHyperlinksInSavedScrollback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	const target = "https://example.com/pull/8"
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf '\033]8;;https://example.com/pull/8\aold-link\033]8;;\a\\none\\ntwo\\nthree\\n'"},
+		Width:   20,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+
+	got := strings.Join(term.VisibleLines(20, 6), "\n")
+	if !strings.Contains(got, ansi.SetHyperlink(target)) {
+		t.Fatalf("saved scrollback dropped hyperlink: %q", got)
+	}
+	if !strings.Contains(got, ansi.ResetHyperlink()) {
+		t.Fatalf("saved scrollback did not close hyperlink: %q", got)
+	}
+}
+
+func TestTerminalPreservesHyperlinkWithSemicolonURI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	const target = "https://example.com/__approach_osc8_escape__/a;b?x=1;y=2"
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf '\033]8;;https://example.com/__approach_osc8_escape__/a;b?x=1;y=2\alink\033]8;;\a'"},
+		Width:   40,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+
+	got := strings.Join(term.VisibleLines(40, 2), "\n")
+	if !strings.Contains(got, ansi.SetHyperlink(target)) {
+		t.Fatalf("semicolon URI hyperlink was not preserved: %q", got)
+	}
+}
+
+func TestOSC8InputFilterHandlesChunkBoundaries(t *testing.T) {
+	const target = "https://example.com/a;b"
+	var filter osc8InputFilter
+	chunks := [][]byte{
+		[]byte("before\x1b"),
+		[]byte("]8;id=8;https://example.com/a"),
+		[]byte(";b\x1b"),
+		[]byte("\\link\x1b]8;;\aafter"),
+	}
+	var got []byte
+	for i, chunk := range chunks {
+		got = append(got, filter.Filter(chunk, i == len(chunks)-1)...)
+	}
+	want := "before\x1b]8;" + encodeOSC8URI(target) + ";id=8\x1b\\link\x1b]8;;\aafter"
+	if string(got) != want {
+		t.Fatalf("filtered OSC 8 stream = %q, want %q", string(got), want)
+	}
+}
+
 func TestTerminalVisibleLinesFitRequestedWidth(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

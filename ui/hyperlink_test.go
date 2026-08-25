@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -191,6 +192,34 @@ func TestFilesystemHyperlinkLabelsAreTerminalSafe(t *testing.T) {
 			}
 			if strings.ContainsAny(ansi.Strip(row), "\n\r\a\x1b") {
 				t.Fatalf("row contains an unsafe line or control character: %q", row)
+			}
+		})
+	}
+}
+
+func TestFilesystemHyperlinkLabelsPreservePrintableWhitespace(t *testing.T) {
+	const (
+		displayName = "repo  copy "
+		path        = "/tmp/repo  copy "
+	)
+	flow := flowstore.FlowRecord{
+		FlowID: "flow-1", Title: "Flow", Status: flowstore.StatusInProgress,
+		RepoPath: "/tmp/repo", WorktreePath: path,
+	}
+	rows := map[string]struct {
+		row  string
+		want string
+	}{
+		"repo":     {row: renderRepoList([]scanner.Repo{{Path: "/tmp/repo", DisplayName: displayName}}, 0, 0, 120, 1, "", nil)[0], want: displayName},
+		"worktree": {row: renderWorktreePane([]gitquery.Worktree{{Path: path, BranchName: "feature"}}, 0, 0, 240, 1)[0], want: path},
+		"branch":   {row: renderBranchPaneSelected([]gitquery.BranchRow{{Branch: gitquery.Branch{Name: "feature", IsWorktree: true}, WorktreePath: path}}, 0, 0, 240, 1, "/tmp/repo")[0], want: path},
+		"session":  {row: renderSessionPane([]sessions.SessionRecord{{Provider: sessions.ProviderCodex, WorktreePath: path, Status: "ended"}}, 0, 0, 240, 2)[1], want: filepath.Base(path)},
+		"flow":     {row: renderFlowPane([]flowstore.FlowRecord{flow}, 0, 0, 240, 2, "", "", nil, true, map[string]string{flow.RepoPath: displayName})[1], want: displayName},
+	}
+	for name, tt := range rows {
+		t.Run(name, func(t *testing.T) {
+			if got := ansi.Strip(tt.row); !strings.Contains(got, tt.want) {
+				t.Fatalf("row changed printable path whitespace: got %q, want substring %q", got, tt.want)
 			}
 		})
 	}
