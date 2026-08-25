@@ -970,7 +970,7 @@ func renderApplication(p RenderParams) string {
 		message := "Could not load " + beadsModeLabel(p.Mode) + " beads: " + terminalSafeSingleLine(p.BeadsError)
 		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, message)
 	case IsBeadsMode(p.Mode) && len(p.BeadsOpen) > 0:
-		rightLines = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight, p.BeadExpansion)
+		rightLines = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight, p.BeadExpansion, repoPath)
 	case IsBeadsMode(p.Mode):
 		message := p.RightEmptyMessage
 		if message == "" {
@@ -1117,7 +1117,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	case IsBeadsMode(mode) && p.BeadsError != "":
 		body = renderPlaceholderPane(width, bodyRows, "Could not load "+beadsModeLabel(mode)+" beads: "+terminalSafeSingleLine(p.BeadsError))
 	case IsBeadsMode(mode) && len(p.BeadsOpen) > 0:
-		body = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows, p.BeadExpansion)
+		body = renderBeadsPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows, p.BeadExpansion, repoPath)
 	case IsBeadsMode(mode):
 		message := "beads not configured"
 		if repoPath == "" || p.BeadsOpenAvailable {
@@ -2993,7 +2993,7 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	for i := 0; i < height; i++ {
 		idx := scroll + i
 		if idx < len(repos) {
-			name := repos[idx].DisplayName
+			name := terminalSafeHyperlinkLabel(repos[idx].DisplayName)
 			activeRepo := repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path)
 			activityMarker := ""
 			if showActivityColumn {
@@ -3002,10 +3002,11 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 					activityMarker = "● "
 				}
 			}
+			target := fileHyperlinkTarget(repos[idx].Path)
 			if idx == selected {
-				lines[i] = renderSelectedRepoRow(name, activityMarker, activeRepo, showActivityColumn, width)
+				lines[i] = renderSelectedRepoRow(name, target, activityMarker, activeRepo, showActivityColumn, width)
 			} else {
-				lines[i] = renderRepoRow(name, activityMarker, activeRepo, showActivityColumn, width)
+				lines[i] = renderRepoRow(name, target, activityMarker, activeRepo, showActivityColumn, width)
 			}
 		} else {
 			lines[i] = strings.Repeat(" ", width)
@@ -3027,7 +3028,8 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRes
 	}
 	lines = append(lines, restoreHint)
 	if selected >= 0 && selected < len(repos) {
-		for _, r := range repos[selected].DisplayName {
+		target := fileHyperlinkTarget(repos[selected].Path)
+		for _, r := range terminalSafeHyperlinkLabel(repos[selected].DisplayName) {
 			if len(lines) >= height {
 				break
 			}
@@ -3035,7 +3037,7 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRes
 			if width <= 0 || width > contentWidth {
 				continue
 			}
-			line := string(r)
+			line := hyperlink(string(r), target)
 			if width < contentWidth {
 				line += strings.Repeat(" ", contentWidth-width)
 			}
@@ -3048,7 +3050,7 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRes
 	return lines
 }
 
-func renderSelectedRepoRow(name, activityMarker string, activeRepo, showActivityColumn bool, width int) string {
+func renderSelectedRepoRow(name, target, activityMarker string, activeRepo, showActivityColumn bool, width int) string {
 	line := selectedStyle.Render(" > ")
 	if showActivityColumn {
 		if activeRepo {
@@ -3057,11 +3059,11 @@ func renderSelectedRepoRow(name, activityMarker string, activeRepo, showActivity
 			line += selectedStyle.Render(activityMarker)
 		}
 	}
-	line += selectedStyle.Render(name)
+	line += hyperlink(selectedStyle.Render(name), target)
 	return renderSelectedRow(line, width)
 }
 
-func renderRepoRow(name, activityMarker string, activeRepo, showActivityColumn bool, width int) string {
+func renderRepoRow(name, target, activityMarker string, activeRepo, showActivityColumn bool, width int) string {
 	line := repoStyle.Render("   ")
 	if showActivityColumn {
 		if activeRepo {
@@ -3070,7 +3072,7 @@ func renderRepoRow(name, activityMarker string, activeRepo, showActivityColumn b
 			line += repoStyle.Render(activityMarker)
 		}
 	}
-	line += repoStyle.Render(name)
+	line += hyperlink(repoStyle.Render(name), target)
 	return renderStyledRow(line, repoStyle, width)
 }
 
@@ -3127,10 +3129,11 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 		var locationLabel string
 		if row.WorktreePath != "" {
+			worktreePath := terminalSafeHyperlinkLabel(row.WorktreePath)
 			if repoPath != "" && row.WorktreePath == repoPath {
-				locationLabel = " " + rootStyle.Render("[root]")
+				locationLabel = " " + hyperlink(rootStyle.Render("[root]"), fileHyperlinkTarget(row.WorktreePath))
 			} else {
-				locationLabel = " " + commitStyle.Render(fmt.Sprintf("[%s]", row.WorktreePath))
+				locationLabel = " " + hyperlink(commitStyle.Render(fmt.Sprintf("[%s]", worktreePath)), fileHyperlinkTarget(row.WorktreePath))
 			}
 		}
 
@@ -3184,9 +3187,10 @@ func renderSelectedBranchRow(row gitquery.BranchRow, repoPath string, width int)
 	if row.WorktreePath != "" {
 		line += selectedStyle.Render(" ")
 		if repoPath != "" && row.WorktreePath == repoPath {
-			line += selectedSegment(rootStyle, "[root]")
+			line += hyperlink(selectedSegment(rootStyle, "[root]"), fileHyperlinkTarget(row.WorktreePath))
 		} else {
-			line += selectedSegment(commitStyle, fmt.Sprintf("[%s]", row.WorktreePath))
+			worktreePath := terminalSafeHyperlinkLabel(row.WorktreePath)
+			line += hyperlink(selectedSegment(commitStyle, fmt.Sprintf("[%s]", worktreePath)), fileHyperlinkTarget(row.WorktreePath))
 		}
 	}
 	return renderSelectedRow(line, width)
@@ -3297,10 +3301,15 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 }
 
 func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, height int) []string {
-	return renderBeadsPane(beads, selected, scroll, width, height, BeadExpansion{})
+	return renderBeadsPane(beads, selected, scroll, width, height, BeadExpansion{}, "")
 }
 
 func terminalSafeSingleLine(text string) string {
+	text = terminalSafeHyperlinkLabel(text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func terminalSafeHyperlinkLabel(text string) string {
 	text = ansi.Strip(text)
 	text = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -3308,7 +3317,7 @@ func terminalSafeSingleLine(text string) string {
 		}
 		return r
 	}, text)
-	return strings.Join(strings.Fields(text), " ")
+	return text
 }
 
 func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width, height int) []string {
@@ -3328,11 +3337,12 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		if worktree == "." || worktree == string(filepath.Separator) {
 			worktree = ""
 		}
+		worktree = terminalSafeHyperlinkLabel(worktree)
 		summary := sessionSummaryDisplayText(record.Summary)
 		line := formatSessionColumns("   ",
 			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
 			branchStyle.Render(fitSessionColumn(record.Branch, sessionBranchWidth)),
-			stashDateStyle.Render(fitSessionColumn(worktree, sessionWorktreeWidth)),
+			hyperlinkColumn(worktree, fileHyperlinkTarget(record.WorktreePath), sessionWorktreeWidth, stashDateStyle),
 			statusStyle.Render(fitSessionColumn(record.Status, sessionStatusWidth)),
 			stashMsgStyle.Render(summary),
 		)
@@ -3340,7 +3350,7 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 			selectedLine := truncateToWidth(formatSessionColumns(" > ",
 				provider,
 				record.Branch,
-				worktree,
+				hyperlink(worktree, fileHyperlinkTarget(record.WorktreePath)),
 				record.Status,
 				summary,
 			), width)
@@ -3711,18 +3721,18 @@ func renderPRBabysitterPane(rows []PRBabysitterRow, selected, scroll, width, hei
 			prefix,
 			prBabysitterStatusStyle(mergeability).Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
 			prBabysitterStatusStyle(checks).Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
-			statusStyle.Render(fitSessionColumn(repo, prBabysitterRepoWidth)),
-			stashMsgStyle.Render(fitSessionColumn(title, prBabysitterFlowWidth)),
-			statusStyle.Render(fitSessionColumn(beadID, prBabysitterBeadWidth)),
+			hyperlinkColumn(repo, fileHyperlinkTarget(record.RepoPath), prBabysitterRepoWidth, statusStyle),
+			hyperlinkColumn(title, prHyperlinkTarget(record.PR.URL), prBabysitterFlowWidth, stashMsgStyle),
+			hyperlinkColumn(beadID, beadHyperlinkTarget(record.RepoPath, row.BeadID), prBabysitterBeadWidth, statusStyle),
 		)
 		if index == selected && selectedPhaseID == "" {
 			line = renderSelectedRow(formatPRBabysitterColumns(
 				selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
 				selectedStyle.Render(fitSessionColumn(mergeability, prBabysitterMergeabilityWidth)),
 				selectedStyle.Render(fitSessionColumn(checks, prBabysitterChecksWidth)),
-				selectedStyle.Render(fitSessionColumn(repo, prBabysitterRepoWidth)),
-				selectedStyle.Render(fitSessionColumn(title, prBabysitterFlowWidth)),
-				selectedStyle.Render(fitSessionColumn(beadID, prBabysitterBeadWidth)),
+				hyperlinkColumn(repo, fileHyperlinkTarget(record.RepoPath), prBabysitterRepoWidth, selectedStyle),
+				hyperlinkColumn(title, prHyperlinkTarget(record.PR.URL), prBabysitterFlowWidth, selectedStyle),
+				hyperlinkColumn(beadID, beadHyperlinkTarget(record.RepoPath, row.BeadID), prBabysitterBeadWidth, selectedStyle),
 			), width)
 		}
 		visualRows = append(visualRows, truncateToWidth(line, width))
@@ -3777,7 +3787,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		updated := flowUpdatedLabel(record)
 		repo := ""
 		if showRepo {
-			repo = flowRepoLabel(record, repoDisplayNames)
+			repo = terminalSafeHyperlinkLabel(flowRepoLabel(record, repoDisplayNames))
 		}
 		branch := record.Branch
 		if branch == "" {
@@ -3787,14 +3797,20 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				branch = "missing-worktree"
 			}
 		}
+		branch = terminalSafeHyperlinkLabel(branch)
 		rowSelected := i == selected && selectedPhaseID == ""
 		statusCell := statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
-		repoCell := statusStyle.Render(fitSessionColumn(repo, flowRepoWidth))
-		branchCell := branchStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+		targets := flowRowHyperlinkTargets{
+			repo:   fileHyperlinkTarget(record.RepoPath),
+			branch: fileHyperlinkTarget(record.WorktreePath),
+			pr:     prHyperlinkTarget(record.PR.URL),
+		}
+		repoCell := hyperlinkColumn(repo, targets.repo, flowRepoWidth, statusStyle)
+		branchCell := hyperlinkColumn(branch, targets.branch, flowBranchWidth, branchStyle)
 		phaseCell := diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
 		issueCell := statusStyle.Render(fitSessionColumn(issue, flowIssueWidth))
 		planCell := statusStyle.Render(fitSessionColumn(plan, flowPlanWidth))
-		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
+		prCell := hyperlinkColumn(pr, targets.pr, flowPRWidth, statusStyle)
 		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
 		title := terminalSafeSingleLine(record.Title)
 		if reason := strings.TrimSpace(record.Closed.Reason); reason != "" && flowstore.FlowClosed(record) {
@@ -3823,7 +3839,8 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				pr,
 				updated,
 				title,
-				width)
+				width,
+				targets)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {
@@ -3874,7 +3891,8 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 				"",
 				"",
 				title,
-				width)
+				width,
+				flowRowHyperlinkTargets{})
 		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
@@ -3977,15 +3995,21 @@ func formatFlowColumns(showRepo bool, prefix, status, repo, branch, phase, issue
 	)
 }
 
-func renderSelectedFlowColumns(showRepo bool, prefix, status, repo, branch, phase, issue, plan, pr, updated, title string, width int) string {
+type flowRowHyperlinkTargets struct {
+	repo   string
+	branch string
+	pr     string
+}
+
+func renderSelectedFlowColumns(showRepo bool, prefix, status, repo, branch, phase, issue, plan, pr, updated, title string, width int, targets flowRowHyperlinkTargets) string {
 	line := prefix
 	line += selectedStyle.Render(fitSessionColumn(status, flowStatusWidth))
 	line += selectedStyle.Render("  ")
 	if showRepo {
-		line += selectedStyle.Render(fitSessionColumn(repo, flowRepoWidth))
+		line += hyperlinkColumn(repo, targets.repo, flowRepoWidth, selectedStyle)
 		line += selectedStyle.Render("  ")
 	}
-	line += selectedStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+	line += hyperlinkColumn(branch, targets.branch, flowBranchWidth, selectedStyle)
 	line += selectedStyle.Render("  ")
 	line += selectedStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
 	line += selectedStyle.Render("  ")
@@ -3993,7 +4017,7 @@ func renderSelectedFlowColumns(showRepo bool, prefix, status, repo, branch, phas
 	line += selectedStyle.Render("  ")
 	line += selectedStyle.Render(fitSessionColumn(plan, flowPlanWidth))
 	line += selectedStyle.Render("  ")
-	line += selectedStyle.Render(fitSessionColumn(pr, flowPRWidth))
+	line += hyperlinkColumn(pr, targets.pr, flowPRWidth, selectedStyle)
 	line += selectedStyle.Render("  ")
 	line += selectedStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
 	line += selectedStyle.Render("  ")
@@ -4250,7 +4274,7 @@ func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scr
 			rootLabel = " " + rootStyle.Render("[root]")
 		}
 
-		path := " " + commitStyle.Render(wt.Path)
+		path := " " + hyperlink(commitStyle.Render(terminalSafeHyperlinkLabel(wt.Path)), fileHyperlinkTarget(wt.Path))
 
 		line := "   " + name + indicators + rootLabel + path
 		if i == selected {
@@ -4345,7 +4369,7 @@ func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
 		line += selectedSegment(rootStyle, "[root]")
 	}
 	line += selectedStyle.Render(" ")
-	line += selectedSegment(commitStyle, wt.Path)
+	line += hyperlink(selectedSegment(commitStyle, terminalSafeHyperlinkLabel(wt.Path)), fileHyperlinkTarget(wt.Path))
 	return renderSelectedRow(line, width)
 }
 

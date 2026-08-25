@@ -71,21 +71,21 @@ func BeadVisualHeight(bead beadsquery.Bead, expansion BeadExpansion) int {
 	return height
 }
 
-func renderBeadsPane(beads []beadsquery.Bead, selected, scroll, width, height int, expansion BeadExpansion) []string {
+func renderBeadsPane(beads []beadsquery.Bead, selected, scroll, width, height int, expansion BeadExpansion, repoPath string) []string {
 	content := make([]string, 0, len(beads))
 	for i, bead := range beads {
-		content = append(content, expansionVisualLines(bead, i == selected, width, expansion)...)
+		content = append(content, expansionVisualLines(bead, i == selected, width, expansion, repoPath)...)
 	}
 	return scrollAndPad(content, scroll, height)
 }
 
-func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expansion BeadExpansion) []string {
+func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expansion BeadExpansion, repoPath string) []string {
 	own := selected && bead.ID == expansion.EpicID
 	markers := beadRowMarkers{
 		Auto:   own && expansion.ProgressionKnown && expansion.ProgressionEnabled,
 		Halted: own && strings.TrimSpace(expansion.ProgressionHaltDetail) != "",
 	}
-	lines := []string{renderBeadRow(bead, selected, width, markers)}
+	lines := []string{renderBeadRow(bead, selected, width, markers, repoPath)}
 	if expansion.EpicID == "" || bead.ID != expansion.EpicID {
 		return lines
 	}
@@ -112,7 +112,7 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 			for _, child := range expansion.Children {
 				id := terminalSafeSingleLine(child.ID)
 				title := terminalSafeSingleLine(child.Title)
-				body := fmt.Sprintf("↳ %s  P%d  %s", id, child.Priority, title)
+				body := fmt.Sprintf("↳ %s  P%d  %s", hyperlink(id, beadHyperlinkTarget(repoPath, child.ID)), child.Priority, title)
 				marker := ""
 				if expansion.ReadinessKnown && expansion.ReadyIDs[child.ID] {
 					marker = "  [ready]"
@@ -136,11 +136,11 @@ func expansionVisualLines(bead beadsquery.Bead, selected bool, width int, expans
 	return lines
 }
 
-func renderBeadRow(bead beadsquery.Bead, selected bool, width int, markers beadRowMarkers) string {
+func renderBeadRow(bead beadsquery.Bead, selected bool, width int, markers beadRowMarkers, repoPath string) string {
 	id := terminalSafeSingleLine(bead.ID)
 	title := terminalSafeSingleLine(bead.Title)
 	assignee := terminalSafeSingleLine(bead.Assignee)
-	body := fmt.Sprintf("%s  P%d  %s", id, bead.Priority, title)
+	body := fmt.Sprintf("%s  P%d  %s", hyperlink(id, beadHyperlinkTarget(repoPath, bead.ID)), bead.Priority, title)
 	if assignee != "" {
 		body += "  " + assignee
 	}

@@ -1,6 +1,7 @@
 package embeddedterm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -55,7 +56,10 @@ const (
 	finalOutputDrainTimeout = 200 * time.Millisecond
 	terminateWaitTimeout    = 2 * time.Second
 	maxPendingSequenceBytes = 16
+	maxPendingOSC8Bytes     = 64 * 1024
 )
+
+const osc8URIEscapeMarker = "__approach_osc8_escape__"
 
 var newEmulator = func(width, height int) (*vt.SafeEmulator, error) {
 	return vt.NewSafeEmulator(width, height), nil
@@ -327,6 +331,7 @@ func (t *Terminal) waitLoop() {
 func (t *Terminal) readLoop(ptmx *os.File, emu *vt.SafeEmulator) {
 	defer close(t.readDone)
 	filter := terminalQueryFilter{writer: ptmx}
+	hyperlinks := osc8InputFilter{}
 	buf := make([]byte, 4096)
 	for {
 		n, err := ptmx.Read(buf)
@@ -338,6 +343,7 @@ func (t *Terminal) readLoop(ptmx *os.File, emu *vt.SafeEmulator) {
 			if t.transform != nil {
 				filtered = t.transform.Transform(filtered, final)
 			}
+			filtered = hyperlinks.Filter(filtered, final)
 			if len(filtered) > 0 {
 				t.emuMu.Lock()
 				_, writeErr := emu.Write(filtered)
@@ -349,6 +355,107 @@ func (t *Terminal) readLoop(ptmx *os.File, emu *vt.SafeEmulator) {
 		}
 		if err != nil {
 			return
+		}
+	}
+}
+
+// osc8InputFilter works around x/vt's reversed hyperlink fields and its
+// unbounded semicolon split. It swaps the URI and parameter fields before the
+// emulator sees them, escaping URI semicolons with a reversible marker.
+type osc8InputFilter struct {
+	pending []byte
+}
+
+func (f *osc8InputFilter) Filter(p []byte, final bool) []byte {
+	const prefix = "\x1b]8;"
+	data := append(append([]byte(nil), f.pending...), p...)
+	f.pending = nil
+	out := make([]byte, 0, len(data))
+
+	for len(data) > 0 {
+		start := bytes.Index(data, []byte(prefix))
+		if start < 0 {
+			keep := 0
+			if !final {
+				keep = osc8PrefixSuffixLen(data, []byte(prefix))
+			}
+			out = append(out, data[:len(data)-keep]...)
+			f.pending = append(f.pending, data[len(data)-keep:]...)
+			break
+		}
+		out = append(out, data[:start]...)
+		data = data[start:]
+		end, terminatorLen := oscTerminator(data[len(prefix):])
+		if end < 0 {
+			if !final && len(data) <= maxPendingOSC8Bytes {
+				f.pending = append(f.pending, data...)
+			} else {
+				out = append(out, data...)
+			}
+			break
+		}
+		end += len(prefix)
+		params, uri, ok := strings.Cut(string(data[len(prefix):end]), ";")
+		if !ok {
+			out = append(out, data[:end+terminatorLen]...)
+		} else {
+			out = append(out, prefix...)
+			out = append(out, encodeOSC8URI(uri)...)
+			out = append(out, ';')
+			out = append(out, params...)
+			out = append(out, data[end:end+terminatorLen]...)
+		}
+		data = data[end+terminatorLen:]
+	}
+	return out
+}
+
+func osc8PrefixSuffixLen(data, prefix []byte) int {
+	limit := min(len(data), len(prefix)-1)
+	for length := limit; length > 0; length-- {
+		if bytes.Equal(data[len(data)-length:], prefix[:length]) {
+			return length
+		}
+	}
+	return 0
+}
+
+func oscTerminator(data []byte) (int, int) {
+	bel := bytes.IndexByte(data, '\a')
+	st := bytes.Index(data, []byte("\x1b\\"))
+	switch {
+	case bel >= 0 && (st < 0 || bel < st):
+		return bel, 1
+	case st >= 0:
+		return st, 2
+	default:
+		return -1, 0
+	}
+}
+
+func encodeOSC8URI(uri string) string {
+	uri = strings.ReplaceAll(uri, osc8URIEscapeMarker, osc8URIEscapeMarker+"m")
+	return strings.ReplaceAll(uri, ";", osc8URIEscapeMarker+"s")
+}
+
+func decodeOSC8URI(uri string) string {
+	var out strings.Builder
+	for {
+		before, after, ok := strings.Cut(uri, osc8URIEscapeMarker)
+		out.WriteString(before)
+		if !ok {
+			return out.String()
+		}
+		switch {
+		case strings.HasPrefix(after, "s"):
+			out.WriteByte(';')
+			uri = after[1:]
+		case strings.HasPrefix(after, "m"):
+			out.WriteString(osc8URIEscapeMarker)
+			uri = after[1:]
+		default:
+			out.WriteString(osc8URIEscapeMarker)
+			uri = after
 		}
 	}
 }
@@ -404,7 +511,7 @@ func (t *Terminal) trySnapshotRows() []string {
 	rows := make([]string, 0, emu.ScrollbackLen()+emu.Height())
 	if scrollback := emu.Scrollback(); scrollback != nil {
 		for _, line := range scrollback.Lines() {
-			rows = append(rows, line.Render())
+			rows = append(rows, normalizeRenderedHyperlinkLine(line.Render()))
 		}
 	}
 	rows = append(rows, splitTerminalRows(emu.Render())...)
@@ -447,11 +554,68 @@ func fitTerminalLine(line string, width int) string {
 }
 
 func splitTerminalRows(rendered string) []string {
+	rendered = normalizeRenderedHyperlinks(rendered)
 	rows := strings.Split(rendered, "\n")
 	if len(rows) > 0 && rows[len(rows)-1] == "" {
 		rows = rows[:len(rows)-1]
 	}
 	return rows
+}
+
+// x/vt renders the reversible URI escape used by osc8InputFilter. Restore the
+// exact child-provided target before exposing rendered rows to the host.
+func normalizeRenderedHyperlinks(rendered string) string {
+	const prefix = "\x1b]8;"
+	var out strings.Builder
+	for {
+		start := strings.Index(rendered, prefix)
+		if start < 0 {
+			out.WriteString(rendered)
+			return out.String()
+		}
+		out.WriteString(rendered[:start])
+		rendered = rendered[start:]
+		end := strings.IndexByte(rendered, '\a')
+		if end < 0 {
+			out.WriteString(rendered)
+			return out.String()
+		}
+		sequence := rendered[:end+1]
+		payload := rendered[len(prefix):end]
+		params, uri, ok := strings.Cut(payload, ";")
+		if ok {
+			sequence = prefix + params + ";" + decodeOSC8URI(uri) + "\a"
+		}
+		out.WriteString(sequence)
+		rendered = rendered[end+1:]
+	}
+}
+
+func normalizeRenderedHyperlinkLine(rendered string) string {
+	rendered = normalizeRenderedHyperlinks(rendered)
+	const prefix = "\x1b]8;"
+	open := false
+	remaining := rendered
+	for {
+		start := strings.Index(remaining, prefix)
+		if start < 0 {
+			break
+		}
+		remaining = remaining[start+len(prefix):]
+		end := strings.IndexByte(remaining, '\a')
+		if end < 0 {
+			break
+		}
+		_, uri, ok := strings.Cut(remaining[:end], ";")
+		if ok {
+			open = uri != ""
+		}
+		remaining = remaining[end+1:]
+	}
+	if open {
+		rendered += ansi.ResetHyperlink()
+	}
+	return rendered
 }
 
 func trimBlankTerminalRows(rows []string) []string {

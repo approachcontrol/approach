@@ -462,7 +462,7 @@ func TestRender_ActiveFlowsSelectedActiveRowsPreserveSelectionAfterRepoColumn(t 
 	if !strings.Contains(flowRow, selectedSegment(flowTerminalStyle, "●")) {
 		t.Fatalf("selected active flow marker should keep semantic marker style:\n%q", flowRow)
 	}
-	if want := selectedStyle.Render(fitSessionColumn("approach", flowRepoWidth)); !strings.Contains(flowRow, want) {
+	if want := hyperlinkColumn("approach", fileHyperlinkTarget(flows[0].RepoPath), flowRepoWidth, selectedStyle); !strings.Contains(flowRow, want) {
 		t.Fatalf("selected active flow row should style repo column after marker:\n%q\nmissing %q", flowRow, want)
 	}
 
