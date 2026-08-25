@@ -93,10 +93,30 @@ func validateUntrackedOwnerIdentity(owner UntrackedOwner) error {
 	}
 	switch owner.Role {
 	case UntrackedOwnerWorktreeAgent, UntrackedOwnerAutofix, UntrackedOwnerRepair:
-		return nil
+		return validateUntrackedOwnerTransport(owner.Transport)
 	default:
 		return fmt.Errorf("invalid phase-untracked owner role %q", owner.Role)
 	}
+}
+
+func validateUntrackedOwnerTransport(transport UntrackedOwnerTransport) error {
+	switch transport.Kind {
+	case UntrackedTransportLauncher, UntrackedTransportDirect:
+		if transport.PID <= 0 || strings.TrimSpace(transport.ProcessToken) == "" {
+			return fmt.Errorf("phase-untracked %s transport requires a PID and process token", transport.Kind)
+		}
+	case UntrackedTransportRepoTmux:
+		if strings.TrimSpace(transport.Session) == "" || strings.TrimSpace(transport.Window) == "" {
+			return errors.New("phase-untracked repo tmux transport requires a session and window")
+		}
+	case UntrackedTransportEmbeddedTmux:
+		if strings.TrimSpace(transport.Socket) == "" || strings.TrimSpace(transport.Session) == "" {
+			return errors.New("phase-untracked embedded tmux transport requires a socket and session")
+		}
+	default:
+		return fmt.Errorf("invalid phase-untracked owner transport %q", transport.Kind)
+	}
+	return nil
 }
 
 func (s *Store) ClaimUntrackedOwner(update UntrackedOwnerClaim) (FlowRecord, error) {
@@ -155,6 +175,9 @@ func (s *Store) ReplaceUntrackedOwner(update UntrackedOwnerReplacement) (FlowRec
 // the launcher reservation still owns admission. A failed activation can then
 // remain fail-closed on the real transport instead of only the launcher PID.
 func (s *Store) PrepareUntrackedOwnerTransport(update UntrackedOwnerActivation) (FlowRecord, error) {
+	if err := validateUntrackedOwnerTransport(update.Transport); err != nil {
+		return FlowRecord{}, err
+	}
 	expected := strings.TrimSpace(update.LaunchID)
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, _ time.Time) (FlowRecord, error) {
 		owner := record.UntrackedOwner
@@ -170,6 +193,9 @@ func (s *Store) PrepareUntrackedOwnerTransport(update UntrackedOwnerActivation) 
 }
 
 func (s *Store) ActivateUntrackedOwner(update UntrackedOwnerActivation) (FlowRecord, error) {
+	if err := validateUntrackedOwnerTransport(update.Transport); err != nil {
+		return FlowRecord{}, err
+	}
 	expected := strings.TrimSpace(update.LaunchID)
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		owner := record.UntrackedOwner

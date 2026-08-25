@@ -2,6 +2,8 @@ package flowstore_test
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -17,6 +19,11 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	record := mustCreateFlow(t, store, "durable untracked owner")
+	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{
+		FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{LaunchID: "invalid", Role: flowstore.UntrackedOwnerRepair},
+	}); err == nil || !strings.Contains(err.Error(), "transport") {
+		t.Fatalf("identity-less claim error = %v", err)
+	}
 
 	claimed, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{
 		FlowID: record.FlowID,
@@ -31,7 +38,10 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	if got := claimed.UntrackedOwner; got == nil || got.LaunchID != "launch-1" || got.State != flowstore.UntrackedOwnerReserved || got.ReservedAt.IsZero() || got.Transport.PID != 4242 || got.LauncherPID != 4242 || got.LauncherToken != "birth-4242" {
 		t.Fatalf("claimed owner = %#v", got)
 	}
-	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{LaunchID: "launch-2", Role: flowstore.UntrackedOwnerRepair}}); !errors.Is(err, flowstore.ErrFlowUntrackedOwned) {
+	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{
+		LaunchID: "launch-2", Role: flowstore.UntrackedOwnerRepair,
+		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 4343, ProcessToken: "birth-4343"},
+	}}); !errors.Is(err, flowstore.ErrFlowUntrackedOwned) {
 		t.Fatalf("competing claim error = %v", err)
 	}
 	if err := store.Delete(record.FlowID); !errors.Is(err, flowstore.ErrFlowUntrackedOwned) {
@@ -41,6 +51,12 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	activation := flowstore.UntrackedOwnerActivation{
 		FlowID: record.FlowID, LaunchID: "launch-1",
 		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "approach-repo", Window: "launch-1"},
+	}
+	if _, err := store.PrepareUntrackedOwnerTransport(flowstore.UntrackedOwnerActivation{
+		FlowID: record.FlowID, LaunchID: "launch-1",
+		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "approach-repo"},
+	}); err == nil || !strings.Contains(err.Error(), "window") {
+		t.Fatalf("partial prepared transport error = %v", err)
 	}
 	prepared, err := store.PrepareUntrackedOwnerTransport(activation)
 	if err != nil {
@@ -92,7 +108,10 @@ func TestUntrackedOwnerReplacementAndConcurrentClaimsFenceByLaunch(t *testing.T)
 		wg.Add(1)
 		go func(i int, store *flowstore.Store) {
 			defer wg.Done()
-			_, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{LaunchID: []string{"launch-a", "launch-b"}[i], Role: flowstore.UntrackedOwnerAutofix}})
+			_, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{
+				LaunchID: []string{"launch-a", "launch-b"}[i], Role: flowstore.UntrackedOwnerAutofix,
+				Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 6000 + i, ProcessToken: fmt.Sprintf("birth-%d", 6000+i)},
+			}})
 			errs <- err
 		}(i, store)
 	}
