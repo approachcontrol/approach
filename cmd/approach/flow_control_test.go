@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
@@ -546,6 +547,30 @@ func TestLostControllerResponseReturnsDurableResultWithoutReexecution(t *testing
 	requests, _ = log.Requests()
 	if len(requests) != 2 || requests[1].Verb != launchcontrol.VerbPhaseSet {
 		t.Fatalf("requests after replayable result recovery = %#v", requests)
+	}
+}
+
+func TestLostReadResponseFallsBackWithoutTakingLaunchLogLock(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Lost read", "--instructions", "x", "--repo-path", filepath.Join(root, "repo"), "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	_, endpoint := controllerFor(t, root, created.FlowID, "plan", "launch-1")
+	droppingEndpoint := dropControllerResponses(t, endpoint.Path)
+	log, _ := launchcontrol.OpenLog(root, "launch-1")
+	unlock, err := log.Lock(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	var stdout, stderr bytes.Buffer
+	err = run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: controlEnv(root, droppingEndpoint, endpoint.Token, "launch-1", created.FlowID, "plan")}))
+	if err != nil {
+		t.Fatalf("read after lost response = %v (%s)", err, stderr.String())
+	}
+	var got flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.FlowID != created.FlowID {
+		t.Fatalf("read output = %s (%v)", stdout.String(), err)
 	}
 }
 

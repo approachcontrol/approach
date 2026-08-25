@@ -366,3 +366,9 @@ func TestLogReadersRefuseFilesFromANewerSchema(t *testing.T) {
 		t.Fatalf("sweep replayed a newer-schema launch: %#v", report)
 	}
 }
+
+func TestResponseAwareReplayUsesLogSchemaTwo(t *testing.T) {
+	if LogSchemaVersion != 2 {
+		t.Fatalf("LogSchemaVersion = %d, want 2 for durable per-request responses", LogSchemaVersion)
+	}
+}

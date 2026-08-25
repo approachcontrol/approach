@@ -1731,7 +1731,7 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	if cfgErr != nil {
 		return launchcontrol.Response{}, fmt.Errorf("error loading config: %w", cfgErr)
 	}
-	if errors.Is(err, launchcontrol.ErrResponseLost) {
+	if errors.Is(err, launchcontrol.ErrResponseLost) && !launchcontrol.IsRead(req.Verb) {
 		if saved, ok, lookupErr := recoverLostFlowResponse(stateRoot, cfg, deps, control, req); lookupErr != nil {
 			return launchcontrol.Response{}, lookupErr
 		} else if ok {
