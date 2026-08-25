@@ -28,6 +28,7 @@ exist:
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Clipboard method | none | `[clipboard].method` | `auto` |
 | OSC 52 encoded payload limit | none | `[clipboard].osc52_max_payload_bytes` | `100000` bytes |
+| Desktop notifications | none | `[notifications].enabled` | `false` |
 | Coding agent | none | `[agent].command` | unset |
 | Agent launch backend | none | `[launch].backend` | `embedded` |
 | Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
@@ -65,6 +66,9 @@ command = "wezterm start"
 [clipboard]
 method = "auto"
 osc52_max_payload_bytes = 100000
+
+[notifications]
+enabled = false
 
 [provider]
 name = "github"
@@ -249,6 +253,21 @@ Approach emits tmux's passthrough form. Configure tmux to permit passthrough and
 clipboard writes, for example with `set -g allow-passthrough on` and
 `set -g set-clipboard on`. Approach sends one complete clipboard update and
 never splits or truncates the copied text.
+
+### `[notifications]`
+
+Controls desktop notifications emitted by the TUI.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `enabled` | boolean | Emit OSC 9 notifications for observed agent exits and Flow phases that newly become `completed`, `blocked`, or `needs_attention`. The default is `false`. |
+
+The terminal hosting Approach must support OSC 9 and allow desktop
+notifications. Unsupported terminals ignore the sequence. Approach reports
+only changes observed while the TUI is running, so startup does not replay old
+outcomes. In tmux launch mode, Approach checks watched windows on its periodic
+launch sweep. A notification may therefore arrive up to 30 seconds after the
+agent exits.
 
 ### `[provider]`
 

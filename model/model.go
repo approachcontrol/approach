@@ -99,6 +99,7 @@ type Model struct {
 	sessions                    pane.Pane[sessions.SessionRecord]
 	plans                       pane.Pane[planstore.PlanRecord]
 	flows                       pane.Pane[flowstore.FlowRecord]
+	notificationsEnabled        bool
 	activeFlowRecords           []flowstore.FlowRecord
 	latestFlowMutations         []cachedFlowMutation
 	pendingFlowHeadlessWrites   []pendingFlowHeadlessWrite
@@ -107,6 +108,7 @@ type Model struct {
 	prBabysitterRecords         []flowstore.FlowRecord
 	prBabysitterFlows           pane.Pane[flowstore.FlowRecord]
 	prBabysitterStatuses        map[string]actions.PullRequestStatus
+	tmuxNotificationWatches     map[string]tmuxNotificationWatch
 	beads                       [beadSubviewCount]beadSubviewState
 	beadExpansion               beadExpansionSnapshot
 	beadExpansionSeq            uint64
@@ -338,6 +340,7 @@ func agentConfigFromOptions(opts Options) agentConfig {
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
+	NotificationsEnabled      bool
 	AgentCommand              string
 	CodexModel                string
 	ClaudeModel               string
@@ -1134,6 +1137,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchControl:             opts.LaunchControl,
 		reconcileLaunchExit:       opts.ReconcileLaunchExit,
 		sweepLaunches:             opts.SweepLaunches,
+		notificationsEnabled:      opts.NotificationsEnabled,
 		bootstrapHookForRepo:      bootstrapHookForRepo,
 		runBootstrapHook:          runBootstrapHook,
 	}
@@ -2135,6 +2139,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		// Before dismissal, because a dismissed slot is gone from the model
 		// and its exit would never be reported.
 		var cmds []tea.Cmd
+		var notificationCmds []tea.Cmd
+		m, notificationCmds = m.collectEmbeddedExitNotifications()
+		cmds = append(cmds, notificationCmds...)
 		var reconcileCmds []tea.Cmd
 		m, reconcileCmds = m.reconcileExitedFlowEmbeddedTerminals()
 		cmds = append(cmds, reconcileCmds...)
@@ -2515,6 +2522,9 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
 	} else if msg.Detached {
+		if msg.Tmux {
+			m = m.withTmuxNotificationWatch(ctx)
+		}
 		// Only detached launches carry a status here; an interactive launch's own
 		// status is set before the TTY handover, since this message lands when the
 		// user's session ends rather than when it starts.

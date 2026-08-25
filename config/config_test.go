@@ -52,6 +52,48 @@ func TestLoadFrom_AllowsMissingConfig(t *testing.T) {
 	if cfg.Launch.Backend != config.LaunchBackendEmbedded {
 		t.Fatalf("expected embedded launch backend by default, got %q", cfg.Launch.Backend)
 	}
+	if cfg.Notifications.Enabled {
+		t.Fatal("expected desktop notifications to be disabled by default")
+	}
+}
+
+func TestLoadFrom_ParsesNotificationsEnabled(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "section omitted", body: "", want: false},
+		{name: "enabled", body: "[notifications]\nenabled = true\n", want: true},
+		{name: "disabled", body: "[notifications]\nenabled = false\n", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.LoadFrom(path)
+			if err != nil {
+				t.Fatalf("LoadFrom returned error: %v", err)
+			}
+			if cfg.Notifications.Enabled != tt.want {
+				t.Fatalf("notifications.enabled = %v, want %v", cfg.Notifications.Enabled, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadFrom_RejectsMalformedNotificationsEnabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[notifications]\nenabled = \"yes\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := config.LoadFrom(path); err == nil {
+		t.Fatal("expected notifications.enabled type error")
+	}
 }
 
 func TestLoadFrom_ParsesLaunchBackend(t *testing.T) {

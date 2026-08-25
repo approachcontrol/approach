@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,6 +33,7 @@ type launchSweepTickMsg struct {
 
 type launchSweepDoneMsg struct {
 	Generation uint64
+	Exited     []tmuxNotificationWatch
 }
 
 // launchExitReconcileDoneMsg reports a reconciliation the model requested for
@@ -44,7 +46,7 @@ type launchExitReconcileDoneMsg struct {
 }
 
 func (m Model) launchSweepTickCmd() tea.Cmd {
-	if m.sweepLaunches == nil {
+	if m.sweepLaunches == nil && (!m.notificationsEnabled || len(m.tmuxNotificationWatches) == 0) {
 		return nil
 	}
 	generation := m.launchSweepTickGen
@@ -56,15 +58,31 @@ func (m Model) launchSweepTickCmd() tea.Cmd {
 // startLaunchSweep runs the controller's sweep as a command, off the render
 // path, then re-arms the tick once it is done so sweeps never overlap.
 func (m Model) startLaunchSweep() (Model, tea.Cmd) {
-	if m.sweepLaunches == nil {
+	if m.sweepLaunches == nil && (!m.notificationsEnabled || len(m.tmuxNotificationWatches) == 0) {
 		return m, nil
 	}
 	m.launchSweepTickGen++
 	generation := m.launchSweepTickGen
 	sweep := m.sweepLaunches
+	probe := m.repoTmuxLaunchWindowLive
+	watches := make([]tmuxNotificationWatch, 0, len(m.tmuxNotificationWatches))
+	if m.notificationsEnabled {
+		for _, watch := range m.tmuxNotificationWatches {
+			watches = append(watches, watch)
+		}
+		sort.Slice(watches, func(i, j int) bool { return watches[i].LaunchID < watches[j].LaunchID })
+	}
 	return m, func() tea.Msg {
-		sweep()
-		return launchSweepDoneMsg{Generation: generation}
+		if sweep != nil {
+			sweep()
+		}
+		var exited []tmuxNotificationWatch
+		for _, watch := range watches {
+			if probe != nil && !probe(watch.RepoPath, watch.LaunchID) {
+				exited = append(exited, watch)
+			}
+		}
+		return launchSweepDoneMsg{Generation: generation, Exited: exited}
 	}
 }
 
@@ -72,7 +90,13 @@ func (m Model) handleLaunchSweepDone(msg launchSweepDoneMsg) (Model, tea.Cmd) {
 	if msg.Generation != m.launchSweepTickGen {
 		return m, nil
 	}
-	return m, m.launchSweepTickCmd()
+	m = m.withoutTmuxNotificationWatches(msg.Exited)
+	cmds := make([]tea.Cmd, 0, len(msg.Exited)+1)
+	for _, watch := range msg.Exited {
+		cmds = append(cmds, m.notificationCmd(agentExitNotification(watch.Provider, watch.RepoPath, "exited", 0, false)))
+	}
+	cmds = append(cmds, m.launchSweepTickCmd())
+	return m, batchNonNil(cmds...)
 }
 
 // reconcileExitedFlowEmbeddedTerminals emits one reconciliation command per

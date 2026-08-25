@@ -1247,6 +1247,7 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
 	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
+	launchCmd = markTmuxAgentResult(launchCmd)
 	// Placed after the handoffPending transition above, so a handoff canceled
 	// before its spawn opens no window. It is a sibling command: it touches no
 	// attempt token, reservation, or AgentResultMsg field.
