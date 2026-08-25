@@ -3,6 +3,7 @@ package flowstore_test
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -444,6 +445,62 @@ func TestPreparationFinalizerRejectsReplacementFlowGenerationBeforeCallback(t *t
 	authoritative, err := store.Read(replacement.FlowID)
 	if err != nil || authoritative.PreparedAt != nil || authoritative.Title != replacement.Title || authoritative.PreparationNonce != "" {
 		t.Fatalf("replacement after stale finalizer = %#v, err %v", authoritative, err)
+	}
+}
+
+func TestPreparationFinalizerRejectsReplacementFlowGenerationCreatedDuringCallback(t *testing.T) {
+	now := time.Date(2026, 8, 14, 13, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repo := filepath.Join(t.TempDir(), "repo")
+	created, finalizer, err := store.CreatePreparation(flowstore.FlowRecord{
+		FlowID: "reused-during-callback", Title: "Same", Instructions: "Same.", RepoPath: repo,
+	}, flowstore.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	callbacks := 0
+	var replacement flowstore.FlowRecord
+	finalized, err := finalizer.Finalize(func() error {
+		callbacks++
+		if err := store.Delete(created.FlowID); err != nil {
+			return err
+		}
+		replacement, err = store.Create(flowstore.FlowRecord{
+			FlowID: created.FlowID, Title: created.Title, Instructions: created.Instructions, RepoPath: created.RepoPath,
+			BaseRef: created.BaseRef, Bead: created.Bead, CreatedAt: created.CreatedAt,
+			PreparationNonce: created.PreparationNonce,
+		})
+		if err != nil {
+			return err
+		}
+		replacement, err = store.SetStartMetadata(flowstore.StartMetadataUpdate{
+			FlowID: replacement.FlowID, WorktreePath: filepath.Join(t.TempDir(), "replacement"), Branch: "flow/replacement",
+		})
+		return err
+	})
+	if !flowstore.IsPreparationStale(err) || flowstore.IsPreparationIncomplete(err) || !strings.Contains(err.Error(), "generation changed") {
+		t.Fatalf("Finalize() error = %v, want stale non-incomplete generation refusal", err)
+	}
+	if callbacks != 1 {
+		t.Fatalf("stale finalizer ran %d callbacks, want 1", callbacks)
+	}
+	if replacement.PreparationNonce != "" {
+		t.Fatalf("replacement inherited caller-supplied preparation nonce %q", replacement.PreparationNonce)
+	}
+	if !reflect.DeepEqual(finalized, replacement) {
+		t.Fatalf("Finalize() record = %#v, want authoritative replacement %#v", finalized, replacement)
+	}
+	authoritative, err := store.Read(replacement.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authoritative.PreparedAt != nil || !reflect.DeepEqual(authoritative, replacement) {
+		t.Fatalf("replacement after stale finalizer = %#v, want unchanged %#v", authoritative, replacement)
 	}
 }
 
