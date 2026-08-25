@@ -300,6 +300,36 @@ func TestRetainPinSerializesAcrossProcesses(t *testing.T) {
 	}
 }
 
+func TestMaterializeDoesNotPublishWithoutCacheLease(t *testing.T) {
+	source := stubExecutable(t, "contended-materialization")
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, cacheDirName)
+	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+		t.Fatalf("create cache directory: %v", err)
+	}
+	release, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("acquire cache lease: %v", err)
+	}
+	defer release()
+
+	digest := mustDigest(t, source)
+	pin := Materialize(root, SourceIdentity{Path: source, Digest: digest}, testSchemaVersion)
+	if !pin.Degraded {
+		t.Fatalf("Materialize returned unclaimed cached path %q while cache lease was held", pin.ExecutablePath)
+	}
+	if pin.ExecutablePath != source {
+		t.Fatalf("ExecutablePath = %q, want degraded source %q", pin.ExecutablePath, source)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, cachedBinaryName(digest))); !os.IsNotExist(err) {
+		t.Fatalf("contended Materialize published an unclaimed cache entry: %v", err)
+	}
+}
+
 func TestRetainPinContentionHelper(t *testing.T) {
 	root := os.Getenv("APPROACH_TEST_RETAIN_PIN_ROOT")
 	if root == "" {

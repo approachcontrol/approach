@@ -258,12 +258,12 @@ func ReleaseProcessPin(root string) error {
 	return ReleasePin(root, processClaimID())
 }
 
-func claimProcessPin(root, digest string) {
+func claimProcessPin(cacheDir, digest string) error {
 	id := strings.TrimSpace(processClaimID())
 	if id == "" || !artifacts.IsSafeID(id) || strings.TrimSpace(digest) == "" {
-		return
+		return fmt.Errorf("invalid launcher pin claim")
 	}
-	_ = RetainPin(root, id, digest)
+	return retainPinUnlocked(cacheDir, id, digest)
 }
 
 // Resolve captures and materializes in one step, for callers that have the root
@@ -345,13 +345,17 @@ func RetainPin(root, launchID, digest string) error {
 		return fmt.Errorf("invalid launch id %q", launchID)
 	}
 	return withCacheLease(root, func(cacheDir string) error {
-		retainPinLeaseAcquired()
-		dir := filepath.Join(cacheDir, pinsDirName)
-		if err := os.MkdirAll(dir, artifacts.DirPerm); err != nil {
-			return fmt.Errorf("create launch pin directory: %w", err)
-		}
-		return artifacts.WriteFileAtomic(filepath.Join(dir, launchID), []byte(digest+"\n"))
+		return retainPinUnlocked(cacheDir, launchID, digest)
 	})
+}
+
+func retainPinUnlocked(cacheDir, launchID, digest string) error {
+	retainPinLeaseAcquired()
+	dir := filepath.Join(cacheDir, pinsDirName)
+	if err := os.MkdirAll(dir, artifacts.DirPerm); err != nil {
+		return fmt.Errorf("create launch pin directory: %w", err)
+	}
+	return artifacts.WriteFileAtomic(filepath.Join(dir, launchID), []byte(digest+"\n"))
 }
 
 func withCacheLease(root string, operation func(cacheDir string) error) error {
@@ -448,19 +452,26 @@ func materialize(root, source, digest string) (string, error) {
 		return "", err
 	}
 	target := filepath.Join(cacheDir, cachedBinaryName(digest))
-	if !reusable(target, digest) {
-		if err := copyExecutable(source, target, digest); err != nil {
-			return "", err
+	err = withCacheDirLease(cacheDir, func(cacheDir string) error {
+		if !reusable(target, digest) {
+			if err := copyExecutable(source, target, digest); err != nil {
+				return err
+			}
 		}
-	}
-	if err := requireRunnable(target); err != nil {
+		if err := requireRunnable(target); err != nil {
+			return err
+		}
+		// Publish and claim under the same lease. Otherwise a peer sweep can
+		// unlink target after the runnable check but before the claim exists.
+		if err := claimProcessPin(cacheDir, digest); err != nil {
+			return err
+		}
+		sweepCacheUnlocked(cacheDir, target)
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
-	// Claim before sweep so this process's copy is already non-evictable
-	// when retention runs. Claiming afterwards would protect the previous
-	// Resolve instead, and an idle launcher would still lose its pin.
-	claimProcessPin(root, digest)
-	sweepCache(cacheDir, target)
 	return target, nil
 }
 
