@@ -147,6 +147,20 @@ func ProcessAlive(pid int) bool {
 	return pid > 0 && processAlive(pid)
 }
 
+// ProcessIdentity returns a stable birth identity for pid. The boolean reports
+// numeric PID liveness; a live process with an empty identity is unknown rather
+// than dead, so a transient ps failure cannot authorize owner reclamation.
+func ProcessIdentity(pid int) (string, bool) {
+	if pid <= 0 || !ProcessAlive(pid) {
+		return "", false
+	}
+	identity, err := processBirthIdentity(pid)
+	if err != nil {
+		return "", true
+	}
+	return identity, true
+}
+
 // Pin identifies the approach binary a launch must invoke.
 type Pin struct {
 	// ExecutablePath is what a launch runs: the cached copy, or the resolved

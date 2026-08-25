@@ -35,24 +35,26 @@ const (
 // UntrackedOwnerTransport identifies the exact transport whose liveness proves
 // whether an owner may be reclaimed. Only the fields used by Kind are set.
 type UntrackedOwnerTransport struct {
-	Kind    UntrackedTransportKind `json:"kind"`
-	Socket  string                 `json:"socket,omitempty"`
-	Session string                 `json:"session,omitempty"`
-	Window  string                 `json:"window,omitempty"`
-	PID     int                    `json:"pid,omitempty"`
+	Kind         UntrackedTransportKind `json:"kind"`
+	Socket       string                 `json:"socket,omitempty"`
+	Session      string                 `json:"session,omitempty"`
+	Window       string                 `json:"window,omitempty"`
+	PID          int                    `json:"pid,omitempty"`
+	ProcessToken string                 `json:"process_token,omitempty"`
 }
 
 // UntrackedOwner is the durable phase-untracked worktree owner. Ended owners
 // remain as fenced lifecycle history until the next claim replaces them.
 type UntrackedOwner struct {
-	LaunchID    string                  `json:"launch_id"`
-	Role        UntrackedOwnerRole      `json:"role"`
-	State       UntrackedOwnerState     `json:"state"`
-	Transport   UntrackedOwnerTransport `json:"transport,omitzero"`
-	LauncherPID int                     `json:"launcher_pid,omitempty"`
-	ReservedAt  time.Time               `json:"reserved_at"`
-	ActivatedAt time.Time               `json:"activated_at,omitempty"`
-	EndedAt     time.Time               `json:"ended_at,omitempty"`
+	LaunchID      string                  `json:"launch_id"`
+	Role          UntrackedOwnerRole      `json:"role"`
+	State         UntrackedOwnerState     `json:"state"`
+	Transport     UntrackedOwnerTransport `json:"transport,omitzero"`
+	LauncherPID   int                     `json:"launcher_pid,omitempty"`
+	LauncherToken string                  `json:"launcher_token,omitempty"`
+	ReservedAt    time.Time               `json:"reserved_at"`
+	ActivatedAt   time.Time               `json:"activated_at,omitempty"`
+	EndedAt       time.Time               `json:"ended_at,omitempty"`
 }
 
 type UntrackedOwnerClaim struct {
@@ -114,6 +116,7 @@ func (s *Store) ClaimUntrackedOwner(update UntrackedOwnerClaim) (FlowRecord, err
 		owner.Transport = update.Owner.Transport
 		if owner.LauncherPID <= 0 && owner.Transport.Kind == UntrackedTransportLauncher {
 			owner.LauncherPID = owner.Transport.PID
+			owner.LauncherToken = owner.Transport.ProcessToken
 		}
 		owner.ReservedAt, owner.ActivatedAt, owner.EndedAt = now, time.Time{}, time.Time{}
 		record.UntrackedOwner = &owner
@@ -140,6 +143,7 @@ func (s *Store) ReplaceUntrackedOwner(update UntrackedOwnerReplacement) (FlowRec
 		owner.State, owner.Transport = UntrackedOwnerReserved, update.Owner.Transport
 		if owner.LauncherPID <= 0 && owner.Transport.Kind == UntrackedTransportLauncher {
 			owner.LauncherPID = owner.Transport.PID
+			owner.LauncherToken = owner.Transport.ProcessToken
 		}
 		owner.ReservedAt, owner.ActivatedAt, owner.EndedAt = now, time.Time{}, time.Time{}
 		record.UntrackedOwner = &owner

@@ -1173,7 +1173,9 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	m = next
 	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
 		if m.launchSeams.ActivateUntrackedOwner != nil {
-			transport := flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid()}
+			pid := os.Getpid()
+			processToken, _ := controlplane.ProcessIdentity(pid)
+			transport := flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: processToken}
 			terminal, terminalFound := m.flowLaunchEmbeddedTerminal(ctx.FlowID, ctx.LaunchID)
 			if terminalFound {
 				if identified, ok := terminal.(interface {

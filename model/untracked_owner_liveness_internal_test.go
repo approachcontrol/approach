@@ -18,6 +18,7 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 		repo      actions.TransportLiveness
 		embedded  actions.TransportLiveness
 		process   bool
+		identity  string
 		state     flowstore.UntrackedOwnerState
 		launcher  int
 		wantEnded bool
@@ -28,9 +29,11 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 		{name: "embedded live", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportEmbeddedTmux, Socket: "socket", Session: "owner"}, embedded: actions.TransportLivenessLive},
 		{name: "embedded unknown", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportEmbeddedTmux, Socket: "socket", Session: "owner"}, embedded: actions.TransportLivenessUnknown},
 		{name: "embedded dead", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportEmbeddedTmux, Socket: "socket", Session: "owner"}, embedded: actions.TransportLivenessDead, wantEnded: true},
-		{name: "reserved launcher live", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42}, process: true},
-		{name: "reserved launcher dead", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42}, wantEnded: true},
-		{name: "reserved pending tmux keeps launcher fence", state: flowstore.UntrackedOwnerReserved, launcher: 42, process: true, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessDead},
+		{name: "reserved launcher live", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42, ProcessToken: "birth-a"}, process: true, identity: "birth-a"},
+		{name: "reserved launcher reused", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42, ProcessToken: "birth-a"}, process: true, identity: "birth-b", wantEnded: true},
+		{name: "live PID with unavailable identity is unknown", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42, ProcessToken: "birth-a"}, process: true},
+		{name: "reserved launcher dead", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: 42, ProcessToken: "birth-a"}, wantEnded: true},
+		{name: "reserved pending tmux keeps launcher fence", state: flowstore.UntrackedOwnerReserved, launcher: 42, process: true, identity: "birth-a", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessDead},
 		{name: "reserved pending tmux falls back to exact window", state: flowstore.UntrackedOwnerReserved, launcher: 42, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessLive},
 	}
 	for _, tc := range tests {
@@ -41,7 +44,7 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 			}
 			record := flowstore.FlowRecord{FlowID: "flow-1", UntrackedOwner: &flowstore.UntrackedOwner{
 				LaunchID: "launch-1", Role: flowstore.UntrackedOwnerRepair,
-				State: state, Transport: tc.transport, LauncherPID: tc.launcher,
+				State: state, Transport: tc.transport, LauncherPID: tc.launcher, LauncherToken: "birth-a",
 			}}
 			releases := 0
 			sessionReads := 0
@@ -64,7 +67,9 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 				},
 				ProbeRepoTmuxOwner:     func(string, string) actions.TransportLiveness { return tc.repo },
 				ProbeEmbeddedTmuxOwner: func(string, string) actions.TransportLiveness { return tc.embedded },
-				ProcessAlive:           func(int) bool { return tc.process },
+				ProcessIdentity: func(int) (string, bool) {
+					return tc.identity, tc.process
+				},
 			})
 			got, err := m.launchSeams.ResolveUntrackedOwner(record)
 			if err != nil {

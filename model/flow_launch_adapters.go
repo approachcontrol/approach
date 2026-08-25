@@ -8,6 +8,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -193,12 +194,14 @@ func claimUntrackedOwner(seams flowLaunchSeams, flowID, launchID string, kind fl
 	if seams.ClaimUntrackedOwner == nil {
 		return nil
 	}
+	launcherPID := os.Getpid()
+	launcherToken, _ := controlplane.ProcessIdentity(launcherPID)
 	_, err := seams.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: flowID, Owner: flowstore.UntrackedOwner{
 		LaunchID: launchID,
 		Role:     role,
 		Transport: flowstore.UntrackedOwnerTransport{
 			Kind: flowstore.UntrackedTransportLauncher,
-			PID:  os.Getpid(),
+			PID:  launcherPID, ProcessToken: launcherToken,
 		},
 	}})
 	return err

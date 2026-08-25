@@ -431,7 +431,7 @@ type Options struct {
 	RepoTmuxLaunchStatus   func(repoPath string, launchIDs ...string) (bool, error)
 	ProbeRepoTmuxOwner     func(session, window string) actions.TransportLiveness
 	ProbeEmbeddedTmuxOwner func(socket, session string) actions.TransportLiveness
-	ProcessAlive           func(pid int) bool
+	ProcessIdentity        func(pid int) (string, bool)
 	// RepoTmuxSessionAttached probes whether a terminal is already watching a
 	// repo's tmux session. It decides whether a tmux-mode launch opens the
 	// repo's first terminal window, and runs only inside a command goroutine.
@@ -1115,17 +1115,19 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if probeEmbeddedTmuxOwner == nil {
 		probeEmbeddedTmuxOwner = actions.EmbeddedTmuxSessionLiveness
 	}
-	processAlive := opts.ProcessAlive
-	if processAlive == nil {
-		processAlive = controlplane.ProcessAlive
+	processIdentity := opts.ProcessIdentity
+	if processIdentity == nil {
+		processIdentity = controlplane.ProcessIdentity
 	}
 	launchSeams.ResolveUntrackedOwner = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 		owner := record.UntrackedOwner
 		if owner == nil || owner.State == flowstore.UntrackedOwnerEnded {
 			return record, nil
 		}
-		if owner.State == flowstore.UntrackedOwnerReserved && owner.LauncherPID > 0 && processAlive(owner.LauncherPID) {
-			return record, nil
+		if owner.State == flowstore.UntrackedOwnerReserved && owner.LauncherPID > 0 {
+			if identity, alive := processIdentity(owner.LauncherPID); alive && owner.LauncherToken != "" && identity == owner.LauncherToken {
+				return record, nil
+			}
 		}
 		liveness := actions.TransportLivenessUnknown
 		switch owner.Transport.Kind {
@@ -1135,9 +1137,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			liveness = probeEmbeddedTmuxOwner(owner.Transport.Socket, owner.Transport.Session)
 		case flowstore.UntrackedTransportLauncher, flowstore.UntrackedTransportDirect:
 			if owner.Transport.PID > 0 {
-				if processAlive(owner.Transport.PID) {
+				identity, alive := processIdentity(owner.Transport.PID)
+				if alive && owner.Transport.ProcessToken != "" && identity == owner.Transport.ProcessToken {
 					liveness = actions.TransportLivenessLive
-				} else {
+				} else if !alive || (owner.Transport.ProcessToken != "" && identity != "" && identity != owner.Transport.ProcessToken) {
 					liveness = actions.TransportLivenessDead
 				}
 			}
@@ -2656,9 +2659,16 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	} else if msg.FlowLaunchRelease != nil {
-		// A stale or duplicate lifecycle result is fenced completely: it cannot
-		// release a reservation now owned by a newer attempt, persist failure, or
-		// fall through to generic detached-launch status handling.
+		// The result carries its own sync.Once-protected reservation, so releasing
+		// it cannot touch a newer attempt. A failed spawn also has no live agent to
+		// own its exact durable claim.
+		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
+		if resultErr != "" && !msg.FlowLaunchOwnerRetained {
+			switch actions.FlowLaunchRoleOf(ctx) {
+			case actions.RoleRepair, actions.RoleAutofix, actions.RoleWorktreeAgent:
+				m.releaseDurableUntrackedOwner(ctx.FlowID, ctx.LaunchID)
+			}
+		}
 		return m, nil
 	}
 	if resultErr != "" {

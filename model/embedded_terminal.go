@@ -22,6 +22,7 @@ import (
 	"github.com/approachcontrol/approach/embeddedterm"
 	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -293,9 +294,13 @@ func (t realEmbeddedTerminal) untrackedOwnerTransport() flowstore.UntrackedOwner
 		}
 	}
 	if direct, ok := t.term.(interface{ ProcessID() int }); ok {
-		return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: direct.ProcessID()}
+		pid := direct.ProcessID()
+		token, _ := controlplane.ProcessIdentity(pid)
+		return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: token}
 	}
-	return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid()}
+	pid := os.Getpid()
+	token, _ := controlplane.ProcessIdentity(pid)
+	return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: token}
 }
 func (t realEmbeddedTerminal) Detach() error {
 	detachable, ok := t.term.(interface{ Detach() error })

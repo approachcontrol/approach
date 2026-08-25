@@ -3283,15 +3283,15 @@ func TestTmuxHandoffTransitionFailurePersistsTrackedPhaseFailure(t *testing.T) {
 	}
 }
 
-func TestStaleTmuxLifecycleResultCannotReleaseOrPersist(t *testing.T) {
+func TestStaleTmuxLifecycleResultReleasesOnlyItsCarriedOwnership(t *testing.T) {
 	h := newTmuxLaunchHarness(t, true)
 	m := h.model()
 	releases := 0
 	next, cmd := m.handleAgentResultAfterFinalization(AgentResultMsg{
-		LaunchContext: actions.AgentLaunchContext{FlowID: h.record.FlowID, LaunchID: "stale"},
+		LaunchContext: actions.AgentLaunchContext{FlowID: h.record.FlowID, LaunchID: "stale", FlowRepair: true},
 		Err:           "stale failure", Detached: true, FlowLaunchRelease: func() { releases++ },
 	}, nil)
-	if releases != 0 || cmd != nil || next.status.Text != m.status.Text || len(h.phaseUpdates) != 0 {
+	if releases != 1 || cmd != nil || next.status.Text != m.status.Text || len(h.phaseUpdates) != 0 || len(h.ownerReleases) != 1 || h.ownerReleases[0].LaunchID != "stale" {
 		t.Fatalf("stale result changed state: releases=%d cmd=%v status=%q updates=%#v", releases, cmd != nil, next.status.Text, h.phaseUpdates)
 	}
 }
