@@ -555,16 +555,13 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 // launch whose latest end is a `clear` is continued, not ended.
 func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 	return func(launchID string) (launchcontrol.LaunchLiveness, error) {
-		records, err := store.List(sessions.SessionFilter{})
+		records, err := store.List(sessions.SessionFilter{LaunchID: launchID})
 		if err != nil {
 			return launchcontrol.LaunchLiveness{}, err
 		}
 		liveness := launchcontrol.LaunchLiveness{Ended: true}
 		var latest sessions.SessionRecord
 		for _, record := range records {
-			if strings.TrimSpace(record.LaunchID) != launchID {
-				continue
-			}
 			liveness.RecordKnown = true
 			if sessions.IsActive(record.Status, record.EndedAt) || !sessionEndIsProcessEnd(record.Provider) {
 				liveness.Ended = false
