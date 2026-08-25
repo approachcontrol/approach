@@ -1499,7 +1499,9 @@ func (m *Model) releaseDurableUntrackedOwner(flowID, launchID string) error {
 	}
 	_, err := m.launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
 	if err == nil || errors.Is(err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(err, flowstore.ErrFlowNotFound) {
-		delete(m.pendingUntrackedOwnerReleases, flowID)
+		if m.pendingUntrackedOwnerReleases[flowID] == launchID {
+			delete(m.pendingUntrackedOwnerReleases, flowID)
+		}
 		return nil
 	}
 	if m.pendingUntrackedOwnerReleases == nil {
@@ -1509,10 +1511,64 @@ func (m *Model) releaseDurableUntrackedOwner(flowID, launchID string) error {
 	return err
 }
 
-func (m *Model) retryDurableUntrackedOwnerReleases() {
-	for flowID, launchID := range m.pendingUntrackedOwnerReleases {
-		_ = m.releaseDurableUntrackedOwner(flowID, launchID)
+func (m Model) scheduleDurableUntrackedOwnerReleaseRetry() (Model, tea.Cmd) {
+	if len(m.pendingUntrackedOwnerReleases) == 0 || m.untrackedOwnerReleaseRetryScheduled {
+		return m, nil
 	}
+	delay := m.untrackedOwnerReleaseRetryDelay
+	if delay <= 0 {
+		delay = time.Second
+	}
+	m.untrackedOwnerReleaseRetryScheduled = true
+	return m, tea.Tick(delay, func(time.Time) tea.Msg { return untrackedOwnerReleaseRetryMsg{} })
+}
+
+func (m Model) durableUntrackedOwnerReleaseRetryCmd() tea.Cmd {
+	pending := make(map[string]string, len(m.pendingUntrackedOwnerReleases))
+	for flowID, launchID := range m.pendingUntrackedOwnerReleases {
+		pending[flowID] = launchID
+	}
+	release := m.launchSeams.ReleaseUntrackedOwner
+	return func() tea.Msg {
+		results := make([]untrackedOwnerReleaseRetryResult, 0, len(pending))
+		for flowID, launchID := range pending {
+			var err error
+			if release != nil {
+				_, err = release(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
+			}
+			results = append(results, untrackedOwnerReleaseRetryResult{FlowID: flowID, LaunchID: launchID, Err: err})
+		}
+		return untrackedOwnerReleaseRetryResultMsg{Results: results}
+	}
+}
+
+func (m Model) handleDurableUntrackedOwnerReleaseRetryResult(msg untrackedOwnerReleaseRetryResultMsg) Model {
+	m.untrackedOwnerReleaseRetryScheduled = false
+	failed := false
+	for _, result := range msg.Results {
+		if m.pendingUntrackedOwnerReleases[result.FlowID] != result.LaunchID {
+			continue
+		}
+		if result.Err == nil || errors.Is(result.Err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(result.Err, flowstore.ErrFlowNotFound) {
+			delete(m.pendingUntrackedOwnerReleases, result.FlowID)
+			continue
+		}
+		failed = true
+	}
+	if !failed {
+		m.untrackedOwnerReleaseRetryDelay = 0
+		return m
+	}
+	delay := m.untrackedOwnerReleaseRetryDelay
+	if delay <= 0 {
+		delay = time.Second
+	}
+	delay *= 2
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+	m.untrackedOwnerReleaseRetryDelay = delay
+	return m
 }
 
 func flowLaunchFailurePersistCmd(

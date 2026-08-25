@@ -554,6 +554,18 @@ type AgentResultMsg struct {
 	LaunchedStatus string
 }
 
+type untrackedOwnerReleaseRetryMsg struct{}
+
+type untrackedOwnerReleaseRetryResult struct {
+	FlowID   string
+	LaunchID string
+	Err      error
+}
+
+type untrackedOwnerReleaseRetryResultMsg struct {
+	Results []untrackedOwnerReleaseRetryResult
+}
+
 type agentSessionFinalizedMsg struct {
 	Result AgentResultMsg
 	Err    error

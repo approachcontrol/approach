@@ -225,10 +225,12 @@ type Model struct {
 	// pendingUntrackedOwnerReleases retains exact cleanup failures for retry on
 	// subsequent update-loop activity. One active durable owner can exist per
 	// Flow, so the Flow ID is the natural key.
-	pendingUntrackedOwnerReleases map[string]string
-	inspectFlowLease              func(string, string) (flowlease.LeaseState, error)
-	leaseInspectInjected          bool
-	tmuxAttachHint                bool
+	pendingUntrackedOwnerReleases       map[string]string
+	untrackedOwnerReleaseRetryScheduled bool
+	untrackedOwnerReleaseRetryDelay     time.Duration
+	inspectFlowLease                    func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected                bool
+	tmuxAttachHint                      bool
 	embeddedTerminalState
 	autoAdvanceState
 	epicProgressionBaselines map[string]epicProgressionBaseline
@@ -2187,7 +2189,6 @@ func (m Model) activeViewMatches(kind FetchKind, mode ui.Mode, request uint64) b
 // --- Update ---
 
 func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
-	m.retryDurableUntrackedOwnerReleases()
 	flowRefreshWasVisible := m.flowRefreshSurfaceVisible()
 	defer func() {
 		modelNext, ok := next.(Model)
@@ -2200,6 +2201,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
+		var ownerRetryCmd tea.Cmd
+		modelNext, ownerRetryCmd = modelNext.scheduleDurableUntrackedOwnerReleaseRetry()
+		cmd = batchNonNil(cmd, ownerRetryCmd)
 		if modelNext.quitAfterFlowLaunch && modelNext.flowLaunchOwnershipCount() == 0 {
 			shutdownCmd := tea.Quit
 			if modelNext.interruptAfterFlowLaunch {
@@ -2210,6 +2214,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next = modelNext
 	}()
 	switch msg := msg.(type) {
+	case untrackedOwnerReleaseRetryMsg:
+		return m, m.durableUntrackedOwnerReleaseRetryCmd()
+	case untrackedOwnerReleaseRetryResultMsg:
+		return m.handleDurableUntrackedOwnerReleaseRetryResult(msg), nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:

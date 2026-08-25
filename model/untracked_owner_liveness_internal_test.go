@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/embeddedterm"
@@ -113,13 +114,31 @@ func TestDurableOwnerReleaseFailureIsRetried(t *testing.T) {
 	if got := m.pendingUntrackedOwnerReleases["flow-1"]; got != "launch-1" {
 		t.Fatalf("pending release = %q", got)
 	}
-	m.retryDurableUntrackedOwnerReleases()
+	scheduled, tickCmd := m.scheduleDurableUntrackedOwnerReleaseRetry()
+	if tickCmd == nil || calls != 1 {
+		t.Fatalf("schedule performed store I/O: tick=%v calls=%d", tickCmd != nil, calls)
+	}
+	m = scheduled
+	result := m.durableUntrackedOwnerReleaseRetryCmd()().(untrackedOwnerReleaseRetryResultMsg)
+	m = m.handleDurableUntrackedOwnerReleaseRetryResult(result)
 	if got := m.pendingUntrackedOwnerReleases["flow-1"]; got != "launch-1" {
 		t.Fatalf("pending release after failed retry = %q", got)
 	}
-	m.retryDurableUntrackedOwnerReleases()
+	if m.untrackedOwnerReleaseRetryDelay != 2*time.Second {
+		t.Fatalf("retry delay = %v, want 2s backoff", m.untrackedOwnerReleaseRetryDelay)
+	}
+	result = m.durableUntrackedOwnerReleaseRetryCmd()().(untrackedOwnerReleaseRetryResultMsg)
+	m = m.handleDurableUntrackedOwnerReleaseRetryResult(result)
 	if _, pending := m.pendingUntrackedOwnerReleases["flow-1"]; pending || calls != 3 {
 		t.Fatalf("pending=%v calls=%d, want successful third attempt", pending, calls)
+	}
+
+	m.pendingUntrackedOwnerReleases["flow-1"] = "launch-new"
+	m = m.handleDurableUntrackedOwnerReleaseRetryResult(untrackedOwnerReleaseRetryResultMsg{Results: []untrackedOwnerReleaseRetryResult{{
+		FlowID: "flow-1", LaunchID: "launch-old", Err: flowstore.ErrUntrackedOwnerChanged,
+	}}})
+	if got := m.pendingUntrackedOwnerReleases["flow-1"]; got != "launch-new" {
+		t.Fatalf("stale result deleted newer pending release: %q", got)
 	}
 }
 
