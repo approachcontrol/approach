@@ -748,7 +748,7 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			event.Err = occupancy.Err().Error()
 			return event
 		}
-		if occupancy.Holder() == flowownership.HolderRunningPhase || occupancy.Holder() == flowownership.HolderPhaseSession {
+		if occupancy.Occupied() {
 			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}

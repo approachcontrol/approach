@@ -1236,6 +1236,21 @@ func TestCreateFlowLaunchReadyWrongReservationIdentityCompensatesCreatedFlow(t *
 	}
 }
 
+func TestCreateReservedRecordTreatsDurableOwnerAsClaimed(t *testing.T) {
+	created := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}
+	reserved := created
+	reserved.UntrackedOwner = &flowstore.UntrackedOwner{
+		LaunchID: "repair-1", Role: flowstore.UntrackedOwnerRepair, State: flowstore.UntrackedOwnerLive,
+	}
+	if !createFlowReservedRecordClaimed(created, reserved) {
+		t.Fatal("active durable owner did not claim the creation-time reservation")
+	}
+	reserved.UntrackedOwner.State = flowstore.UntrackedOwnerEnded
+	if createFlowReservedRecordClaimed(created, reserved) {
+		t.Fatal("ended durable owner should not claim the creation-time reservation")
+	}
+}
+
 func TestCreateFlowLaunchReadyPreMetadataExitsUsePreparationFinalizer(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

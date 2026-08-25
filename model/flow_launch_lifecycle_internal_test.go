@@ -1320,6 +1320,17 @@ func TestAutoFlowLaunchOccupancyRefusedAtRead(t *testing.T) {
 				return record
 			},
 		},
+		{
+			name:   "durable owner claimed between poll and read",
+			record: autoLaunchFlowRecord(),
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.UntrackedOwner = &flowstore.UntrackedOwner{
+					LaunchID: "repair-1", Role: flowstore.UntrackedOwnerRepair, State: flowstore.UntrackedOwnerLive,
+					Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "repair"},
+				}
+				return record
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -1338,6 +1349,9 @@ func TestAutoFlowLaunchOccupancyRefusedAtRead(t *testing.T) {
 
 			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
 				t.Fatalf("a read-stage refusal persisted something: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
+			}
+			if len(h.ensureRecords) != 0 {
+				t.Fatalf("a read-stage occupancy refusal reached worktree setup: %#v", h.ensureRecords)
 			}
 			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
 				t.Fatal("a read-stage refusal must release the attempt")
