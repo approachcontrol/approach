@@ -35,9 +35,11 @@ const (
 	noticeFile   = "FLOW-REPLAY-NOTICE.txt"
 	seqLockFile  = ".seq.lock"
 
-	// LogSchemaVersion versions every file in a launch directory. Schema 2 adds
-	// durable per-request responses that replay must honor before execution.
-	LogSchemaVersion = 2
+	// LogSchemaVersion versions the launch, baseline, request, replay, and exit
+	// artifacts shared with pinned older launch clients. Durable responses use
+	// ProtocolSchemaVersion independently and do not change this compatibility
+	// boundary.
+	LogSchemaVersion = 1
 
 	// LaunchLockTimeout bounds how long a writer waits for another process's
 	// hold on a launch's sequence lock.

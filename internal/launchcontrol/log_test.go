@@ -367,8 +367,38 @@ func TestLogReadersRefuseFilesFromANewerSchema(t *testing.T) {
 	}
 }
 
-func TestResponseAwareReplayUsesLogSchemaTwo(t *testing.T) {
-	if LogSchemaVersion != 2 {
-		t.Fatalf("LogSchemaVersion = %d, want 2 for durable per-request responses", LogSchemaVersion)
+func TestResponseAwareLogsRemainReadableBySchemaOneClients(t *testing.T) {
+	root := t.TempDir()
+	log, err := OpenLog(root, "launch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteLaunch(LaunchInfo{FlowID: "flow-1", PhaseID: "plan"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteBaseline(Baseline{BaselineStatus: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.Append(RequestEnvelope{
+		RequestID: "req-1", FlowID: "flow-1", PhaseID: "plan",
+		Verb: VerbPhaseComplete, Replayable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(log.Dir(), launchFile),
+		filepath.Join(log.Dir(), baselineFile),
+		filepath.Join(log.Dir(), requestsDir, "000001-req-1.json"),
+	} {
+		var artifact struct {
+			SchemaVersion int `json:"schema_version"`
+		}
+		if err := readJSON(path, &artifact); err != nil {
+			t.Fatal(err)
+		}
+		if artifact.SchemaVersion != 1 {
+			t.Errorf("%s schema version = %d, want 1 for pinned older clients", filepath.Base(path), artifact.SchemaVersion)
+		}
 	}
 }
