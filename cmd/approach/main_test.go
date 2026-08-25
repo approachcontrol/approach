@@ -54,7 +54,7 @@ func TestUntrackedOwnerReleaseCommandEndsExactOwner(t *testing.T) {
 	}
 	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{
 		LaunchID: "launch-1", Role: flowstore.UntrackedOwnerAutofix,
-		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: os.Getpid()},
+		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportLauncher, PID: os.Getpid(), ProcessToken: "birth-current"},
 	}}); err != nil {
 		t.Fatal(err)
 	}

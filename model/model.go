@@ -1131,8 +1131,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return record, nil
 		}
 		if owner.State == flowstore.UntrackedOwnerReserved && owner.LauncherPID > 0 {
-			if identity, alive := processIdentity(owner.LauncherPID); alive && owner.LauncherToken != "" && identity == owner.LauncherToken {
-				return record, nil
+			if identity, alive := processIdentity(owner.LauncherPID); alive {
+				if identity == "" || owner.LauncherToken == "" || identity == owner.LauncherToken {
+					return record, nil
+				}
 			}
 		}
 		liveness := actions.TransportLivenessUnknown
