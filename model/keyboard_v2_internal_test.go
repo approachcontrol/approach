@@ -115,6 +115,25 @@ func TestEmbeddedTerminalSpaceEncodingPreservesControlNUL(t *testing.T) {
 	}
 }
 
+func TestEmbeddedTerminalAltPrintableEncodingUsesKeyCode(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyPressMsg
+		want []byte
+	}{
+		{name: "ascii", key: tea.KeyPressMsg{Code: 'b', Mod: tea.ModAlt}, want: []byte{0x1b, 'b'}},
+		{name: "unicode", key: tea.KeyPressMsg{Code: '☃', Mod: tea.ModAlt}, want: []byte("\x1b☃")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := keyBytes(tt.key); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("keyBytes(%s) = %#v, want %#v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCtrlEnterDoesNothingAtListFocus(t *testing.T) {
 	m := newModelForTest([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})

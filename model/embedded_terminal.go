@@ -1454,6 +1454,9 @@ func baseKeyBytes(msg tea.KeyPressMsg) []byte {
 				return []byte{byte(code-'a') + 1}
 			}
 		}
+		if !mod.Contains(tea.ModCtrl) && unicode.IsPrint(code) {
+			return []byte(string(code))
+		}
 		return nil
 	}
 }
