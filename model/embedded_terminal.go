@@ -302,6 +302,16 @@ func (t realEmbeddedTerminal) untrackedOwnerTransport() flowstore.UntrackedOwner
 	token, _ := controlplane.ProcessIdentity(pid)
 	return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: token}
 }
+
+func (t realEmbeddedTerminal) durableOwnerEndsWithTerminal() bool {
+	if tmuxTerm, ok := t.term.(interface {
+		SocketName() string
+		SessionName() string
+	}); ok {
+		return strings.TrimSpace(tmuxTerm.SocketName()) == "" || strings.TrimSpace(tmuxTerm.SessionName()) == ""
+	}
+	return true
+}
 func (t realEmbeddedTerminal) Detach() error {
 	detachable, ok := t.term.(interface{ Detach() error })
 	if !ok {
@@ -1148,8 +1158,12 @@ func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason em
 			next = append(next, slot)
 		} else {
 			removed = true
+			terminalExitEndsOwner := true
+			if classified, ok := slot.Terminal.(interface{ durableOwnerEndsWithTerminal() bool }); ok {
+				terminalExitEndsOwner = classified.durableOwnerEndsWithTerminal()
+			}
 			if strings.TrimSpace(slot.FlowID) != "" && strings.TrimSpace(slot.LaunchID) != "" && reason != embeddedTerminalRemovalDetach &&
-				(reason == embeddedTerminalRemovalTerminate || slot.Terminal == nil || slot.Terminal.State() == "exited" || slot.Terminal.State() == "terminated") {
+				(reason == embeddedTerminalRemovalTerminate || slot.Terminal == nil || terminalExitEndsOwner && (slot.Terminal.State() == "exited" || slot.Terminal.State() == "terminated")) {
 				m.releaseDurableUntrackedOwner(slot.FlowID, slot.LaunchID)
 			}
 			m = m.recordRepairTerminalRemoval(slot, reason)

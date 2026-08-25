@@ -3025,7 +3025,7 @@ func TestFlowLifecycleTmuxPublishesOwnerOnlyAfterWindowStarts(t *testing.T) {
 	activation := flowstore.UntrackedOwnerActivation{
 		FlowID: "flow-1", LaunchID: "launch-1",
 		Transport: flowstore.UntrackedOwnerTransport{
-			Kind: flowstore.UntrackedTransportRepoTmux, Session: "approach-alpha", Window: "repair-abcd",
+			Kind: flowstore.UntrackedTransportRepoTmux, Session: "approach-alpha", Window: "%7",
 		},
 	}
 	m := Model{}
@@ -3055,9 +3055,12 @@ func TestFlowLifecycleTmuxPublishesOwnerOnlyAfterWindowStarts(t *testing.T) {
 	}
 	_, cmd := m.runFlowLifecycleTmuxLaunchWithStatus(
 		actions.AgentLaunchContext{FlowID: "flow-1", LaunchID: "launch-1"},
-		actions.RepoTmuxAgentSpec{Launch: actions.TerminalLaunchSpec{
-			Cmd: exec.Command("sh", "-c", "touch \"$1\"", "approach-test", marker), Detached: true,
-		}},
+		actions.RepoTmuxAgentSpec{
+			WindowID: func() string { return "%7" },
+			Launch: actions.TerminalLaunchSpec{
+				Cmd: exec.Command("sh", "-c", "touch \"$1\"", "approach-test", marker), Detached: true,
+			},
+		},
 		&activation, func() {}, "launched",
 	)
 	msg := cmd().(AgentResultMsg)

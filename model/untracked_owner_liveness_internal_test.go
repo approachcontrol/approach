@@ -208,3 +208,21 @@ func TestPrefillTerminationReleasesDurableOwner(t *testing.T) {
 		t.Fatalf("releases=%d terminals=%d", releases, len(m.embeddedTerminals))
 	}
 }
+
+func TestEmbeddedTmuxClientExitRetainsDurableOwner(t *testing.T) {
+	runtime := &ownerIdentityRuntime{state: embeddedterm.StateExited, socket: "socket-1", session: "session-1"}
+	releases := 0
+	m := Model{
+		embeddedTerminalState: embeddedTerminalState{embeddedTerminals: []embeddedTerminalSlot{{
+			ID: 1, FlowID: "flow-1", LaunchID: "launch-1", Terminal: realEmbeddedTerminal{term: runtime},
+		}}},
+		launchSeams: flowLaunchSeams{ReleaseUntrackedOwner: func(flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
+			releases++
+			return flowstore.FlowRecord{}, nil
+		}},
+	}
+	m = m.dismissEmbeddedTerminalForReason(1, embeddedTerminalRemovalAutoClose)
+	if releases != 0 || len(m.embeddedTerminals) != 0 {
+		t.Fatalf("releases=%d terminals=%d, want detached client slot removed without owner release", releases, len(m.embeddedTerminals))
+	}
+}

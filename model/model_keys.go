@@ -3161,6 +3161,11 @@ func (m Model) runFlowLifecycleTmuxLaunchWithStatus(
 		}
 		if activation != nil {
 			completed := *activation
+			if spec.WindowID != nil {
+				if windowID := strings.TrimSpace(spec.WindowID()); windowID != "" {
+					completed.Transport.Window = windowID
+				}
+			}
 			completed.LauncherHandoffComplete = true
 			publicationOp := "Activate durable Flow owner"
 			var publicationErr error

@@ -239,7 +239,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			fail: nil,
 			want: []string{
 				"has-session -t =sess",
-				"new-window -d -t =sess: -n win -c DIR agent",
+				"new-window -d -P -F #{window_id} -t =sess: -n win -c DIR agent",
 				"set-option -w -t =sess:=win @approach_launch_id launch-1",
 			},
 		},
@@ -248,7 +248,7 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			fail: []string{"has-session"},
 			want: []string{
 				"has-session -t =sess",
-				"new-session -d -s sess -n win -c DIR agent",
+				"new-session -d -P -F #{window_id} -s sess -n win -c DIR agent",
 				"set-option -w -t =sess:=win @approach_launch_id launch-1",
 			},
 		},
@@ -259,8 +259,8 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			fail: []string{"new-window"},
 			want: []string{
 				"has-session -t =sess",
-				"new-window -d -t =sess: -n win -c DIR agent",
-				"new-session -d -s sess -n win -c DIR agent",
+				"new-window -d -P -F #{window_id} -t =sess: -n win -c DIR agent",
+				"new-session -d -P -F #{window_id} -s sess -n win -c DIR agent",
 				"set-option -w -t =sess:=win @approach_launch_id launch-1",
 			},
 		},
@@ -271,8 +271,8 @@ func TestRepoTmuxLaunchScriptCreatesReusesAndRetries(t *testing.T) {
 			fail: []string{"has-session", "new-session"},
 			want: []string{
 				"has-session -t =sess",
-				"new-session -d -s sess -n win -c DIR agent",
-				"new-window -d -t =sess: -n win -c DIR agent",
+				"new-session -d -P -F #{window_id} -s sess -n win -c DIR agent",
+				"new-window -d -P -F #{window_id} -t =sess: -n win -c DIR agent",
 				"set-option -w -t =sess:=win @approach_launch_id launch-1",
 			},
 		},
@@ -620,6 +620,19 @@ func requireTrackedLeaseHelpersUseExecutable(t *testing.T, spec RepoTmuxAgentSpe
 // TestRepoTmuxWindowNameNeverEmpty pins the fallback chain. tmux names an
 // unnamed window after its command, so an empty -n would silently rename the
 // window to the launch script's path.
+func TestRepoTmuxOwnerLivenessUsesStableWindowIDAfterRename(t *testing.T) {
+	listing := "%7\tuser renamed this window\t0\n%8\toriginal-label\t1\n"
+	if got := repoTmuxOwnerLivenessInListing(listing, "%7"); got != TransportLivenessLive {
+		t.Fatalf("renamed live window liveness = %v, want live", got)
+	}
+	if got := repoTmuxOwnerLivenessInListing(listing, "%8"); got != TransportLivenessDead {
+		t.Fatalf("dead window liveness = %v, want dead", got)
+	}
+	if got := repoTmuxOwnerLivenessInListing(listing, "%9"); got != TransportLivenessDead {
+		t.Fatalf("missing window liveness = %v, want dead", got)
+	}
+}
+
 func TestRepoTmuxWindowNameNeverEmpty(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	tests := []struct {
