@@ -57,6 +57,40 @@ func controllerFor(t *testing.T, root, flowID, phaseID, launchID string) (*launc
 	return ctrl, endpoint
 }
 
+// dropControllerResponses proxies complete requests to a real controller, then
+// consumes and discards its response before closing the client connection.
+func dropControllerResponses(t *testing.T, upstream string) string {
+	t.Helper()
+	path := filepath.Join(shortSocketDir(t), "drop.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer client.Close()
+				controller, err := net.Dial("unix", upstream)
+				if err != nil {
+					return
+				}
+				defer controller.Close()
+				_, _ = io.Copy(controller, client)
+				if unix, ok := controller.(*net.UnixConn); ok {
+					_ = unix.CloseWrite()
+				}
+				_, _ = io.Copy(io.Discard, controller)
+			}()
+		}
+	}()
+	return path
+}
+
 func recordLaunch(t *testing.T, root, flowID, phaseID, launchID string) {
 	t.Helper()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
@@ -476,12 +510,47 @@ func TestSpoolRefusesLaunchWithoutABaseline(t *testing.T) {
 	}
 }
 
-// An endpoint that takes the request and then closes without answering may
-// or may not have applied it. A replayable write falls back as for any
-// unreachable endpoint (its duplicate is a same-status no-op), but a
-// non-replayable one — phase restart, add-child, agent set — is not executed
-// again on a guess: the CLI exits non-zero saying the outcome is
-// indeterminate, so the agent verifies rather than retries.
+func TestLostControllerResponseReturnsDurableResultWithoutReexecution(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Lost result", "--instructions", "x", "--repo-path", repoPath, "--json", "--state-root", root})
+	recordLaunch(t, root, created.FlowID, "plan", "launch-1")
+	mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseBlocked, flowstore.OutcomeBlocked, "", "waiting")
+	_, endpoint := controllerFor(t, root, created.FlowID, "plan", "launch-1")
+	droppingEndpoint := dropControllerResponses(t, endpoint.Path)
+	getenv := controlEnv(root, droppingEndpoint, endpoint.Token, "launch-1", created.FlowID, "plan")
+	var stdout, stderr bytes.Buffer
+
+	if err := run([]string{"approach", "flow", "phase", "restart", "--flow-id", created.FlowID, "--phase-id", "plan", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv})); err != nil {
+		t.Fatalf("restart after lost response = %v (%s)", err, stderr.String())
+	}
+	if phase := phaseByID(mustRunFlow(t, []string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root}), "plan"); phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("restart result was not recovered: %#v", phase)
+	}
+	log, _ := launchcontrol.OpenLog(root, "launch-1")
+	requests, _ := log.Requests()
+	if len(requests) != 1 || requests[0].Verb != launchcontrol.VerbPhaseRestart {
+		t.Fatalf("restart requests = %#v", requests)
+	}
+	if _, ok, err := log.Response(requests[0].RequestID); err != nil || !ok {
+		t.Fatalf("restart response = ok %v, err %v", ok, err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := run([]string{"approach", "flow", "phase", "set", "--flow-id", created.FlowID, "--phase-id", "plan", "--status", "running", "--notes", "resumed", "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout, stderr: &stderr, getenv: getenv})); err != nil {
+		t.Fatalf("replayable write after lost response = %v (%s)", err, stderr.String())
+	}
+	requests, _ = log.Requests()
+	if len(requests) != 2 || requests[1].Verb != launchcontrol.VerbPhaseSet {
+		t.Fatalf("requests after replayable result recovery = %#v", requests)
+	}
+}
+
+// Without a durable response, a non-replayable request is still
+// indeterminate and is not executed again.
 func TestNonReplayableWriteIsNotRetriedAfterALostResponse(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

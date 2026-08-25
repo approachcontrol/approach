@@ -151,6 +151,9 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 			if err != nil {
 				return result, err
 			}
+			if err := log.WriteResponse(env.RequestID, resp); err != nil {
+				return result, err
+			}
 			if err := applyMarkerHook(); err != nil {
 				return result, err
 			}

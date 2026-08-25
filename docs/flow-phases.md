@@ -116,8 +116,10 @@ Additional rules:
   live or mismatched session, older live session, unsatisfied predecessor,
   duplicate phase row, or closed Flow rejects the whole transaction. The
   request is non-replayable: an unreachable controller may fall back to a
-  direct store open, but a lost response is reported as indeterminate and is
-  never retried. For plan review, recovery also accepts the reconciliation-
+  direct store open. After a post-send response loss, the CLI returns the
+  durable response saved under the same request ID without executing recovery
+  again. The outcome remains indeterminate only when the launch log contains
+  the request but no completed response. For plan review, recovery also accepts the reconciliation-
   specific `blocked`/`blocked` form carrying the same reconciliation stamp. A
   manually blocked review is not recoverable this way, even if its notes use a
   reconciliation reason.

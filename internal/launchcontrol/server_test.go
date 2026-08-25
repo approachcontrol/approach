@@ -1,6 +1,7 @@
 package launchcontrol
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -78,6 +79,24 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 	if result.UpdatedPhase.Status != flowstore.PhaseCompleted {
 		t.Fatalf("complete = %#v", result.UpdatedPhase)
 	}
+	firstSuccess, _ := json.Marshal(resp)
+	duplicate, err := client.Call(req)
+	if err != nil {
+		t.Fatalf("duplicate complete: %v", err)
+	}
+	duplicateSuccess, _ := json.Marshal(duplicate)
+	if string(duplicateSuccess) != string(firstSuccess) {
+		t.Fatalf("duplicate complete = %s, want %s", duplicateSuccess, firstSuccess)
+	}
+	collision := req
+	collision.Payload = json.RawMessage(`{"summary":"another operation"}`)
+	collisionResp, err := client.Call(collision)
+	if err != nil {
+		t.Fatalf("request ID collision: %v", err)
+	}
+	if !collisionResp.Refused || !strings.Contains(collisionResp.Error, "collision") {
+		t.Fatalf("request ID collision = %#v", collisionResp)
+	}
 	log, _ := OpenLog(root, "launch-1")
 	requests, _ := log.Requests()
 	if len(requests) != 1 || requests[0].Verb != VerbPhaseComplete || requests[0].WrittenBy != WrittenByController || !requests[0].Replayable || requests[0].Observed.Status != string(flowstore.PhaseRunning) {
@@ -106,6 +125,15 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 	if resp.OK || !resp.Refused {
 		t.Fatalf("skipped without notes = %#v", resp)
 	}
+	firstRefusal, _ := json.Marshal(resp)
+	duplicate, err = client.Call(req)
+	if err != nil {
+		t.Fatalf("duplicate refusal: %v", err)
+	}
+	duplicateRefusal, _ := json.Marshal(duplicate)
+	if string(duplicateRefusal) != string(firstRefusal) {
+		t.Fatalf("duplicate refusal = %s, want %s", duplicateRefusal, firstRefusal)
+	}
 	applied, _, _ = log.Applied()
 	if applied.AppliedSeq != 2 || applied.Result != ResultRefused || applied.Status != string(flowstore.PhaseCompleted) {
 		t.Fatalf("applied after refusal = %#v", applied)
@@ -113,8 +141,34 @@ func TestControllerServesRegisteredLaunchAndLogsWrites(t *testing.T) {
 	if pending, _ := log.Pending(); len(pending) != 0 {
 		t.Fatalf("pending = %#v", pending)
 	}
+	requests, _ = log.Requests()
+	if len(requests) != 2 || len(events) != 2 {
+		t.Fatalf("after duplicates: requests = %d, events = %d; want 2, 2", len(requests), len(events))
+	}
 	if info, err := os.Stat(endpoint.Path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("socket = %v %v", info, err)
+	}
+}
+
+func TestApplyLoggedDoesNotRetryUnfinishedNonReplayableRequest(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Unfinished")
+	launchPhase(t, store, created.FlowID, "plan", "launch-1")
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: created.FlowID, PhaseID: "plan", Status: flowstore.PhaseBlocked, Outcome: flowstore.OutcomeBlocked, Notes: "waiting"}); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := NewRequest(VerbPhaseRestart, PhaseRestartPayload{})
+	req.LaunchID, req.FlowID, req.PhaseID = "launch-1", created.FlowID, "plan"
+	env := mustEnvelope(t, req, WrittenByController)
+	log, _ := OpenLog(root, "launch-1")
+	if _, err := log.Append(env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyLogged(store, log, req, env, time.Now().UTC()); !errors.Is(err, ErrRequestOutcomeIndeterminate) {
+		t.Fatalf("ApplyLogged error = %v", err)
+	}
+	if phase := phaseOf(t, store, created.FlowID, "plan"); phase.Status != flowstore.PhaseBlocked {
+		t.Fatalf("unfinished restart executed twice: %#v", phase)
 	}
 }
 

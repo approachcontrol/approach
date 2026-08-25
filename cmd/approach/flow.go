@@ -1727,16 +1727,16 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	if !errors.Is(err, launchcontrol.ErrUnreachable) {
 		return launchcontrol.Response{}, err
 	}
-	// Unreachable can also mean "answered, but the answer was lost": the
-	// controller logs before it acknowledges, so it may already have applied
-	// this very request. Reads and replayable writes fall back regardless —
-	// same-status phase writes are idempotent no-ops in the store, so a
-	// replayable duplicate applies once semantically. A non-replayable write
-	// is not run again on a guess (below); request-ID idempotency that could
-	// answer it exactly is approach-0e9.3.1.
 	cfg, cfgErr := deps.loadConfig()
 	if cfgErr != nil {
 		return launchcontrol.Response{}, fmt.Errorf("error loading config: %w", cfgErr)
+	}
+	if errors.Is(err, launchcontrol.ErrResponseLost) {
+		if saved, ok, lookupErr := recoverLostFlowResponse(stateRoot, cfg, deps, control, req); lookupErr != nil {
+			return launchcontrol.Response{}, lookupErr
+		} else if ok {
+			return saved, nil
+		}
 	}
 	switch {
 	case launchcontrol.IsRead(req.Verb):
@@ -1820,6 +1820,42 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 		return launchcontrol.Response{}, errors.Join(openErr, err)
 	}
 	return launchcontrol.Response{}, flowRequestSpooled{}
+}
+
+// recoverLostFlowResponse checks the owning launch log while holding its lock.
+// A durable response is final even when the socket copy never arrived.
+func recoverLostFlowResponse(stateRoot string, cfg config.Config, deps runDeps, control flowControlContext, req launchcontrol.Request) (launchcontrol.Response, bool, error) {
+	if control.launchID == "" || (control.flowID != "" && control.flowID != req.FlowID) {
+		return launchcontrol.Response{}, false, nil
+	}
+	root, _ := resolveFlowStateRoot(stateRoot, cfg, deps)
+	log, err := launchcontrol.OpenLog(root, control.launchID)
+	if err != nil {
+		return launchcontrol.Response{}, false, fmt.Errorf("open launch log after lost response: %w", err)
+	}
+	if !log.Exists() {
+		return launchcontrol.Response{}, false, nil
+	}
+	unlock, err := log.Lock(launchcontrol.LaunchLockTimeout)
+	if err != nil {
+		return launchcontrol.Response{}, false, fmt.Errorf("lock launch log after lost response: %w", err)
+	}
+	defer unlock()
+	env := launchcontrol.RequestEnvelope{
+		RequestID: req.RequestID, FlowID: req.FlowID, PhaseID: req.PhaseID,
+		Verb: req.Verb, Replayable: launchcontrol.Replayable(req.Verb),
+		Unowned: control.phaseID == "", Payload: req.Payload,
+	}
+	if _, found, err := log.FindRequest(env); err != nil {
+		return launchcontrol.Response{}, false, fmt.Errorf("find launch request after lost response: %w", err)
+	} else if !found {
+		return launchcontrol.Response{}, false, nil
+	}
+	resp, completed, err := log.Response(req.RequestID)
+	if err != nil {
+		return launchcontrol.Response{}, false, fmt.Errorf("read launch response after lost response: %w", err)
+	}
+	return resp, completed, nil
 }
 
 // runFlowRequestDirect opens the store with role and runs req through the

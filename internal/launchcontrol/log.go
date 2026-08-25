@@ -1,6 +1,7 @@
 package launchcontrol
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ const (
 	// mutation log, and the two fail for different reasons.
 	launchesCollection = "launches"
 	requestsDir        = "requests"
+	responsesDir       = "responses"
 
 	launchFile   = "launch.json"
 	baselineFile = "baseline.json"
@@ -40,6 +42,11 @@ const (
 	// hold on a launch's sequence lock.
 	LaunchLockTimeout = 5 * time.Second
 )
+
+// ErrRequestIDCollision means one launch reused a request ID for a different
+// operation. Returning the first operation's result would answer the wrong
+// request, while appending the second would defeat request-ID idempotency.
+var ErrRequestIDCollision = errors.New("launch control request ID collision")
 
 // Written-by markers name which path appended a request.
 const (
@@ -196,7 +203,7 @@ func (l *Log) Exists() bool {
 // refuses a symlink in its place: the directory is written to by root-owned
 // processes and must not be redirectable.
 func (l *Log) ensureDir() error {
-	for _, dir := range []string{LaunchesDir(l.root), l.dir, filepath.Join(l.dir, requestsDir)} {
+	for _, dir := range []string{LaunchesDir(l.root), l.dir, filepath.Join(l.dir, requestsDir), filepath.Join(l.dir, responsesDir)} {
 		if err := os.MkdirAll(dir, artifacts.DirPerm); err != nil {
 			return fmt.Errorf("create launch directory: %w", err)
 		}
@@ -214,6 +221,46 @@ func (l *Log) ensureDir() error {
 		}
 	}
 	return nil
+}
+
+func sameRequestIdentity(a, b RequestEnvelope) bool {
+	return a.RequestID == b.RequestID &&
+		a.FlowID == b.FlowID &&
+		artifacts.NormalizePhaseID(a.PhaseID) == artifacts.NormalizePhaseID(b.PhaseID) &&
+		a.Verb == b.Verb &&
+		a.Replayable == b.Replayable &&
+		a.Unowned == b.Unowned &&
+		equalJSON(a.Payload, b.Payload)
+}
+
+func equalJSON(a, b json.RawMessage) bool {
+	var compactA, compactB bytes.Buffer
+	if json.Compact(&compactA, a) != nil || json.Compact(&compactB, b) != nil {
+		return bytes.Equal(a, b)
+	}
+	return bytes.Equal(compactA.Bytes(), compactB.Bytes())
+}
+
+// FindRequest returns the durable request for env's RequestID. The caller
+// holds Lock. A matching ID with another identity is a collision.
+func (l *Log) FindRequest(env RequestEnvelope) (RequestEnvelope, bool, error) {
+	if !artifacts.IsSafeID(env.RequestID) {
+		return RequestEnvelope{}, false, fmt.Errorf("launch log refuses unsafe request id %q", env.RequestID)
+	}
+	requests, err := l.Requests()
+	if err != nil {
+		return RequestEnvelope{}, false, err
+	}
+	for _, existing := range requests {
+		if existing.RequestID != env.RequestID {
+			continue
+		}
+		if !sameRequestIdentity(existing, env) {
+			return RequestEnvelope{}, false, fmt.Errorf("%w: %q already names sequence %d", ErrRequestIDCollision, env.RequestID, existing.Seq)
+		}
+		return existing, true, nil
+	}
+	return RequestEnvelope{}, false, nil
 }
 
 // Lock takes the launch's cross-process sequence lock. Every appender and
@@ -246,6 +293,25 @@ func (l *Log) requestFiles() ([]string, error) {
 	return names, nil
 }
 
+func (l *Log) responseFiles() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(l.dir, responsesDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list launch responses: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.Type().IsRegular() && strings.HasSuffix(name, ".json") && artifacts.IsSafeID(strings.TrimSuffix(name, ".json")) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func (l *Log) lastSeq() (int, error) {
 	names, err := l.requestFiles()
 	if err != nil {
@@ -272,6 +338,11 @@ func (l *Log) Append(env RequestEnvelope) (int, error) {
 	if err := l.ensureDir(); err != nil {
 		return 0, err
 	}
+	if existing, ok, err := l.FindRequest(env); err != nil {
+		return 0, err
+	} else if ok {
+		return existing.Seq, nil
+	}
 	last, err := l.lastSeq()
 	if err != nil {
 		return 0, err
@@ -290,6 +361,34 @@ func (l *Log) Append(env RequestEnvelope) (int, error) {
 		return env.Seq, err
 	}
 	return env.Seq, nil
+}
+
+// Response reads the exact durable response for requestID. The caller holds
+// Lock when it needs the lookup to be atomic with request execution.
+func (l *Log) Response(requestID string) (Response, bool, error) {
+	var resp Response
+	if !artifacts.IsSafeID(requestID) {
+		return resp, false, fmt.Errorf("launch log refuses unsafe request id %q", requestID)
+	}
+	ok, err := readOptionalJSON(filepath.Join(l.dir, responsesDir, requestID+".json"), &resp)
+	if err == nil && ok && resp.SchemaVersion != ProtocolSchemaVersion {
+		err = fmt.Errorf("response %s has schema version %d, want %d", requestID, resp.SchemaVersion, ProtocolSchemaVersion)
+	}
+	return resp, ok, err
+}
+
+// WriteResponse persists the exact response returned for requestID.
+func (l *Log) WriteResponse(requestID string, resp Response) error {
+	if !artifacts.IsSafeID(requestID) {
+		return fmt.Errorf("launch log refuses unsafe request id %q", requestID)
+	}
+	if err := l.ensureDir(); err != nil {
+		return err
+	}
+	if resp.SchemaVersion == 0 {
+		resp.SchemaVersion = ProtocolSchemaVersion
+	}
+	return writeJSONDurably(filepath.Join(l.dir, responsesDir), requestID+".json", resp)
 }
 
 // Requests returns every request in sequence order.
@@ -506,6 +605,15 @@ func (l *Log) AgeForRetention() (time.Time, error) {
 	}
 	for _, name := range names {
 		if err := consider(filepath.Join(l.dir, requestsDir, name)); err != nil {
+			return time.Time{}, err
+		}
+	}
+	responses, err := l.responseFiles()
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, name := range responses {
+		if err := consider(filepath.Join(l.dir, responsesDir, name)); err != nil {
 			return time.Time{}, err
 		}
 	}

@@ -134,6 +134,89 @@ func TestLogAppendIsDurableBeforeAck(t *testing.T) {
 	}
 }
 
+func TestLogAppendReusesMatchingRequestID(t *testing.T) {
+	log, _ := OpenLog(t.TempDir(), "launch-1")
+	env := RequestEnvelope{
+		RequestID: "req-1", FlowID: "flow-1", PhaseID: "plan",
+		Verb: VerbPhaseComplete, Replayable: true,
+		Payload: json.RawMessage(`{"summary":"done"}`), WrittenBy: WrittenByController,
+	}
+	first, err := log.Append(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.WrittenBy = WrittenByDirect
+	second, err := log.Append(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != 1 || second != first {
+		t.Fatalf("Append sequences = %d, %d; want 1, 1", first, second)
+	}
+	requests, err := log.Requests()
+	if err != nil || len(requests) != 1 {
+		t.Fatalf("Requests() = %#v, %v", requests, err)
+	}
+}
+
+func TestLogAppendRefusesRequestIDCollision(t *testing.T) {
+	log, _ := OpenLog(t.TempDir(), "launch-1")
+	base := RequestEnvelope{
+		RequestID: "req-1", FlowID: "flow-1", PhaseID: "plan",
+		Verb: VerbPhaseSet, Replayable: true,
+		Payload: json.RawMessage(`{"status":"completed"}`), WrittenBy: WrittenByController,
+	}
+	if _, err := log.Append(base); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*RequestEnvelope){
+		"flow":    func(env *RequestEnvelope) { env.FlowID = "flow-2" },
+		"phase":   func(env *RequestEnvelope) { env.PhaseID = "review" },
+		"verb":    func(env *RequestEnvelope) { env.Verb = VerbPhaseComplete },
+		"payload": func(env *RequestEnvelope) { env.Payload = json.RawMessage(`{"status":"blocked"}`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			collision := base
+			mutate(&collision)
+			if _, err := log.Append(collision); !errors.Is(err, ErrRequestIDCollision) {
+				t.Fatalf("Append collision error = %v", err)
+			}
+		})
+	}
+	requests, _ := log.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("Requests() count = %d, want 1", len(requests))
+	}
+}
+
+func TestLogResponseRoundTrip(t *testing.T) {
+	log, _ := OpenLog(t.TempDir(), "launch-1")
+	for name, want := range map[string]Response{
+		"success": {SchemaVersion: ProtocolSchemaVersion, OK: true, Result: json.RawMessage(`{"status":"completed"}`)},
+		"refused": {SchemaVersion: ProtocolSchemaVersion, Refused: true, Error: "transition refused"},
+		"warning": {SchemaVersion: ProtocolSchemaVersion, OK: true, Result: json.RawMessage(`[]`), Warning: "partial result"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requestID := "req-" + name
+			if _, err := log.Append(RequestEnvelope{RequestID: requestID, FlowID: "flow-1", Verb: VerbPhaseSet}); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := log.Response(requestID); err != nil || ok {
+				t.Fatalf("Response before write = ok %v, err %v", ok, err)
+			}
+			if err := log.WriteResponse(requestID, want); err != nil {
+				t.Fatal(err)
+			}
+			got, ok, err := log.Response(requestID)
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(want)
+			if err != nil || !ok || string(gotJSON) != string(wantJSON) {
+				t.Fatalf("Response() = %#v, %v, %v; want %#v", got, ok, err, want)
+			}
+		})
+	}
+}
+
 func TestLogAppendRefusesUnsafeRequestID(t *testing.T) {
 	root := t.TempDir()
 	log, _ := OpenLog(root, "launch-1")
@@ -258,10 +341,10 @@ func TestLogReadersRefuseFilesFromANewerSchema(t *testing.T) {
 		t.Fatal("Pending over a newer envelope succeeded")
 	}
 	// Restore the request; the sidecars refuse the same way.
-	if _, err := log.Append(mustEnvelope(t, req, WrittenBySpool)); err != nil {
+	if err := os.Remove(requestPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(requestPath); err != nil {
+	if _, err := log.Append(mustEnvelope(t, req, WrittenBySpool)); err != nil {
 		t.Fatal(err)
 	}
 	bump(filepath.Join(log.Dir(), launchFile))

@@ -174,6 +174,10 @@ mutation log, and the two fail for different reasons. The files:
   the `flow` CLI, appended durably (fsync + directory sync) **before** it is
   acknowledged, by the controller (`written_by: controller`), by the CLI's
   direct fallback (`direct`), or by the CLI's spool path (`spool`).
+- `responses/<request-id>.json` — the exact success or refusal returned for a
+  completed request. The controller writes it before releasing the launch lock
+  or answering the socket, so a retry can resolve a lost response by request
+  ID without executing the operation again.
 - `applied.json` — the log's high-water mark and the phase status after the
   last applied request; `result` is `applied`, `refused`, `reconciled`, or
   `rejected`.
@@ -208,13 +212,14 @@ The endpoint serves exactly the launcher's root (the exported
 `APPROACH_FLOW_STATE_ROOT`): a `flow` command that names another
 `--state-root` — a scratch root under test — is never proxied into the
 launcher's database and opens the root it named directly, as before.
-When the socket does not answer, reads open the database read-only or exit
-non-zero (a read never exits 0 without data); `phase restart`, `phase recover`,
-`add-child`, and `agent set` open the database or exit non-zero (`cannot be deferred`) —
-except when the request was sent and only the answer was lost, in which case
-they exit non-zero without running again, because the controller may already
-have applied a write that is not idempotent;
-and the replayable writes open the database under the same log discipline or,
+When the socket does not answer after receiving a complete request, the CLI
+locks the owning launch log and checks the same request ID first. A saved
+response is returned as the controller's answer, including refusals and
+warnings, without another sequence entry or store mutation. If the log has
+only an unfinished request, non-replayable writes such as `phase restart`,
+`phase recover`, `add-child`, and `agent set` remain indeterminate and are not
+run again. Reads open the database read-only or exit non-zero, and replayable
+writes open the database under the same log discipline or,
 when this build must not touch that database at all, spool the request and
 exit 0 with a fixed `spooled:` message — but only a request a replay can
 apply: one from a launch that owns a phase, for that phase or for the Flow.
