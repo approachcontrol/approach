@@ -163,6 +163,8 @@ func worktreeAgentAuthoritativeOccupancyStatus(flowID string, record flowstore.F
 		return verdict.Err().Error()
 	}
 	switch verdict.Holder() {
+	case flowownership.HolderUntrackedOwner:
+		return flowWorktreeAgentPendingStatus
 	case flowownership.HolderFlowSession:
 		return flowWorktreeAgentSessionStatus
 	case flowownership.HolderPhaseSession:

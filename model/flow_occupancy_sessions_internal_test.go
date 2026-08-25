@@ -72,6 +72,42 @@ func testActiveFlowSession(records []sessions.SessionRecord) bool {
 	return testAuthoritativeOccupancy(record, records, actions.RoleWorktreeAgent).Holder() == flowownership.HolderFlowSession
 }
 
+func TestDurableOwnerUsesRoleSpecificBusyRefusals(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID: "flow-1",
+		UntrackedOwner: &flowstore.UntrackedOwner{
+			LaunchID: "repair-1", Role: flowstore.UntrackedOwnerRepair, State: flowstore.UntrackedOwnerLive,
+		},
+	}
+	tests := []struct {
+		name   string
+		role   actions.FlowLaunchRole
+		status func(flowownership.Verdict) string
+		want   string
+	}{
+		{name: "worktree agent", role: actions.RoleWorktreeAgent, status: func(verdict flowownership.Verdict) string {
+			return worktreeAgentAuthoritativeOccupancyStatus(record.FlowID, record, verdict)
+		}, want: flowWorktreeAgentPendingStatus},
+		{name: "autofix", role: actions.RoleAutofix, status: func(verdict flowownership.Verdict) string {
+			return autofixAuthoritativeOccupancyStatus(record.FlowID, record, verdict)
+		}, want: flowAutofixInFlightStatus},
+		{name: "repair", role: actions.RoleRepair, status: func(verdict flowownership.Verdict) string {
+			return flowRepairAuthoritativeOccupancyStatus(record.FlowID, record, verdict)
+		}, want: flowRepairPendingStatus},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verdict := testAuthoritativeOccupancy(record, nil, tt.role)
+			if verdict.Holder() != flowownership.HolderUntrackedOwner {
+				t.Fatalf("holder = %v, want durable owner", verdict.Holder())
+			}
+			if got := tt.status(verdict); got != tt.want {
+				t.Fatalf("status = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestFlowLaunchPhaseSessionOccupiedUnionRule runs one table across both halves
 // of the union: every row is asserted with the session in the phase mirror only,
 // in the store listing only, and in both. A rule that stopped reading one half

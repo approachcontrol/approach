@@ -321,6 +321,9 @@ func flowRepairAuthoritativeOccupancyStatus(flowID string, record flowstore.Flow
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
+	if verdict.Holder() == flowownership.HolderUntrackedOwner {
+		return flowRepairPendingStatus
+	}
 	if verdict.Holder() == flowownership.HolderPhaseSession {
 		if phase, ok := flowPhaseByID(record, verdict.PhaseID()); ok {
 			return flowRepairLiveSessionStatus(flowID, phase)

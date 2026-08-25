@@ -262,6 +262,9 @@ func autofixAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRec
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
+	if verdict.Holder() == flowownership.HolderUntrackedOwner {
+		return flowAutofixInFlightStatus
+	}
 	if verdict.Holder() == flowownership.HolderPhaseSession {
 		return flowAutofixLiveSessionStatus
 	}
