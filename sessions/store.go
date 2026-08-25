@@ -89,6 +89,7 @@ type SessionFilter struct {
 	WorktreePath string
 	Branch       string
 	Provider     Provider
+	LaunchID     string
 }
 
 type TranscriptEvent struct {
@@ -659,6 +660,9 @@ func matchesFilter(record SessionRecord, filter SessionFilter) bool {
 		return false
 	}
 	if filter.Provider != "" && record.Provider != filter.Provider {
+		return false
+	}
+	if launchID := strings.TrimSpace(filter.LaunchID); launchID != "" && strings.TrimSpace(record.LaunchID) != launchID {
 		return false
 	}
 	return true

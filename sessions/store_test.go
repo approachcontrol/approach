@@ -74,6 +74,41 @@ func TestStoreSavesAndListsSessionsByRepoPath(t *testing.T) {
 	}
 }
 
+func TestStoreListsSessionsByNormalizedLaunchID(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	for _, record := range []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "target", LaunchID: " launch-1 ", Branch: "feature"},
+		{Provider: sessions.ProviderClaude, SessionID: "other-provider", LaunchID: "launch-1", Branch: "feature"},
+		{Provider: sessions.ProviderCodex, SessionID: "other-launch", LaunchID: "launch-2", Branch: "feature"},
+	} {
+		if err := store.Upsert(record); err != nil {
+			t.Fatalf("Upsert(%#v) error = %v", record, err)
+		}
+	}
+
+	records, err := store.List(sessions.SessionFilter{
+		LaunchID: " launch-1 ",
+		Provider: sessions.ProviderCodex,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].SessionID != "target" {
+		t.Fatalf("List() = %#v, want only target session", records)
+	}
+
+	records, err = store.List(sessions.SessionFilter{Provider: sessions.ProviderCodex})
+	if err != nil {
+		t.Fatalf("List() without LaunchID error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("List() without LaunchID returned %d records, want 2: %#v", len(records), records)
+	}
+}
+
 func TestStoreReadUsesExactProviderAndRawSessionID(t *testing.T) {
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
 	if err != nil {
