@@ -101,14 +101,10 @@ const (
 // re-derives that.
 const pinClaimMaxAge = 30 * 24 * time.Hour
 
-const (
-	// cacheSweepLeaseTimeout keeps retention best-effort under contention.
-	cacheSweepLeaseTimeout = 250 * time.Millisecond
-	// defaultCacheMutationLeaseTimeout exceeds the longest runnability probe a
-	// materializer can hold the lease through, so ordinary cache work cannot
-	// make a launch or keep-alive silently lose its claim.
-	defaultCacheMutationLeaseTimeout = 15 * time.Second
-)
+// defaultCacheMutationLeaseTimeout exceeds the longest runnability probe a
+// materializer can hold the lease through, so ordinary cache work cannot make a
+// launch or keep-alive silently lose its claim.
+const defaultCacheMutationLeaseTimeout = 15 * time.Second
 
 // timeNow is time.Now, replaced in tests so claim expiry can be exercised
 // without sleeping.
@@ -122,8 +118,6 @@ var cacheMutationLeaseTimeout = defaultCacheMutationLeaseTimeout
 // them as no-ops.
 var retainPinLeaseAcquired = func() {}
 var refreshPinLeaseAcquired = func() {}
-var sweepCacheStarted = func() {}
-var sweepCacheLeaseAcquired = func() {}
 
 // resolveExecutable is os.Executable, replaced in tests so they can stand in a
 // disposable "running binary" and delete or replace it.
@@ -474,7 +468,7 @@ func materialize(root, source, digest string) (string, error) {
 		if err := claimProcessPin(cacheDir, digest); err != nil {
 			return err
 		}
-		sweepCacheUnlocked(cacheDir, target)
+		sweepCache(cacheDir, target)
 		return nil
 	})
 	if err != nil {
@@ -627,15 +621,6 @@ func copyExecutable(source, target, expected string) error {
 // retention is hygiene, and failing a launch over it would trade a bounded
 // disk cost for an outage.
 func sweepCache(cacheDir, keep string) {
-	sweepCacheStarted()
-	_ = withCacheDirLease(cacheDir, cacheSweepLeaseTimeout, func(cacheDir string) error {
-		sweepCacheLeaseAcquired()
-		sweepCacheUnlocked(cacheDir, keep)
-		return nil
-	})
-}
-
-func sweepCacheUnlocked(cacheDir, keep string) {
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
 		return

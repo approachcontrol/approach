@@ -356,7 +356,7 @@ func TestRetainPinWaitsForOrdinaryCacheWork(t *testing.T) {
 	case err := <-result:
 		release()
 		t.Fatalf("RetainPin returned before ordinary cache work finished: %v", err)
-	case <-time.After(cacheSweepLeaseTimeout + 100*time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 	}
 	release()
 	if err := <-result; err != nil {
@@ -418,160 +418,6 @@ func TestCacheLeaseIsOwnerOnlyAndRefusesSymlinks(t *testing.T) {
 	})
 }
 
-func TestClaimCreationSerializesWithCacheSweep(t *testing.T) {
-	root := t.TempDir()
-	cacheDir := filepath.Join(root, cacheDirName)
-	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
-		t.Fatalf("create cache directory: %v", err)
-	}
-	targetDigest := strings.Repeat("a", 64)
-	target := filepath.Join(cacheDir, cachedBinaryName(targetDigest))
-	keep := filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("d", 64)))
-	for i, path := range []string{
-		target,
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("b", 64))),
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("c", 64))),
-		keep,
-	} {
-		if err := os.WriteFile(path, []byte(path), cachedBinaryPerm); err != nil {
-			t.Fatalf("write cache entry: %v", err)
-		}
-		stamp := time.Unix(int64(1_700_000_000+i), 0)
-		if err := os.Chtimes(path, stamp, stamp); err != nil {
-			t.Fatalf("stamp cache entry: %v", err)
-		}
-	}
-
-	claimEntered := make(chan struct{})
-	allowClaim := make(chan struct{})
-	sweepStarted := make(chan struct{})
-	sweepEntered := make(chan struct{})
-	originalRetainHook := retainPinLeaseAcquired
-	originalSweepStartedHook := sweepCacheStarted
-	originalSweepHook := sweepCacheLeaseAcquired
-	t.Cleanup(func() {
-		retainPinLeaseAcquired = originalRetainHook
-		sweepCacheStarted = originalSweepStartedHook
-		sweepCacheLeaseAcquired = originalSweepHook
-	})
-	retainPinLeaseAcquired = func() {
-		close(claimEntered)
-		<-allowClaim
-	}
-	sweepCacheStarted = func() { close(sweepStarted) }
-	sweepCacheLeaseAcquired = func() { close(sweepEntered) }
-
-	claimResult := make(chan error, 1)
-	go func() { claimResult <- RetainPin(root, "launch-overlap", targetDigest) }()
-	<-claimEntered
-	sweepDone := make(chan struct{})
-	go func() {
-		sweepCache(cacheDir, keep)
-		close(sweepDone)
-	}()
-	<-sweepStarted
-
-	select {
-	case <-sweepEntered:
-		close(allowClaim)
-		<-claimResult
-		<-sweepDone
-		t.Fatal("cache sweep entered its critical section while claim creation held the lease")
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(allowClaim)
-	if err := <-claimResult; err != nil {
-		t.Fatalf("RetainPin: %v", err)
-	}
-	<-sweepDone
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("sweep evicted concurrently claimed digest: %v", err)
-	}
-}
-
-func TestRefreshPinSerializesWithClaimExpiry(t *testing.T) {
-	root := t.TempDir()
-	cacheDir := filepath.Join(root, cacheDirName)
-	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
-		t.Fatalf("create cache directory: %v", err)
-	}
-	targetDigest := strings.Repeat("a", 64)
-	target := filepath.Join(cacheDir, cachedBinaryName(targetDigest))
-	keep := filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("d", 64)))
-	for i, path := range []string{
-		target,
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("b", 64))),
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("c", 64))),
-		keep,
-	} {
-		if err := os.WriteFile(path, []byte(path), cachedBinaryPerm); err != nil {
-			t.Fatalf("write cache entry: %v", err)
-		}
-		stamp := time.Unix(int64(1_700_000_000+i), 0)
-		if err := os.Chtimes(path, stamp, stamp); err != nil {
-			t.Fatalf("stamp cache entry: %v", err)
-		}
-	}
-	if err := RetainPin(root, "launch-refresh-overlap", targetDigest); err != nil {
-		t.Fatalf("RetainPin: %v", err)
-	}
-	claimPath := filepath.Join(cacheDir, pinsDirName, "launch-refresh-overlap")
-	stale := time.Unix(1_700_000_000, 0)
-	if err := os.Chtimes(claimPath, stale, stale); err != nil {
-		t.Fatalf("stamp stale claim: %v", err)
-	}
-	originalNow := timeNow
-	timeNow = func() time.Time { return stale.Add(pinClaimMaxAge + time.Hour) }
-	refreshEntered := make(chan struct{})
-	allowRefresh := make(chan struct{})
-	sweepStarted := make(chan struct{})
-	sweepEntered := make(chan struct{})
-	originalRefreshHook := refreshPinLeaseAcquired
-	originalSweepStartedHook := sweepCacheStarted
-	originalSweepHook := sweepCacheLeaseAcquired
-	t.Cleanup(func() {
-		timeNow = originalNow
-		refreshPinLeaseAcquired = originalRefreshHook
-		sweepCacheStarted = originalSweepStartedHook
-		sweepCacheLeaseAcquired = originalSweepHook
-	})
-	refreshPinLeaseAcquired = func() {
-		close(refreshEntered)
-		<-allowRefresh
-	}
-	sweepCacheStarted = func() { close(sweepStarted) }
-	sweepCacheLeaseAcquired = func() { close(sweepEntered) }
-
-	refreshResult := make(chan error, 1)
-	go func() { refreshResult <- RefreshPin(root, "launch-refresh-overlap") }()
-	<-refreshEntered
-	sweepDone := make(chan struct{})
-	go func() {
-		sweepCache(cacheDir, keep)
-		close(sweepDone)
-	}()
-	<-sweepStarted
-	select {
-	case <-sweepEntered:
-		close(allowRefresh)
-		<-refreshResult
-		<-sweepDone
-		t.Fatal("cache sweep entered its critical section while claim refresh was in progress")
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(allowRefresh)
-	if err := <-refreshResult; err != nil {
-		t.Fatalf("RefreshPin: %v", err)
-	}
-	<-sweepDone
-	if _, err := os.Stat(claimPath); err != nil {
-		t.Fatalf("sweep deleted concurrently refreshed claim: %v", err)
-	}
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("sweep evicted digest protected by refreshed claim: %v", err)
-	}
-}
-
 func TestReleasePinReturnsNamedErrorOnLeaseContention(t *testing.T) {
 	originalTimeout := cacheMutationLeaseTimeout
 	cacheMutationLeaseTimeout = 25 * time.Millisecond
@@ -602,47 +448,6 @@ func TestReleasePinReturnsNamedErrorOnLeaseContention(t *testing.T) {
 	}
 	if _, statErr := os.Stat(claimPath); statErr != nil {
 		t.Fatalf("contended release mutated claim: %v", statErr)
-	}
-}
-
-func TestCacheSweepSkipsRetentionOnLeaseContention(t *testing.T) {
-	root := t.TempDir()
-	cacheDir := filepath.Join(root, cacheDirName)
-	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
-		t.Fatalf("create cache directory: %v", err)
-	}
-	keep := filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("e", 64)))
-	paths := []string{
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("a", 64))),
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("b", 64))),
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("c", 64))),
-		filepath.Join(cacheDir, cachedBinaryName(strings.Repeat("d", 64))),
-		keep,
-	}
-	for i, path := range paths {
-		if err := os.WriteFile(path, []byte(path), cachedBinaryPerm); err != nil {
-			t.Fatalf("write cache entry: %v", err)
-		}
-		stamp := time.Unix(int64(1_700_000_000+i), 0)
-		if err := os.Chtimes(path, stamp, stamp); err != nil {
-			t.Fatalf("stamp cache entry: %v", err)
-		}
-	}
-	release, err := artifacts.AcquireFileLockNoFollow(
-		filepath.Join(cacheDir, cacheLeaseFileName),
-		"launch binary cache lease",
-		time.Second,
-	)
-	if err != nil {
-		t.Fatalf("acquire cache lease: %v", err)
-	}
-	defer release()
-
-	sweepCache(cacheDir, keep)
-	for _, path := range paths {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("contended sweep mutated %s: %v", filepath.Base(path), err)
-		}
 	}
 }
 
