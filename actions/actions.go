@@ -1498,24 +1498,26 @@ func EmbeddedTmuxAgentCommand(ctx AgentLaunchContext) (EmbeddedTmuxAgentSpec, er
 	return embeddedTmuxAgentCommand(ctx, exec.LookPath)
 }
 
-func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (EmbeddedTmuxAgentSpec, error) {
-	if !commandExists("tmux", lookPath) {
-		return EmbeddedTmuxAgentSpec{}, ErrEmbeddedTmuxUnavailable
+// EmbeddedTmuxAgentIdentity returns the deterministic private tmux identity an
+// embedded launch will use, without creating its launch script or starting the
+// session. Callers can durably publish the identity before spawning tmux.
+func EmbeddedTmuxAgentIdentity(ctx AgentLaunchContext) (socketName, sessionName string, err error) {
+	if UsesStreamJSONOutput(ctx) {
+		return "", "", ErrEmbeddedTmuxUnavailable
 	}
-	ctx.Embedded = true
-	cmd, _, err := agentCommandSpec(ctx)
+	_, socketName, sessionName, err = embeddedTmuxAgentIdentity(ctx, exec.LookPath)
+	return socketName, sessionName, err
+}
+
+func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (EmbeddedTmuxAgentSpec, error) {
+	cmd, socketName, sessionName, err := embeddedTmuxAgentIdentity(ctx, lookPath)
 	if err != nil {
 		return EmbeddedTmuxAgentSpec{}, err
-	}
-	sessionSource := ctx.WorktreePath
-	if sessionSource == "" {
-		sessionSource = cmd.Dir
 	}
 	argv, err := resolvedCommandArgv(cmd)
 	if err != nil {
 		return EmbeddedTmuxAgentSpec{}, err
 	}
-	sessionName := agentSessionName(sessionSource, ctx.LaunchID)
 	agentEnv := envWithoutKeys(cmd.Env, "TMUX", "ZELLIJ")
 	termCommand, err := newTerminalCommandWithStatus(cmd.Dir, agentEnv, argv, sessionName)
 	if err != nil {
@@ -1523,7 +1525,6 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 	}
 	configureUntrackedOwnerRelease(termCommand, ctx)
 	tmuxEnv := envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
-	socketName := tmuxSocketName(sessionName)
 	tmuxArgs := isolatedTmuxArgs(socketName)
 	spec := EmbeddedTmuxAgentSpec{
 		SocketName:         socketName,
@@ -1542,6 +1543,24 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 	spec.AttachCommand.Env = tmuxEnv
 	spec.KillSessionCommand.Env = tmuxEnv
 	return spec, nil
+}
+
+func embeddedTmuxAgentIdentity(ctx AgentLaunchContext, lookPath lookPathFunc) (*exec.Cmd, string, string, error) {
+	if !commandExists("tmux", lookPath) {
+		return nil, "", "", ErrEmbeddedTmuxUnavailable
+	}
+	ctx.Embedded = true
+	cmd, _, err := agentCommandSpec(ctx)
+	if err != nil {
+		return nil, "", "", err
+	}
+	sessionSource := ctx.WorktreePath
+	if sessionSource == "" {
+		sessionSource = cmd.Dir
+	}
+	sessionName := agentSessionName(sessionSource, ctx.LaunchID)
+	socketName := tmuxSocketName(sessionName)
+	return cmd, socketName, sessionName, nil
 }
 
 func isolatedTmuxArgs(socketName string) []string {

@@ -58,6 +58,7 @@ type manualLaunchHarness struct {
 	tmuxLaunchErr error
 	activateErr   error
 	activations   []flowstore.UntrackedOwnerActivation
+	preparations  []flowstore.UntrackedOwnerActivation
 	ownerReleases []flowstore.UntrackedOwnerRelease
 	// windowLive answers the tmux live-window probe. Nil means no window is
 	// live, which is what every test that does not care about the probe wants.
@@ -69,13 +70,14 @@ type manualLaunchHarness struct {
 	tmuxTerminates     int
 	tmuxTerminateErr   error
 
-	startTerminalErr error
-	startTerminal    EmbeddedTerminal
-	setPhaseErr      error
-	addLaunchIDErr   error
-	planBodyErr      error
-	launchAgentErr   error
-	reserveLaunchErr error
+	startTerminalErr   error
+	startTerminal      EmbeddedTerminal
+	startTerminalCheck func()
+	setPhaseErr        error
+	addLaunchIDErr     error
+	planBodyErr        error
+	launchAgentErr     error
+	reserveLaunchErr   error
 	// Repair reserves through its own store call, whose error verb differs from
 	// the tracked one, so the double is separate too.
 	reserveRepairErr error
@@ -274,6 +276,10 @@ func (h *manualLaunchHarness) options() Options {
 			}
 			return h.persistedFlow(update.FlowID)
 		},
+		PrepareOwnerTransport: func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+			h.preparations = append(h.preparations, update)
+			return h.persistedFlow(update.FlowID)
+		},
 		ReleaseUntrackedOwner: func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
 			h.ownerReleases = append(h.ownerReleases, update)
 			return h.persistedFlow(update.FlowID)
@@ -349,6 +355,9 @@ func (h *manualLaunchHarness) options() Options {
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
 			h.launchContexts = append(h.launchContexts, ctx)
+			if h.startTerminalCheck != nil {
+				h.startTerminalCheck()
+			}
 			if h.startTerminalErr != nil {
 				return nil, h.startTerminalErr
 			}
@@ -3020,12 +3029,27 @@ func TestFlowLifecycleTmuxPublishesOwnerOnlyAfterWindowStarts(t *testing.T) {
 		},
 	}
 	m := Model{}
+	handoffCompleted := false
+	m.launchSeams.PrepareOwnerTransport = func(got flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+		if _, err := os.Stat(marker); err != nil {
+			return flowstore.FlowRecord{}, fmt.Errorf("window was not started before handoff completion: %w", err)
+		}
+		if !got.LauncherHandoffComplete {
+			t.Fatalf("handoff completion = %#v", got)
+		}
+		handoffCompleted = true
+		return flowstore.FlowRecord{}, nil
+	}
 	m.launchSeams.ActivateUntrackedOwner = func(got flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+		activation.LauncherHandoffComplete = true
 		if got != activation {
 			t.Fatalf("activation = %#v, want %#v", got, activation)
 		}
 		if _, err := os.Stat(marker); err != nil {
 			return flowstore.FlowRecord{}, fmt.Errorf("window was not started before publication: %w", err)
+		}
+		if !handoffCompleted {
+			t.Fatal("activation ran before durable launcher handoff completed")
 		}
 		return flowstore.FlowRecord{}, nil
 	}
@@ -3039,6 +3063,48 @@ func TestFlowLifecycleTmuxPublishesOwnerOnlyAfterWindowStarts(t *testing.T) {
 	msg := cmd().(AgentResultMsg)
 	if msg.Err != "" || msg.LaunchedStatus != "launched" {
 		t.Fatalf("result = %#v, want successful publication after spawn", msg)
+	}
+}
+
+func TestEmbeddedTmuxOwnerIdentityIsPreparedBeforeTerminalStarts(t *testing.T) {
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.startTerminalCheck = func() {
+		if len(h.preparations) != 1 {
+			t.Fatalf("preparations before terminal start = %#v, want one", h.preparations)
+		}
+		prepared := h.preparations[0]
+		if prepared.LauncherHandoffComplete || prepared.Transport.Kind != flowstore.UntrackedTransportEmbeddedTmux || prepared.Transport.Socket == "" || prepared.Transport.Session == "" {
+			t.Fatalf("pre-start preparation = %#v", prepared)
+		}
+	}
+	m := h.model()
+	attempt := flowLaunchAttempt{Token: "repair-1", Kind: flowLaunchKindRepair, FlowID: record.FlowID, State: flowLaunchStatePreparing}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	if !ok {
+		t.Fatal("reserve repair attempt")
+	}
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", FlowID: record.FlowID, LaunchID: attempt.Token, FlowRepair: true,
+		RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Embedded: true,
+	}
+	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{Context: ctx, RepoPath: "/dev/alpha"})
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminals = %d, want 1", len(next.embeddedTerminals))
+	}
+	if len(h.preparations) != 2 || !h.preparations[1].LauncherHandoffComplete {
+		t.Fatalf("preparations after terminal start = %#v", h.preparations)
+	}
+	if len(h.activations) != 1 || !h.activations[0].LauncherHandoffComplete {
+		t.Fatalf("activations = %#v", h.activations)
 	}
 }
 

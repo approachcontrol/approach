@@ -72,6 +72,9 @@ type UntrackedOwnerActivation struct {
 	FlowID    string
 	LaunchID  string
 	Transport UntrackedOwnerTransport
+	// LauncherHandoffComplete clears the temporary launcher fence after the
+	// exact transport has started, so later reconciliation probes that identity.
+	LauncherHandoffComplete bool
 }
 
 type UntrackedOwnerRelease struct {
@@ -171,9 +174,9 @@ func (s *Store) ReplaceUntrackedOwner(update UntrackedOwnerReplacement) (FlowRec
 	})
 }
 
-// PrepareUntrackedOwnerTransport records the exact post-spawn identity while
-// the launcher reservation still owns admission. A failed activation can then
-// remain fail-closed on the real transport instead of only the launcher PID.
+// PrepareUntrackedOwnerTransport records an exact transport identity while the
+// launcher reservation still owns admission. Once the caller confirms spawn,
+// LauncherHandoffComplete transfers reconciliation to that exact transport.
 func (s *Store) PrepareUntrackedOwnerTransport(update UntrackedOwnerActivation) (FlowRecord, error) {
 	if err := validateUntrackedOwnerTransport(update.Transport); err != nil {
 		return FlowRecord{}, err
@@ -188,6 +191,10 @@ func (s *Store) PrepareUntrackedOwnerTransport(update UntrackedOwnerActivation) 
 			return FlowRecord{}, fmt.Errorf("%w: transport changed for %s", ErrUntrackedOwnerChanged, expected)
 		}
 		owner.Transport = update.Transport
+		if update.LauncherHandoffComplete {
+			owner.LauncherPID = 0
+			owner.LauncherToken = ""
+		}
 		return record, nil
 	})
 }

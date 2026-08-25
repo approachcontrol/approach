@@ -37,6 +37,7 @@ func TestResolveUntrackedOwnerReleasesOnlyOnProvenTransportDeath(t *testing.T) {
 		{name: "reserved pending tmux keeps launcher fence", state: flowstore.UntrackedOwnerReserved, launcher: 42, process: true, identity: "birth-a", transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessDead},
 		{name: "reserved pending tmux keeps launcher fence when identity is unavailable", state: flowstore.UntrackedOwnerReserved, launcher: 42, process: true, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessDead},
 		{name: "reserved pending tmux falls back to exact window", state: flowstore.UntrackedOwnerReserved, launcher: 42, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessLive},
+		{name: "completed pending tmux releases on exact window death", state: flowstore.UntrackedOwnerReserved, transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "pending"}, repo: actions.TransportLivenessDead, wantEnded: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

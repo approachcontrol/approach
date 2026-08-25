@@ -3160,8 +3160,20 @@ func (m Model) runFlowLifecycleTmuxLaunchWithStatus(
 			}
 		}
 		if activation != nil {
-			if _, err := m.launchSeams.ActivateUntrackedOwner(*activation); err != nil {
-				activationErr := "Activate durable Flow owner: " + err.Error()
+			completed := *activation
+			completed.LauncherHandoffComplete = true
+			publicationOp := "Activate durable Flow owner"
+			var publicationErr error
+			if m.launchSeams.PrepareOwnerTransport != nil {
+				_, publicationErr = m.launchSeams.PrepareOwnerTransport(completed)
+				publicationOp = "Complete durable Flow owner transport handoff"
+			}
+			if publicationErr == nil {
+				_, publicationErr = m.launchSeams.ActivateUntrackedOwner(completed)
+				publicationOp = "Activate durable Flow owner"
+			}
+			if publicationErr != nil {
+				activationErr := publicationOp + ": " + publicationErr.Error()
 				if spec.Terminate == nil {
 					return AgentResultMsg{
 						LaunchContext: ctx, Err: activationErr + "; exact tmux termination is unavailable", Detached: true,

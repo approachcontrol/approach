@@ -65,6 +65,14 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	if got := prepared.UntrackedOwner; got.State != flowstore.UntrackedOwnerReserved || got.Transport.Window != "launch-1" || got.LauncherPID != 4242 {
 		t.Fatalf("prepared owner = %#v", got)
 	}
+	activation.LauncherHandoffComplete = true
+	prepared, err = store.PrepareUntrackedOwnerTransport(activation)
+	if err != nil {
+		t.Fatalf("complete prepared owner handoff: %v", err)
+	}
+	if got := prepared.UntrackedOwner; got.LauncherPID != 0 || got.LauncherToken != "" {
+		t.Fatalf("completed handoff retained launcher fence = %#v", got)
+	}
 	activated, err := store.ActivateUntrackedOwner(activation)
 	if err != nil {
 		t.Fatalf("ActivateUntrackedOwner: %v", err)

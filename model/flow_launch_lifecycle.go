@@ -1194,6 +1194,23 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	if attempt.Kind == flowLaunchKindWorktreeAgent && m.tmuxAutofixAgentStillRunning(msg.Record, msg.WorktreePath) {
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, flowWorktreeAgentPendingStatus)
 	}
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable && m.launchSeams.PrepareOwnerTransport != nil {
+		if socketName, sessionName, identityErr := actions.EmbeddedTmuxAgentIdentity(ctx); identityErr == nil {
+			activation := flowstore.UntrackedOwnerActivation{
+				FlowID: attempt.FlowID, LaunchID: attempt.Token,
+				Transport: flowstore.UntrackedOwnerTransport{
+					Kind: flowstore.UntrackedTransportEmbeddedTmux, Socket: socketName, Session: sessionName,
+				},
+			}
+			if _, err := m.launchSeams.PrepareOwnerTransport(activation); err != nil {
+				errText := "Prepare durable Flow owner transport: " + err.Error()
+				if attempt.Kind == flowLaunchKindCreatePhase {
+					return m.failCreateFlowLaunchEmbedded(attempt, ctx, errText, msg.Release)
+				}
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
+			}
+		}
+	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
@@ -1222,7 +1239,7 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 			}
 			activation := flowstore.UntrackedOwnerActivation{
 				FlowID: attempt.FlowID, LaunchID: attempt.Token,
-				Transport: transport,
+				Transport: transport, LauncherHandoffComplete: true,
 			}
 			var publicationErr error
 			publicationOp := "Activate durable Flow owner"
