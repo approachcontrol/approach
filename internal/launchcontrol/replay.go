@@ -35,8 +35,9 @@ func identityOf(phase flowstore.FlowPhase) phaseIdentity {
 // replayLocked replays a launch's pending requests. The caller holds both the
 // in-process launch lock and the file lock.
 //
-// Four cases, decided per request in sequence order once the latest-launch
-// gate has passed for the launch as a whole:
+// Durable responses are recovered before the latest-launch gate because they
+// prove the request completed while this launch still owned the phase. The
+// remaining requests have four cases, decided in sequence order:
 //
 //  1. a durable response proves the request completed before its applied
 //     marker was written, so the marker is advanced without executing again;
@@ -91,6 +92,31 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 	if phaseID == "" {
 		phaseID = pending[0].PhaseID
 	}
+	comparison := ""
+	if applied, ok, err := log.Applied(); err != nil {
+		return result, err
+	} else if ok && applied.Status != "" {
+		comparison = applied.Status
+	} else if baseline, ok, err := log.Baseline(); err != nil {
+		return result, err
+	} else if ok {
+		comparison = baseline.BaselineStatus
+	}
+	for len(pending) > 0 {
+		nextComparison, completed, err := markSavedResponseApplied(log, pending[0], phaseID, comparison, now)
+		if err != nil {
+			return result, err
+		}
+		if !completed {
+			break
+		}
+		result.Applied++
+		comparison = nextComparison
+		pending = pending[1:]
+	}
+	if len(pending) == 0 {
+		return result, nil
+	}
 	unowned := info.FlowID != "" && info.PhaseID == "" || pending[0].Unowned
 	if unowned || phaseID == "" {
 		notice("launch %s: %d spooled request(s) rejected: launch has no owned phase (%s)", log.LaunchID(), len(pending), ReasonBaselineMissing)
@@ -117,46 +143,19 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 		return result, rejectBatch(pending, ReasonPhaseResultStale, intendedStatus(pending[0]), live.Status,
 			fmt.Sprintf("phase is now owned by launch %s", live.LaunchID))
 	}
-	comparison := ""
-	if applied, ok, err := log.Applied(); err != nil {
-		return result, err
-	} else if ok && applied.Status != "" {
-		comparison = applied.Status
-	} else if baseline, ok, err := log.Baseline(); err != nil {
-		return result, err
-	} else if ok {
-		comparison = baseline.BaselineStatus
-	}
 	if comparison == "" {
 		notice("launch %s: %d spooled request(s) rejected: no baseline recorded for this launch (%s)", log.LaunchID(), len(pending), ReasonBaselineMissing)
 		return result, rejectBatch(pending, ReasonBaselineMissing, intendedStatus(pending[0]), live.Status, "no baseline.json for this launch")
 	}
 
 	for i, env := range pending {
-		resp, completed, err := log.Response(env.RequestID)
+		nextComparison, completed, err := markSavedResponseApplied(log, env, phaseID, comparison, now)
 		if err != nil {
 			return result, err
 		}
 		if completed {
-			appliedResult := ResultApplied
-			if !resp.OK {
-				appliedResult = ResultRefused
-			}
-			postState, err := savedResponsePhaseState(env, phaseID, resp)
-			if err != nil {
-				return result, err
-			}
-			if postState.Status == "" {
-				postState.Status = comparison
-			}
-			if err := log.WriteApplied(AppliedState{
-				AppliedSeq: env.Seq, Status: postState.Status, Result: appliedResult,
-				ObservedUpdatedAt: postState.UpdatedAt, AppliedAt: now,
-			}); err != nil {
-				return result, err
-			}
 			result.Applied++
-			comparison = postState.Status
+			comparison = nextComparison
 			continue
 		}
 		if !env.Replayable {
@@ -232,8 +231,36 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 	return result, nil
 }
 
+func markSavedResponseApplied(log *Log, env RequestEnvelope, phaseID, comparison string, now time.Time) (string, bool, error) {
+	resp, completed, err := log.Response(env.RequestID)
+	if err != nil || !completed {
+		return comparison, completed, err
+	}
+	appliedResult := ResultApplied
+	if !resp.OK {
+		appliedResult = ResultRefused
+	}
+	postState, err := savedResponsePhaseState(env, phaseID, resp)
+	if err != nil {
+		return comparison, false, err
+	}
+	if postState.Status == "" {
+		postState.Status = comparison
+	}
+	if err := log.WriteApplied(AppliedState{
+		AppliedSeq: env.Seq, Status: postState.Status, Result: appliedResult,
+		ObservedUpdatedAt: postState.UpdatedAt, AppliedAt: now,
+	}); err != nil {
+		return comparison, false, err
+	}
+	return postState.Status, true, nil
+}
+
 func savedResponsePhaseState(env RequestEnvelope, phaseID string, resp Response) (ObservedPhase, error) {
 	if !resp.OK {
+		return env.Observed, nil
+	}
+	if phaseID == "" {
 		return env.Observed, nil
 	}
 	var action PhaseActionResult
