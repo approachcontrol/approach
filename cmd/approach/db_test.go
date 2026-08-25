@@ -250,12 +250,12 @@ func setTestDatabaseVersion(t *testing.T, path string, version int) {
 	}
 	defer func() { _ = db.Close() }()
 	if version == flowstore.DatabaseSchemaVersion()-1 {
-		// Reconstruct the exact v6 parent-release shape. Stamping a v7 database
+		// Reconstruct the exact parent-release shape. Stamping a current database
 		// down while retaining its column and trigger must fail strict
 		// predecessor validation.
 		if _, err := db.Exec(`
-DROP TRIGGER guard_recovered_launch_state_update;
-ALTER TABLE flows DROP COLUMN recovery_generation;`); err != nil {
+DROP TRIGGER guard_untracked_owner_update;
+ALTER TABLE flows DROP COLUMN untracked_owner_launch_id;`); err != nil {
 			t.Fatal(err)
 		}
 	}

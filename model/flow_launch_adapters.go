@@ -172,6 +172,31 @@ func flowLaunchRole(kind flowLaunchKind) actions.FlowLaunchRole {
 	}
 }
 
+func untrackedOwnerRole(kind flowLaunchKind) (flowstore.UntrackedOwnerRole, bool) {
+	switch kind {
+	case flowLaunchKindWorktreeAgent:
+		return flowstore.UntrackedOwnerWorktreeAgent, true
+	case flowLaunchKindAutofix:
+		return flowstore.UntrackedOwnerAutofix, true
+	case flowLaunchKindRepair:
+		return flowstore.UntrackedOwnerRepair, true
+	default:
+		return "", false
+	}
+}
+
+func claimUntrackedOwner(seams flowLaunchSeams, flowID, launchID string, kind flowLaunchKind) error {
+	role, ok := untrackedOwnerRole(kind)
+	if !ok {
+		return nil
+	}
+	if seams.ClaimUntrackedOwner == nil {
+		return nil
+	}
+	_, err := seams.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: flowID, Owner: flowstore.UntrackedOwner{LaunchID: launchID, Role: role}})
+	return err
+}
+
 func (m Model) flowLaunchInstallOccupancy(kind flowLaunchKind, flowID string) flowownership.Verdict {
 	return flowownership.Evaluate(flowownership.Sources{
 		Runtime: flowOccupancyRuntime{model: m},
@@ -223,6 +248,13 @@ func trackedPhaseAuthoritativeOccupancy(
 	phaseID string,
 	stage flowownership.Stage,
 ) flowownership.Verdict {
+	if seams.ResolveUntrackedOwner != nil {
+		resolved, err := seams.ResolveUntrackedOwner(record)
+		if err != nil {
+			return flowownership.Failed(err)
+		}
+		record = resolved
+	}
 	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
@@ -243,6 +275,13 @@ func flowAuthoritativeOccupancy(
 	record flowstore.FlowRecord,
 	role actions.FlowLaunchRole,
 ) flowownership.Verdict {
+	if seams.ResolveUntrackedOwner != nil {
+		resolved, err := seams.ResolveUntrackedOwner(record)
+		if err != nil {
+			return flowownership.Failed(err)
+		}
+		record = resolved
+	}
 	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
@@ -435,6 +474,10 @@ type flowLaunchSeams struct {
 	AddPhaseLaunchID         func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	SetStartMetadata         func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase                 func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	ClaimUntrackedOwner      func(flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error)
+	ActivateUntrackedOwner   func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
+	ReleaseUntrackedOwner    func(flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error)
+	ResolveUntrackedOwner    func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	PlanMarkdownPath         func(planID string) (string, error)
 	ReadPlan                 func(planID string) (string, error)
 	InspectWorktreeDirectory func(path string) error

@@ -37,6 +37,15 @@ the Flow store, the session store, or the lease file at the moment of the call.
 | S14 | Pending headless write | `model/model_keys.go:1070` `flowHeadlessWritePending` over `m.pendingFlowHeadlessWrites`; status at `:1012` | A headless toggle is in flight and the persisted preference is about to change | Enqueue → resolve (`:1055` `clearFlowHeadlessWritePending`) | In-process, transient |
 | S15 | tmux autofix agent probe | `model/tmux_mode.go:446` `tmuxAutofixAgentStillRunning`; registry written at `model/model.go:2731` `withFlowAutofixTmuxLaunch` and read at `model/tmux_mode.go:462` `flowAutofixTmuxLaunchIDs` | A phase-untracked autofix agent still has a live tmux window in this Flow's worktree | Registry entry lifetime, in-process only | Authoritative but *shells out*; never called from a poll (`model/tmux_mode.go:426`) |
 | S16 | Pending repair auto-drain marker | `model/flow_phase_launch.go:555` `hasPendingRepairAutoDrainMarker`, written at `:551` | A repair terminal was removed and its outcome has not been consumed by the AutoMode poll yet | Removal → poll consumption (`:564` `withoutRepairAutoDrainMarker`) | In-process |
+| S17 | Durable phase-untracked owner | `FlowRecord.UntrackedOwner`, mutated by `flowstore.ClaimUntrackedOwner`, `ActivateUntrackedOwner`, `ReplaceUntrackedOwner`, and `ReleaseUntrackedOwner` | The exact repair, autofix, or generic worktree-agent launch owns the Flow worktree | Reserved → live → ended, fenced by launch ID | Persisted and cross-process; cached reads only defer, authoritative reads may reclaim proven-dead owners |
+
+S17 replaces the in-process tmux registry as authority. Every authoritative
+launch read checks it before admitting tracked phases, resumes, repair, autofix,
+generic worktree agents, saved-session resumes, or AutoMode work. Session state
+and the exact repo-tmux window supply liveness evidence. Missing or failed
+evidence stays occupied. Only an ended matching session or a missing exact tmux
+window permits an identity-fenced release. Cached footer and drain queries do
+not probe processes or walk stores.
 
 Two composites are built from the above and are what most consumers actually
 call:

@@ -10,14 +10,15 @@ import (
 const storageTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 type flowProjection struct {
-	flowID           string
-	repoPath         string
-	status           string
-	updatedAt        string
-	beadID           string
-	epicID           string
-	preparedAt       string
-	preparationNonce string
+	flowID                 string
+	repoPath               string
+	status                 string
+	updatedAt              string
+	beadID                 string
+	epicID                 string
+	preparedAt             string
+	preparationNonce       string
+	untrackedOwnerLaunchID string
 }
 
 type storageGraphRecovery struct {
@@ -52,6 +53,7 @@ type storedFlowDTO struct {
 	AutoMerge             *bool                 `json:"auto_merge,omitempty"`
 	Headless              bool                  `json:"headless"`
 	Phases                []FlowPhase           `json:"phases"`
+	UntrackedOwner        *UntrackedOwner       `json:"untracked_owner,omitempty"`
 	ProgressionClaim      bool                  `json:"progression_claim,omitempty"`
 	PreparationGeneration string                `json:"preparation_generation,omitempty"`
 	PreparedAt            string                `json:"prepared_at,omitempty"`
@@ -99,6 +101,7 @@ func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 		AutoMerge:             cloneBoolPointer(record.AutoMerge),
 		Headless:              record.Headless,
 		Phases:                record.Phases,
+		UntrackedOwner:        cloneUntrackedOwner(record.UntrackedOwner),
 		ProgressionClaim:      record.ProgressionClaim,
 		PreparationGeneration: record.PreparationGeneration,
 		PreparationNonce:      record.PreparationNonce,
@@ -138,6 +141,7 @@ func (dto storedFlowDTO) record() FlowRecord {
 		AutoMerge:             cloneBoolPointer(dto.AutoMerge),
 		Headless:              dto.Headless,
 		Phases:                dto.Phases,
+		UntrackedOwner:        cloneUntrackedOwner(dto.UntrackedOwner),
 		ProgressionClaim:      dto.ProgressionClaim,
 		PreparationGeneration: dto.PreparationGeneration,
 		PreparationNonce:      dto.PreparationNonce,
@@ -185,15 +189,23 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
 	}
 	return data, flowProjection{
-		flowID:           record.FlowID,
-		repoPath:         filepath.Clean(record.RepoPath),
-		status:           record.Status,
-		updatedAt:        updatedAt,
-		beadID:           record.Bead.ID,
-		epicID:           record.Bead.EpicID,
-		preparedAt:       preparedAt,
-		preparationNonce: record.PreparationNonce,
+		flowID:                 record.FlowID,
+		repoPath:               filepath.Clean(record.RepoPath),
+		status:                 record.Status,
+		updatedAt:              updatedAt,
+		beadID:                 record.Bead.ID,
+		epicID:                 record.Bead.EpicID,
+		preparedAt:             preparedAt,
+		preparationNonce:       record.PreparationNonce,
+		untrackedOwnerLaunchID: untrackedOwnerLaunchID(record.UntrackedOwner),
 	}, nil
+}
+
+func untrackedOwnerLaunchID(owner *UntrackedOwner) string {
+	if owner == nil {
+		return ""
+	}
+	return owner.LaunchID
 }
 
 func patchStoredFlowPhaseAgentSettings(data []byte, update phaseAgentSettingsSave) ([]byte, error) {

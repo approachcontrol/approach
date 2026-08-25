@@ -370,6 +370,11 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		event.Context = ctx
 		event.Route = decision.Route
 		event.FallbackNote = decision.FallbackNote
+		if err := claimUntrackedOwner(m.launchSeams, msg.FlowID, msg.Token, msg.Kind); err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		event.UntrackedOwnerClaimed = true
 		return event
 	}
 }

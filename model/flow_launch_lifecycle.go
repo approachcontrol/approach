@@ -190,20 +190,21 @@ type flowLaunchEventMsg struct {
 	// FlowMissing distinguishes the saved-session compatibility case from every
 	// other read failure: a saved session outlives a deleted Flow and resumes via
 	// its established non-Flow route instead of being stranded by stale linkage.
-	FlowMissing     bool
-	Err             string
-	LeaseDeferred   bool
-	LeaseSetupError bool
-	Release         func()
-	Create          flowLaunchCreateRequest
-	StartupRoots    []flowstore.FlowPhase
-	Worktree        actions.FlowWorktreeCreateResult
-	Commit          string
-	Proof           flowLaunchCreateProof
-	GenerationLost  bool
-	RecoveryErrs    []string
-	Settings        flowLaunchAgentSettingsSnapshot
-	ErrOp           string
+	FlowMissing           bool
+	Err                   string
+	LeaseDeferred         bool
+	LeaseSetupError       bool
+	UntrackedOwnerClaimed bool
+	Release               func()
+	Create                flowLaunchCreateRequest
+	StartupRoots          []flowstore.FlowPhase
+	Worktree              actions.FlowWorktreeCreateResult
+	Commit                string
+	Proof                 flowLaunchCreateProof
+	GenerationLost        bool
+	RecoveryErrs          []string
+	Settings              flowLaunchAgentSettingsSnapshot
+	ErrOp                 string
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -1143,6 +1144,16 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		return next.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
 	}
 	m = next
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
+		if m.launchSeams.ActivateUntrackedOwner != nil {
+			if _, err := m.launchSeams.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
+				FlowID: attempt.FlowID, LaunchID: attempt.Token,
+				Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect},
+			}); err != nil {
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Activate durable Flow owner: "+err.Error())
+			}
+		}
+	}
 	if attempt.Kind == flowLaunchKindCreatePhase && prefillCmd != nil {
 		create := attempt.Create
 		originalPrefillCmd := prefillCmd
@@ -1308,6 +1319,9 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 // persistable produces no flowLaunchFailurePersistedMsg, so entering
 // failurePersisting first would strand the attempt and block the Flow forever.
 func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunchContext, repoPath, errText string) (Model, tea.Cmd) {
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
+		m.releaseDurableUntrackedOwner(attempt.FlowID, attempt.Token)
+	}
 	if attempt.Kind == flowLaunchKindRepair || attempt.Kind == flowLaunchKindWorktreeAgent || attempt.Kind == flowLaunchKindSavedSessionResume {
 		// Repair and generic Flow agents report with a bare status on every
 		// stage. Neither writes a phase, so the MutatedPhase ladder below has
@@ -1360,6 +1374,12 @@ func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunch
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, errText), nil
 	}
 	return next, flowLaunchFailurePersistCmd(next.launchSeams.SetPhase, update, ctx, errText)
+}
+
+func (m Model) releaseDurableUntrackedOwner(flowID, launchID string) {
+	if m.launchSeams.ReleaseUntrackedOwner != nil {
+		_, _ = m.launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
+	}
 }
 
 func flowLaunchFailurePersistCmd(

@@ -1125,6 +1125,10 @@ func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason em
 			next = append(next, slot)
 		} else {
 			removed = true
+			if strings.TrimSpace(slot.FlowID) != "" && strings.TrimSpace(slot.LaunchID) != "" && reason != embeddedTerminalRemovalDetach &&
+				(reason == embeddedTerminalRemovalTerminate || slot.Terminal == nil || slot.Terminal.State() == "exited") {
+				m.releaseDurableUntrackedOwner(slot.FlowID, slot.LaunchID)
+			}
 			m = m.recordRepairTerminalRemoval(slot, reason)
 		}
 	}

@@ -308,6 +308,8 @@ const (
 	// HolderOtherAttempt means an in-process launch of some other role holds
 	// it.
 	HolderOtherAttempt
+	// HolderUntrackedOwner is the durable phase-untracked Flow-level owner.
+	HolderUntrackedOwner
 	// HolderTmuxAgent means a phase-untracked agent still has a live tmux
 	// window in this Flow's worktree.
 	HolderTmuxAgent
@@ -353,6 +355,8 @@ func (holder Holder) String() string {
 		return "phaseAttempt"
 	case HolderOtherAttempt:
 		return "otherAttempt"
+	case HolderUntrackedOwner:
+		return "untrackedOwner"
 	case HolderTmuxAgent:
 		return "tmuxAgent"
 	case HolderRepairTerminal:
@@ -603,6 +607,9 @@ func queryFlowCache(cache FlowCache, flowID, phaseID string, purpose Purpose) Ve
 	if strings.TrimSpace(record.FlowID) != flowID {
 		return failedVerdict(fmt.Errorf("%w: cached Flow identity does not match %q", ErrInvalidQuery, flowID))
 	}
+	if untrackedOwnerActive(record.UntrackedOwner) {
+		return Verdict{holder: HolderUntrackedOwner}
+	}
 	for _, phase := range record.Phases {
 		currentPhaseID := strings.TrimSpace(phase.PhaseID)
 		if phaseID != "" && currentPhaseID != phaseID {
@@ -743,6 +750,9 @@ func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy,
 	if record.FlowID != flowID {
 		return failedVerdict(fmt.Errorf("%w: authoritative Flow identity %q does not match %q", ErrInvalidQuery, record.FlowID, flowID))
 	}
+	if untrackedOwnerActive(record.UntrackedOwner) {
+		return Verdict{holder: HolderUntrackedOwner}
+	}
 	if query.Purpose.Stage == StageAutoAdvance {
 		candidate := artifacts.NormalizePhaseID(query.PhaseID)
 		for _, phase := range record.Phases {
@@ -839,6 +849,10 @@ func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy,
 
 func phaseHasLiveStoredSession(flowID string, phase flowstore.FlowPhase, records []sessions.SessionRecord) bool {
 	return phaseHasLiveStoredSessionExcept(flowID, phase, records, SessionIdentity{})
+}
+
+func untrackedOwnerActive(owner *flowstore.UntrackedOwner) bool {
+	return owner != nil && strings.TrimSpace(owner.LaunchID) != "" && owner.State != flowstore.UntrackedOwnerEnded
 }
 
 func phaseHasLiveStoredSessionExcept(flowID string, phase flowstore.FlowPhase, records []sessions.SessionRecord, skip SessionIdentity) bool {
@@ -999,3 +1013,6 @@ func attemptHolder(role actions.FlowLaunchRole) Holder {
 // can express "nothing holds it" without constructing a zero Verdict literal
 // and depending on the zero value staying free.
 func Free() Verdict { return Verdict{} }
+
+// Failed is the verdict for an authoritative source failure.
+func Failed(err error) Verdict { return failedVerdict(err) }

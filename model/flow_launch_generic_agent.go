@@ -282,6 +282,11 @@ func (m Model) worktreeAgentFlowLaunchPrepareCmd(msg flowLaunchEventMsg, setting
 		event.Context = ctx
 		event.Route = decision.Route
 		event.FallbackNote = decision.FallbackNote
+		if err := claimUntrackedOwner(seams, msg.FlowID, msg.Token, msg.Kind); err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		event.UntrackedOwnerClaimed = true
 		return event
 	}
 }

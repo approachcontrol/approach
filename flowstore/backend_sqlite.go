@@ -33,7 +33,7 @@ const (
 // v6 flows.preparation_nonce projection, backfill, and nonce-protection trigger;
 // v7 recovery-generation projection and predecessor-writer compatibility
 // trigger.
-const databaseSchemaVersion = 7
+const databaseSchemaVersion = 8
 
 // DatabaseSchemaVersion is the physical flow database schema this build writes.
 // It is exported so launch and diagnostic surfaces can report the schema an
@@ -111,6 +111,21 @@ CREATE TABLE IF NOT EXISTS flows (
     prepared_at TEXT NOT NULL DEFAULT '',
     preparation_nonce TEXT NOT NULL DEFAULT '',
     recovery_generation INTEGER NOT NULL DEFAULT 0
+ )`
+
+const flowTableSchemaV8 = `
+CREATE TABLE IF NOT EXISTS flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL,
+    bead_id TEXT NOT NULL DEFAULT '',
+    epic_id TEXT NOT NULL DEFAULT '',
+    prepared_at TEXT NOT NULL DEFAULT '',
+    preparation_nonce TEXT NOT NULL DEFAULT '',
+    recovery_generation INTEGER NOT NULL DEFAULT 0,
+    untracked_owner_launch_id TEXT NOT NULL DEFAULT ''
  )`
 
 const epicProgressionTableSchema = `
@@ -197,7 +212,16 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove persisted recovered launch state');
 END`
 
-const flowSchemaSQL = flowTableSchemaV7 + `;
+const flowUntrackedOwnerCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_untracked_owner_update
+BEFORE UPDATE OF record, untracked_owner_launch_id ON flows
+WHEN OLD.untracked_owner_launch_id <> ''
+    AND COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.untracked_owner.launch_id'), '') <> NEW.untracked_owner_launch_id
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted phase-untracked owner');
+END`
+
+const flowSchemaSQL = flowTableSchemaV8 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
@@ -211,7 +235,8 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
 ` + epicProgressionDoneInsertCompatibilityTrigger + `;
 ` + epicProgressionDoneUpdateCompatibilityTrigger + `;
 ` + flowPreparationNonceCompatibilityTrigger + `;
-` + flowRecoveryGenerationCompatibilityTrigger + `;`
+` + flowRecoveryGenerationCompatibilityTrigger + `;
+` + flowUntrackedOwnerCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -621,6 +646,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0"}
 	case 7:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0", "recovery_generation:INTEGER:1:0:0:0"}
+	case 8:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0", "recovery_generation:INTEGER:1:0:0:0", "untracked_owner_launch_id:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
@@ -654,7 +681,13 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 					return err
 				}
 				if version >= 7 {
-					return validateSQLiteRecoveryGenerationCompatibilityTrigger(db)
+					if err := validateSQLiteRecoveryGenerationCompatibilityTrigger(db); err != nil {
+						return err
+					}
+					if version >= 8 {
+						return validateSQLiteUntrackedOwnerCompatibilityTrigger(db)
+					}
+					return nil
 				}
 				return nil
 			}
@@ -685,6 +718,8 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV6
 	case 7:
 		want = flowTableSchemaV7
+	case 8:
+		want = flowTableSchemaV8
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
 	}
@@ -757,6 +792,9 @@ func validateSQLiteSchemaObjectSet(objects []string, version int64) error {
 				want = append(want, "trigger:guard_preparation_nonce_update:flows")
 				if version >= 7 {
 					want = append(want, "trigger:guard_recovered_launch_state_update:flows")
+					if version >= 8 {
+						want = append(want, "trigger:guard_untracked_owner_update:flows")
+					}
 				}
 			}
 		}
@@ -774,7 +812,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 {
+	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string
@@ -848,6 +886,17 @@ func validateSQLiteRecoveryGenerationCompatibilityTrigger(db *sql.DB) error {
 	}
 	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowRecoveryGenerationCompatibilityTrigger) {
 		return fmt.Errorf("flow database has incompatible recovery generation compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowRecoveryGenerationCompatibilityTrigger))
+	}
+	return nil
+}
+
+func validateSQLiteUntrackedOwnerCompatibilityTrigger(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_untracked_owner_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database phase-untracked owner compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowUntrackedOwnerCompatibilityTrigger) {
+		return errors.New("flow database has incompatible phase-untracked owner compatibility trigger")
 	}
 	return nil
 }
@@ -1186,8 +1235,8 @@ func (s sqliteSession) save(record FlowRecord) error {
 		return err
 	}
 	_, err = s.tx.Exec(`
-INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(flow_id) DO UPDATE SET
     repo_path=excluded.repo_path,
     status=excluded.status,
@@ -1196,9 +1245,10 @@ ON CONFLICT(flow_id) DO UPDATE SET
 	epic_id=excluded.epic_id,
 	prepared_at=excluded.prepared_at,
 	preparation_nonce=excluded.preparation_nonce,
+	untracked_owner_launch_id=excluded.untracked_owner_launch_id,
 	recovery_generation=flows.recovery_generation+1,
     record=excluded.record`,
-		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, data)
+		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, projection.untrackedOwnerLaunchID, data)
 	if err != nil {
 		return fmt.Errorf("save flow %q: %w", record.FlowID, err)
 	}

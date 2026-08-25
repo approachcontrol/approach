@@ -486,7 +486,7 @@ func (o migrationOutcome) backupPathOrNil() *string {
 // it — and without an executing migration test for it — fails the build's own
 // gate rather than shipping an untested upgrade path. Version 0 is the
 // unstamped original, whose shape is v1's.
-var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5, 6}
+var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5, 6, 7}
 
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
 // It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
@@ -673,6 +673,13 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		statements = append(statements,
 			"ALTER TABLE flows ADD COLUMN recovery_generation INTEGER NOT NULL DEFAULT 0",
 			flowRecoveryGenerationCompatibilityTrigger,
+		)
+	}
+	if predecessor <= 7 {
+		statements = append(statements,
+			"ALTER TABLE flows ADD COLUMN untracked_owner_launch_id TEXT NOT NULL DEFAULT ''",
+			"UPDATE flows SET untracked_owner_launch_id = CASE WHEN json_valid(CAST(record AS TEXT)) THEN COALESCE(json_extract(CAST(record AS TEXT), '$.untracked_owner.launch_id'), '') ELSE '' END",
+			flowUntrackedOwnerCompatibilityTrigger,
 		)
 	}
 	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))

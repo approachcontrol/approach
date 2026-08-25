@@ -34,6 +34,32 @@ PRAGMA user_version = 6;`
 	return db
 }
 
+func createParentReleaseV7DatabaseAt(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", sqliteDSN(path, map[string][]string{"mode": {"rwc"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := flowTableSchemaV7 + `;
+CREATE INDEX idx_flows_updated ON flows(updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_repo_updated ON flows(repo_path, updated_at DESC, flow_id ASC);
+CREATE INDEX idx_flows_status_updated ON flows(status, updated_at DESC, flow_id ASC);
+` + epicProgressionTableSchema + `;
+` + flowBeadCompatibilityTrigger + `;
+` + flowPreparedCompatibilityTrigger + `;
+` + epicProgressionDoneInsertCompatibilityTrigger + `;
+` + epicProgressionDoneUpdateCompatibilityTrigger + `;
+` + flowProgressionClaimCompatibilityTrigger + `;
+` + flowPreparationNonceCompatibilityTrigger + `;
+` + flowRecoveryGenerationCompatibilityTrigger + `;
+PRAGMA user_version = 7;`
+	if _, err := db.Exec(schema); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	return db
+}
+
 // downgradeCurrentDatabaseToV6ForTest reconstructs the exact parent-release
 // shape. Changing user_version alone would leave v7's column and trigger in a
 // database that advertises itself as v6, which predecessor validation must
@@ -50,13 +76,13 @@ func downgradeCurrentDatabaseToV6ForTest(t *testing.T, root string) {
 		}
 	}()
 	if _, err := db.Exec(`
-DROP TRIGGER guard_recovered_launch_state_update;
-ALTER TABLE flows DROP COLUMN recovery_generation;
-PRAGMA user_version = 6;`); err != nil {
+DROP TRIGGER guard_untracked_owner_update;
+ALTER TABLE flows DROP COLUMN untracked_owner_launch_id;
+PRAGMA user_version = 7;`); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSQLiteSchemaVersion(db, 6); err != nil {
-		t.Fatalf("test downgrade did not reconstruct exact v6: %v", err)
+	if err := validateSQLiteSchemaVersion(db, 7); err != nil {
+		t.Fatalf("test downgrade did not reconstruct exact v7: %v", err)
 	}
 }
 
@@ -115,8 +141,8 @@ func TestSQLiteV6DatabaseMigratesToV7WithoutRewritingRecoveredCapabilities(t *te
 	if err := backend.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 7 {
-		t.Fatalf("user_version = %d, want 7", version)
+	if version != databaseSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, databaseSchemaVersion)
 	}
 	var migratedBlob []byte
 	if err := backend.db.QueryRow("SELECT record FROM flows WHERE flow_id = ?", record.FlowID).Scan(&migratedBlob); err != nil {

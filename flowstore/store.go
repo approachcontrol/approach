@@ -7,7 +7,8 @@
 // SQLite schema versions: v3 adds prepared_at + receipt trigger; v4 requires
 // boolean `done` in epic progression JSON; v5 fences the progression-claim
 // marker; v6 adds the protected flows.preparation_nonce generation projection;
-// v7 fences recovered-launch capabilities from older writers.
+// v7 fences recovered-launch capabilities from older writers; v8 projects and
+// fences the durable phase-untracked owner identity.
 package flowstore
 
 import (
@@ -127,6 +128,14 @@ var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
 // error return, and only the first may block a caller: callers that must stay
 // permissive when a Flow is missing test for this rather than for any error.
 var ErrFlowClosed = errors.New("flow is closed")
+
+// ErrFlowUntrackedOwned reports that a live or reserved phase-untracked launch
+// already owns the Flow worktree.
+var ErrFlowUntrackedOwned = errors.New("flow worktree is owned by a phase-untracked launch")
+
+// ErrUntrackedOwnerChanged reports that an identity-fenced owner mutation no
+// longer names the persisted launch.
+var ErrUntrackedOwnerChanged = errors.New("phase-untracked Flow owner changed")
 
 const (
 	StatusPending        = "pending"
@@ -619,6 +628,9 @@ type FlowRecord struct {
 	// stays distinguishable from a legacy record that predates the field.
 	Headless bool        `json:"headless"`
 	Phases   []FlowPhase `json:"phases"`
+	// UntrackedOwner is the durable Flow-level owner for worktree-writing
+	// launches that deliberately do not attach to a phase.
+	UntrackedOwner *UntrackedOwner `json:"untracked_owner,omitempty"`
 	// ProgressionClaim marks an identity created for the external Beads claim
 	// protocol. Recovery repeats the idempotent claim; the marker is retry
 	// provenance, not proof that ownership already landed. SQLite schema v5

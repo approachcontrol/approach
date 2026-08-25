@@ -56,6 +56,14 @@
       "first_compatible_release": "v0.10.7",
       "migration_tested_predecessors": [0, 1, 2, 3, 4, 5, 6],
       "release_notes": "Recovered-launch generation projection and compatibility trigger: already-open older writers cannot rewrite Flow JSON that persists recovered_launch_ids and reconciliation state."
+    },
+    {
+      "physical_version": 8,
+      "min_reader_generation": 8,
+      "min_writer_generation": 8,
+      "first_compatible_release": "unreleased",
+      "migration_tested_predecessors": [0, 1, 2, 3, 4, 5, 6, 7],
+      "release_notes": "Durable phase-untracked Flow owner projection and compatibility trigger prevent older writers from dropping live worktree ownership."
     }
   ]
 }

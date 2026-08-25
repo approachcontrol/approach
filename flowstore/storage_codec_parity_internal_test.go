@@ -47,6 +47,7 @@ func populatedFlowRecord() FlowRecord {
 			Sessions:  []Session{{Provider: "claude", SessionID: "s1", LaunchID: "launch-1", Status: "ended", StartedAt: created, EndedAt: updated, TranscriptPath: "/tmp/t.jsonl"}},
 			CreatedAt: created, UpdatedAt: updated,
 		}},
+		UntrackedOwner:        &UntrackedOwner{LaunchID: "untracked-1", Role: UntrackedOwnerAutofix, State: UntrackedOwnerLive, Transport: UntrackedOwnerTransport{Kind: UntrackedTransportRepoTmux, Session: "repo", Window: "untracked-1"}, ReservedAt: created, ActivatedAt: updated},
 		ProgressionClaim:      true,
 		PreparationGeneration: "0123456789abcdef0123456789abcdef",
 		PreparedAt:            &preparedAt,

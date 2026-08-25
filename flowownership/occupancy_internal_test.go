@@ -57,6 +57,20 @@ func TestAdvisoryCachedRunningPhaseDefers(t *testing.T) {
 	}
 }
 
+func TestDurableUntrackedOwnerDefersCachedAndAuthoritativeAdmissions(t *testing.T) {
+	record := flowstore.FlowRecord{FlowID: "flow-1", UntrackedOwner: &flowstore.UntrackedOwner{LaunchID: "launch-1", Role: flowstore.UntrackedOwnerAutofix, State: flowstore.UntrackedOwnerLive}}
+	cache := &flowCacheFixture{found: true, record: record}
+	advice := New(Sources{FlowCache: cache, Cache: &sessionCacheFixture{wantFlowID: "flow-1"}, Lease: &leaseFixture{t: t, wantFlowID: "flow-1"}, Runtime: runtimeFixture{}}).Advise(Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleWorktreeAgent, Stage: StageFooter}})
+	if advice.Holder() != HolderUntrackedOwner {
+		t.Fatalf("cached holder=%v", advice.Holder())
+	}
+	reader := &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record}
+	verdict := New(Sources{Flows: reader}).Query(Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageAuthoritative}, PhaseID: "implementation"})
+	if verdict.Holder() != HolderUntrackedOwner {
+		t.Fatalf("authoritative holder=%v err=%v", verdict.Holder(), verdict.Err())
+	}
+}
+
 type sessionCacheFixture struct {
 	records    []sessions.SessionRecord
 	wantFlowID string

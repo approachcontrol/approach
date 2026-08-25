@@ -229,6 +229,21 @@ func (h *manualLaunchHarness) options() Options {
 			h.readFlowCalls++
 			return h.persistedFlow(strings.TrimSpace(flowID))
 		},
+		ClaimUntrackedOwner: func(update flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error) {
+			record, err := h.persistedFlow(update.FlowID)
+			if err == nil {
+				owner := update.Owner
+				owner.State = flowstore.UntrackedOwnerReserved
+				record.UntrackedOwner = &owner
+			}
+			return record, err
+		},
+		ActivateUntrackedOwner: func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+			return h.persistedFlow(update.FlowID)
+		},
+		ReleaseUntrackedOwner: func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
+			return h.persistedFlow(update.FlowID)
+		},
 		ReserveFlowLaunch: func(flowID string) (flowstore.FlowRecord, func(), error) {
 			if h.reserveLaunchErr != nil {
 				return flowstore.FlowRecord{}, nil, h.reserveLaunchErr
