@@ -3,6 +3,7 @@ package sessions_test
 import (
 	"bytes"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,11 +43,12 @@ func sessionEndPayload(worktreePath string) []byte {
 		"session_id": "claude-flow-1",
 		"cwd": ` + quoteJSON(worktreePath) + `,
 		"hook_event_name": "SessionEnd",
+		"reason": "prompt_input_exit",
 		"timestamp": "2026-06-06T14:10:00Z"
 	}`)
 }
 
-func TestIngestHookSessionEndDoesNotDemoteAStillRunningPhase(t *testing.T) {
+func TestIngestHookCertifiedSessionEndDemotesRunningPhaseImmediately(t *testing.T) {
 	root := t.TempDir()
 	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
 	result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader(sessionEndPayload(flow.WorktreePath)), sessions.IngestOptions{
@@ -69,16 +71,16 @@ func TestIngestHookSessionEndDoesNotDemoteAStillRunningPhase(t *testing.T) {
 		t.Fatal(err)
 	}
 	phase := flowPhaseByID(t, read, "plan")
-	if phase.Status != flowstore.PhaseRunning {
-		t.Fatalf("fresh SessionEnd demoted a live phase: %#v", phase)
+	if phase.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("certified SessionEnd did not demote immediately: %#v", phase)
 	}
 	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" {
 		t.Fatalf("session still attached: %#v", phase.Sessions)
 	}
-	for _, warning := range result.Warnings {
-		if strings.Contains(warning, "marked needs_attention") || strings.Contains(warning, "could not reconcile") {
-			t.Fatalf("unexpected warning: %q", warning)
-		}
+	if !slices.ContainsFunc(result.Warnings, func(warning string) bool {
+		return strings.Contains(warning, "marked needs_attention")
+	}) {
+		t.Fatalf("warnings = %#v, want reconciliation notice", result.Warnings)
 	}
 }
 
@@ -104,6 +106,152 @@ func TestIngestHookCodexStopDoesNotDemoteAStillRunningPhase(t *testing.T) {
 	read, _ := flowStore.Read(flow.FlowID)
 	if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
 		t.Fatalf("Codex Stop demoted a live phase: %#v", phase)
+	}
+}
+
+func TestIngestHookStaleCertificateDoesNotDemoteNewerLaunch(t *testing.T) {
+	root := t.TempDir()
+	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+	next := launchcontrol.RecordBaseline(root, flowStore.AddPhaseLaunchID)
+	if _, err := next(flowstore.PhaseLaunchUpdate{
+		FlowID: flow.FlowID, PhaseID: "plan", LaunchID: "launch-flow-2",
+	}); err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	envForLaunch := func(launchID string) map[string]string {
+		return map[string]string{
+			"APPROACH_LAUNCH_ID":          launchID,
+			"APPROACH_SESSION_STATE_ROOT": root,
+			"APPROACH_FLOW_STATE_ROOT":    root,
+			"APPROACH_FLOW_ID":            flow.FlowID,
+			"APPROACH_FLOW_PHASE_ID":      "plan",
+		}
+	}
+	if _, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+		"session_id": "claude-flow-1",
+		"cwd": `+quoteJSON(flow.WorktreePath)+`,
+		"hook_event_name": "SessionEnd",
+		"reason": "clear",
+		"timestamp": "2026-06-06T14:20:00Z"
+	}`)), sessions.IngestOptions{Env: envForLaunch("launch-flow-2")}); err != nil {
+		t.Fatalf("current IngestHook() error = %v", err)
+	}
+	result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+		"session_id": "claude-flow-1",
+		"cwd": `+quoteJSON(flow.WorktreePath)+`,
+		"hook_event_name": "SessionEnd",
+		"reason": "logout",
+		"timestamp": "2026-06-06T14:10:00Z"
+	}`)), sessions.IngestOptions{Env: envForLaunch("launch-flow-1")})
+	if err != nil {
+		t.Fatalf("stale IngestHookWithWarnings() error = %v", err)
+	}
+	if result.Record.LaunchID != "launch-flow-2" || result.Record.DeathCertificate {
+		t.Fatalf("accepted record = %#v, want newer non-certificate launch", result.Record)
+	}
+	read, err := flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("stale certificate demoted newer launch: %#v", phase)
+	}
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "marked") || strings.Contains(warning, "could not reconcile") {
+			t.Fatalf("unexpected reconciliation warning: %q", warning)
+		}
+	}
+}
+
+func TestIngestHookCertificateRespectsLaunchWideLiveness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, root string, flow flowstore.FlowRecord)
+	}{
+		{
+			name: "newer clear for same session",
+			seed: func(t *testing.T, root string, flow flowstore.FlowRecord) {
+				t.Helper()
+				if _, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+					"session_id": "claude-flow-1",
+					"cwd": `+quoteJSON(flow.WorktreePath)+`,
+					"hook_event_name": "SessionEnd",
+					"reason": "clear",
+					"timestamp": "2026-06-06T14:20:00Z"
+				}`)), sessions.IngestOptions{Env: launchEnv(root, flow, "launch-flow-1")}); err != nil {
+					t.Fatalf("seed clear IngestHook() error = %v", err)
+				}
+			},
+		},
+		{
+			name: "newer clear",
+			seed: func(t *testing.T, root string, flow flowstore.FlowRecord) {
+				t.Helper()
+				if _, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+					"session_id": "claude-flow-2",
+					"cwd": `+quoteJSON(flow.WorktreePath)+`,
+					"hook_event_name": "SessionEnd",
+					"reason": "clear",
+					"timestamp": "2026-06-06T14:20:00Z"
+				}`)), sessions.IngestOptions{Env: launchEnv(root, flow, "launch-flow-1")}); err != nil {
+					t.Fatalf("seed clear IngestHook() error = %v", err)
+				}
+			},
+		},
+		{
+			name: "active record",
+			seed: func(t *testing.T, root string, _ flowstore.FlowRecord) {
+				t.Helper()
+				store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Upsert(sessions.SessionRecord{
+					Provider: sessions.ProviderCodex, SessionID: "codex-flow-1",
+					LaunchID: "launch-flow-1", Status: "last_seen",
+				}); err != nil {
+					t.Fatalf("seed active Upsert() error = %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+			tc.seed(t, root, flow)
+			result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+				"session_id": "claude-flow-1",
+				"cwd": `+quoteJSON(flow.WorktreePath)+`,
+				"hook_event_name": "SessionEnd",
+				"reason": "logout",
+				"timestamp": "2026-06-06T14:10:00Z"
+			}`)), sessions.IngestOptions{Env: launchEnv(root, flow, "launch-flow-1")})
+			if err != nil {
+				t.Fatalf("IngestHookWithWarnings() error = %v", err)
+			}
+			read, err := flowStore.Read(flow.FlowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
+				t.Fatalf("certificate ignored launch-wide liveness: %#v", phase)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "marked") || strings.Contains(warning, "could not reconcile") {
+					t.Fatalf("unexpected reconciliation warning: %q", warning)
+				}
+			}
+		})
+	}
+}
+
+func launchEnv(root string, flow flowstore.FlowRecord, launchID string) map[string]string {
+	return map[string]string{
+		"APPROACH_LAUNCH_ID":          launchID,
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_FLOW_ID":            flow.FlowID,
+		"APPROACH_FLOW_PHASE_ID":      "plan",
 	}
 }
 
@@ -247,7 +395,7 @@ func TestIngestHookRecordsTheSessionEndReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IngestHookWithWarnings() error = %v", err)
 	}
-	if result.Record.Status != "ended" || result.Record.EndReason != "clear" {
+	if result.Record.Status != "ended" || result.Record.EndReason != "clear" || result.Record.DeathCertificate {
 		t.Fatalf("record = %#v, want ended with reason clear", result.Record)
 	}
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
@@ -258,19 +406,19 @@ func TestIngestHookRecordsTheSessionEndReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].EndReason != "clear" {
+	if len(records) != 1 || records[0].EndReason != "clear" || records[0].DeathCertificate {
 		t.Fatalf("stored records = %#v, want the end reason persisted", records)
 	}
 }
 
-// A per-turn hook is not exit evidence however old its timestamp: a Codex
-// Stop, Cursor stop, or Claude /clear payload that carries an ended_at past
-// the session-end grace still may not demote a live launch's phase.
-func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
+// A non-certificate provider event is not exit evidence however old its
+// timestamp. Age cannot turn a turn boundary or malformed reason into proof.
+func TestIngestHookNonCertificatesWithOldTimestampsDoNotDemote(t *testing.T) {
 	cases := []struct {
-		name     string
-		provider sessions.Provider
-		payload  string
+		name       string
+		provider   sessions.Provider
+		payload    string
+		wantReason string
 	}{
 		{name: "codex Stop", provider: sessions.ProviderCodex, payload: `{
 			"session_id": "codex-flow-1",
@@ -279,11 +427,41 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 			"ended_at": "2020-01-01T00:00:00Z",
 			"timestamp": "2020-01-01T00:00:00Z"
 		}`},
-		{name: "claude clear", provider: sessions.ProviderClaude, payload: `{
+		{name: "cursor stop", provider: sessions.ProviderCursor, payload: `{
+			"conversation_id": "cursor-flow-1",
+			"cwd": %s,
+			"hook_event_name": "stop",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude clear", provider: sessions.ProviderClaude, wantReason: "clear", payload: `{
 			"session_id": "claude-flow-1",
 			"cwd": %s,
 			"hook_event_name": "SessionEnd",
 			"reason": "clear",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude missing reason", provider: sessions.ProviderClaude, payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "SessionEnd",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude unknown reason", provider: sessions.ProviderClaude, wantReason: "future_reason", payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "SessionEnd",
+			"reason": "future_reason",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude wrong event", provider: sessions.ProviderClaude, payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "Stop",
+			"reason": "logout",
 			"ended_at": "2020-01-01T00:00:00Z",
 			"timestamp": "2020-01-01T00:00:00Z"
 		}`},
@@ -308,22 +486,27 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 			if result.Record.Status != "ended" {
 				t.Fatalf("record status = %q, want ended", result.Record.Status)
 			}
+			if result.Record.EndReason != tc.wantReason {
+				t.Fatalf("record end reason = %q, want %q", result.Record.EndReason, tc.wantReason)
+			}
+			if result.Record.DeathCertificate {
+				t.Fatalf("record = %#v, want no persisted death certificate", result.Record)
+			}
 			read, _ := flowStore.Read(flow.FlowID)
 			if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
 				t.Fatalf("old per-turn hook demoted the phase: %#v", phase)
 			}
 		})
 	}
-	// A Claude SessionEnd that is a real end and is past the grace does demote.
+	// A recognized final Claude SessionEnd demotes without waiting for age.
 	root := t.TempDir()
 	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
-	if _, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+	result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
 		"session_id": "claude-flow-1",
 		"cwd": `+quoteJSON(flow.WorktreePath)+`,
 		"hook_event_name": "SessionEnd",
 		"reason": "prompt_input_exit",
-		"ended_at": "2020-01-01T00:00:00Z",
-		"timestamp": "2020-01-01T00:00:00Z"
+		"timestamp": "2026-06-06T14:10:00Z"
 	}`)), sessions.IngestOptions{
 		Env: map[string]string{
 			"APPROACH_LAUNCH_ID":          "launch-flow-1",
@@ -332,11 +515,26 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 			"APPROACH_FLOW_ID":            flow.FlowID,
 			"APPROACH_FLOW_PHASE_ID":      "plan",
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("IngestHookWithWarnings() error = %v", err)
+	}
+	if !result.Record.DeathCertificate {
+		t.Fatalf("record = %#v, want persisted death certificate", result.Record)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || !records[0].DeathCertificate {
+		t.Fatalf("stored records = %#v, want persisted death certificate", records)
 	}
 	read, _ := flowStore.Read(flow.FlowID)
 	if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseNeedsAttention {
-		t.Fatalf("aged real SessionEnd did not demote: %#v", phase)
+		t.Fatalf("certified SessionEnd did not demote immediately: %#v", phase)
 	}
 }

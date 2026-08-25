@@ -65,23 +65,27 @@ type SessionRecord struct {
 	// supplied one (Claude's SessionEnd `reason`: clear, logout,
 	// prompt_input_exit, other). A `clear` end leaves the agent process alive
 	// on a new session, so it is not process-exit evidence.
-	EndReason      string    `json:"end_reason,omitempty"`
-	StartedAt      time.Time `json:"started_at,omitempty"`
-	EndedAt        time.Time `json:"ended_at,omitempty"`
-	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
-	CWD            string    `json:"cwd,omitempty"`
-	RepoPath       string    `json:"repo_path,omitempty"`
-	WorktreePath   string    `json:"worktree_path,omitempty"`
-	PlanID         string    `json:"plan_id,omitempty"`
-	PlanPath       string    `json:"plan_path,omitempty"`
-	FlowID         string    `json:"flow_id,omitempty"`
-	FlowPhaseID    string    `json:"flow_phase_id,omitempty"`
-	Branch         string    `json:"branch,omitempty"`
-	Commit         string    `json:"commit,omitempty"`
-	Model          string    `json:"model,omitempty"`
-	Summary        string    `json:"summary,omitempty"`
-	TranscriptPath string    `json:"transcript_path,omitempty"`
-	CaptureSource  string    `json:"capture_source,omitempty"`
+	EndReason string `json:"end_reason,omitempty"`
+	// DeathCertificate records that ingestion validated the provider event,
+	// not merely that an ended record carries a recognized reason. Records
+	// written by older builds omit it and remain non-evidence.
+	DeathCertificate bool      `json:"death_certificate,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	EndedAt          time.Time `json:"ended_at,omitempty"`
+	LastSeenAt       time.Time `json:"last_seen_at,omitempty"`
+	CWD              string    `json:"cwd,omitempty"`
+	RepoPath         string    `json:"repo_path,omitempty"`
+	WorktreePath     string    `json:"worktree_path,omitempty"`
+	PlanID           string    `json:"plan_id,omitempty"`
+	PlanPath         string    `json:"plan_path,omitempty"`
+	FlowID           string    `json:"flow_id,omitempty"`
+	FlowPhaseID      string    `json:"flow_phase_id,omitempty"`
+	Branch           string    `json:"branch,omitempty"`
+	Commit           string    `json:"commit,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	Summary          string    `json:"summary,omitempty"`
+	TranscriptPath   string    `json:"transcript_path,omitempty"`
+	CaptureSource    string    `json:"capture_source,omitempty"`
 }
 
 type SessionFilter struct {
@@ -539,6 +543,9 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	incoming.Provider = existing.Provider
 	incoming.SessionID = existing.SessionID
 	newerLaunch := incoming.LaunchID != "" && incoming.LaunchID != existing.LaunchID
+	incomingEventTime := sortTime(incoming)
+	existingEventTime := sortTime(existing)
+	olderEvent := !newerLaunch && !incomingEventTime.IsZero() && !existingEventTime.IsZero() && incomingEventTime.Before(existingEventTime)
 	if incoming.SchemaVersion == 0 {
 		incoming.SchemaVersion = existing.SchemaVersion
 	}
@@ -567,6 +574,10 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	preserveBlank(&incoming.CaptureSource, existing.CaptureSource)
 	if existing.Status == "ended" && !newerLaunch {
 		incoming.Status = "ended"
+	}
+	if olderEvent {
+		incoming.EndReason = existing.EndReason
+		incoming.DeathCertificate = existing.DeathCertificate
 	}
 	incoming.StartedAt = earliestNonzero(existing.StartedAt, incoming.StartedAt)
 	incoming.LastSeenAt = latestTime(existing.LastSeenAt, incoming.LastSeenAt)

@@ -857,12 +857,10 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 	}
 }
 
-// The session hook is a keep-alive, not a release, for EVERY provider. No
-// provider hook here is a reliable death certificate — Codex wires Stop, which
-// fires per turn, and Claude wires SessionEnd, which also fires on /clear while
-// the agent keeps running — so releasing on one would unpin a live agent still
-// bound to the path baked into its argv. Retirement belongs to
-// FinalizeAgentSession and to expiry.
+// The session hook is a keep-alive, not a pin release, for every provider.
+// Some final Claude reasons certify launch death, but the hook type alone does
+// not: Codex Stop fires per turn and Claude SessionEnd also fires on /clear.
+// Retirement belongs to FinalizeAgentSession and expiry.
 func TestRunSessionHookRefreshesTheLaunchPinClaimForEveryProvider(t *testing.T) {
 	for _, tc := range []struct {
 		provider string

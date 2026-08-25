@@ -118,19 +118,22 @@ phase in the TUI makes the same call by hand after a confirmation — see
 `docs/tui-guide.md` — which is why a released session is indistinguishable from
 a cleanly exited one: it is the same write.
 
-A Claude `SessionEnd` whose `reason` is not `clear`, for a tracked phase
-launch, also reports the end to the launch controller (see "Launch
-directories" below): anything the launch spooled is replayed first. Even that
-record is not a death certificate, so a still-`running` phase is not demoted
-from the hook alone: demotion waits the same ten-minute grace the sweep uses,
-and a held Flow lease vetoes it either way. Codex `Stop` fires per turn,
-Cursor's `stop` is the same shape, and Claude's `SessionEnd` also fires on
-`/clear` while the agent keeps running, so those hooks record the session as
-`ended` but never reach the controller at all — however old a timestamp they
-carry. The sweep likewise treats an ended Claude session as evidence only
-after ten minutes and only when its end was not a `/clear`, and never a
-Codex or Cursor one. The hook reports what it did as a stderr warning and
-still exits 0.
+A Claude `SessionEnd` with a recognized final reason (`logout`,
+`prompt_input_exit`, or `other`) is a provider death certificate for a tracked
+phase launch. The hook reports it to the launch controller, which replays the
+launch's pending writes first and may demote a still-`running` phase
+immediately. Before reporting it, the hook applies the same launch-wide rule as
+the sweep: a newer non-certificate event or any active record suppresses the
+certificate. A held Flow lease still vetoes the demotion.
+
+Codex `Stop`, Cursor `stop`, Claude `clear`, blank reasons, unknown reasons,
+and malformed provider events remain session history only. No timestamp can
+turn them into exit evidence. The sweep uses the newest ended provider record
+for a launch and accepts only records whose ingestion persisted both the
+recognized Claude reason and an explicit death-certificate bit. Records from
+older builds have no bit and remain non-evidence, even when their stored reason
+matches. Any active record keeps the launch alive. The hook reports a demotion
+as a stderr warning and still exits 0.
 
 `session-hook` loads the normal Approach config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
@@ -239,16 +242,16 @@ tracked work settles.
 
 Reconciliation demotes a phase only on positive exit evidence: an embedded
 terminal's exit, an interactive launch handing the TTY back, the lease
-runner's `exit.json`, or a Claude session record the store says ended more
-than ten minutes ago for a reason other than `/clear` — and never while the
-Flow lease is held. A `SessionEnd` hook replays first but is not itself exit
-evidence; it does keep the provider's `reason` on the record (`end_reason`),
-and a launch whose latest end is a `clear` is treated as continued, because
-the agent lives on in a new session that has no record until it ends. Codex
-and Cursor records say `ended` after every turn, so they are never exit
-evidence either: a Codex or Cursor launch that exits without a result is
-demoted only by its embedded terminal's exit or the lease runner's
-`exit.json`.
+runner's `exit.json`, or a recognized final Claude `SessionEnd` death
+certificate. Session evidence never demotes while the Flow lease is held. The
+hook and sweep both replay pending writes before demotion. The provider's
+`reason` remains on the record as `end_reason`, and validated final events set
+`death_certificate`. Legacy records without that bit remain non-evidence.
+`ended_at` remains in the evidence and reconciliation notes for diagnosis, not
+proof. Claude `clear`, blank or unknown reasons, and Codex or Cursor records are
+never exit evidence, regardless of age. A Codex or Cursor launch that exits
+without a result is demoted only by its embedded terminal's exit or the lease
+runner's `exit.json`.
 That exit record and the resulting `phase_result_missing` transition are
 diagnostic evidence when teardown still prevents a phase result or session
 capture. They are not a substitute for the agent awaiting its background work.

@@ -381,14 +381,14 @@ func runSessionHook(args []string, deps runDeps) error {
 	// emits — the TUI releases claims in FinalizeAgentSession but deliberately
 	// skips that for detached launches — but "a hook fired" does not mean "the
 	// agent is done", and releasing on a hook that is not end-of-life would
-	// unpin a live agent still bound to the path baked into its argv. Codex
-	// wires Stop, which fires once per TURN. Claude wires SessionEnd, which also
-	// fires on /clear while the process keeps running. Neither is a reliable
-	// death certificate, and a provider added later would be one more guess.
+	// unpin a live agent still bound to the path baked into its argv. A recognized
+	// final Claude reason certifies death for launch reconciliation, but the hook
+	// type alone does not. Codex wires Stop once per turn, and Claude also emits
+	// SessionEnd on /clear while the process keeps running.
 	//
-	// So what the hook actually attests is "this launch was alive just now",
-	// which is exactly what a claim's freshness should track: it restamps the
-	// claim, and retirement is left to FinalizeAgentSession or to expiry. The
+	// The hook proves that the pinned binary remained available through
+	// ingestion. The claim tracks that use, so the hook restamps it and leaves
+	// retirement to FinalizeAgentSession or expiry. The
 	// cost is that a detached launch holds its digest until pinClaimMaxAge after
 	// its last sign of life; that is bounded disk, against the unbounded
 	// alternative of evicting a binary a running agent still has to exec.
@@ -539,58 +539,22 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	return err
 }
 
-// sessionLivenessProbe answers the launch controller's "did this launch's
-// agent process end" from the session store. Status is authoritative over
-// EndedAt; several records for one launch count as ended only when all of
-// them are, and the launch's end is its latest record's end.
-//
-// An `ended` record is exit evidence only when the provider's hook means the
-// process ended. Codex records `ended` after every turn (its Stop hook fires
-// while the CLI stays open) and Cursor's stop hook is the same shape, so for
-// those providers an ended record is a turn boundary: the launch is known but
-// never reported ended, and its phase is left to authoritative evidence — the
-// embedded terminal's exit or the lease runner's exit.json. Claude's
-// SessionEnd-backed records count, except a `/clear`: that ends the session
-// with the process alive on a new one that has no record until it ends, so a
-// launch whose latest end is a `clear` is continued, not ended.
+// sessionLivenessProbe reports whether the session store contains a provider
+// death certificate for a launch. The newest provider event decides among
+// ended records, while any active record keeps the launch alive.
 func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 	return func(launchID string) (launchcontrol.LaunchLiveness, error) {
 		records, err := store.List(sessions.SessionFilter{LaunchID: launchID})
 		if err != nil {
 			return launchcontrol.LaunchLiveness{}, err
 		}
-		liveness := launchcontrol.LaunchLiveness{Ended: true}
-		var latest sessions.SessionRecord
-		for _, record := range records {
-			liveness.RecordKnown = true
-			if sessions.IsActive(record.Status, record.EndedAt) || !sessionEndIsProcessEnd(record.Provider) {
-				liveness.Ended = false
-				continue
-			}
-			if record.EndedAt.After(latest.EndedAt) {
-				latest = record
-			}
-		}
-		if !liveness.RecordKnown || sessionEndContinues(latest) {
-			liveness.Ended = false
-		}
-		if liveness.Ended {
-			liveness.EndedAt = latest.EndedAt
-		}
-		return liveness, nil
+		classified := sessions.ClassifyLaunchLiveness(records, launchID)
+		return launchcontrol.LaunchLiveness{
+			RecordKnown:      classified.RecordKnown,
+			DeathCertificate: classified.DeathCertificate,
+			EndedAt:          classified.EndedAt,
+		}, nil
 	}
-}
-
-// sessionEndIsProcessEnd reports whether an `ended` session record from
-// provider can mean its agent process ended rather than a turn.
-func sessionEndIsProcessEnd(provider sessions.Provider) bool {
-	return provider == sessions.ProviderClaude
-}
-
-// sessionEndContinues reports an ended record whose end left the agent
-// process alive: Claude's `/clear`.
-func sessionEndContinues(record sessions.SessionRecord) bool {
-	return record.Provider == sessions.ProviderClaude && strings.TrimSpace(record.EndReason) == "clear"
 }
 
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {

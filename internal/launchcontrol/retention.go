@@ -9,9 +9,8 @@ import (
 
 const (
 	// RetentionAge is how long a launch directory is kept after its last state
-	// change. It exceeds every grace and every replay window by orders of
-	// magnitude, so retention can never delete a directory the sweep still
-	// needs.
+	// change. It exceeds every replay window by orders of magnitude, so
+	// retention can never delete a directory the sweep still needs.
 	RetentionAge = 14 * 24 * time.Hour
 	// retentionInterval spaces retention passes within a long-lived process.
 	retentionInterval = 24 * time.Hour
