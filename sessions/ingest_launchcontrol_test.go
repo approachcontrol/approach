@@ -163,6 +163,83 @@ func TestIngestHookStaleCertificateDoesNotDemoteNewerLaunch(t *testing.T) {
 	}
 }
 
+func TestIngestHookCertificateRespectsLaunchWideLiveness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, root string, flow flowstore.FlowRecord)
+	}{
+		{
+			name: "newer clear",
+			seed: func(t *testing.T, root string, flow flowstore.FlowRecord) {
+				t.Helper()
+				if _, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+					"session_id": "claude-flow-2",
+					"cwd": `+quoteJSON(flow.WorktreePath)+`,
+					"hook_event_name": "SessionEnd",
+					"reason": "clear",
+					"timestamp": "2026-06-06T14:20:00Z"
+				}`)), sessions.IngestOptions{Env: launchEnv(root, flow, "launch-flow-1")}); err != nil {
+					t.Fatalf("seed clear IngestHook() error = %v", err)
+				}
+			},
+		},
+		{
+			name: "active record",
+			seed: func(t *testing.T, root string, _ flowstore.FlowRecord) {
+				t.Helper()
+				store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Upsert(sessions.SessionRecord{
+					Provider: sessions.ProviderCodex, SessionID: "codex-flow-1",
+					LaunchID: "launch-flow-1", Status: "last_seen",
+				}); err != nil {
+					t.Fatalf("seed active Upsert() error = %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
+			tc.seed(t, root, flow)
+			result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+				"session_id": "claude-flow-1",
+				"cwd": `+quoteJSON(flow.WorktreePath)+`,
+				"hook_event_name": "SessionEnd",
+				"reason": "logout",
+				"timestamp": "2026-06-06T14:10:00Z"
+			}`)), sessions.IngestOptions{Env: launchEnv(root, flow, "launch-flow-1")})
+			if err != nil {
+				t.Fatalf("IngestHookWithWarnings() error = %v", err)
+			}
+			read, err := flowStore.Read(flow.FlowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
+				t.Fatalf("certificate ignored launch-wide liveness: %#v", phase)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "marked") || strings.Contains(warning, "could not reconcile") {
+					t.Fatalf("unexpected reconciliation warning: %q", warning)
+				}
+			}
+		})
+	}
+}
+
+func launchEnv(root string, flow flowstore.FlowRecord, launchID string) map[string]string {
+	return map[string]string{
+		"APPROACH_LAUNCH_ID":          launchID,
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_FLOW_ID":            flow.FlowID,
+		"APPROACH_FLOW_PHASE_ID":      "plan",
+	}
+}
+
 func TestIngestHookSessionEndDoesNotDemoteWhileFlowLeaseIsHeld(t *testing.T) {
 	root := t.TempDir()
 	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")

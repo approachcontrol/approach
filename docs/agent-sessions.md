@@ -122,7 +122,9 @@ A Claude `SessionEnd` with a recognized final reason (`logout`,
 `prompt_input_exit`, or `other`) is a provider death certificate for a tracked
 phase launch. The hook reports it to the launch controller, which replays the
 launch's pending writes first and may demote a still-`running` phase
-immediately. A held Flow lease still vetoes the demotion.
+immediately. Before reporting it, the hook applies the same launch-wide rule as
+the sweep: a newer non-certificate event or any active record suppresses the
+certificate. A held Flow lease still vetoes the demotion.
 
 Codex `Stop`, Cursor `stop`, Claude `clear`, blank reasons, unknown reasons,
 and malformed provider events remain session history only. No timestamp can

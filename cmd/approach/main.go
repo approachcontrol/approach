@@ -548,24 +548,12 @@ func sessionLivenessProbe(store *sessions.Store) launchcontrol.LivenessProbe {
 		if err != nil {
 			return launchcontrol.LaunchLiveness{}, err
 		}
-		var liveness launchcontrol.LaunchLiveness
-		var latest sessions.SessionRecord
-		active := false
-		for _, record := range records {
-			liveness.RecordKnown = true
-			if sessions.IsActive(record.Status, record.EndedAt) {
-				active = true
-			}
-			if latest.SessionID == "" {
-				latest = record
-			}
-		}
-		if !liveness.RecordKnown {
-			return liveness, nil
-		}
-		liveness.EndedAt = latest.EndedAt
-		liveness.DeathCertificate = !active && sessions.IsDeathCertificate(latest)
-		return liveness, nil
+		classified := sessions.ClassifyLaunchLiveness(records, launchID)
+		return launchcontrol.LaunchLiveness{
+			RecordKnown:      classified.RecordKnown,
+			DeathCertificate: classified.DeathCertificate,
+			EndedAt:          classified.EndedAt,
+		}, nil
 	}
 }
 

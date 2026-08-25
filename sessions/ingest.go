@@ -144,7 +144,13 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	// store handle at a time. Only a provider event that certifies process
 	// death reaches the controller.
 	if record.DeathCertificate {
-		reconcileFlowLaunchExit(record, opts, warnings)
+		records, listErr := store.List(SessionFilter{})
+		if listErr != nil {
+			appendWarning(warnings, fmt.Sprintf("could not classify launch %s session liveness: %v", record.LaunchID, listErr))
+		} else if liveness := ClassifyLaunchLiveness(records, record.LaunchID); liveness.DeathCertificate {
+			record.EndedAt = liveness.EndedAt
+			reconcileFlowLaunchExit(record, opts, warnings)
+		}
 	}
 	return record, nil
 }
@@ -255,6 +261,41 @@ func IsDeathCertificate(record SessionRecord) bool {
 		return false
 	}
 	return finalClaudeEndReason(record.EndReason)
+}
+
+// LaunchSessionLiveness is the launch-wide interpretation of session history.
+// List returns records newest first, so the first matching record is the latest
+// provider event. Any active record vetoes a certificate from an ended record.
+type LaunchSessionLiveness struct {
+	RecordKnown      bool
+	DeathCertificate bool
+	EndedAt          time.Time
+}
+
+// ClassifyLaunchLiveness applies the same session evidence rule to immediate
+// hook reconciliation and the controller sweep.
+func ClassifyLaunchLiveness(records []SessionRecord, launchID string) LaunchSessionLiveness {
+	var liveness LaunchSessionLiveness
+	var latest SessionRecord
+	active := false
+	for _, record := range records {
+		if strings.TrimSpace(record.LaunchID) != strings.TrimSpace(launchID) {
+			continue
+		}
+		liveness.RecordKnown = true
+		if IsActive(record.Status, record.EndedAt) {
+			active = true
+		}
+		if latest.SessionID == "" {
+			latest = record
+		}
+	}
+	if !liveness.RecordKnown {
+		return liveness
+	}
+	liveness.EndedAt = latest.EndedAt
+	liveness.DeathCertificate = !active && IsDeathCertificate(latest)
+	return liveness
 }
 
 func finalClaudeEndReason(reason string) bool {
