@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 // ReplayResult summarizes one launch's replay.
@@ -141,14 +142,21 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 			if !resp.OK {
 				appliedResult = ResultRefused
 			}
+			postState, err := savedResponsePhaseState(env, phaseID, resp)
+			if err != nil {
+				return result, err
+			}
+			if postState.Status == "" {
+				postState.Status = comparison
+			}
 			if err := log.WriteApplied(AppliedState{
-				AppliedSeq: env.Seq, Status: live.Status, Result: appliedResult,
-				ObservedUpdatedAt: phase.UpdatedAt, AppliedAt: now,
+				AppliedSeq: env.Seq, Status: postState.Status, Result: appliedResult,
+				ObservedUpdatedAt: postState.UpdatedAt, AppliedAt: now,
 			}); err != nil {
 				return result, err
 			}
 			result.Applied++
-			comparison = live.Status
+			comparison = postState.Status
 			continue
 		}
 		if !env.Replayable {
@@ -222,6 +230,25 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 		break
 	}
 	return result, nil
+}
+
+func savedResponsePhaseState(env RequestEnvelope, phaseID string, resp Response) (ObservedPhase, error) {
+	if !resp.OK {
+		return env.Observed, nil
+	}
+	var action PhaseActionResult
+	if err := json.Unmarshal(resp.Result, &action); err == nil &&
+		artifacts.NormalizePhaseID(action.UpdatedPhase.PhaseID) == artifacts.NormalizePhaseID(phaseID) &&
+		action.UpdatedPhase.Status != "" {
+		return ObservedPhase{Status: string(action.UpdatedPhase.Status), UpdatedAt: action.UpdatedPhase.UpdatedAt}, nil
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(resp.Result, &record); err == nil {
+		if phase, ok := PhaseByID(record, phaseID); ok {
+			return ObservedPhase{Status: string(phase.Status), UpdatedAt: phase.UpdatedAt}, nil
+		}
+	}
+	return ObservedPhase{}, fmt.Errorf("saved response for request %s does not contain phase %s post-state", env.RequestID, phaseID)
 }
 
 // demote applies the controller-only reconciliation mutation and records the

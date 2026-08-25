@@ -120,6 +120,40 @@ func TestReplayMarksSavedNonReplayableResponseAppliedWithoutExecutingAgain(t *te
 	}
 }
 
+func TestReplaySavedResponseDoesNotAuthorizeLaterRequestAfterPhaseMoved(t *testing.T) {
+	store, root := newTestStore(t)
+	created := createFlow(t, store, "Saved then moved")
+	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
+	original := applyMarkerHook
+	applyMarkerHook = func() error { return errors.New("crash before applied.json") }
+	req := mustRequest(t, VerbPhaseNeedsAttention, created.FlowID, "plan", "launch-1", PhaseActionPayload{Notes: "changes"})
+	log, _ := OpenLog(root, "launch-1")
+	unlock, _ := log.Lock(time.Second)
+	_, err := ApplyLogged(store, log, req, mustEnvelope(t, req, WrittenByController), time.Now())
+	unlock()
+	applyMarkerHook = original
+	if err == nil || !strings.Contains(err.Error(), "crash before applied.json") {
+		t.Fatalf("ApplyLogged error = %v", err)
+	}
+	if _, err := store.RestartPhase(flowstore.PhaseRestartUpdate{
+		FlowID: created.FlowID, PhaseID: "plan", Notes: "operator retry",
+		Fence: flowstore.PhaseLaunchFence{LaunchID: "launch-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spool(t, root, mustRequest(t, VerbPhaseComplete, created.FlowID, "plan", "launch-1", PhaseActionPayload{Summary: "must not land"}))
+
+	newTestController(t, store, root).Sweep()
+	phase := phaseOf(t, store, created.FlowID, "plan")
+	if phase.Status == flowstore.PhaseCompleted || phase.Summary == "must not land" {
+		t.Fatalf("later request overwrote moved phase: %#v", phase)
+	}
+	rejected, ok, err := log.Rejected()
+	if err != nil || !ok || len(rejected.Batches) != 1 || rejected.Batches[0].Reason != ReasonPhaseResultStale || len(rejected.Batches[0].Requests) != 1 || rejected.Batches[0].Requests[0].Seq != 2 {
+		t.Fatalf("rejected = %#v, %v, %v", rejected, ok, err)
+	}
+}
+
 func TestReplayAppliesSpooledBatchInOrderRegardlessOfObservedTimestamps(t *testing.T) {
 	store, root := newTestStore(t)
 	created := createFlow(t, store, "Batch")
