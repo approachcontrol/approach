@@ -106,14 +106,17 @@ func AllVerbs() []Verb {
 // encoded as JSON; Token authenticates the launch to the controller and never
 // reaches the log.
 type Request struct {
-	SchemaVersion int             `json:"schema_version"`
-	RequestID     string          `json:"request_id"`
-	LaunchID      string          `json:"launch_id,omitempty"`
-	FlowID        string          `json:"flow_id,omitempty"`
-	PhaseID       string          `json:"phase_id,omitempty"`
-	Token         string          `json:"token,omitempty"`
-	Verb          Verb            `json:"verb"`
-	Payload       json.RawMessage `json:"payload,omitempty"`
+	SchemaVersion int    `json:"schema_version"`
+	RequestID     string `json:"request_id"`
+	LaunchID      string `json:"launch_id,omitempty"`
+	FlowID        string `json:"flow_id,omitempty"`
+	PhaseID       string `json:"phase_id,omitempty"`
+	// OwnerPhaseID is controller-local context. The authenticated registration
+	// or durable launch log supplies it; clients cannot choose it on the wire.
+	OwnerPhaseID string          `json:"-"`
+	Token        string          `json:"token,omitempty"`
+	Verb         Verb            `json:"verb"`
+	Payload      json.RawMessage `json:"payload,omitempty"`
 }
 
 // Response is the controller's (or the shared executor's) answer. Refused

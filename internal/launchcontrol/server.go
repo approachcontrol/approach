@@ -394,6 +394,7 @@ func (c *Controller) handleRequest(req Request) Response {
 	if err != nil {
 		return refuse(err)
 	}
+	req.OwnerPhaseID = entry.phaseID
 	if IsRead(req.Verb) {
 		resp, err := Execute(c.store, req)
 		if err != nil {
@@ -463,6 +464,16 @@ func (c *Controller) applyLogged(req Request, env RequestEnvelope) (Response, *A
 // envelope durably, execute, then write the applied marker. A store refusal
 // still advances applied_seq (result: refused) so replay never retries it.
 func ApplyLogged(store *flowstore.Store, log *Log, req Request, env RequestEnvelope, now time.Time) (Response, error) {
+	if env.Unowned {
+		req.OwnerPhaseID = ""
+	} else {
+		req.OwnerPhaseID = artifacts.NormalizePhaseID(env.PhaseID)
+		if info, ok, err := log.Launch(); err != nil {
+			return Response{}, fmt.Errorf("read launch ownership: %w", err)
+		} else if ok && strings.TrimSpace(info.PhaseID) != "" {
+			req.OwnerPhaseID = artifacts.NormalizePhaseID(info.PhaseID)
+		}
+	}
 	if env.Observed.Status == "" {
 		env.Observed = observePhase(store, req.FlowID, env.PhaseID)
 	}

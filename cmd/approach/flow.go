@@ -1709,6 +1709,9 @@ func runFlowRequest(deps runDeps, stateRoot string, req launchcontrol.Request, r
 	if req.PhaseID == "" {
 		req.PhaseID = control.phaseID
 	}
+	if control.launchID != "" && control.phaseID != "" && strings.TrimSpace(req.FlowID) == strings.TrimSpace(control.flowID) {
+		req.OwnerPhaseID = control.phaseID
+	}
 	if class == launchcontrol.ClassDirect || control.endpoint == "" ||
 		!control.servesRoot(stateRoot) || !control.servesFlow(req.FlowID) {
 		return runFlowRequestDirect(deps, stateRoot, req, role)

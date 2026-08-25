@@ -227,12 +227,17 @@ func (c *Controller) demote(log *Log, flowID, launchID, reason string, update fl
 }
 
 func requestFromEnvelope(env RequestEnvelope) Request {
+	ownerPhaseID := ""
+	if !env.Unowned {
+		ownerPhaseID = env.PhaseID
+	}
 	return Request{
 		SchemaVersion: ProtocolSchemaVersion,
 		RequestID:     env.RequestID,
 		LaunchID:      env.LaunchID,
 		FlowID:        env.FlowID,
 		PhaseID:       env.PhaseID,
+		OwnerPhaseID:  ownerPhaseID,
 		Verb:          env.Verb,
 		Payload:       env.Payload,
 	}

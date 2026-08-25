@@ -288,6 +288,13 @@ func refuse(err error) Response {
 	return Response{SchemaVersion: ProtocolSchemaVersion, Refused: true, Error: err.Error()}
 }
 
+func requestFence(req Request) flowstore.PhaseLaunchFence {
+	return flowstore.PhaseLaunchFence{
+		LaunchID:     req.LaunchID,
+		OwnerPhaseID: artifacts.NormalizePhaseID(req.OwnerPhaseID),
+	}
+}
+
 func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 	switch req.Verb {
 	case VerbFlowRead:
@@ -323,7 +330,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			Outcome: payload.Outcome,
 			Notes:   payload.Notes,
 			Summary: payload.Summary,
-			Fence:   flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence:   requestFence(req),
 		})
 		return record, "", err
 	case VerbPhaseComplete, VerbPhaseBlock, VerbPhaseNeedsAttention:
@@ -351,7 +358,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			Outcome: outcome,
 			Notes:   payload.Notes,
 			Summary: payload.Summary,
-			Fence:   flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence:   requestFence(req),
 		})
 		if err != nil {
 			return nil, "", err
@@ -368,7 +375,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		}
 		record, err := store.RestartPhase(flowstore.PhaseRestartUpdate{
 			FlowID: req.FlowID, PhaseID: req.PhaseID, Notes: note,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		if err != nil {
 			return nil, "", err
@@ -377,7 +384,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 	case VerbPhaseReset:
 		record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{
 			FlowID: req.FlowID, PhaseID: req.PhaseID,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		if err != nil {
 			return nil, "", err
@@ -392,7 +399,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			FlowID: req.FlowID, PhaseID: req.PhaseID,
 			ExpectedStatus: flowstore.PhaseStatus(payload.ExpectedStatus), ExpectedOutcome: payload.ExpectedOutcome,
 			ExpectedLaunchID: payload.ExpectedLaunchID, ExpectedUpdatedAt: payload.ExpectedUpdatedAt,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		if err != nil {
 			return nil, "", err
@@ -409,7 +416,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			PhaseID:       payload.PhaseID,
 			Title:         payload.Title,
 			Order:         payload.Order,
-			Fence:         flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence:         requestFence(req),
 		})
 		return record, "", err
 	case VerbPhaseAgentSet:
@@ -423,7 +430,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		}
 		record, err := store.SetPhaseAgentSettings(flowstore.PhaseAgentSettingsUpdate{
 			FlowID: req.FlowID, PhaseID: req.PhaseID, Settings: settings,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		return record, "", err
 	case VerbPlanSet:
@@ -433,7 +440,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		}
 		record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{
 			FlowID: req.FlowID, PlanID: payload.PlanID, PlanPath: payload.PlanPath,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		return record, "", err
 	case VerbIssueSet:
@@ -443,7 +450,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		}
 		record, err := store.SetIssue(flowstore.IssueUpdate{
 			FlowID: req.FlowID, Provider: payload.Provider, Number: payload.Number, URL: payload.URL,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		return record, "", err
 	case VerbPRSet:
@@ -459,7 +466,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 			HeadBranch: payload.Head,
 			BaseBranch: payload.Base,
 			Status:     payload.Status,
-			Fence:      flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence:      requestFence(req),
 		})
 		return record, "", err
 	case VerbMergeSet:
@@ -477,7 +484,7 @@ func executeVerb(store *flowstore.Store, req Request) (any, string, error) {
 		}
 		record, err := store.SetMerge(flowstore.MergeUpdate{
 			FlowID: req.FlowID, Status: payload.Status, Commit: payload.Commit, MergedAt: mergedAt,
-			Fence: flowstore.PhaseLaunchFence{LaunchID: req.LaunchID},
+			Fence: requestFence(req),
 		})
 		return record, "", err
 	}

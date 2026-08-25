@@ -1751,6 +1751,61 @@ func TestStoreRecoverReconciledPhaseRemovesOnlyExpectedLaunch(t *testing.T) {
 	}
 }
 
+func TestPhaseLaunchFenceRequiresLatestOwnedLaunch(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := mustCreateFlow(t, store, "Fence latest launch")
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	firstFence := flowstore.PhaseLaunchFence{LaunchID: "launch-1", OwnerPhaseID: " Plan "}
+	if _, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID: record.FlowID, Provider: "github", Number: 1,
+		URL: "https://github.com/o/r/issues/1", Fence: firstFence,
+	}); err != nil {
+		t.Fatalf("latest launch write: %v", err)
+	}
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID: record.FlowID, Provider: "github", Number: 2,
+		URL: "https://github.com/o/r/issues/2", Fence: firstFence,
+	}); err == nil || !strings.Contains(err.Error(), `latest launch is "launch-2"`) {
+		t.Fatalf("stale launch write error = %v, want latest owner", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Issue.Number != 1 {
+		t.Fatalf("stale launch changed issue = %#v", read.Issue)
+	}
+	if _, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID: record.FlowID, Provider: "github", Number: 3,
+		URL:   "https://github.com/o/r/issues/3",
+		Fence: flowstore.PhaseLaunchFence{LaunchID: "launch-2", OwnerPhaseID: "plan"},
+	}); err != nil {
+		t.Fatalf("new latest launch write: %v", err)
+	}
+
+	// A launch without an owner phase keeps the recovery-only fence behavior.
+	if _, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID: record.FlowID, Provider: "github", Number: 4,
+		URL:   "https://github.com/o/r/issues/4",
+		Fence: flowstore.PhaseLaunchFence{LaunchID: "launch-1"},
+	}); err != nil {
+		t.Fatalf("unowned launch write: %v", err)
+	}
+}
+
 func TestStoreRecoverReconciledPlanReviewPhase(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
