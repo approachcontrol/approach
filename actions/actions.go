@@ -2264,6 +2264,9 @@ func parseTerminalPreference(source, terminal string, lookPath lookPathFunc) ter
 }
 
 func normalizeMacOSGUIAppAlias(value string) (string, bool) {
+	if value == "Ghostty" || value == "Ghostty.app" {
+		return "Ghostty", true
+	}
 	switch strings.ToLower(value) {
 	case "terminal", "terminal.app":
 		return "Terminal", true
@@ -2284,6 +2287,9 @@ func terminalLaunchFromPreference(goos, path string, lookPath lookPathFunc, pref
 		}
 		if command != nil {
 			if !commandExists("osascript", lookPath) {
+				if pref.app == "Ghostty" {
+					return TerminalLaunchSpec{}, ghosttyAppleScriptDependencyError("launch agent")
+				}
 				return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in %s", pref.app)
 			}
 			return TerminalLaunchSpec{
@@ -2294,8 +2300,11 @@ func terminalLaunchFromPreference(goos, path string, lookPath lookPathFunc, pref
 		if pref.app == "Terminal" && !commandExists("open", lookPath) {
 			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch terminal: open is required to open Terminal")
 		}
-		if pref.app == "iTerm" && !commandExists("osascript", lookPath) {
-			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch terminal: osascript is required to open iTerm")
+		if pref.app != "Terminal" && !commandExists("osascript", lookPath) {
+			if pref.app == "Ghostty" {
+				return TerminalLaunchSpec{}, ghosttyAppleScriptDependencyError("launch terminal")
+			}
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch terminal: osascript is required to open %s", pref.app)
 		}
 		return TerminalLaunchSpec{Cmd: macOSTerminalOpenCommand(pref.app, path)}, nil
 	case terminalPreferenceUnsupportedGUIApp:
@@ -2330,6 +2339,9 @@ func detachedTerminalLaunchFromPreference(goos, cwd string, lookPath lookPathFun
 			return TerminalLaunchSpec{}, missingTerminalCommandError(pref)
 		}
 		if !commandExists("osascript", lookPath) {
+			if pref.app == "Ghostty" {
+				return TerminalLaunchSpec{}, ghosttyAppleScriptDependencyError("launch detached terminal handoff")
+			}
 			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch detached terminal handoff: osascript is required to run a command in %s", pref.app)
 		}
 		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand(pref.app, detachedTerminalShellCommand(shellCommand, cwd))}, nil
@@ -2373,6 +2385,9 @@ func macOSScriptLaunch(path string, lookPath lookPathFunc, pref terminalPreferen
 		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand("Terminal", shellCommand), Detached: detached}, nil
 	case terminalPreferenceGUIApp:
 		if !commandExists("osascript", lookPath) {
+			if pref.app == "Ghostty" {
+				return TerminalLaunchSpec{}, ghosttyAppleScriptDependencyError("launch agent")
+			}
 			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in %s", pref.app)
 		}
 		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand(pref.app, shellCommand), Detached: detached}, nil
@@ -2408,6 +2423,10 @@ func missingTerminalCommandError(pref terminalPreference) error {
 		return fmt.Errorf("TERMINAL is set to %q, but that command was not found", pref.raw)
 	}
 	return fmt.Errorf("%s is set to %q, but that command was not found", pref.source, pref.raw)
+}
+
+func ghosttyAppleScriptDependencyError(action string) error {
+	return fmt.Errorf("cannot %s: osascript and macOS Automation permission are required to control Ghostty; configure command = %q to use the CLI fallback", action, "ghostty")
 }
 
 // resolveShell returns a runnable shell path. It accepts shell only if it is a
@@ -2671,8 +2690,8 @@ func commandExists(name string, lookPath lookPathFunc) bool {
 }
 
 func macOSTerminalOpenCommand(app, path string) *exec.Cmd {
-	if app == "iTerm" {
-		return macOSTerminalScriptCommand("iTerm", "cd "+shellQuote(path)+" && exec ${SHELL:-/bin/sh}")
+	if app == "iTerm" || app == "Ghostty" {
+		return macOSTerminalScriptCommand(app, "cd "+shellQuote(path)+" && exec ${SHELL:-/bin/sh}")
 	}
 	return exec.Command("open", "-a", "Terminal", path)
 }
@@ -2692,6 +2711,18 @@ func macOSTerminalScriptCommand(app, shellCommand string) *exec.Cmd {
 			"-e", `activate`,
 			"-e", `set newWindow to (create window with default profile)`,
 			"-e", fmt.Sprintf(`tell current session of newWindow to write text %q`, shellCommand),
+			"-e", `end tell`,
+		)
+	}
+	if app == "Ghostty" {
+		return exec.Command(
+			"osascript",
+			"-e", `tell application "Ghostty"`,
+			"-e", `activate`,
+			"-e", `set newWindow to new window`,
+			"-e", `set targetTerminal to focused terminal of selected tab of newWindow`,
+			"-e", fmt.Sprintf(`input text %q to targetTerminal`, shellCommand),
+			"-e", `send key "enter" to targetTerminal`,
 			"-e", `end tell`,
 		)
 	}

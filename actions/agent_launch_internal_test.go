@@ -183,6 +183,81 @@ func TestAgentLaunchWithOptions_DarwinConfiguredITermRunsGeneratedScript(t *test
 	requireScriptContains(t, agentLaunchScript(t), "Read the plan and begin implementation.")
 }
 
+func TestAgentLaunchWithOptions_DarwinConfiguredGhosttyRunsGeneratedScript(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := planAgentContext()
+	const prompt = `"; do shell script "touch /tmp/PWNED"; echo "`
+	ctx.InitialPrompt = prompt
+	launch, err := agentLaunchWithOptions(ctx, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "Ghostty.app",
+	})
+	if err != nil {
+		t.Fatalf("agentLaunchWithOptions returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("Ghostty agent launch should be detached")
+	}
+	if !launch.Detached {
+		t.Fatal("Ghostty agent launch should be marked detached")
+	}
+	if launch.Cleanup == nil {
+		t.Fatal("expected cleanup to be wired")
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected Ghostty AppleScript transport, got %#v", launch.Cmd.Args)
+	}
+
+	joined := strings.Join(launch.Cmd.Args, "\n")
+	for _, want := range []string{
+		`tell application "Ghostty"`,
+		"activate",
+		"set newWindow to new window",
+		"set targetTerminal to focused terminal of selected tab of newWindow",
+		`send key "enter" to targetTerminal`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected Ghostty agent args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+	for _, unwanted := range []string{prompt, "APPROACH_PLAN_ID", "codex --config", "front window"} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("agent details or existing-window target leaked into AppleScript args: %q in %#v", unwanted, launch.Cmd.Args)
+		}
+	}
+
+	const prefix = `input text `
+	const suffix = ` to targetTerminal`
+	var inputText string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) && strings.HasSuffix(arg, suffix) {
+			inputText = strings.TrimSuffix(strings.TrimPrefix(arg, prefix), suffix)
+		}
+	}
+	inner, err := strconv.Unquote(inputText)
+	if err != nil {
+		t.Fatalf("input-text payload is not a valid quoted string: %q", inputText)
+	}
+	if !strings.HasPrefix(inner, "exec sh '") || !strings.Contains(inner, "approach-agent-") {
+		t.Fatalf("Ghostty input payload should run only the generated agent script, got %q", inner)
+	}
+	requireScriptContains(t, agentLaunchScript(t), `'`+prompt+`'`)
+}
+
+func TestAgentLaunchWithOptions_GhosttyReportsMissingOsascriptFallback(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	_, err := agentLaunchWithOptions(planAgentContext(), "darwin", fakeGetenv(nil), fakeLookPath(), LaunchOptions{
+		TerminalCommand: "Ghostty",
+	})
+	if err == nil {
+		t.Fatal("expected missing osascript error")
+	}
+	for _, want := range []string{"osascript", "macOS Automation", `command = "ghostty"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+}
+
 func TestAgentLaunch_TerminalEnvRunsAgentWithDashE(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})

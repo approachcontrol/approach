@@ -202,9 +202,10 @@ command = "iTerm"
 ```
 
 On macOS, supported GUI aliases are `Terminal`, `Terminal.app`, `iTerm`,
-`iTerm.app`, `iTerm2`, and `iTerm2.app`. Terminal aliases use the built-in
-Terminal transport. iTerm aliases use AppleScript so both plain worktree
-terminals and detached agent scripts open in iTerm.
+`iTerm.app`, `iTerm2`, `iTerm2.app`, `Ghostty`, and `Ghostty.app`. Terminal
+aliases use the built-in Terminal transport. iTerm and Ghostty aliases use
+AppleScript so plain worktree terminals, agent launches, and detach handoff
+open a new window in the running app.
 
 Other command values are treated as whitespace-separated CLI terminal commands
 when the first field exists on `PATH`; configured arguments are preserved as
@@ -215,14 +216,18 @@ an unsupported GUI app name can open a plain worktree terminal with
 handoff. Use a supported GUI alias or a CLI terminal command for agent launches
 and embedded detach handoff.
 
-Ghostty works through the CLI command path because it accepts `-e`:
-`command = "ghostty"` covers plain worktree terminals, agent launches, and
-detach handoff. The `ghostty` binary must be on `PATH` (the macOS app bundle
-ships it at `Ghostty.app/Contents/MacOS/ghostty`). On macOS each launch starts
-a separate Ghostty app instance rather than a window in the running one.
-Ghostty accepts any of its config keys as flags, so
+The `Ghostty` and `Ghostty.app` GUI aliases require Ghostty 1.3 or newer and
+`osascript`. macOS asks once for Automation permission when Approach first
+controls Ghostty. If Ghostty has `macos-applescript = false`, configure the
+lowercase CLI form, `command = "ghostty"`, instead.
+
+Lowercase `ghostty` stays on the CLI command path because it accepts `-e`.
+This form requires the `ghostty` binary on `PATH`; the macOS app bundle ships it
+at `Ghostty.app/Contents/MacOS/ghostty`. It starts a separate Ghostty app
+instance on macOS rather than adding a window to the running app. Ghostty
+accepts its config keys as flags, so
 `command = "ghostty --wait-after-command=true"` keeps windows open after a
-launched agent exits instead of closing before the output can be read.
+launched agent exits. The GUI aliases do not accept CLI arguments.
 
 ### `[clipboard]`
 

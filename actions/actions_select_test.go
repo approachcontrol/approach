@@ -341,6 +341,71 @@ func TestTerminalLaunchWithOptions_DarwinConfiguredITermOpensWorktree(t *testing
 	}
 }
 
+func TestTerminalLaunchWithOptions_DarwinConfiguredGhosttyAliasesOpenNewWindow(t *testing.T) {
+	for _, alias := range []string{"Ghostty", "Ghostty.app"} {
+		t.Run(alias, func(t *testing.T) {
+			launch, err := terminalLaunchWithOptions("/repo/work tree's", "darwin", fakeGetenv(nil), fakeLookPath("osascript"), nil, LaunchOptions{
+				TerminalCommand: alias,
+			})
+			if err != nil {
+				t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+			}
+			if launch.Cmd.Args[0] != "osascript" {
+				t.Fatalf("expected Ghostty AppleScript transport, got %#v", launch.Cmd.Args)
+			}
+
+			joined := strings.Join(launch.Cmd.Args, "\n")
+			for _, want := range []string{
+				`tell application "Ghostty"`,
+				"activate",
+				"set newWindow to new window",
+				"set targetTerminal to focused terminal of selected tab of newWindow",
+				"input text",
+				`send key "enter" to targetTerminal`,
+			} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("expected Ghostty launch args to contain %q, got %#v", want, launch.Cmd.Args)
+				}
+			}
+			if strings.Contains(joined, "front window") {
+				t.Fatalf("Ghostty launch should not address an existing user terminal: %#v", launch.Cmd.Args)
+			}
+
+			const prefix = `input text `
+			const suffix = ` to targetTerminal`
+			var inputText string
+			for _, arg := range launch.Cmd.Args {
+				if strings.HasPrefix(arg, prefix) && strings.HasSuffix(arg, suffix) {
+					inputText = strings.TrimSuffix(strings.TrimPrefix(arg, prefix), suffix)
+				}
+			}
+			inner, err := strconv.Unquote(inputText)
+			if err != nil {
+				t.Fatalf("input-text payload is not a valid quoted string: %q", inputText)
+			}
+			want := "cd " + shellQuote("/repo/work tree's") + " && exec ${SHELL:-/bin/sh}"
+			if inner != want {
+				t.Fatalf("input-text payload = %q, want %q", inner, want)
+			}
+		})
+	}
+}
+
+func TestTerminalLaunchWithOptions_LowercaseGhosttyRemainsCLICommand(t *testing.T) {
+	launch, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("ghostty"), nil, LaunchOptions{
+		TerminalCommand: "ghostty",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"ghostty"}) {
+		t.Fatalf("lowercase ghostty should use the CLI transport, got %#v", launch.Cmd.Args)
+	}
+	if launch.Cmd.Dir != "/repo" {
+		t.Fatalf("lowercase ghostty launch dir = %q, want /repo", launch.Cmd.Dir)
+	}
+}
+
 func TestTerminalLaunchWithOptions_DarwinTerminalAppNormalizesToFallback(t *testing.T) {
 	launch, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("open"), nil, LaunchOptions{
 		TerminalCommand: "Terminal.app",
@@ -614,6 +679,75 @@ func TestDetachedTerminalLaunch_ITermOsascriptEscapesTargetShellCommand(t *testi
 	}
 	if strings.Contains(strings.Join(launch.Cmd.Args, "\n"), "current session of current window") {
 		t.Fatalf("iTerm handoff should not write into the user's current session: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestDetachedTerminalLaunch_GhosttyOsascriptEscapesTargetShellCommand(t *testing.T) {
+	const target = `env -u TMUX tmux -L "sock"; do shell script "touch /tmp/PWNED"; echo '$HOME' \ attach-session -t agent`
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "Ghostty.app",
+	})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
+	}
+
+	const prefix = `input text `
+	const suffix = ` to targetTerminal`
+	var inputText string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) && strings.HasSuffix(arg, suffix) {
+			inputText = strings.TrimSuffix(strings.TrimPrefix(arg, prefix), suffix)
+		}
+	}
+	if inputText == "" {
+		t.Fatalf("no Ghostty input-text argument found in %#v", launch.Cmd.Args)
+	}
+	inner, err := strconv.Unquote(inputText)
+	if err != nil {
+		t.Fatalf("input-text payload is not a valid quoted string: %q", inputText)
+	}
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("input-text payload = %q, want exact handoff command %q", inner, want)
+	}
+	joined := strings.Join(launch.Cmd.Args, "\n")
+	for _, want := range []string{"set newWindow to new window", "set targetTerminal to focused terminal of selected tab of newWindow", `send key "enter" to targetTerminal`} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected Ghostty handoff args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+	if strings.Contains(joined, "front window") {
+		t.Fatalf("Ghostty handoff should not address an existing user terminal: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestGhosttyGUILaunchesReportMissingOsascriptFallback(t *testing.T) {
+	tests := map[string]func() error{
+		"worktree": func() error {
+			_, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath(), nil, LaunchOptions{TerminalCommand: "Ghostty"})
+			return err
+		},
+		"handoff": func() error {
+			_, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo", "darwin", fakeGetenv(nil), fakeLookPath(), LaunchOptions{TerminalCommand: "Ghostty.app"})
+			return err
+		},
+	}
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			if err == nil {
+				t.Fatal("expected missing osascript error")
+			}
+			for _, want := range []string{"osascript", "macOS Automation", `command = "ghostty"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want %q", err.Error(), want)
+				}
+			}
+		})
 	}
 }
 
