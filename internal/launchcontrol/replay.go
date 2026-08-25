@@ -174,7 +174,7 @@ func (c *Controller) replayLocked(log *Log) (ReplayResult, error) {
 			continue
 		}
 		if live.Status == comparison {
-			req := requestFromEnvelope(env)
+			req := requestFromEnvelope(env, phaseID)
 			resp, err := Execute(c.store, req)
 			if err != nil {
 				return result, err
@@ -264,10 +264,14 @@ func savedResponsePhaseState(env RequestEnvelope, phaseID string, resp Response)
 		return env.Observed, nil
 	}
 	var action PhaseActionResult
-	if err := json.Unmarshal(resp.Result, &action); err == nil &&
-		artifacts.NormalizePhaseID(action.UpdatedPhase.PhaseID) == artifacts.NormalizePhaseID(phaseID) &&
-		action.UpdatedPhase.Status != "" {
-		return ObservedPhase{Status: string(action.UpdatedPhase.Status), UpdatedAt: action.UpdatedPhase.UpdatedAt}, nil
+	if err := json.Unmarshal(resp.Result, &action); err == nil {
+		if artifacts.NormalizePhaseID(action.UpdatedPhase.PhaseID) == artifacts.NormalizePhaseID(phaseID) &&
+			action.UpdatedPhase.Status != "" {
+			return ObservedPhase{Status: string(action.UpdatedPhase.Status), UpdatedAt: action.UpdatedPhase.UpdatedAt}, nil
+		}
+		if phase, ok := PhaseByID(action.Flow, phaseID); ok {
+			return ObservedPhase{Status: string(phase.Status), UpdatedAt: phase.UpdatedAt}, nil
+		}
 	}
 	var record flowstore.FlowRecord
 	if err := json.Unmarshal(resp.Result, &record); err == nil {
@@ -304,10 +308,9 @@ func (c *Controller) demote(log *Log, flowID, launchID, reason string, update fl
 	return resp, nil
 }
 
-func requestFromEnvelope(env RequestEnvelope) Request {
-	ownerPhaseID := ""
-	if !env.Unowned {
-		ownerPhaseID = env.PhaseID
+func requestFromEnvelope(env RequestEnvelope, ownerPhaseID string) Request {
+	if env.Unowned {
+		ownerPhaseID = ""
 	}
 	return Request{
 		SchemaVersion: ProtocolSchemaVersion,
@@ -315,7 +318,7 @@ func requestFromEnvelope(env RequestEnvelope) Request {
 		LaunchID:      env.LaunchID,
 		FlowID:        env.FlowID,
 		PhaseID:       env.PhaseID,
-		OwnerPhaseID:  ownerPhaseID,
+		OwnerPhaseID:  artifacts.NormalizePhaseID(ownerPhaseID),
 		Verb:          env.Verb,
 		Payload:       env.Payload,
 	}
@@ -342,6 +345,13 @@ func intendedStatus(env RequestEnvelope) string {
 // a false negative only re-executes an idempotent request while a false
 // positive loses a write for good.
 func targetReached(record flowstore.FlowRecord, phase flowstore.FlowPhase, env RequestEnvelope) bool {
+	if artifacts.NormalizePhaseID(env.PhaseID) != "" {
+		if target, ok := PhaseByID(record, env.PhaseID); ok {
+			phase = target
+		} else if !FlowLevel(env.Verb) {
+			return false
+		}
+	}
 	fieldsMatch := func(outcome, notes, summary string) bool {
 		if outcome != "" && phase.Outcome != outcome {
 			return false
