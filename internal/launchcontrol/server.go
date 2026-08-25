@@ -24,12 +24,12 @@ import (
 var ErrRequestOutcomeIndeterminate = errors.New("launch control request outcome is indeterminate")
 
 // LaunchLiveness is what the injected probe knows about a launch's session
-// records. It is deliberately not "alive": the sessions store can attest that
-// a record ended, but only positive evidence demotes.
+// records. DeathCertificate is positive provider evidence; EndedAt is
+// diagnostic and never becomes proof through age.
 type LaunchLiveness struct {
-	RecordKnown bool
-	Ended       bool
-	EndedAt     time.Time
+	RecordKnown      bool
+	DeathCertificate bool
+	EndedAt          time.Time
 }
 
 // LivenessProbe answers for one launch ID. cmd/approach wires it as a closure

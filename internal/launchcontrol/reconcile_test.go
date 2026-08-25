@@ -73,14 +73,14 @@ func TestSweepDemotesOnExitJSONWithCodeInNotes(t *testing.T) {
 	}
 }
 
-func TestSweepLivenessProbeRespectsGraceAndLeaseVeto(t *testing.T) {
+func TestSweepLivenessProbeRequiresCertificateAndRespectsLeaseVeto(t *testing.T) {
 	store, root := newTestStore(t)
 	created := createFlow(t, store, "Probe")
 	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
 	now := time.Now().UTC()
-	endedAt := now
+	certified := false
 	probe := func(launchID string) (LaunchLiveness, error) {
-		return LaunchLiveness{RecordKnown: true, Ended: true, EndedAt: endedAt}, nil
+		return LaunchLiveness{RecordKnown: true, DeathCertificate: certified, EndedAt: now}, nil
 	}
 	lease := freeLease
 	c := newTestController(t, store, root, func(o *Options) {
@@ -88,11 +88,10 @@ func TestSweepLivenessProbeRespectsGraceAndLeaseVeto(t *testing.T) {
 		o.InspectLease = func(root, flowID string) (flowlease.LeaseState, error) { return lease(root, flowID) }
 		o.Now = func() time.Time { return now }
 	})
-	endedAt = now.Add(-2 * time.Minute)
 	if report := c.Sweep(); report.Reconciled != 0 {
-		t.Fatalf("sweep inside grace = %#v", report)
+		t.Fatalf("sweep without certificate = %#v", report)
 	}
-	endedAt = now.Add(-30 * time.Minute)
+	certified = true
 	lease = heldLease
 	if report := c.Sweep(); report.Reconciled != 0 {
 		t.Fatalf("sweep with held lease = %#v", report)
@@ -102,7 +101,7 @@ func TestSweepLivenessProbeRespectsGraceAndLeaseVeto(t *testing.T) {
 	}
 	lease = freeLease
 	if report := c.Sweep(); report.Reconciled != 1 {
-		t.Fatalf("sweep past grace = %#v", report)
+		t.Fatalf("next sweep with certificate = %#v", report)
 	}
 	phase := phaseOf(t, store, created.FlowID, "plan")
 	if phase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(phase.Notes, "exit code unknown") {
@@ -175,10 +174,12 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	if !strings.Contains(phase.Notes, wantRecovery) {
 		t.Fatalf("plan-review notes = %q, missing %q", phase.Notes, wantRecovery)
 	}
-	// session_end respects the lease veto even with a recent EndedAt.
+	// A certified session_end respects the lease veto.
 	other := createFlow(t, store, "Session End")
 	launchWithBaseline(t, store, root, other.FlowID, "plan", "launch-2")
-	outcome, err = c.Reconcile(other.FlowID, "plan", "launch-2", ExitEvidence{Source: SourceSessionEnd, EndedAt: time.Now().UTC()})
+	outcome, err = c.Reconcile(other.FlowID, "plan", "launch-2", ExitEvidence{
+		Source: SourceSessionEnd, DeathCertificate: true, EndedAt: time.Now().UTC(),
+	})
 	if err != nil || outcome.Action != ActionVetoed {
 		t.Fatalf("vetoed outcome = %#v %v", outcome, err)
 	}
@@ -191,9 +192,9 @@ func TestReconcileDemotesRunningPhaseOnTerminalExitAndPlanReviewBlocked(t *testi
 	}
 }
 
-func TestReconcileSessionEndWaitsForGraceWithoutLease(t *testing.T) {
+func TestReconcileSessionEndRequiresCertificateWithoutLease(t *testing.T) {
 	store, root := newTestStore(t)
-	created := createFlow(t, store, "Session End Grace")
+	created := createFlow(t, store, "Session Death Certificate")
 	launchWithBaseline(t, store, root, created.FlowID, "plan", "launch-1")
 	now := time.Now().UTC()
 	c := newTestController(t, store, root, func(o *Options) {
@@ -202,24 +203,23 @@ func TestReconcileSessionEndWaitsForGraceWithoutLease(t *testing.T) {
 	})
 	outcome, err := c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{Source: SourceSessionEnd, EndedAt: now})
 	if err != nil || outcome.Action != ActionNone {
-		t.Fatalf("fresh session_end outcome = %#v %v", outcome, err)
+		t.Fatalf("uncertified session_end outcome = %#v %v", outcome, err)
 	}
 	if phaseOf(t, store, created.FlowID, "plan").Status != flowstore.PhaseRunning {
-		t.Fatal("fresh session_end demoted a live phase")
-	}
-	outcome, err = c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{Source: SourceSessionEnd})
-	if err != nil || outcome.Action != ActionNone {
-		t.Fatalf("zero EndedAt outcome = %#v %v", outcome, err)
+		t.Fatal("uncertified session_end demoted a live phase")
 	}
 	outcome, err = c.Reconcile(created.FlowID, "plan", "launch-1", ExitEvidence{
-		Source: SourceSessionEnd, EndedAt: now.Add(-SessionEndGrace),
+		Source: SourceSessionEnd, DeathCertificate: true, EndedAt: now,
 	})
 	if err != nil || outcome.Action != ActionDemoted || outcome.Reason != ReasonPhaseResultMissing {
-		t.Fatalf("aged session_end outcome = %#v %v", outcome, err)
+		t.Fatalf("certified session_end outcome = %#v %v", outcome, err)
 	}
 	phase := phaseOf(t, store, created.FlowID, "plan")
 	if phase.Status != flowstore.PhaseNeedsAttention || phase.Outcome != ReasonPhaseResultMissing {
-		t.Fatalf("aged session_end phase = %#v", phase)
+		t.Fatalf("certified session_end phase = %#v", phase)
+	}
+	if !strings.Contains(phase.Notes, now.Format(time.RFC3339Nano)) {
+		t.Fatalf("certified session_end notes = %q, want diagnostic EndedAt", phase.Notes)
 	}
 }
 

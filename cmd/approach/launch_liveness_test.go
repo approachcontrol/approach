@@ -7,21 +7,24 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 )
 
-// The launch controller's liveness probe answers "did this launch's agent
-// process end" from session records. Only a Claude record can say so: Codex
-// records `ended` after every turn (its Stop hook) and Cursor's stop hook is
-// the same shape, so for those providers an ended record is a turn boundary,
-// not exit evidence, and the probe must not report the launch as ended.
+// The launch controller's liveness probe reports a death certificate only for
+// recognized final Claude reasons. Other ended records remain history.
 func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 	endedAt := time.Date(2026, 6, 6, 14, 10, 0, 0, time.UTC)
 	cases := []struct {
-		name      string
-		provider  sessions.Provider
-		wantEnded bool
+		name          string
+		provider      sessions.Provider
+		reason        string
+		wantCertified bool
 	}{
-		{name: "claude ended record is exit evidence", provider: sessions.ProviderClaude, wantEnded: true},
-		{name: "codex ended record is a turn boundary", provider: sessions.ProviderCodex, wantEnded: false},
-		{name: "cursor ended record is a turn boundary", provider: sessions.ProviderCursor, wantEnded: false},
+		{name: "claude logout", provider: sessions.ProviderClaude, reason: "logout", wantCertified: true},
+		{name: "claude prompt input exit", provider: sessions.ProviderClaude, reason: "prompt_input_exit", wantCertified: true},
+		{name: "claude other", provider: sessions.ProviderClaude, reason: "other", wantCertified: true},
+		{name: "claude clear", provider: sessions.ProviderClaude, reason: "clear"},
+		{name: "claude missing reason", provider: sessions.ProviderClaude},
+		{name: "claude unknown reason", provider: sessions.ProviderClaude, reason: "future_reason"},
+		{name: "codex ended record", provider: sessions.ProviderCodex, reason: "logout"},
+		{name: "cursor ended record", provider: sessions.ProviderCursor, reason: "logout"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -31,6 +34,7 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 				SessionID: "session-1",
 				LaunchID:  "launch-1",
 				Status:    "ended",
+				EndReason: tc.reason,
 				EndedAt:   endedAt,
 			}); err != nil {
 				t.Fatalf("Upsert() error = %v", err)
@@ -42,10 +46,10 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 			if !liveness.RecordKnown {
 				t.Fatalf("liveness = %#v, want the record known", liveness)
 			}
-			if liveness.Ended != tc.wantEnded {
-				t.Fatalf("liveness = %#v, want Ended=%v", liveness, tc.wantEnded)
+			if liveness.DeathCertificate != tc.wantCertified {
+				t.Fatalf("liveness = %#v, want DeathCertificate=%v", liveness, tc.wantCertified)
 			}
-			if tc.wantEnded && !liveness.EndedAt.Equal(endedAt) {
+			if tc.wantCertified && !liveness.EndedAt.Equal(endedAt) {
 				t.Fatalf("liveness = %#v, want EndedAt=%v", liveness, endedAt)
 			}
 		})
@@ -66,8 +70,8 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		if err != nil {
 			t.Fatalf("probe error = %v", err)
 		}
-		if !liveness.RecordKnown || liveness.Ended {
-			t.Fatalf("liveness = %#v, want known and not ended after /clear", liveness)
+		if !liveness.RecordKnown || liveness.DeathCertificate {
+			t.Fatalf("liveness = %#v, want known without a certificate after /clear", liveness)
 		}
 		if err := sessionStore.Upsert(sessions.SessionRecord{
 			Provider: sessions.ProviderClaude, SessionID: "session-2", LaunchID: "launch-1",
@@ -79,8 +83,8 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		if err != nil {
 			t.Fatalf("probe error = %v", err)
 		}
-		if !liveness.Ended || !liveness.EndedAt.Equal(endedAt.Add(time.Hour)) {
-			t.Fatalf("liveness = %#v, want ended at the later real exit", liveness)
+		if !liveness.DeathCertificate || !liveness.EndedAt.Equal(endedAt.Add(time.Hour)) {
+			t.Fatalf("liveness = %#v, want the later final exit certified", liveness)
 		}
 	})
 	t.Run("unknown launch is not ended", func(t *testing.T) {
@@ -89,14 +93,14 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		if err != nil {
 			t.Fatalf("probe error = %v", err)
 		}
-		if liveness.RecordKnown || liveness.Ended {
-			t.Fatalf("liveness = %#v, want unknown and not ended", liveness)
+		if liveness.RecordKnown || liveness.DeathCertificate {
+			t.Fatalf("liveness = %#v, want unknown without a certificate", liveness)
 		}
 	})
 	t.Run("one live record keeps the launch alive", func(t *testing.T) {
 		sessionStore, _, _ := testArtifactStores(t)
 		for _, record := range []sessions.SessionRecord{
-			{Provider: sessions.ProviderClaude, SessionID: "session-1", LaunchID: "launch-1", Status: "ended", EndedAt: endedAt},
+			{Provider: sessions.ProviderClaude, SessionID: "session-1", LaunchID: "launch-1", Status: "ended", EndedAt: endedAt, EndReason: "logout"},
 			{Provider: sessions.ProviderClaude, SessionID: "session-2", LaunchID: "launch-1", Status: "last_seen"},
 		} {
 			if err := sessionStore.Upsert(record); err != nil {
@@ -107,8 +111,8 @@ func TestSessionLivenessProbeIsProviderAware(t *testing.T) {
 		if err != nil {
 			t.Fatalf("probe error = %v", err)
 		}
-		if !liveness.RecordKnown || liveness.Ended {
-			t.Fatalf("liveness = %#v, want known and not ended", liveness)
+		if !liveness.RecordKnown || liveness.DeathCertificate {
+			t.Fatalf("liveness = %#v, want active record to suppress the certificate", liveness)
 		}
 	})
 }

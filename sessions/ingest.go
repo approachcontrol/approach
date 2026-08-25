@@ -139,36 +139,29 @@ func ingestHook(provider Provider, input io.Reader, opts IngestOptions, warnings
 	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts, warnings)
 	// After the attach, and with its own store: the hook path holds one Flow
-	// store handle at a time. Only a hook that can mean the agent process
-	// ended reaches the controller; a per-turn stop never does, however old
-	// the timestamp it carries.
-	if hookCanMeanProcessEnd(provider, payload) {
+	// store handle at a time. Only a provider event that certifies process
+	// death reaches the controller.
+	if hookIssuesDeathCertificate(provider, payload) {
 		reconcileFlowLaunchExit(record, opts, warnings)
 	}
 	return record, nil
 }
 
-// hookCanMeanProcessEnd reports whether a hook payload can be evidence that
-// the agent process ended, as opposed to a record that merely says `ended`.
-// Codex fires `Stop` after every turn while the CLI stays open, Cursor's
-// `stop` hook is the same shape, and Claude's `SessionEnd` on `/clear` leaves
-// the agent alive on a new session; none of those may reach reconciliation,
-// which would otherwise demote on their age alone. Only a Claude `SessionEnd`
-// that is not a `/clear` can mean the process is exiting — and even that
-// still waits SessionEndGrace and the lease veto in Reconcile.
-func hookCanMeanProcessEnd(provider Provider, payload hookPayload) bool {
-	if provider != ProviderClaude {
+// hookIssuesDeathCertificate accepts only Claude's documented final
+// SessionEnd reasons. Per-turn stops, /clear, and malformed or future reason
+// values remain session history without becoming launch-exit evidence.
+func hookIssuesDeathCertificate(provider Provider, payload hookPayload) bool {
+	if provider != ProviderClaude || strings.TrimSpace(payload.HookEventName) != "SessionEnd" {
 		return false
 	}
-	return strings.TrimSpace(payload.Reason) != "clear"
+	return finalClaudeEndReason(payload.Reason)
 }
 
 // reconcileFlowLaunchExit reports a session's end to the launch controller
-// so anything the launch spooled is replayed first. Session-end is not a
-// death certificate even for the hooks hookCanMeanProcessEnd admits, so
-// demotion waits for SessionEndGrace; the Flow lease veto still applies for
-// tracked tmux launches. Failures are warnings: the session record this hook
-// exists to write was still captured.
+// so anything the launch spooled is replayed first. Its caller admits only a
+// certified provider event. The Flow lease veto still applies for tracked
+// tmux launches. Failures are warnings: the session record this hook exists to
+// write was still captured.
 func reconcileFlowLaunchExit(record SessionRecord, opts IngestOptions, warnings *[]string) {
 	if record.Status != "ended" || record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.LaunchID) == "" {
 		return
@@ -196,8 +189,9 @@ func reconcileFlowLaunchExit(record SessionRecord, opts IngestOptions, warnings 
 		return
 	}
 	outcome, err := controller.Reconcile(record.FlowID, record.FlowPhaseID, strings.TrimSpace(record.LaunchID), launchcontrol.ExitEvidence{
-		Source:  launchcontrol.SourceSessionEnd,
-		EndedAt: record.EndedAt,
+		Source:           launchcontrol.SourceSessionEnd,
+		DeathCertificate: true,
+		EndedAt:          record.EndedAt,
 	})
 	for _, notice := range outcome.Notices {
 		appendWarning(warnings, notice)
@@ -238,15 +232,36 @@ func statusForPayload(provider Provider, payload hookPayload) string {
 	return "last_seen"
 }
 
-// endReasonForPayload keeps the provider's end reason on an ended record.
-// Only Claude's SessionEnd carries one that matters: `clear` means the agent
-// process is alive on a new session, which the launch liveness probe must
-// not read as an exit.
+// endReasonForPayload keeps the provider's end reason on an ended record. A
+// malformed Claude event cannot retain a recognized final reason and later
+// masquerade as a SessionEnd death certificate.
 func endReasonForPayload(provider Provider, payload hookPayload) string {
 	if statusForPayload(provider, payload) != "ended" {
 		return ""
 	}
+	if provider == ProviderClaude && strings.TrimSpace(payload.HookEventName) != "SessionEnd" {
+		return ""
+	}
 	return strings.TrimSpace(payload.Reason)
+}
+
+// IsDeathCertificate reports whether a stored session record contains a
+// recognized final provider event. Claude's final SessionEnd reasons are the
+// only provider evidence strong enough to reconcile a Flow launch.
+func IsDeathCertificate(record SessionRecord) bool {
+	if record.Provider != ProviderClaude || strings.TrimSpace(record.Status) != "ended" {
+		return false
+	}
+	return finalClaudeEndReason(record.EndReason)
+}
+
+func finalClaudeEndReason(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case "logout", "prompt_input_exit", "other":
+		return true
+	default:
+		return false
+	}
 }
 
 func summaryForPayload(payload hookPayload) string {

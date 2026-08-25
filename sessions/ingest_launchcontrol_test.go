@@ -3,6 +3,7 @@ package sessions_test
 import (
 	"bytes"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,11 +43,12 @@ func sessionEndPayload(worktreePath string) []byte {
 		"session_id": "claude-flow-1",
 		"cwd": ` + quoteJSON(worktreePath) + `,
 		"hook_event_name": "SessionEnd",
+		"reason": "prompt_input_exit",
 		"timestamp": "2026-06-06T14:10:00Z"
 	}`)
 }
 
-func TestIngestHookSessionEndDoesNotDemoteAStillRunningPhase(t *testing.T) {
+func TestIngestHookCertifiedSessionEndDemotesRunningPhaseImmediately(t *testing.T) {
 	root := t.TempDir()
 	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
 	result, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader(sessionEndPayload(flow.WorktreePath)), sessions.IngestOptions{
@@ -69,16 +71,16 @@ func TestIngestHookSessionEndDoesNotDemoteAStillRunningPhase(t *testing.T) {
 		t.Fatal(err)
 	}
 	phase := flowPhaseByID(t, read, "plan")
-	if phase.Status != flowstore.PhaseRunning {
-		t.Fatalf("fresh SessionEnd demoted a live phase: %#v", phase)
+	if phase.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("certified SessionEnd did not demote immediately: %#v", phase)
 	}
 	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" {
 		t.Fatalf("session still attached: %#v", phase.Sessions)
 	}
-	for _, warning := range result.Warnings {
-		if strings.Contains(warning, "marked needs_attention") || strings.Contains(warning, "could not reconcile") {
-			t.Fatalf("unexpected warning: %q", warning)
-		}
+	if !slices.ContainsFunc(result.Warnings, func(warning string) bool {
+		return strings.Contains(warning, "marked needs_attention")
+	}) {
+		t.Fatalf("warnings = %#v, want reconciliation notice", result.Warnings)
 	}
 }
 
@@ -263,14 +265,14 @@ func TestIngestHookRecordsTheSessionEndReason(t *testing.T) {
 	}
 }
 
-// A per-turn hook is not exit evidence however old its timestamp: a Codex
-// Stop, Cursor stop, or Claude /clear payload that carries an ended_at past
-// the session-end grace still may not demote a live launch's phase.
-func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
+// A non-certificate provider event is not exit evidence however old its
+// timestamp. Age cannot turn a turn boundary or malformed reason into proof.
+func TestIngestHookNonCertificatesWithOldTimestampsDoNotDemote(t *testing.T) {
 	cases := []struct {
-		name     string
-		provider sessions.Provider
-		payload  string
+		name       string
+		provider   sessions.Provider
+		payload    string
+		wantReason string
 	}{
 		{name: "codex Stop", provider: sessions.ProviderCodex, payload: `{
 			"session_id": "codex-flow-1",
@@ -279,11 +281,41 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 			"ended_at": "2020-01-01T00:00:00Z",
 			"timestamp": "2020-01-01T00:00:00Z"
 		}`},
-		{name: "claude clear", provider: sessions.ProviderClaude, payload: `{
+		{name: "cursor stop", provider: sessions.ProviderCursor, payload: `{
+			"conversation_id": "cursor-flow-1",
+			"cwd": %s,
+			"hook_event_name": "stop",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude clear", provider: sessions.ProviderClaude, wantReason: "clear", payload: `{
 			"session_id": "claude-flow-1",
 			"cwd": %s,
 			"hook_event_name": "SessionEnd",
 			"reason": "clear",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude missing reason", provider: sessions.ProviderClaude, payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "SessionEnd",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude unknown reason", provider: sessions.ProviderClaude, wantReason: "future_reason", payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "SessionEnd",
+			"reason": "future_reason",
+			"ended_at": "2020-01-01T00:00:00Z",
+			"timestamp": "2020-01-01T00:00:00Z"
+		}`},
+		{name: "claude wrong event", provider: sessions.ProviderClaude, payload: `{
+			"session_id": "claude-flow-1",
+			"cwd": %s,
+			"hook_event_name": "Stop",
+			"reason": "logout",
 			"ended_at": "2020-01-01T00:00:00Z",
 			"timestamp": "2020-01-01T00:00:00Z"
 		}`},
@@ -308,13 +340,16 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 			if result.Record.Status != "ended" {
 				t.Fatalf("record status = %q, want ended", result.Record.Status)
 			}
+			if result.Record.EndReason != tc.wantReason {
+				t.Fatalf("record end reason = %q, want %q", result.Record.EndReason, tc.wantReason)
+			}
 			read, _ := flowStore.Read(flow.FlowID)
 			if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseRunning {
 				t.Fatalf("old per-turn hook demoted the phase: %#v", phase)
 			}
 		})
 	}
-	// A Claude SessionEnd that is a real end and is past the grace does demote.
+	// A recognized final Claude SessionEnd demotes without waiting for age.
 	root := t.TempDir()
 	flowStore, flow := newRunningFlowLaunch(t, root, "launch-flow-1")
 	if _, err := sessions.IngestHookWithWarnings(sessions.ProviderClaude, bytes.NewReader([]byte(`{
@@ -322,8 +357,7 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 		"cwd": `+quoteJSON(flow.WorktreePath)+`,
 		"hook_event_name": "SessionEnd",
 		"reason": "prompt_input_exit",
-		"ended_at": "2020-01-01T00:00:00Z",
-		"timestamp": "2020-01-01T00:00:00Z"
+		"timestamp": "2026-06-06T14:10:00Z"
 	}`)), sessions.IngestOptions{
 		Env: map[string]string{
 			"APPROACH_LAUNCH_ID":          "launch-flow-1",
@@ -337,6 +371,6 @@ func TestIngestHookPerTurnStopsWithOldTimestampsDoNotDemote(t *testing.T) {
 	}
 	read, _ := flowStore.Read(flow.FlowID)
 	if phase := flowPhaseByID(t, read, "plan"); phase.Status != flowstore.PhaseNeedsAttention {
-		t.Fatalf("aged real SessionEnd did not demote: %#v", phase)
+		t.Fatalf("certified SessionEnd did not demote immediately: %#v", phase)
 	}
 }
