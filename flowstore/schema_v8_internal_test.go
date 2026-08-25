@@ -49,4 +49,7 @@ func TestSQLiteV7MigrationBackfillsAndFencesUntrackedOwner(t *testing.T) {
 	if _, err := older.Exec("UPDATE flows SET record=? WHERE flow_id=?", olderBlob, record.FlowID); err == nil || !strings.Contains(err.Error(), "cannot remove persisted phase-untracked owner") {
 		t.Fatalf("older writer error=%v", err)
 	}
+	if _, err := older.Exec("DELETE FROM flows WHERE flow_id=?", record.FlowID); err == nil || !strings.Contains(err.Error(), "cannot delete a Flow with a persisted phase-untracked owner") {
+		t.Fatalf("older writer delete error=%v", err)
+	}
 }

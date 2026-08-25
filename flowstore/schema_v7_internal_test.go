@@ -77,6 +77,7 @@ func downgradeCurrentDatabaseToV6ForTest(t *testing.T, root string) {
 	}()
 	if _, err := db.Exec(`
 DROP TRIGGER guard_untracked_owner_update;
+DROP TRIGGER guard_untracked_owner_delete;
 ALTER TABLE flows DROP COLUMN untracked_owner_launch_id;
 PRAGMA user_version = 7;`); err != nil {
 		t.Fatal(err)

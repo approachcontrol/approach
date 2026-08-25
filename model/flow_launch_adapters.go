@@ -232,14 +232,19 @@ func (m Model) trackedPhaseOccupancy(flowID string, stage flowownership.Stage) f
 	if strings.TrimSpace(flowID) == "" {
 		return flowownership.Free()
 	}
-	return flowownership.Evaluate(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.Evaluate(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RoleTrackedPhase,
@@ -347,14 +352,19 @@ func (m Model) repairOccupancy(flowID string, stage flowownership.Stage) flowown
 	if strings.TrimSpace(flowID) == "" {
 		return flowownership.Free()
 	}
-	return flowownership.Evaluate(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.Evaluate(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RoleRepair,
@@ -364,14 +374,19 @@ func (m Model) repairOccupancy(flowID string, stage flowownership.Stage) flowown
 }
 
 func (m Model) autofixFooterAdvice(flowID string) flowownership.Advisory {
-	return flowownership.EvaluateAdvisory(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.EvaluateAdvisory(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RoleAutofix,
@@ -381,14 +396,19 @@ func (m Model) autofixFooterAdvice(flowID string) flowownership.Advisory {
 }
 
 func (m Model) phaseResumeAdvice(flowID string, stage flowownership.Stage) flowownership.Advisory {
-	return flowownership.EvaluateAdvisory(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.EvaluateAdvisory(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RolePhaseResume,

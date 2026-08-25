@@ -47,8 +47,10 @@ repo-tmux session/window, isolated embedded-tmux socket/session, or direct child
 PID. Probes return live, dead, or unknown. Missing tools, timeouts, and probe
 errors stay occupied; only proven death permits an identity-fenced release.
 Provider hooks are not exit evidence because Codex Stop is a turn boundary and
-Claude SessionEnd can be `/clear`. Cached footer and drain queries do not probe
-processes or walk stores.
+Claude SessionEnd can be `/clear`. The agent wrapper invokes the pinned
+`untracked-owner-release` callback on process exit, so detached tmux completion
+updates the mirror without waiting for another launch attempt. Cached footer and
+drain queries do not probe processes or walk stores.
 
 Two composites are built from the above and are what most consumers actually
 call:

@@ -701,6 +701,35 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	}
 }
 
+func TestUntrackedFlowTerminalCommandReleasesOwnerAfterAgentExit(t *testing.T) {
+	command, err := newTerminalCommand(t.TempDir(), nil, []string{"true"}, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(command.cleanup)
+	ctx := AgentLaunchContext{
+		FlowID: "flow-1", LaunchID: "launch-1", FlowAutofix: true,
+		Executable: "/pinned/approach",
+	}
+	configureUntrackedOwnerRelease(command, ctx)
+	got := command.shellCommand()
+	for _, want := range []string{"/pinned/approach", UntrackedOwnerReleaseCommand, "--flow-id 'flow-1'", "--launch-id 'launch-1'", `exit "$status"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shell command %q does not contain %q", got, want)
+		}
+	}
+
+	tracked, err := newTerminalCommand(t.TempDir(), nil, []string{"true"}, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tracked.cleanup)
+	configureUntrackedOwnerRelease(tracked, AgentLaunchContext{FlowID: "flow-1", LaunchID: "launch-2", FlowLaunchTracked: true, FlowPhaseID: "implementation"})
+	if strings.Contains(tracked.shellCommand(), UntrackedOwnerReleaseCommand) {
+		t.Fatalf("tracked launch received untracked release callback: %q", tracked.shellCommand())
+	}
+}
+
 func TestEmbeddedTmuxAgentCommandReportsMissingTmux(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	_, err := embeddedTmuxAgentCommand(planAgentContext(), fakeLookPath())

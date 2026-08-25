@@ -594,6 +594,7 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	if err != nil {
 		return RepoTmuxAgentSpec{}, err
 	}
+	configureUntrackedOwnerRelease(termCommand, ctx)
 	tmuxCmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", sessionName, windowName, cmd.Dir, termCommand.shellCommand(), ctx.LaunchID)
 	tmuxCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
 	// Without this the script's last attempt — the only one that does not

@@ -7,7 +7,9 @@ Successful embedded install or tmux handoff activates that exact owner with its
 direct PID, isolated socket/session, or repo session/window. Startup failures
 release it by launch ID. Embedded detach changes presentation only and does not
 release a live tmux-backed agent; process exit or termination does. Transport
-probe failures remain occupied. A stale result cannot clear a replacement owner.
+probe failures remain occupied. The agent wrapper runs the pinned exact-owner
+release callback after process exit. A stale result cannot clear a replacement
+owner.
 
 Evidence base for `approach-hyl` (typed Flow launch intent). Every cell cites
 `file:line` against commit `e1dd62e`, the state of the code before the ADR 0002

@@ -80,6 +80,9 @@ func run(args []string, deps runDeps) error {
 			}
 		})
 	}
+	if len(args) > 1 && args[1] == actions.UntrackedOwnerReleaseCommand {
+		return runUntrackedOwnerRelease(args[2:], deps)
+	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)
 		return nil
@@ -168,6 +171,30 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
+}
+
+func runUntrackedOwnerRelease(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet(actions.UntrackedOwnerReleaseCommand, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	launchID := flags.String("launch-id", deps.getenv("APPROACH_LAUNCH_ID"), "launch id")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*flowID) == "" || strings.TrimSpace(*launchID) == "" {
+		return errors.New("untracked owner release requires --flow-id and --launch-id")
+	}
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	_, err = store.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: *flowID, LaunchID: *launchID})
+	if errors.Is(err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(err, flowstore.ErrFlowNotFound) {
+		return nil
+	}
+	return err
 }
 
 // truthyEnv accepts the spellings a shell script is likely to use for an

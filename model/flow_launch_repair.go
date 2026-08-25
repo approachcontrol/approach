@@ -155,7 +155,7 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	flowID := strings.TrimSpace(record.FlowID)
 	intent.FlowID = flowID
-	if verdict := m.repairOccupancy(flowID, flowownership.StageAdmission); verdict.Occupied() {
+	if verdict := m.repairOccupancy(flowID, flowownership.StageAdmission); verdict.Occupied() && verdict.Holder() != flowownership.HolderUntrackedOwner {
 		return m.setStatus(statusOther, flowRepairOccupancyStatus(verdict)), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())

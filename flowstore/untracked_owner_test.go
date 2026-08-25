@@ -34,6 +34,9 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{LaunchID: "launch-2", Role: flowstore.UntrackedOwnerRepair}}); !errors.Is(err, flowstore.ErrFlowUntrackedOwned) {
 		t.Fatalf("competing claim error = %v", err)
 	}
+	if err := store.Delete(record.FlowID); !errors.Is(err, flowstore.ErrFlowUntrackedOwned) {
+		t.Fatalf("delete active owner error = %v", err)
+	}
 
 	activated, err := store.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
 		FlowID: record.FlowID, LaunchID: "launch-1",
@@ -54,6 +57,9 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	}
 	if got := ended.UntrackedOwner; got == nil || got.State != flowstore.UntrackedOwnerEnded || got.EndedAt.IsZero() {
 		t.Fatalf("ended owner = %#v", got)
+	}
+	if err := store.Delete(record.FlowID); err != nil {
+		t.Fatalf("delete ended owner: %v", err)
 	}
 }
 

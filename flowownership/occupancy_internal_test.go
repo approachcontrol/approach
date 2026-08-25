@@ -906,7 +906,7 @@ func TestQueryAnswersFromLeaseSource(t *testing.T) {
 				tc.lease.t = t
 				tc.lease.wantFlowID = "flow-exact"
 			}
-			sources := Sources{Runtime: runtimeFixture{}}
+			sources := Sources{FlowCache: &flowCacheFixture{}, Runtime: runtimeFixture{}}
 			if tc.lease != nil {
 				sources.Lease = tc.lease
 			}
@@ -965,8 +965,9 @@ func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			verdict := New(Sources{
-				Lease:   &leaseFixture{occupied: tc.leaseOccupied, t: t, wantFlowID: "flow-1"},
-				Runtime: tc.runtime,
+				FlowCache: &flowCacheFixture{},
+				Lease:     &leaseFixture{occupied: tc.leaseOccupied, t: t, wantFlowID: "flow-1"},
+				Runtime:   tc.runtime,
 			}).Query(Query{
 				FlowID:  "flow-1",
 				Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: tc.stage},
@@ -979,8 +980,9 @@ func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
 
 	t.Run("footer headless write outranks unreadable lease", func(t *testing.T) {
 		verdict := New(Sources{
-			Lease:   &leaseFixture{err: errors.New("lease unreadable"), t: t, wantFlowID: "flow-1"},
-			Runtime: runtimeFixture{headless: map[string]bool{"flow-1": true}},
+			FlowCache: &flowCacheFixture{},
+			Lease:     &leaseFixture{err: errors.New("lease unreadable"), t: t, wantFlowID: "flow-1"},
+			Runtime:   runtimeFixture{headless: map[string]bool{"flow-1": true}},
 		}).Query(Query{
 			FlowID:  "flow-1",
 			Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageFooter},
@@ -1046,7 +1048,7 @@ func TestRepairPurposeHolderPrecedence(t *testing.T) {
 		} {
 			t.Run(tc.name+"/"+stage.name, func(t *testing.T) {
 				lease := &leaseFixture{occupied: tc.leaseOccupied, err: tc.leaseErr, t: t, wantFlowID: "flow-1"}
-				verdict := New(Sources{Lease: lease, Runtime: tc.runtime}).Query(Query{
+				verdict := New(Sources{FlowCache: &flowCacheFixture{}, Lease: lease, Runtime: tc.runtime}).Query(Query{
 					FlowID:  "flow-1",
 					Purpose: Purpose{Role: actions.RoleRepair, Stage: stage.stage},
 				})

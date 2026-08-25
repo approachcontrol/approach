@@ -131,7 +131,7 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	case flowownership.HolderFlowTerminal:
 		return m.setStatus(statusOther, flowPhaseResumeTerminalStatus), nil, false
 	}
-	if advice.Defer() {
+	if advice.Defer() && advice.Holder() != flowownership.HolderUntrackedOwner {
 		return m, nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())

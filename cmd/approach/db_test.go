@@ -255,6 +255,7 @@ func setTestDatabaseVersion(t *testing.T, path string, version int) {
 		// predecessor validation.
 		if _, err := db.Exec(`
 DROP TRIGGER guard_untracked_owner_update;
+DROP TRIGGER guard_untracked_owner_delete;
 ALTER TABLE flows DROP COLUMN untracked_owner_launch_id;`); err != nil {
 			t.Fatal(err)
 		}

@@ -2686,6 +2686,20 @@ func (s *Store) Delete(flowID string) error {
 		return err
 	}
 	defer release()
+	record, err := s.Read(flowID)
+	if err != nil {
+		return err
+	}
+	if owner := record.UntrackedOwner; owner != nil && owner.State != UntrackedOwnerEnded {
+		return fmt.Errorf("%w: %s owns %s", ErrFlowUntrackedOwned, owner.LaunchID, flowID)
+	} else if owner != nil {
+		if _, err := s.updateFlowMetadataOnly(flowID, func(record FlowRecord, _ time.Time) (FlowRecord, error) {
+			record.UntrackedOwner = nil
+			return record, nil
+		}); err != nil {
+			return err
+		}
+	}
 	return s.backend.delete(flowID)
 }
 

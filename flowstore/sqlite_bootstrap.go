@@ -680,6 +680,7 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 			"ALTER TABLE flows ADD COLUMN untracked_owner_launch_id TEXT NOT NULL DEFAULT ''",
 			"UPDATE flows SET untracked_owner_launch_id = CASE WHEN json_valid(CAST(record AS TEXT)) THEN COALESCE(json_extract(CAST(record AS TEXT), '$.untracked_owner.launch_id'), '') ELSE '' END",
 			flowUntrackedOwnerCompatibilityTrigger,
+			flowUntrackedOwnerDeleteCompatibilityTrigger,
 		)
 	}
 	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))

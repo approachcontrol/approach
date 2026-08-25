@@ -319,7 +319,7 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 		status, _ := m.retainedFlowTerminalLaunchStatus(record.FlowID)
 		return m.setStatus(statusOther, status), nil, false
 	}
-	if occupancy.Occupied() {
+	if occupancy.Occupied() && occupancy.Holder() != flowownership.HolderUntrackedOwner {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())

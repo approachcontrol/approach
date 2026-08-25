@@ -1221,6 +1221,10 @@ type TerminalLaunchSpec struct {
 // path because tmux is not installed.
 var ErrEmbeddedTmuxUnavailable = errors.New("tmux is not available for embedded terminal detach")
 
+// UntrackedOwnerReleaseCommand is the internal process-exit callback used by
+// phase-untracked Flow agents. It is not part of the interactive CLI surface.
+const UntrackedOwnerReleaseCommand = "untracked-owner-release"
+
 // EmbeddedTmuxAgentSpec describes a CLI agent launch that runs inside a tmux
 // session while approach embeds only an attached tmux client.
 type EmbeddedTmuxAgentSpec struct {
@@ -1369,6 +1373,7 @@ func agentLaunchWithOptions(ctx AgentLaunchContext, goos string, getenv getenvFu
 	if err != nil {
 		return TerminalLaunchSpec{}, err
 	}
+	configureUntrackedOwnerRelease(termCommand, ctx)
 	launch, err := terminalLaunchWithOptions(cmd.Dir, goos, getenv, lookPath, termCommand, opts)
 	if err != nil {
 		termCommand.cleanup()
@@ -1469,6 +1474,7 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 	if err != nil {
 		return EmbeddedTmuxAgentSpec{}, err
 	}
+	configureUntrackedOwnerRelease(termCommand, ctx)
 	tmuxEnv := envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
 	socketName := tmuxSocketName(sessionName)
 	tmuxArgs := isolatedTmuxArgs(socketName)
@@ -1868,14 +1874,19 @@ func claudeSessionHookSettings(hookCommand string) string {
 // path data crossing a shell boundary and must remain shellQuote'd. Provider is
 // a closed value supplied only by agentLaunchArgs, never untrusted input.
 func approachSessionHookCommand(provider, executable string) string {
-	if strings.TrimSpace(executable) == "" {
-		resolved, err := os.Executable()
-		if err != nil {
-			resolved = os.Args[0]
-		}
-		executable = resolved
-	}
+	executable = approachCommandExecutable(executable)
 	return shellQuote(executable) + " session-hook --provider " + provider
+}
+
+func approachCommandExecutable(executable string) string {
+	if strings.TrimSpace(executable) != "" {
+		return executable
+	}
+	resolved, err := os.Executable()
+	if err != nil {
+		return os.Args[0]
+	}
+	return resolved
 }
 
 // schemaVersionEnvValue renders a schema version for the environment. Zero means
@@ -1893,8 +1904,9 @@ func schemaVersionEnvValue(version int) string {
 // lives in an owner-readable script so inherited secrets are not serialized into
 // tmux/zellij/osascript/terminal argv.
 type terminalCommand struct {
-	scriptPath string
-	statusPath string
+	scriptPath  string
+	statusPath  string
+	exitCommand string
 	// session overrides the tmux/Zellij session name for this launch. When
 	// empty, the transport falls back to WorktreeSessionName(path).
 	session string
@@ -1944,7 +1956,21 @@ func newTerminalCommandWithArgvBuilder(
 // contains the quoted environment, cwd, and argv, then deletes itself before
 // exec'ing the agent.
 func (c *terminalCommand) shellCommand() string {
+	if strings.TrimSpace(c.exitCommand) != "" {
+		return "sh " + shellQuote(c.scriptPath) + "; status=$?; " + c.exitCommand + "; exit \"$status\""
+	}
 	return "exec sh " + shellQuote(c.scriptPath)
+}
+
+func configureUntrackedOwnerRelease(command *terminalCommand, ctx AgentLaunchContext) {
+	if command == nil || strings.TrimSpace(ctx.FlowID) == "" || strings.TrimSpace(ctx.LaunchID) == "" {
+		return
+	}
+	switch FlowLaunchRoleOf(ctx) {
+	case RoleRepair, RoleAutofix, RoleWorktreeAgent:
+		command.exitCommand = shellQuote(approachCommandExecutable(ctx.Executable)) + " " + UntrackedOwnerReleaseCommand +
+			" --flow-id " + shellQuote(ctx.FlowID) + " --launch-id " + shellQuote(ctx.LaunchID)
+	}
 }
 
 func (c *terminalCommand) cleanup() {

@@ -221,6 +221,14 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove persisted phase-untracked owner');
 END`
 
+const flowUntrackedOwnerDeleteCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_untracked_owner_delete
+BEFORE DELETE ON flows
+WHEN OLD.untracked_owner_launch_id <> ''
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot delete a Flow with a persisted phase-untracked owner');
+END`
+
 const flowSchemaSQL = flowTableSchemaV8 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
@@ -236,7 +244,8 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
 ` + epicProgressionDoneUpdateCompatibilityTrigger + `;
 ` + flowPreparationNonceCompatibilityTrigger + `;
 ` + flowRecoveryGenerationCompatibilityTrigger + `;
-` + flowUntrackedOwnerCompatibilityTrigger + `;`
+` + flowUntrackedOwnerCompatibilityTrigger + `;
+` + flowUntrackedOwnerDeleteCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -793,7 +802,10 @@ func validateSQLiteSchemaObjectSet(objects []string, version int64) error {
 				if version >= 7 {
 					want = append(want, "trigger:guard_recovered_launch_state_update:flows")
 					if version >= 8 {
-						want = append(want, "trigger:guard_untracked_owner_update:flows")
+						want = append(want,
+							"trigger:guard_untracked_owner_delete:flows",
+							"trigger:guard_untracked_owner_update:flows",
+						)
 					}
 				}
 			}
@@ -897,6 +909,12 @@ func validateSQLiteUntrackedOwnerCompatibilityTrigger(db *sql.DB) error {
 	}
 	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowUntrackedOwnerCompatibilityTrigger) {
 		return errors.New("flow database has incompatible phase-untracked owner compatibility trigger")
+	}
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_untracked_owner_delete'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database phase-untracked owner delete compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowUntrackedOwnerDeleteCompatibilityTrigger) {
+		return errors.New("flow database has incompatible phase-untracked owner delete compatibility trigger")
 	}
 	return nil
 }

@@ -185,16 +185,16 @@ type purposePolicy struct {
 // purpose may eventually read, including families implemented by later slices.
 var purposeRegistry = map[Purpose]purposePolicy{
 	// Matrix section 2.1: manual phase admission and its g-key tmux probe.
-	{Role: actions.RoleTrackedPhase, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	{Role: actions.RoleTrackedPhase, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeAutofixAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: creation-time Plan Now admission is runtime-only.
 	{Role: actions.RoleCreatePhase, Stage: StageAdmission}: {sources: readRuntime, runtime: readAdmissionRuntime, freshness: allowAuthoritative},
 	// Matrix section 2.1: phase-resume admission and its keypress probe.
-	{Role: actions.RolePhaseResume, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
+	{Role: actions.RolePhaseResume, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: repair admission. The whole-Flow tmux probe remains a
 	// separate keypress check because it shells out and is not part of admission.
-	{Role: actions.RoleRepair, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowAuthoritative},
+	{Role: actions.RoleRepair, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowAuthoritative},
 	// Matrix section 2.1: autofix admission and its whole-Flow agent probe.
-	{Role: actions.RoleAutofix, Stage: StageAdmission}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
+	{Role: actions.RoleAutofix, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime | readHeadlessWrite, probe: probeFlowAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: worktree-agent admission reads every source family.
 	{Role: actions.RoleWorktreeAgent, Stage: StageAdmission}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, probe: probeAutofixAgent, freshness: allowAuthoritative},
 	// Matrix section 2.1: saved-session resume admits after resolving its Flow.
@@ -230,18 +230,18 @@ var purposeRegistry = map[Purpose]purposePolicy{
 	// Matrix section 2.3: launch previews omit footer-only occupancy terms.
 	// Phase resume reuses its preview purpose as the no-I/O admission advisory;
 	// the source handler retains the separate tmux probe.
-	{Role: actions.RoleTrackedPhase, Stage: StagePreview}: {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
-	{Role: actions.RolePhaseResume, Stage: StagePreview}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
-	{Role: actions.RoleRepair, Stage: StagePreview}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime, freshness: allowCached},
+	{Role: actions.RoleTrackedPhase, Stage: StagePreview}: {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime, freshness: allowCached},
+	{Role: actions.RolePhaseResume, Stage: StagePreview}:  {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime, freshness: allowCached},
+	{Role: actions.RoleRepair, Stage: StagePreview}:       {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime, freshness: allowCached},
 	// Session release uses the RoleNone preview to fence its local checks before
 	// the authoritative session-store probe.
 	{Role: actions.RoleNone, Stage: StagePreview}: {sources: readRuntime, runtime: readAttempt | readHeadlessWrite, freshness: allowCached},
 	// Matrix section 2.3: rendered affordances use mirrors only. Tracked phase
 	// and repair add the headless-write term their launch previews omit.
-	{Role: actions.RoleTrackedPhase, Stage: StageFooter}:  {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
-	{Role: actions.RolePhaseResume, Stage: StageFooter}:   {sources: readRuntime | readLease, runtime: readFlowTerminalWithoutRepair, freshness: allowCached},
-	{Role: actions.RoleRepair, Stage: StageFooter}:        {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
-	{Role: actions.RoleAutofix, Stage: StageFooter}:       {sources: readRuntime | readLease, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RoleTrackedPhase, Stage: StageFooter}:  {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RolePhaseResume, Stage: StageFooter}:   {sources: readRuntime | readLease | readFlowCache, runtime: readFlowTerminalWithoutRepair, freshness: allowCached},
+	{Role: actions.RoleRepair, Stage: StageFooter}:        {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
+	{Role: actions.RoleAutofix, Stage: StageFooter}:       {sources: readRuntime | readLease | readFlowCache, runtime: readAdmissionRuntime | readHeadlessWrite, freshness: allowCached},
 	{Role: actions.RoleWorktreeAgent, Stage: StageFooter}: {sources: readRuntime | readLease | readFlowCache | readSessionCache, runtime: readAdmissionRuntime, freshness: allowCached},
 	{Role: actions.RoleNone, Stage: StageFooter}:          {sources: readFlowCache, freshness: allowCached},
 
@@ -610,6 +610,12 @@ func queryFlowCache(cache FlowCache, flowID, phaseID string, purpose Purpose) Ve
 	if untrackedOwnerActive(record.UntrackedOwner) {
 		return Verdict{holder: HolderUntrackedOwner}
 	}
+	if purpose.Stage == StagePreview || purpose.Stage == StageFooter || purpose.Stage == StageAdmission {
+		switch purpose.Role {
+		case actions.RoleTrackedPhase, actions.RolePhaseResume, actions.RoleRepair, actions.RoleAutofix:
+			return Free()
+		}
+	}
 	for _, phase := range record.Phases {
 		currentPhaseID := strings.TrimSpace(phase.PhaseID)
 		if phaseID != "" && currentPhaseID != phaseID {
@@ -662,6 +668,9 @@ func querySessionCache(cache SessionCache, flowID string) Verdict {
 }
 
 func chooseAdvisory(purpose Purpose, lease, runtime, flowCache, sessionCache Verdict) Verdict {
+	if purpose.Role == actions.RoleTrackedPhase && purpose.Stage == StageFooter && runtime.Holder() == HolderHeadlessWrite {
+		return runtime
+	}
 	if lease.Occupied() {
 		return lease
 	}
@@ -702,7 +711,7 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 	if freshness == FreshnessAuthoritative && policy.sources&(readFlowStore|readSessionStore) != 0 {
 		return occupancy.queryAuthoritative(query, policy, flowID)
 	}
-	if policy.sources&^(readRuntime|readLease) != 0 || policy.probe != probeNone {
+	if policy.sources&^(readRuntime|readLease|readFlowCache) != 0 || policy.probe != probeNone {
 		return failedVerdict(errPendingSourceFamily)
 	}
 
@@ -725,7 +734,14 @@ func (occupancy Occupancy) Query(query Query) Verdict {
 	if policy.sources&readLease != 0 {
 		leaseVerdict = queryLease(occupancy.sources.Lease, flowID)
 	}
-	return chooseVerdict(query.Purpose, leaseVerdict, runtimeVerdict)
+	flowCacheVerdict := Free()
+	if policy.sources&readFlowCache != 0 {
+		if occupancy.sources.FlowCache == nil {
+			return failedVerdict(ErrMissingFlowCache)
+		}
+		flowCacheVerdict = queryFlowCache(occupancy.sources.FlowCache, flowID, strings.TrimSpace(query.PhaseID), query.Purpose)
+	}
+	return chooseAdvisory(query.Purpose, leaseVerdict, runtimeVerdict, flowCacheVerdict, Free())
 }
 
 func (occupancy Occupancy) queryAuthoritative(query Query, policy purposePolicy, flowID string) Verdict {
