@@ -17,6 +17,10 @@ const epicProgressionSchemaVersion = 1
 
 var errPreparedEpicProgressionCommitUnknown = errors.New("prepared epic progression commit outcome is unknown")
 
+// ErrEpicProgressionActivationChanged reports that a progression edge was
+// observed under an activation other than the one currently stored.
+var ErrEpicProgressionActivationChanged = errors.New("epic progression activation changed")
+
 // IsPreparedEpicProgressionCommitUnknown reports that an atomic enable reached
 // commit but SQLite could not confirm whether that commit became durable.
 func IsPreparedEpicProgressionCommitUnknown(err error) bool {
@@ -52,16 +56,18 @@ type EpicProgression struct {
 // done and halt; explicit normal off clears done and retains a sticky halt;
 // done may be newly established only from authoritative active state.
 type EpicProgressionUpdate struct {
-	Key     EpicProgressionKey
-	Enabled bool
-	Done    bool
+	Key                EpicProgressionKey
+	Enabled            bool
+	Done               bool
+	ExpectedActivation time.Time
 }
 
 // EpicProgressionHaltUpdate records why progression stopped. Only authoritative
 // active state may halt, and the first halt tuple is the one that sticks.
 type EpicProgressionHaltUpdate struct {
-	Key  EpicProgressionKey
-	Halt EpicProgressionHalt
+	Key                EpicProgressionKey
+	Halt               EpicProgressionHalt
+	ExpectedActivation time.Time
 }
 
 // PreparedEpicProgressionUpdate binds enablement to one exact prepared child
@@ -87,9 +93,10 @@ const (
 // EpicProgressionSuccessorUpdate names the exact prepared Flow that sequential
 // progression owns. Callers hold its launch/close reservation while reconciling.
 type EpicProgressionSuccessorUpdate struct {
-	FlowID string
-	Key    EpicProgressionKey
-	Bead   BeadLink
+	FlowID             string
+	Key                EpicProgressionKey
+	Bead               BeadLink
+	ExpectedActivation time.Time
 }
 
 // EpicProgressionSuccessorResult returns the records observed in the same
@@ -140,6 +147,12 @@ func (s *Store) SetEpicProgression(update EpicProgressionUpdate) (EpicProgressio
 		return EpicProgression{}, err
 	}
 	update.Key = key
+	if update.Done {
+		update.ExpectedActivation, err = normalizeEpicProgressionActivation(update.ExpectedActivation)
+		if err != nil {
+			return EpicProgression{}, err
+		}
+	}
 	backend, ok := s.backend.(epicProgressionBackend)
 	if !ok {
 		return EpicProgression{}, errors.New("flow backend does not support epic progression")
@@ -156,6 +169,10 @@ func (s *Store) HaltEpicProgression(update EpicProgressionHaltUpdate) (EpicProgr
 		return EpicProgression{}, err
 	}
 	update.Key = key
+	update.ExpectedActivation, err = normalizeEpicProgressionActivation(update.ExpectedActivation)
+	if err != nil {
+		return EpicProgression{}, err
+	}
 	if err := validateEpicProgressionHalt(update.Halt); err != nil {
 		return EpicProgression{}, err
 	}
@@ -288,6 +305,10 @@ func (s *Store) ReconcileEpicProgressionSuccessor(update EpicProgressionSuccesso
 	if update.Bead.EpicID != key.EpicID {
 		return retryable(fmt.Errorf("sequential epic progression key epic %q does not match Flow link epic %q", key.EpicID, update.Bead.EpicID))
 	}
+	update.ExpectedActivation, err = normalizeEpicProgressionActivation(update.ExpectedActivation)
+	if err != nil {
+		return retryable(err)
+	}
 	backend, ok := s.backend.(*sqliteBackend)
 	if !ok {
 		return retryable(errors.New("flow backend does not support atomic sequential epic progression reconciliation"))
@@ -306,7 +327,7 @@ func (s *Store) ReconcileEpicProgressionSuccessor(update EpicProgressionSuccesso
 		return retryable(err)
 	}
 	result := EpicProgressionSuccessorResult{Progression: progression}
-	if !found || !progression.Enabled || progression.Done || progression.Halt != nil {
+	if !found || !progression.Enabled || progression.Done || progression.Halt != nil || !progression.UpdatedAt.Equal(update.ExpectedActivation) {
 		result.Outcome = EpicProgressionSuccessorInactive
 	} else {
 		stored, flowFound, readErr := queryStoredFlow(tx.QueryRow(
@@ -348,6 +369,21 @@ func normalizeEpicProgressionKey(key EpicProgressionKey) (EpicProgressionKey, er
 		return EpicProgressionKey{}, errors.New("epic progression epic id is required")
 	}
 	return EpicProgressionKey{RepoPath: filepath.Clean(repoPath), EpicID: epicID}, nil
+}
+
+func normalizeEpicProgressionActivation(value time.Time) (time.Time, error) {
+	if value.IsZero() {
+		return time.Time{}, errors.New("epic progression expected activation is required")
+	}
+	encoded, err := formatStorageTime(value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("epic progression expected activation is invalid: %w", err)
+	}
+	parsed, err := parseCanonicalStorageTime(encoded)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("epic progression expected activation is invalid: %w", err)
+	}
+	return parsed, nil
 }
 
 func validateEpicProgression(record EpicProgression) error {
@@ -642,8 +678,17 @@ func (b *sqliteBackend) setEpicProgression(update EpicProgressionUpdate, now fun
 		}
 		if update.Done {
 			halt = nil
+			if current.Done {
+				if err := tx.Commit(); err != nil {
+					return EpicProgression{}, fmt.Errorf("commit epic progression update %q/%q: %w", update.Key.RepoPath, update.Key.EpicID, err)
+				}
+				return current, nil
+			}
 			if !current.Done && (!current.Enabled || current.Halt != nil) {
 				return EpicProgression{}, fmt.Errorf("epic progression %q/%q can only become done from active state", update.Key.RepoPath, update.Key.EpicID)
+			}
+			if !current.UpdatedAt.Equal(update.ExpectedActivation) {
+				return EpicProgression{}, fmt.Errorf("%w for %q/%q", ErrEpicProgressionActivationChanged, update.Key.RepoPath, update.Key.EpicID)
 			}
 		}
 		if current.Enabled == update.Enabled && current.Done == update.Done && current.Halt == halt {
@@ -715,17 +760,15 @@ func (b *sqliteBackend) haltEpicProgression(update EpicProgressionHaltUpdate, no
 		}
 		return current, nil
 	}
-	// This checks that progression is active, not that it is the same activation
-	// whose tracked child produced update.Halt: another process that disabled and
-	// re-enabled the epic can still be halted by a stale observation. The advance
-	// edge carries the identical exposure and predates this one, so fencing needs
-	// a shared activation generation across both — tracked in approach-d93.
 	if !current.Enabled || current.Done {
 		state := "off"
 		if current.Done {
 			state = "done"
 		}
 		return EpicProgression{}, fmt.Errorf("epic progression %q/%q is %s; only active progression can halt", update.Key.RepoPath, update.Key.EpicID, state)
+	}
+	if !current.UpdatedAt.Equal(update.ExpectedActivation) {
+		return EpicProgression{}, fmt.Errorf("%w for %q/%q", ErrEpicProgressionActivationChanged, update.Key.RepoPath, update.Key.EpicID)
 	}
 	halt := update.Halt
 	current.Enabled = false

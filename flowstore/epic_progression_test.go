@@ -33,7 +33,8 @@ func TestReconcileEpicProgressionSuccessorClassifiesAuthoritativeState(t *testin
 			repo := filepath.Join(t.TempDir(), "repo")
 			key := flowstore.EpicProgressionKey{RepoPath: repo, EpicID: "epic"}
 			link := flowstore.BeadLink{ID: "epic.2", EpicID: "epic"}
-			if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true}); err != nil {
+			active, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true})
+			if err != nil {
 				t.Fatal(err)
 			}
 			flowID := "successor"
@@ -76,7 +77,7 @@ func TestReconcileEpicProgressionSuccessorClassifiesAuthoritativeState(t *testin
 			}
 
 			result, err := store.ReconcileEpicProgressionSuccessor(flowstore.EpicProgressionSuccessorUpdate{
-				FlowID: flowID, Key: key, Bead: link,
+				FlowID: flowID, Key: key, Bead: link, ExpectedActivation: active.UpdatedAt,
 			})
 			if err != nil {
 				t.Fatalf("ReconcileEpicProgressionSuccessor() error = %v", err)
@@ -155,7 +156,7 @@ func TestReconcileEpicProgressionSuccessorInactivePrecedesEveryFlowCondition(t *
 				// The inactive progression read must win over every simultaneous
 				// authoritative Flow condition above.
 				result, err := store.ReconcileEpicProgressionSuccessor(flowstore.EpicProgressionSuccessorUpdate{
-					FlowID: flowID, Key: key, Bead: link,
+					FlowID: flowID, Key: key, Bead: link, ExpectedActivation: time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC),
 				})
 				if err != nil || result.Outcome != flowstore.EpicProgressionSuccessorInactive {
 					t.Fatalf("result = %#v, err %v; want inactive", result, err)
@@ -251,12 +252,13 @@ func TestEpicProgressionDoneTransitionsRequireAuthoritativeActiveState(t *testin
 				}
 			}
 			if initial == "halted" {
-				if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true}); err != nil {
+				active, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true})
+				if err != nil {
 					t.Fatal(err)
 				}
 				if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: flowstore.EpicProgressionHalt{
 					ChildBeadID: "epic.1", Status: flowstore.StatusBlocked, Message: "child Flow flow-1 halted auto-progression",
-				}}); err != nil {
+				}, ExpectedActivation: active.UpdatedAt}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -264,7 +266,7 @@ func TestEpicProgressionDoneTransitionsRequireAuthoritativeActiveState(t *testin
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
-			if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true}); err == nil {
+			if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC)}); err == nil {
 				t.Fatalf("SetEpicProgression(done) from %s succeeded", initial)
 			}
 			after, foundAfter, readErr := store.ReadEpicProgression(key)
@@ -284,11 +286,11 @@ func TestEpicProgressionDoneTransitionsRequireAuthoritativeActiveState(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	done, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true})
+	done, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: active.UpdatedAt})
 	if err != nil || done.Enabled || !done.Done || done.Halt != nil {
 		t.Fatalf("active -> done = %#v, err %v", done, err)
 	}
-	redundant, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true})
+	redundant, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: active.UpdatedAt})
 	if err != nil || !redundant.UpdatedAt.Equal(done.UpdatedAt) {
 		t.Fatalf("done -> done = %#v, err %v", redundant, err)
 	}
@@ -482,7 +484,7 @@ func TestHaltEpicProgressionRequiresAuthoritativeActiveState(t *testing.T) {
 		Message:     "child Flow flow-1 halted auto-progression",
 	}
 
-	if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt}); err == nil {
+	if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt, ExpectedActivation: now}); err == nil {
 		t.Fatal("HaltEpicProgression(missing row) succeeded")
 	}
 	if _, found, err := store.ReadEpicProgression(key); err != nil || found {
@@ -494,7 +496,7 @@ func TestHaltEpicProgressionRequiresAuthoritativeActiveState(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
-	if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt}); err == nil {
+	if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt, ExpectedActivation: off.UpdatedAt}); err == nil {
 		t.Fatal("HaltEpicProgression(normal off) succeeded")
 	}
 	if got, found, err := store.ReadEpicProgression(key); err != nil || !found || got != off {
@@ -507,7 +509,7 @@ func TestHaltEpicProgressionRequiresAuthoritativeActiveState(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
-	halted, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
+	halted, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt, ExpectedActivation: active.UpdatedAt})
 	if err != nil {
 		t.Fatalf("HaltEpicProgression(active) error = %v", err)
 	}
@@ -527,7 +529,7 @@ func TestHaltEpicProgressionRequiresAuthoritativeActiveState(t *testing.T) {
 
 	now = now.Add(time.Minute)
 	later := flowstore.EpicProgressionHalt{ChildBeadID: "epic.2", Status: flowstore.StatusClosed, Message: "a later cause"}
-	sticky, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: later})
+	sticky, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: later, ExpectedActivation: active.UpdatedAt})
 	if err != nil {
 		t.Fatalf("HaltEpicProgression(already halted) error = %v", err)
 	}
@@ -536,15 +538,16 @@ func TestHaltEpicProgressionRequiresAuthoritativeActiveState(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
-	if _, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true}); err != nil {
+	activeAgain, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Enabled: true})
+	if err != nil {
 		t.Fatal(err)
 	}
-	done, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true})
+	done, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: activeAgain.UpdatedAt})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
-	if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt}); err == nil {
+	if _, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt, ExpectedActivation: done.UpdatedAt}); err == nil {
 		t.Fatal("HaltEpicProgression(done) succeeded")
 	}
 	if got, found, err := store.ReadEpicProgression(key); err != nil || !found || got != done {
@@ -576,12 +579,54 @@ func TestHaltEpicProgressionRejectsNonCanonicalHaltTuples(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: tt.halt})
+			_, err = store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: tt.halt, ExpectedActivation: active.UpdatedAt})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("HaltEpicProgression(%#v) error = %v, want %q", tt.halt, err, tt.want)
 			}
 			if got, found, err := store.ReadEpicProgression(key); err != nil || !found || got != active {
 				t.Fatalf("row after rejected halt = %#v, found %t, err %v; want %#v", got, found, err, active)
+			}
+		})
+	}
+}
+
+func TestEpicProgressionObservedEdgesRequireValidExpectedActivation(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	key := flowstore.EpicProgressionKey{RepoPath: filepath.Join(t.TempDir(), "repo"), EpicID: "epic"}
+	halt := flowstore.EpicProgressionHalt{ChildBeadID: "epic.1", Status: flowstore.StatusBlocked, Message: "blocked"}
+	invalid := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, tt := range []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{name: "completion missing", run: func() error {
+			_, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true})
+			return err
+		}, want: "required"},
+		{name: "completion malformed", run: func() error {
+			_, err := store.SetEpicProgression(flowstore.EpicProgressionUpdate{Key: key, Done: true, ExpectedActivation: invalid})
+			return err
+		}, want: "invalid"},
+		{name: "halt missing", run: func() error {
+			_, err := store.HaltEpicProgression(flowstore.EpicProgressionHaltUpdate{Key: key, Halt: halt})
+			return err
+		}, want: "required"},
+		{name: "successor missing", run: func() error {
+			_, err := store.ReconcileEpicProgressionSuccessor(flowstore.EpicProgressionSuccessorUpdate{
+				FlowID: "prepared", Key: key, Bead: flowstore.BeadLink{ID: "epic.2", EpicID: key.EpicID},
+			})
+			return err
+		}, want: "required"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.run(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
 		})
 	}
