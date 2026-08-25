@@ -3143,10 +3143,12 @@ func (m Model) runAgentLaunchWithStatus(ctx actions.AgentLaunchContext, launch a
 // matching handoffPending attempt consuming that confirmation.
 func (m Model) runFlowLifecycleTmuxLaunchWithStatus(
 	ctx actions.AgentLaunchContext,
-	launch actions.TerminalLaunchSpec,
+	spec actions.RepoTmuxAgentSpec,
+	activation *flowstore.UntrackedOwnerActivation,
 	heldRelease func(),
 	launchedStatus string,
 ) (Model, tea.Cmd) {
+	launch := spec.Launch
 	return m, func() tea.Msg {
 		if err := launch.Cmd.Run(); err != nil {
 			if launch.Cleanup != nil {
@@ -3155,6 +3157,30 @@ func (m Model) runFlowLifecycleTmuxLaunchWithStatus(
 			return AgentResultMsg{
 				LaunchContext: ctx, Err: launchErrorMessage(err, launch), Detached: true,
 				FlowLaunchRelease: heldRelease,
+			}
+		}
+		if activation != nil {
+			if _, err := m.launchSeams.ActivateUntrackedOwner(*activation); err != nil {
+				activationErr := "Activate durable Flow owner: " + err.Error()
+				if spec.Terminate == nil {
+					return AgentResultMsg{
+						LaunchContext: ctx, Err: activationErr + "; exact tmux termination is unavailable", Detached: true,
+						FlowLaunchRelease: heldRelease, FlowLaunchOwnerRetained: true,
+					}
+				}
+				if terminateErr := spec.Terminate(); terminateErr != nil {
+					return AgentResultMsg{
+						LaunchContext: ctx, Err: activationErr + "; " + terminateErr.Error(), Detached: true,
+						FlowLaunchRelease: heldRelease, FlowLaunchOwnerRetained: true,
+					}
+				}
+				if launch.Cleanup != nil {
+					launch.Cleanup()
+				}
+				return AgentResultMsg{
+					LaunchContext: ctx, Err: activationErr, Detached: true,
+					FlowLaunchRelease: heldRelease,
+				}
 			}
 		}
 		return AgentResultMsg{

@@ -40,6 +40,10 @@ type RepoTmuxAgentSpec struct {
 	// session from their own terminal.
 	AttachCommand string
 	Launch        TerminalLaunchSpec
+	// Terminate removes this exact window if post-spawn publication fails. The
+	// launcher must not release its durable reservation while an unpublished
+	// agent is still running.
+	Terminate func() error
 }
 
 // TmuxAvailable reports whether tmux mode can run launches right now.
@@ -582,6 +586,9 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 		return RepoTmuxAgentSpec{
 			SessionName: sessionName, WindowName: windowName,
 			AttachCommand: RepoTmuxAttachCommand(sessionName),
+			Terminate: func() error {
+				return terminateRepoTmuxWindow(sessionName, windowName)
+			},
 			Launch: TerminalLaunchSpec{
 				Cmd: spawnCmd, Detached: true, Cleanup: cleanup,
 				ErrorDetail: errorDetail,
@@ -615,6 +622,9 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 		SessionName:   sessionName,
 		WindowName:    windowName,
 		AttachCommand: RepoTmuxAttachCommand(sessionName),
+		Terminate: func() error {
+			return terminateRepoTmuxWindow(sessionName, windowName)
+		},
 		Launch: TerminalLaunchSpec{
 			Cmd: tmuxCmd,
 			// The tmux command returns as soon as the window exists; the agent
@@ -624,6 +634,20 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 			ErrorDetail: stderr.String,
 		},
 	}, nil
+}
+
+func terminateRepoTmuxWindow(sessionName, windowName string) error {
+	target := "=" + sessionName + ":" + windowName
+	cmd := exec.Command("tmux", "kill-window", "-t", target)
+	cmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		return fmt.Errorf("terminate tmux window %q: %w: %s", target, err, detail)
+	}
+	return fmt.Errorf("terminate tmux window %q: %w", target, err)
 }
 
 // validateTrackedRepoTmuxRole refuses every launch the tracked tmux route does

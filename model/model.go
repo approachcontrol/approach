@@ -2628,6 +2628,10 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
 		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
+			if msg.FlowLaunchOwnerRetained {
+				m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+				return m.setStatus(statusOther, "Flow "+ctx.FlowID+": "+resultErr), interactiveExitCmd
+			}
 			m, cmd := m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
 			return m, batchNonNil(interactiveExitCmd, cmd)
 		}

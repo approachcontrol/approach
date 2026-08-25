@@ -1,9 +1,12 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +21,22 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
+
+type publicationFailureTerminal struct {
+	state      string
+	terminates int
+}
+
+func (*publicationFailureTerminal) VisibleLines(int, int) []string { return nil }
+func (*publicationFailureTerminal) Write(p []byte) (int, error)    { return len(p), nil }
+func (*publicationFailureTerminal) Resize(int, int) error          { return nil }
+func (t *publicationFailureTerminal) Terminate() error {
+	t.terminates++
+	t.state = "terminated"
+	return nil
+}
+func (*publicationFailureTerminal) Wait(context.Context) error { return nil }
+func (t *publicationFailureTerminal) State() string            { return t.state }
 
 // These tests characterize the manual Flow phase launch path. Every invariant
 // asserted here holds both before and after the launch lifecycle module takes
@@ -37,6 +56,8 @@ type manualLaunchHarness struct {
 	launchBackend string
 	tmuxAvailable bool
 	tmuxLaunchErr error
+	activateErr   error
+	activations   []flowstore.UntrackedOwnerActivation
 	// windowLive answers the tmux live-window probe. Nil means no window is
 	// live, which is what every test that does not care about the probe wants.
 	windowLive func(repoPath string, launchIDs []string) bool
@@ -44,8 +65,11 @@ type manualLaunchHarness struct {
 	// launch script, so a successful detached launch must never call it: the tmux
 	// window runs that script after the spawning command has already returned.
 	tmuxLaunchCleanups int
+	tmuxTerminates     int
+	tmuxTerminateErr   error
 
 	startTerminalErr error
+	startTerminal    EmbeddedTerminal
 	setPhaseErr      error
 	addLaunchIDErr   error
 	planBodyErr      error
@@ -204,6 +228,10 @@ func (h *manualLaunchHarness) options() Options {
 				SessionName:   "approach-alpha-0001",
 				WindowName:    "implementation-abcd1234",
 				AttachCommand: "tmux attach -t 'approach-alpha-0001'",
+				Terminate: func() error {
+					h.tmuxTerminates++
+					return h.tmuxTerminateErr
+				},
 				Launch: actions.TerminalLaunchSpec{
 					Cmd:      exec.Command("true"),
 					Detached: true,
@@ -239,6 +267,10 @@ func (h *manualLaunchHarness) options() Options {
 			return record, err
 		},
 		ActivateUntrackedOwner: func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+			h.activations = append(h.activations, update)
+			if h.activateErr != nil {
+				return flowstore.FlowRecord{}, h.activateErr
+			}
 			return h.persistedFlow(update.FlowID)
 		},
 		ReleaseUntrackedOwner: func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
@@ -317,6 +349,9 @@ func (h *manualLaunchHarness) options() Options {
 			h.launchContexts = append(h.launchContexts, ctx)
 			if h.startTerminalErr != nil {
 				return nil, h.startTerminalErr
+			}
+			if h.startTerminal != nil {
+				return h.startTerminal, nil
 			}
 			return flowPhaseLaunchTestTerminal{state: "running"}, nil
 		},
@@ -2898,6 +2933,109 @@ func TestManualFlowLaunchRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
 	// it on success would race the agent's own start.
 	if h.tmuxLaunchCleanups != 0 {
 		t.Fatalf("cleanups = %d, want none on a successful launch", h.tmuxLaunchCleanups)
+	}
+}
+
+func TestFlowLifecycleTmuxPublishesOwnerOnlyAfterWindowStarts(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "window-started")
+	activation := flowstore.UntrackedOwnerActivation{
+		FlowID: "flow-1", LaunchID: "launch-1",
+		Transport: flowstore.UntrackedOwnerTransport{
+			Kind: flowstore.UntrackedTransportRepoTmux, Session: "approach-alpha", Window: "repair-abcd",
+		},
+	}
+	m := Model{}
+	m.launchSeams.ActivateUntrackedOwner = func(got flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+		if got != activation {
+			t.Fatalf("activation = %#v, want %#v", got, activation)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			return flowstore.FlowRecord{}, fmt.Errorf("window was not started before publication: %w", err)
+		}
+		return flowstore.FlowRecord{}, nil
+	}
+	_, cmd := m.runFlowLifecycleTmuxLaunchWithStatus(
+		actions.AgentLaunchContext{FlowID: "flow-1", LaunchID: "launch-1"},
+		actions.RepoTmuxAgentSpec{Launch: actions.TerminalLaunchSpec{
+			Cmd: exec.Command("sh", "-c", "touch \"$1\"", "approach-test", marker), Detached: true,
+		}},
+		&activation, func() {}, "launched",
+	)
+	msg := cmd().(AgentResultMsg)
+	if msg.Err != "" || msg.LaunchedStatus != "launched" {
+		t.Fatalf("result = %#v, want successful publication after spawn", msg)
+	}
+}
+
+func TestFlowLifecycleTmuxPublicationFailureTerminatesExactWindow(t *testing.T) {
+	tests := []struct {
+		name         string
+		terminateErr error
+		wantRetained bool
+	}{
+		{name: "terminated"},
+		{name: "termination failed", terminateErr: errors.New("kill failed"), wantRetained: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			terminates := 0
+			m := Model{}
+			m.launchSeams.ActivateUntrackedOwner = func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{}, errors.New("store unavailable")
+			}
+			activation := flowstore.UntrackedOwnerActivation{FlowID: "flow-1", LaunchID: "launch-1"}
+			_, cmd := m.runFlowLifecycleTmuxLaunchWithStatus(
+				actions.AgentLaunchContext{FlowID: "flow-1", LaunchID: "launch-1"},
+				actions.RepoTmuxAgentSpec{
+					Launch: actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true},
+					Terminate: func() error {
+						terminates++
+						return tt.terminateErr
+					},
+				},
+				&activation, func() {}, "launched",
+			)
+			msg := cmd().(AgentResultMsg)
+			if terminates != 1 || !strings.Contains(msg.Err, "Activate durable Flow owner") {
+				t.Fatalf("terminates = %d result = %#v", terminates, msg)
+			}
+			if msg.FlowLaunchOwnerRetained != tt.wantRetained {
+				t.Fatalf("owner retained = %v, want %v", msg.FlowLaunchOwnerRetained, tt.wantRetained)
+			}
+		})
+	}
+}
+
+func TestEmbeddedOwnerPublicationFailureTerminatesStartedTerminal(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	terminal := &publicationFailureTerminal{state: "running"}
+	h.startTerminal = terminal
+	h.activateErr = errors.New("store unavailable")
+	m := h.model()
+	attempt := flowLaunchAttempt{
+		Token: "repair-1", Kind: flowLaunchKindRepair, FlowID: record.FlowID, State: flowLaunchStatePreparing,
+	}
+	var ok bool
+	m, ok = m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	if !ok {
+		t.Fatal("reserve repair attempt")
+	}
+	ctx := actions.AgentLaunchContext{
+		FlowID: record.FlowID, LaunchID: attempt.Token, FlowRepair: true, Embedded: true,
+	}
+	next, _ := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{Context: ctx, RepoPath: "/dev/alpha"})
+	if terminal.terminates != 1 {
+		t.Fatalf("terminal terminates = %d, want 1", terminal.terminates)
+	}
+	if len(next.embeddedTerminals) != 0 {
+		t.Fatalf("embedded terminals = %#v, want failed launch removed", next.embeddedTerminals)
+	}
+	if _, exists := next.flowLaunchAttempt(record.FlowID); exists {
+		t.Fatal("failed embedded publication retained the launch attempt")
+	}
+	if !strings.Contains(next.status.Text, "Activate durable Flow owner") {
+		t.Fatalf("status = %q", next.status.Text)
 	}
 }
 

@@ -1157,7 +1157,8 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
 		if m.launchSeams.ActivateUntrackedOwner != nil {
 			transport := flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid()}
-			if terminal, ok := m.flowLaunchEmbeddedTerminal(ctx.FlowID, ctx.LaunchID); ok {
+			terminal, terminalFound := m.flowLaunchEmbeddedTerminal(ctx.FlowID, ctx.LaunchID)
+			if terminalFound {
 				if identified, ok := terminal.(interface {
 					untrackedOwnerTransport() flowstore.UntrackedOwnerTransport
 				}); ok {
@@ -1168,7 +1169,20 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 				FlowID: attempt.FlowID, LaunchID: attempt.Token,
 				Transport: transport,
 			}); err != nil {
-				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Activate durable Flow owner: "+err.Error())
+				activationErr := "Activate durable Flow owner: " + err.Error()
+				if terminalFound {
+					if terminateErr := terminal.Terminate(); terminateErr != nil {
+						m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+						return m.setStatus(statusOther, activationErr+"; terminate unpublished embedded terminal: "+terminateErr.Error()), nil
+					}
+					for _, slot := range m.embeddedTerminals {
+						if slot.FlowID == ctx.FlowID && slot.LaunchID == ctx.LaunchID {
+							m = m.dismissEmbeddedTerminalForReason(slot.ID, embeddedTerminalRemovalTerminate)
+							break
+						}
+					}
+				}
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, activationErr)
 			}
 		}
 	}
@@ -1253,18 +1267,13 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		releaseFlowLaunchReservation(msg.Release)
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
 	}
+	var activation *flowstore.UntrackedOwnerActivation
 	if _, durable := untrackedOwnerRole(attempt.Kind); durable && m.launchSeams.ActivateUntrackedOwner != nil {
-		if _, err := m.launchSeams.ActivateUntrackedOwner(flowstore.UntrackedOwnerActivation{
+		activation = &flowstore.UntrackedOwnerActivation{
 			FlowID: attempt.FlowID, LaunchID: attempt.Token,
 			Transport: flowstore.UntrackedOwnerTransport{
 				Kind: flowstore.UntrackedTransportRepoTmux, Session: spec.SessionName, Window: spec.WindowName,
 			},
-		}); err != nil {
-			releaseFlowLaunchReservation(msg.Release)
-			if spec.Launch.Cleanup != nil {
-				spec.Launch.Cleanup()
-			}
-			return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Activate durable Flow owner: "+err.Error())
 		}
 	}
 	if attempt.Kind == flowLaunchKindAutofix {
@@ -1289,7 +1298,7 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		}
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
-	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
+	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec, activation, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
 	launchCmd = markTmuxAgentResult(launchCmd)
 	// Placed after the handoffPending transition above, so a handoff canceled
 	// before its spawn opens no window. It is a sibling command: it touches no
