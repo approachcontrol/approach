@@ -474,6 +474,29 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestModelOptionsFromConfigPassesClipboardOptions(t *testing.T) {
+	sessionStore, planStore, flowStore := testArtifactStores(t)
+	opts := modelOptionsFromConfig(config.Config{
+		Clipboard: config.ClipboardConfig{
+			Method:               config.ClipboardMethodOSC52,
+			OSC52MaxPayloadBytes: 3,
+		},
+	}, nil, sessionStore, planStore, flowStore)
+
+	if opts.CopyToClipboard == nil {
+		t.Fatal("CopyToClipboard should be wired")
+	}
+	err := opts.CopyToClipboard("abc")
+	if err == nil {
+		t.Fatal("configured OSC 52 payload cap should reject the copy")
+	}
+	for _, want := range []string{"4 bytes", "limit is 3 bytes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("CopyToClipboard error = %q, want text %q", err, want)
+		}
+	}
+}
+
 func TestModelOptionsFromConfigPassesFlowPreset(t *testing.T) {
 	sessionStore, planStore, flowStore := testArtifactStores(t)
 	preset := flowstore.Preset{

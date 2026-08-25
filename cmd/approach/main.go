@@ -629,6 +629,12 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		ListFlows:        flowStore.List,
 		FlowStore:        flowStore,
 		ReadPlan:         planStore.ReadPlan,
+		CopyToClipboard: func(text string) error {
+			return actions.CopyToClipboardWithOptions(text, actions.ClipboardOptions{
+				Method:               cfg.Clipboard.Method,
+				OSC52MaxPayloadBytes: cfg.Clipboard.OSC52MaxPayloadBytes,
+			})
+		},
 		LaunchTerminal: func(path string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchWithOptions(path, launchOpts)
 		},

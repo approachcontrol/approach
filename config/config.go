@@ -32,6 +32,21 @@ type Config struct {
 	Flow        FlowConfig       `toml:"flow"`
 	Sessions    SessionsConfig   `toml:"sessions"`
 	Bootstrap   BootstrapConfig  `toml:"bootstrap"`
+	Clipboard   ClipboardConfig  `toml:"clipboard"`
+}
+
+const (
+	ClipboardMethodAuto   = "auto"
+	ClipboardMethodSystem = "system"
+	ClipboardMethodOSC52  = "osc52"
+
+	DefaultOSC52MaxPayloadBytes = 100_000
+)
+
+// ClipboardConfig selects clipboard transport and limits encoded OSC 52 payloads.
+type ClipboardConfig struct {
+	Method               string `toml:"method"`
+	OSC52MaxPayloadBytes int    `toml:"osc52_max_payload_bytes"`
 }
 
 // ScanConfig configures repository discovery.
@@ -261,6 +276,15 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 	}
 	cfg.Launch.Backend = backend
 
+	method, err := normalizeClipboardMethod(cfg.Clipboard.Method)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	cfg.Clipboard.Method = method
+	if cfg.Clipboard.OSC52MaxPayloadBytes < 0 {
+		return Config{}, fmt.Errorf("parse config %s: clipboard.osc52_max_payload_bytes must be >= 0", path)
+	}
+
 	if cfg.Sessions.Root != "" {
 		root, err := expandHome(cfg.Sessions.Root, opts.homeDir)
 		if err != nil {
@@ -284,7 +308,26 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 }
 
 func defaultConfig() Config {
-	return Config{Launch: LaunchConfig{Backend: LaunchBackendEmbedded}}
+	return Config{
+		Launch: LaunchConfig{Backend: LaunchBackendEmbedded},
+		Clipboard: ClipboardConfig{
+			Method:               ClipboardMethodAuto,
+			OSC52MaxPayloadBytes: DefaultOSC52MaxPayloadBytes,
+		},
+	}
+}
+
+func normalizeClipboardMethod(value string) (string, error) {
+	switch method := strings.ToLower(strings.TrimSpace(value)); method {
+	case "", ClipboardMethodAuto:
+		return ClipboardMethodAuto, nil
+	case ClipboardMethodSystem:
+		return ClipboardMethodSystem, nil
+	case ClipboardMethodOSC52:
+		return ClipboardMethodOSC52, nil
+	default:
+		return "", fmt.Errorf("clipboard.method %q must be %q, %q, or %q", value, ClipboardMethodAuto, ClipboardMethodSystem, ClipboardMethodOSC52)
+	}
 }
 
 // normalizeLaunchBackend lowercases and validates [launch].backend. An unknown

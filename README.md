@@ -338,6 +338,10 @@ make clean   # Remove bin/
 
 - Go 1.26+
 - Git 2.15+ (worktree support)
-- macOS clipboard: `pbcopy` (included with macOS)
-- Linux clipboard: install one of `wl-copy`, `xclip`, or `xsel`
+- Clipboard: native commands are preferred in the default `auto` mode. macOS
+  includes `pbcopy`; Linux can use `wl-copy`, `xclip`, or `xsel`. If none is
+  installed, Approach falls back to OSC 52.
+- OSC 52 clipboard fallback requires support from the hosting terminal and
+  permission for clipboard writes. tmux also needs clipboard writes and
+  passthrough enabled. See [clipboard configuration](docs/config.md#clipboard).
 - Linux terminal launch: set `TERMINAL` to your terminal emulator; when no tmux/Zellij/`TERMINAL` launch is available, Approach falls back to launching `$SHELL` in the worktree directory

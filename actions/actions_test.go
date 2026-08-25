@@ -2036,6 +2036,9 @@ func TestTerminalLaunch_TmuxRequiresInteractiveTTY(t *testing.T) {
 }
 
 func TestCopyToClipboard(t *testing.T) {
+	if os.Getenv("TEST_CLIPBOARD") == "" {
+		t.Skip("skipping: set TEST_CLIPBOARD=1 to run the native clipboard smoke test")
+	}
 	if _, err := exec.LookPath("pbcopy"); err != nil {
 		t.Skip("pbcopy not available")
 	}
