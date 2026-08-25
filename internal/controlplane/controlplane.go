@@ -69,6 +69,9 @@ const (
 	// cachedBinaryPrefix names a cached copy. The remainder is the digest
 	// prefix, so the file name is the content.
 	cachedBinaryPrefix = "approach-"
+	// cacheLeaseFileName serializes claim changes and retention decisions for
+	// every Approach process sharing this cache.
+	cacheLeaseFileName = ".cache.lock"
 	// digestNameLength is how much of the hex digest lands in the file name.
 	// 64 bits of prefix is far past the point where a collision is a realistic
 	// concern for a handful of local builds.
@@ -98,9 +101,21 @@ const (
 // re-derives that.
 const pinClaimMaxAge = 30 * 24 * time.Hour
 
+// cacheLeaseTimeout bounds claim and sweep contention. Claim callers receive a
+// descriptive error; retention treats the same error as a reason to skip the
+// best-effort sweep.
+const cacheLeaseTimeout = 250 * time.Millisecond
+
 // timeNow is time.Now, replaced in tests so claim expiry can be exercised
 // without sleeping.
 var timeNow = time.Now
+
+// These cache-operation hooks are deterministic test seams. Production leaves
+// them as no-ops.
+var retainPinLeaseAcquired = func() {}
+var refreshPinLeaseAcquired = func() {}
+var sweepCacheStarted = func() {}
+var sweepCacheLeaseAcquired = func() {}
 
 // resolveExecutable is os.Executable, replaced in tests so they can stand in a
 // disposable "running binary" and delete or replace it.
@@ -329,11 +344,35 @@ func RetainPin(root, launchID, digest string) error {
 	if !artifacts.IsSafeID(launchID) {
 		return fmt.Errorf("invalid launch id %q", launchID)
 	}
-	dir := filepath.Join(root, cacheDirName, pinsDirName)
-	if err := os.MkdirAll(dir, artifacts.DirPerm); err != nil {
-		return fmt.Errorf("create launch pin directory: %w", err)
+	return withCacheLease(root, func(cacheDir string) error {
+		retainPinLeaseAcquired()
+		dir := filepath.Join(cacheDir, pinsDirName)
+		if err := os.MkdirAll(dir, artifacts.DirPerm); err != nil {
+			return fmt.Errorf("create launch pin directory: %w", err)
+		}
+		return artifacts.WriteFileAtomic(filepath.Join(dir, launchID), []byte(digest+"\n"))
+	})
+}
+
+func withCacheLease(root string, operation func(cacheDir string) error) error {
+	cacheDir, err := secureCacheDir(root)
+	if err != nil {
+		return err
 	}
-	return artifacts.WriteFileAtomic(filepath.Join(dir, launchID), []byte(digest+"\n"))
+	return withCacheDirLease(cacheDir, operation)
+}
+
+func withCacheDirLease(cacheDir string, operation func(cacheDir string) error) error {
+	release, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		cacheLeaseTimeout,
+	)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return operation(cacheDir)
 }
 
 // RefreshPin restamps launchID's claim so expiry measures time since the
@@ -350,18 +389,21 @@ func RefreshPin(root, launchID string) error {
 	if !artifacts.IsSafeID(launchID) {
 		return fmt.Errorf("invalid launch id %q", launchID)
 	}
-	path := filepath.Join(root, cacheDirName, pinsDirName, launchID)
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
+	return withCacheLease(root, func(cacheDir string) error {
+		path := filepath.Join(cacheDir, pinsDirName, launchID)
+		refreshPinLeaseAcquired()
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("inspect launch pin: %w", err)
 		}
-		return fmt.Errorf("inspect launch pin: %w", err)
-	}
-	now := timeNow()
-	if err := os.Chtimes(path, now, now); err != nil {
-		return fmt.Errorf("refresh launch pin: %w", err)
-	}
-	return nil
+		now := timeNow()
+		if err := os.Chtimes(path, now, now); err != nil {
+			return fmt.Errorf("refresh launch pin: %w", err)
+		}
+		return nil
+	})
 }
 
 // ReleasePin drops launchID's claim on its digest. A missing claim is success:
@@ -370,11 +412,13 @@ func ReleasePin(root, launchID string) error {
 	if !artifacts.IsSafeID(launchID) {
 		return fmt.Errorf("invalid launch id %q", launchID)
 	}
-	err := os.Remove(filepath.Join(root, cacheDirName, pinsDirName, launchID))
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("release launch pin: %w", err)
-	}
-	return nil
+	return withCacheLease(root, func(cacheDir string) error {
+		err := os.Remove(filepath.Join(cacheDir, pinsDirName, launchID))
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("release launch pin: %w", err)
+		}
+		return nil
+	})
 }
 
 func resolveSourcePath() (string, error) {
@@ -564,6 +608,15 @@ func copyExecutable(source, target, expected string) error {
 // retention is hygiene, and failing a launch over it would trade a bounded
 // disk cost for an outage.
 func sweepCache(cacheDir, keep string) {
+	sweepCacheStarted()
+	_ = withCacheDirLease(cacheDir, func(cacheDir string) error {
+		sweepCacheLeaseAcquired()
+		sweepCacheUnlocked(cacheDir, keep)
+		return nil
+	})
+}
+
+func sweepCacheUnlocked(cacheDir, keep string) {
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
 		return
@@ -597,22 +650,8 @@ func sweepCache(cacheDir, keep string) {
 		return candidates[i].name < candidates[j].name
 	})
 	// keep counts against the budget, so only retainedBinaries-1 others survive.
-	pinsDir := filepath.Join(cacheDir, pinsDirName)
 	for i, candidate := range candidates {
 		if i < retainedBinaries-1 {
-			continue
-		}
-		// Re-read the claims immediately before the unlink rather than trusting
-		// the snapshot taken above. Sweeps are not serialized against launches
-		// in other processes, and everything between that snapshot and here —
-		// reading the whole directory, stat-ing each entry, sorting — is time a
-		// peer can use to claim this very digest for a launch whose argv already
-		// names it. Re-reading cannot make the check atomic, but it shrinks the
-		// window from "the length of a sweep" to "two syscalls", which is the
-		// difference between a race a busy machine loses regularly and one it
-		// effectively never does. Full cross-process serialization of claim,
-		// refresh, release, and sweep is a lock this package does not have yet.
-		if pinnedDigests(pinsDir)[strings.TrimPrefix(candidate.name, cachedBinaryPrefix)] {
 			continue
 		}
 		_ = os.Remove(filepath.Join(cacheDir, candidate.name))
@@ -647,17 +686,10 @@ func pinnedDigests(pinsDir string) map[string]bool {
 			continue
 		}
 		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
-			// Re-stat before removing. ReadDir's entry.Info is a snapshot, and a
-			// RefreshPin in another process between that snapshot and here means
-			// the claim is alive — deleting it would then let the same sweep
-			// evict a binary a running agent still has to exec, which is the one
-			// outcome this whole mechanism exists to prevent. Best effort
-			// otherwise: a claim that cannot be removed is honoured for another
-			// sweep, which costs one retained copy and never a launch.
-			if fresh, statErr := os.Stat(path); statErr == nil && fresh.ModTime().Before(cutoff) {
-				if os.Remove(path) == nil {
-					continue
-				}
+			// A claim that cannot be removed is honoured for another sweep. That
+			// costs one retained copy and never a launch.
+			if os.Remove(path) == nil {
+				continue
 			}
 		}
 		honorClaim(pinned, path)
