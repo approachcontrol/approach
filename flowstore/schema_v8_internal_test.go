@@ -54,6 +54,28 @@ func TestSQLiteV7MigrationBackfillsAndFencesUntrackedOwner(t *testing.T) {
 	}
 }
 
+func TestV7PreparedRecordIsNotExemptedFromMigrationValidation(t *testing.T) {
+	root := t.TempDir()
+	db := createParentReleaseV7DatabaseAt(t, filepath.Join(root, databaseFilename))
+	t.Cleanup(func() { _ = db.Close() })
+	stamp := time.Date(2026, 8, 25, 20, 0, 0, 0, time.UTC)
+	record := FlowRecord{
+		SchemaVersion: schemaVersion, FlowID: "v7-prepared", Title: "prepared", Instructions: "test",
+		Status: StatusInProgress, RepoPath: filepath.Join(root, "repo"), Headless: true, Phases: []FlowPhase{},
+		PreparationNonce: "nonce-v7", PreparedAt: &stamp, CreatedAt: stamp, UpdatedAt: stamp,
+	}
+	blob, projection, err := encodeStoredFlow(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO flows(flow_id,repo_path,status,updated_at,record,bead_id,epic_id,prepared_at,preparation_nonce) VALUES(?,?,?,?,?,?,?,?,?)`, projection.flowID, projection.repoPath, projection.status, projection.updatedAt, blob, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce); err != nil {
+		t.Fatal(err)
+	}
+	if exempted := sampleUndecodableFlows(db, 7); exempted[record.FlowID] {
+		t.Fatalf("valid v7 prepared Flow was exempted from migration validation: %#v", exempted)
+	}
+}
+
 func TestSQLiteReadsRejectUntrackedOwnerProjectionMismatch(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewStore(StoreOptions{Root: root, Role: RoleWriter})

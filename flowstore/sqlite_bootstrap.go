@@ -382,8 +382,14 @@ func migratedRecordSampleQuery(schema int64) string {
 		bead, epic = "''", "''"
 	}
 	prepared, nonce, ownerLaunchID := "''", "''", "''"
-	if schema >= databaseSchemaVersion {
-		prepared, nonce, ownerLaunchID = "prepared_at", "preparation_nonce", "untracked_owner_launch_id"
+	if schema >= 3 {
+		prepared = "prepared_at"
+	}
+	if schema >= 6 {
+		nonce = "preparation_nonce"
+	}
+	if schema >= 8 {
+		ownerLaunchID = "untracked_owner_launch_id"
 	}
 	columns := strings.Join([]string{
 		"flow_id", "repo_path", "status", "updated_at", bead, epic, prepared, nonce, ownerLaunchID, "record",
