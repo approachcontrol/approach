@@ -410,7 +410,7 @@ func TestEnableEpicProgressionRefusesIncompleteClosedAndRunningFlows(t *testing.
 	}
 }
 
-func TestEpicProgressionUpdatesClampRegressingClock(t *testing.T) {
+func TestEpicProgressionUpdatesAdvanceAcrossRegressingClock(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	repo := filepath.Join(t.TempDir(), "repo")
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
@@ -455,8 +455,8 @@ func TestEpicProgressionUpdatesClampRegressingClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.UpdatedAt.Before(enabled.UpdatedAt) {
-		t.Fatalf("disabled updated_at regressed from %s to %s", enabled.UpdatedAt, disabled.UpdatedAt)
+	if !disabled.UpdatedAt.After(enabled.UpdatedAt) {
+		t.Fatalf("disabled updated_at = %s, want after %s", disabled.UpdatedAt, enabled.UpdatedAt)
 	}
 	now = now.Add(-time.Minute)
 	atomicallyEnabled, _, err := store.EnableEpicProgressionForPreparedFlow(flowstore.PreparedEpicProgressionUpdate{
@@ -465,8 +465,8 @@ func TestEpicProgressionUpdatesClampRegressingClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if atomicallyEnabled.UpdatedAt.Before(disabled.UpdatedAt) {
-		t.Fatalf("atomic enable updated_at regressed from %s to %s", disabled.UpdatedAt, atomicallyEnabled.UpdatedAt)
+	if !atomicallyEnabled.UpdatedAt.After(disabled.UpdatedAt) {
+		t.Fatalf("atomic enable updated_at = %s, want after %s", atomicallyEnabled.UpdatedAt, disabled.UpdatedAt)
 	}
 }
 

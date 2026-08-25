@@ -874,5 +874,9 @@ func boolToSQLite(value bool) int {
 }
 
 func epicProgressionMutationTime(record EpicProgression, candidate time.Time) time.Time {
-	return monotonicMutationTime(candidate, record.CreatedAt, record.UpdatedAt)
+	stamp := monotonicMutationTime(candidate, record.CreatedAt, record.UpdatedAt)
+	if !record.UpdatedAt.IsZero() && !stamp.After(record.UpdatedAt) {
+		stamp = record.UpdatedAt.UTC().Add(time.Nanosecond)
+	}
+	return stamp
 }

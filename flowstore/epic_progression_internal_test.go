@@ -24,11 +24,9 @@ func TestEpicProgressionObservedActivationFencesEveryProgressionEdge(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	now = now.Add(time.Minute)
 	if _, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key}); err != nil {
 		t.Fatal(err)
 	}
-	now = now.Add(time.Minute)
 	activationB, err := store.SetEpicProgression(EpicProgressionUpdate{Key: key, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
