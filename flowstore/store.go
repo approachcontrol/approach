@@ -890,11 +890,13 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 }
 
 func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, preparationNonce string) (FlowRecord, error) {
-	// A preparation receipt is a capability minted only by a successful
-	// preparation finalizer. General creation never trusts a caller-supplied one.
+	// Preparation receipts and untracked owners are lifecycle capabilities
+	// minted only by their fenced store operations. General creation never
+	// trusts caller-supplied values for either one.
 	record.PreparedAt = nil
 	record.PreparationNonce = strings.TrimSpace(preparationNonce)
 	record.PreparationGeneration = opts.preparationGeneration
+	record.UntrackedOwner = nil
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, errors.New("flow title is required")
 	}

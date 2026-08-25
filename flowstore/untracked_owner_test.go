@@ -87,6 +87,37 @@ func TestUntrackedOwnerLifecycleIsIdentityFenced(t *testing.T) {
 	}
 }
 
+func TestCreateClearsCallerSuppliedUntrackedOwner(t *testing.T) {
+	t.Parallel()
+	for _, state := range []flowstore.UntrackedOwnerState{flowstore.UntrackedOwnerReserved, flowstore.UntrackedOwnerLive} {
+		state := state
+		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir(), Role: flowstore.RoleWriter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			created, err := store.Create(flowstore.FlowRecord{
+				Title: "ignore supplied owner", Instructions: "test creation boundary", RepoPath: t.TempDir(),
+				UntrackedOwner: &flowstore.UntrackedOwner{
+					LaunchID: "fabricated", Role: flowstore.UntrackedOwnerAutofix, State: state,
+					Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "fabricated"},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if created.UntrackedOwner != nil {
+				t.Fatalf("created owner = %#v, want nil", created.UntrackedOwner)
+			}
+			if err := store.Delete(created.FlowID); err != nil {
+				t.Fatalf("delete newly created Flow: %v", err)
+			}
+		})
+	}
+}
+
 func TestUntrackedOwnerReplacementAndConcurrentClaimsFenceByLaunch(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
