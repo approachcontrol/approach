@@ -64,7 +64,7 @@ func (m Model) startLaunchSweep() (Model, tea.Cmd) {
 	m.launchSweepTickGen++
 	generation := m.launchSweepTickGen
 	sweep := m.sweepLaunches
-	probe := m.repoTmuxLaunchWindowLive
+	probe := m.repoTmuxLaunchStatus
 	watches := make([]tmuxNotificationWatch, 0, len(m.tmuxNotificationWatches))
 	if m.notificationsEnabled {
 		for _, watch := range m.tmuxNotificationWatches {
@@ -78,7 +78,10 @@ func (m Model) startLaunchSweep() (Model, tea.Cmd) {
 		}
 		var exited []tmuxNotificationWatch
 		for _, watch := range watches {
-			if probe != nil && !probe(watch.RepoPath, watch.LaunchID) {
+			if probe == nil {
+				continue
+			}
+			if live, err := probe(watch.RepoPath, watch.LaunchID); err == nil && !live {
 				exited = append(exited, watch)
 			}
 		}

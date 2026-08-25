@@ -211,17 +211,40 @@ func repoTmuxListWindowsArgs(repoPath string) []string {
 // proof the agent is gone, and must only call it on a user-initiated action: it
 // runs a tmux subprocess.
 func RepoTmuxLaunchWindowLive(repoPath string, launchIDs ...string) bool {
+	live, _ := RepoTmuxLaunchWindowStatus(repoPath, launchIDs...)
+	return live
+}
+
+// RepoTmuxLaunchWindowStatus reports whether any matching launch window is
+// live and returns an error when tmux could not answer conclusively. Unlike the
+// advisory boolean wrapper, a successful false result is safe to use as exit
+// evidence.
+func RepoTmuxLaunchWindowStatus(repoPath string, launchIDs ...string) (bool, error) {
 	suffixes := repoTmuxLaunchSuffixes(launchIDs)
-	if len(suffixes) == 0 || !TmuxAvailable() {
-		return false
+	if len(suffixes) == 0 {
+		return false, errors.New("tmux launch probe requires a matchable launch ID")
+	}
+	if !TmuxAvailable() {
+		return false, errors.New("tmux is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
 	defer cancel()
 	out, err := tmuxProbeCommand(ctx, repoTmuxListWindowsArgs(repoPath)...).Output()
 	if err != nil {
-		return false
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if tmuxLaunchProbeConfirmsAbsence(string(exitErr.Stderr)) {
+				return false, nil
+			}
+		}
+		return false, fmt.Errorf("probe tmux launch window: %w", err)
 	}
-	return launchWindowRunningInListing(string(out), suffixes)
+	return launchWindowRunningInListing(string(out), suffixes), nil
+}
+
+func tmuxLaunchProbeConfirmsAbsence(stderr string) bool {
+	stderr = strings.TrimSpace(stderr)
+	return strings.Contains(stderr, "can't find session:") || strings.Contains(stderr, "no server running on")
 }
 
 // launchWindowRunningInListing scans repoTmuxLiveWindowFormat output for a live

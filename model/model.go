@@ -211,6 +211,7 @@ type Model struct {
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
 	repoTmuxLaunchWindowLive  func(string, ...string) bool
+	repoTmuxLaunchStatus      func(string, ...string) (bool, error)
 	repoTmuxSessionAttached   func(string) bool
 	insideMultiplexer         func() bool
 	// repoTmuxTerminalPending holds the repos whose first tmux-mode terminal
@@ -419,6 +420,10 @@ type Options struct {
 	// open tmux window. It is only consulted on user-initiated reset, resume,
 	// and repair.
 	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
+	// RepoTmuxLaunchStatus distinguishes a confirmed missing window from
+	// an inconclusive tmux probe. Notification sweeps consume watches only on a
+	// successful probe that reports no live window.
+	RepoTmuxLaunchStatus func(repoPath string, launchIDs ...string) (bool, error)
 	// RepoTmuxSessionAttached probes whether a terminal is already watching a
 	// repo's tmux session. It decides whether a tmux-mode launch opens the
 	// repo's first terminal window, and runs only inside a command goroutine.
@@ -922,6 +927,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxLaunchWindowLive == nil {
 		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
 	}
+	repoTmuxLaunchStatus := opts.RepoTmuxLaunchStatus
+	if repoTmuxLaunchStatus == nil {
+		repoTmuxLaunchStatus = actions.RepoTmuxLaunchWindowStatus
+	}
 	repoTmuxSessionAttached := opts.RepoTmuxSessionAttached
 	if repoTmuxSessionAttached == nil {
 		repoTmuxSessionAttached = actions.RepoTmuxSessionAttached
@@ -1126,6 +1135,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		launchRepoTmuxAgent:       launchRepoTmuxAgent,
 		repoTmuxSessionExists:     repoTmuxSessionExists,
 		repoTmuxLaunchWindowLive:  repoTmuxLaunchWindowLive,
+		repoTmuxLaunchStatus:      repoTmuxLaunchStatus,
 		repoTmuxSessionAttached:   repoTmuxSessionAttached,
 		insideMultiplexer:         insideMultiplexer,
 		inspectFlowLease:          inspectFlowLease,
@@ -2497,6 +2507,14 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		}
 	}
 	ctx := msg.LaunchContext
+	var interactiveExitCmd tea.Cmd
+	if !msg.Detached {
+		state, codeKnown := "exited", true
+		if msg.Err != "" {
+			state, codeKnown = "failed", false
+		}
+		interactiveExitCmd = m.notificationCmd(agentExitNotification(ctx.Command, ctx.RepoPath, state, 0, codeKnown))
+	}
 	// A slice-epic launch holds its preparation admission across the spawn, and
 	// its own result is what ends the hold. The exact LaunchID match is what
 	// stops a stale result — from a launch made before a repository or
@@ -2510,7 +2528,8 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
 		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
-			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
+			m, cmd := m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
+			return m, batchNonNil(interactiveExitCmd, cmd)
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	} else if msg.FlowLaunchRelease != nil {
@@ -2520,7 +2539,8 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		return m, nil
 	}
 	if resultErr != "" {
-		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
+		m, cmd := m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
+		return m, batchNonNil(interactiveExitCmd, cmd)
 	} else if msg.Detached {
 		if msg.Tmux {
 			m = m.withTmuxNotificationWatch(ctx)
@@ -2544,7 +2564,9 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		// An interactive launch's agent has ended with the TTY handed back; a
 		// tracked phase it left running has no result and is reconciled the
 		// same way an embedded terminal's exit is.
-		return m, cmd
+		return m, batchNonNil(interactiveExitCmd, cmd)
+	} else if !msg.Detached {
+		return m, interactiveExitCmd
 	}
 	return m, nil
 }

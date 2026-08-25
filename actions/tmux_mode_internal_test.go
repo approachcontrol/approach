@@ -743,6 +743,24 @@ func TestLaunchWindowRunningInListingMatchesAnyOfAPhasesLaunches(t *testing.T) {
 	}
 }
 
+func TestTmuxLaunchProbeConfirmsAbsenceOnlyForMissingSessionOrServer(t *testing.T) {
+	tests := []struct {
+		stderr string
+		want   bool
+	}{
+		{stderr: "can't find session: approach-alpha-1234", want: true},
+		{stderr: "no server running on /tmp/tmux-501/default", want: true},
+		{stderr: "error connecting to /tmp/tmux-501/default (Permission denied)"},
+		{stderr: "probe timed out"},
+		{stderr: ""},
+	}
+	for _, tc := range tests {
+		if got := tmuxLaunchProbeConfirmsAbsence(tc.stderr); got != tc.want {
+			t.Fatalf("tmuxLaunchProbeConfirmsAbsence(%q) = %t, want %t", tc.stderr, got, tc.want)
+		}
+	}
+}
+
 // TestRepoTmuxLaunchWindowLiveMatchesTheLaunchsOwnWindow pins the pairing the
 // liveness probe depends on: the window name a launch gets must be matchable
 // back to that launch ID, and must not match a different launch's window.

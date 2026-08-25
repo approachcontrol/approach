@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -134,14 +135,36 @@ func TestSuccessfulTmuxLaunchRegistersNotificationWatch(t *testing.T) {
 	}
 }
 
+func TestInteractiveAgentExitEmitsNotification(t *testing.T) {
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1", RepoPath: "/dev/approach"}
+	m := NewWithOptions(nil, Options{NotificationsEnabled: true})
+
+	_, cmd := m.handleAgentResultAfterFinalization(AgentResultMsg{LaunchContext: ctx}, nil)
+	got := rawNotificationStrings(cmd)
+	if len(got) != 1 || !strings.Contains(got[0], "codex session finished in approach") {
+		t.Fatalf("interactive exit notifications = %#v, want one successful codex notification", got)
+	}
+}
+
+func TestInteractiveAgentFailureEmitsNotification(t *testing.T) {
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1", RepoPath: "/dev/approach"}
+	m := NewWithOptions(nil, Options{NotificationsEnabled: true})
+
+	_, cmd := m.handleAgentResultAfterFinalization(AgentResultMsg{LaunchContext: ctx, Err: "exit status 7"}, nil)
+	got := rawNotificationStrings(cmd)
+	if len(got) != 1 || !strings.Contains(got[0], "codex session failed in approach") {
+		t.Fatalf("interactive failure notifications = %#v, want one failed codex notification", got)
+	}
+}
+
 func TestTmuxLaunchSweepNotifiesOnWindowDisappearance(t *testing.T) {
 	var probes int
 	m := NewWithOptions(nil, Options{
 		NotificationsEnabled: true,
 		SweepLaunches:        func() {},
-		RepoTmuxLaunchWindowLive: func(repoPath string, launchIDs ...string) bool {
+		RepoTmuxLaunchStatus: func(repoPath string, launchIDs ...string) (bool, error) {
 			probes++
-			return launchIDs[0] == "live"
+			return launchIDs[0] == "live", nil
 		},
 	})
 	m.tmuxNotificationWatches = map[string]tmuxNotificationWatch{
@@ -166,13 +189,36 @@ func TestTmuxLaunchSweepNotifiesOnWindowDisappearance(t *testing.T) {
 	}
 }
 
+func TestTmuxLaunchSweepRetainsWatchWhenProbeFails(t *testing.T) {
+	m := NewWithOptions(nil, Options{
+		NotificationsEnabled: true,
+		SweepLaunches:        func() {},
+		RepoTmuxLaunchStatus: func(string, ...string) (bool, error) {
+			return false, errors.New("tmux probe timed out")
+		},
+	})
+	m.tmuxNotificationWatches = map[string]tmuxNotificationWatch{
+		"launch-1": {LaunchID: "launch-1", RepoPath: "/dev/approach", Provider: "codex"},
+	}
+
+	next, sweepCmd := m.startLaunchSweep()
+	done := sweepCmd().(launchSweepDoneMsg)
+	next, notifyCmd := next.handleLaunchSweepDone(done)
+	if _, ok := next.tmuxNotificationWatches["launch-1"]; !ok {
+		t.Fatal("inconclusive tmux probe discarded the notification watch")
+	}
+	if got := rawNotificationStrings(notifyCmd); len(got) != 0 {
+		t.Fatalf("inconclusive tmux probe emitted notifications: %#v", got)
+	}
+}
+
 func TestDisabledNotificationsDoNotProbeTmuxWindows(t *testing.T) {
 	var probes int
 	m := NewWithOptions(nil, Options{
 		SweepLaunches: func() {},
-		RepoTmuxLaunchWindowLive: func(string, ...string) bool {
+		RepoTmuxLaunchStatus: func(string, ...string) (bool, error) {
 			probes++
-			return false
+			return false, nil
 		},
 	})
 	m.tmuxNotificationWatches = map[string]tmuxNotificationWatch{
