@@ -640,6 +640,14 @@ readiness, or linked plan. An identical replacement preserves timestamps.
 
 ## Compatibility and migration
 
+`agent` is the canonical Flow term for a phase's coding-agent selector. The
+Flow JSON field, `approach flow phase agent set --agent`, the TUI, and the
+`APPROACH_AGENT` launch context all use it. Session ingestion and external
+issue or PR metadata use `provider` for separate concepts, while `command`
+describes the configured executable used to launch the selected agent. Existing
+Flow records remain authoritative; no `provider` or `command` alias, record
+migration, or schema-version change is planned.
+
 - The persisted schema gains three optional phase fields (`agent`, `model`,
   `reasoning_effort`); `schema_version` stays `1`, `closed` is an additive
   status, and no existing status strings were removed or renamed. Records
