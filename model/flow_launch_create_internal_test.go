@@ -777,6 +777,78 @@ func TestCreateFlowLaunchRefusesEveryPreexistingSessionAssociationBeforeCreate(t
 	}
 }
 
+func TestCreateFlowLaunchRefusesDeletedFlowIDRetainedByEndedSession(t *testing.T) {
+	root := t.TempDir()
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = flowStore.Close() })
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const flowID = "20260814T120000Z-deleted-flow"
+	if _, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID: flowID, RepoPath: "/dev/alpha", Title: "Original Flow", Instructions: "Write the plan.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessionStore.Upsert(sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", LaunchID: "launch-1",
+		FlowID: flowID, FlowPhaseID: "plan", Status: "active", CWD: "/dev/alpha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	endedAt := time.Date(2026, time.August, 14, 12, 30, 0, 0, time.UTC)
+	if err := sessionStore.MarkLaunchEnded("launch-1", endedAt); err != nil {
+		t.Fatal(err)
+	}
+	ended, err := sessionStore.Read(sessions.ProviderCodex, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ended.Status != "ended" || !ended.EndedAt.Equal(endedAt) {
+		t.Fatalf("ended session = %#v", ended)
+	}
+	if err := flowStore.Delete(flowID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flowStore.Read(flowID); err == nil {
+		t.Fatal("deleted Flow is still present")
+	}
+
+	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
+	h.record.FlowID = flowID
+	h.allocatedID = flowID
+	m := h.model(t)
+	listFlowSessions := newFlowLaunchSeams(nil, nil, sessionStore.List, nil, nil, nil, nil).ListFlowSessions
+	var lookupCalls, writes int
+	m.launchSeams.ListFlowSessions = func(candidate string) ([]sessions.SessionRecord, error) {
+		lookupCalls++
+		return listFlowSessions(candidate)
+	}
+	m.launchSeams.CreatePreparation = func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, flowstore.PreparationFinalizer, error) {
+		writes++
+		return flowStore.CreatePreparation(record, opts)
+	}
+
+	m = h.start(t, m)
+	if lookupCalls != 1 {
+		t.Fatalf("saved-session lookups = %d, want 1", lookupCalls)
+	}
+	if writes != 0 || slices.Contains(h.order, "worktree") {
+		t.Fatalf("ended session crossed creation boundary: writes=%d order=%#v", writes, h.order)
+	}
+	if _, err := flowStore.Read(flowID); err == nil {
+		t.Fatal("replacement Flow was created")
+	}
+	if m.flowCreateReq.current != 0 || !strings.Contains(m.status.Text, "already associated with a saved session") {
+		t.Fatalf("reuse refusal: active=%d status=%q", m.flowCreateReq.current, m.status.Text)
+	}
+}
+
 func TestCreateFlowLaunchRejectsInvalidAllocatedIdentityBeforeSessionLookup(t *testing.T) {
 	h := newCreateLaunchHarness([]flowstore.FlowPhase{{PhaseID: "plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}})
 	h.allocatedID = "../not-safe"
