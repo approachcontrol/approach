@@ -1,13 +1,17 @@
 package controlplane
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 const testSchemaVersion = 6
@@ -264,6 +268,186 @@ func TestRetentionKeepsRecentAndNeverEvictsPinnedDigest(t *testing.T) {
 	}
 	if present[cachedBinaryName(digests[0])] {
 		t.Fatalf("a released digest survived retention: %v", present)
+	}
+}
+
+func TestRetainPinSerializesAcrossProcesses(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, cacheDirName)
+	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+		t.Fatalf("create cache directory: %v", err)
+	}
+	release, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("acquire cache lease: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRetainPinContentionHelper$", "-test.count=1")
+	cmd.Env = append(os.Environ(), "APPROACH_TEST_RETAIN_PIN_ROOT="+root)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("RetainPin helper exceeded guard: %v\n%s", ctx.Err(), output)
+	}
+	if err != nil {
+		t.Fatalf("RetainPin helper error = %v\n%s", err, output)
+	}
+}
+
+func TestMaterializeDoesNotPublishWithoutCacheLease(t *testing.T) {
+	originalTimeout := cacheMutationLeaseTimeout
+	cacheMutationLeaseTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { cacheMutationLeaseTimeout = originalTimeout })
+	source := stubExecutable(t, "contended-materialization")
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, cacheDirName)
+	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+		t.Fatalf("create cache directory: %v", err)
+	}
+	release, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("acquire cache lease: %v", err)
+	}
+	defer release()
+
+	digest := mustDigest(t, source)
+	pin := Materialize(root, SourceIdentity{Path: source, Digest: digest}, testSchemaVersion)
+	if !pin.Degraded {
+		t.Fatalf("Materialize returned unclaimed cached path %q while cache lease was held", pin.ExecutablePath)
+	}
+	if pin.ExecutablePath != source {
+		t.Fatalf("ExecutablePath = %q, want degraded source %q", pin.ExecutablePath, source)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, cachedBinaryName(digest))); !os.IsNotExist(err) {
+		t.Fatalf("contended Materialize published an unclaimed cache entry: %v", err)
+	}
+}
+
+func TestRetainPinWaitsForOrdinaryCacheWork(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, cacheDirName)
+	if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+		t.Fatalf("create cache directory: %v", err)
+	}
+	release, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("acquire cache lease: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- RetainPin(root, "launch-waits", strings.Repeat("a", 64))
+	}()
+	select {
+	case err := <-result:
+		release()
+		t.Fatalf("RetainPin returned before ordinary cache work finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	if err := <-result; err != nil {
+		t.Fatalf("RetainPin after cache work: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, pinsDirName, "launch-waits")); err != nil {
+		t.Fatalf("stat retained claim: %v", err)
+	}
+}
+
+func TestRetainPinContentionHelper(t *testing.T) {
+	root := os.Getenv("APPROACH_TEST_RETAIN_PIN_ROOT")
+	if root == "" {
+		t.Skip("helper process only")
+	}
+	cacheMutationLeaseTimeout = 25 * time.Millisecond
+	err := RetainPin(root, "launch-contended", strings.Repeat("a", 64))
+	if err == nil || !strings.Contains(err.Error(), "launch binary cache lease") || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("RetainPin() error = %v, want named cache lease timeout", err)
+	}
+}
+
+func TestCacheLeaseIsOwnerOnlyAndRefusesSymlinks(t *testing.T) {
+	t.Run("owner only", func(t *testing.T) {
+		root := t.TempDir()
+		if err := RetainPin(root, "launch-mode", strings.Repeat("a", 64)); err != nil {
+			t.Fatalf("RetainPin: %v", err)
+		}
+		info, err := os.Stat(filepath.Join(root, cacheDirName, cacheLeaseFileName))
+		if err != nil {
+			t.Fatalf("stat cache lease: %v", err)
+		}
+		if info.Mode().Perm() != artifacts.FilePerm {
+			t.Fatalf("cache lease mode = %o, want %o", info.Mode().Perm(), artifacts.FilePerm)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		root := t.TempDir()
+		cacheDir := filepath.Join(root, cacheDirName)
+		if err := os.MkdirAll(cacheDir, artifacts.DirPerm); err != nil {
+			t.Fatalf("create cache directory: %v", err)
+		}
+		witness := filepath.Join(t.TempDir(), "witness")
+		if err := os.WriteFile(witness, []byte("unchanged"), artifacts.FilePerm); err != nil {
+			t.Fatalf("write witness: %v", err)
+		}
+		if err := os.Symlink(witness, filepath.Join(cacheDir, cacheLeaseFileName)); err != nil {
+			t.Fatalf("symlink cache lease: %v", err)
+		}
+		err := RetainPin(root, "launch-symlink", strings.Repeat("a", 64))
+		if err == nil || !strings.Contains(err.Error(), "without following symlinks") {
+			t.Fatalf("RetainPin() error = %v, want no-follow refusal", err)
+		}
+		data, readErr := os.ReadFile(witness)
+		if readErr != nil || string(data) != "unchanged" {
+			t.Fatalf("symlink target changed: data=%q error=%v", data, readErr)
+		}
+	})
+}
+
+func TestReleasePinReturnsNamedErrorOnLeaseContention(t *testing.T) {
+	originalTimeout := cacheMutationLeaseTimeout
+	cacheMutationLeaseTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { cacheMutationLeaseTimeout = originalTimeout })
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, cacheDirName)
+	pinsDir := filepath.Join(cacheDir, pinsDirName)
+	if err := os.MkdirAll(pinsDir, artifacts.DirPerm); err != nil {
+		t.Fatalf("create pins directory: %v", err)
+	}
+	claimPath := filepath.Join(pinsDir, "launch-contended-release")
+	if err := os.WriteFile(claimPath, []byte(strings.Repeat("a", 64)+"\n"), artifacts.FilePerm); err != nil {
+		t.Fatalf("write claim: %v", err)
+	}
+	releaseLease, err := artifacts.AcquireFileLockNoFollow(
+		filepath.Join(cacheDir, cacheLeaseFileName),
+		"launch binary cache lease",
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("acquire cache lease: %v", err)
+	}
+	defer releaseLease()
+
+	err = ReleasePin(root, "launch-contended-release")
+	if err == nil || !strings.Contains(err.Error(), "launch binary cache lease") || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("ReleasePin() error = %v, want named cache lease timeout", err)
+	}
+	if _, statErr := os.Stat(claimPath); statErr != nil {
+		t.Fatalf("contended release mutated claim: %v", statErr)
 	}
 }
 
