@@ -618,7 +618,7 @@ func (m Modal) updateInput(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 		m.applyInputEdit(edit.clear(), true)
 		return m, Consumed, nil
 	default:
-		if msg.Code == tea.KeySpace && msg.Text == "" {
+		if isUnmodifiedSpace(msg) && msg.Text == "" {
 			msg.Text = " "
 		}
 		if msg.Text != "" {
@@ -878,7 +878,7 @@ func (m Modal) updateForm(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
 			return m, Consumed, nil
 		}
-		if msg.Code == tea.KeySpace {
+		if isUnmodifiedSpace(msg) {
 			field.Checked = !field.Checked
 			m.formErr = ""
 		}
@@ -897,7 +897,7 @@ func (m Modal) updateForm(msg tea.KeyPressMsg) (Modal, Outcome, tea.Cmd) {
 			field.SelectedIndex = nextSelectIndex(field.SelectedIndex, len(field.Options))
 			m.formErr = ""
 		default:
-			if msg.Code == tea.KeySpace {
+			if isUnmodifiedSpace(msg) {
 				field.SelectedIndex = nextSelectIndex(field.SelectedIndex, len(field.Options))
 				m.formErr = ""
 			}
@@ -955,7 +955,7 @@ func (m Modal) updateFormTextField(msg tea.KeyPressMsg, field *FormField) (Modal
 	case "ctrl+u":
 		edit = edit.clear()
 	default:
-		if msg.Code == tea.KeySpace && msg.Text == "" {
+		if isUnmodifiedSpace(msg) && msg.Text == "" {
 			msg.Text = " "
 		}
 		if msg.Text != "" {
@@ -966,6 +966,10 @@ func (m Modal) updateFormTextField(msg tea.KeyPressMsg, field *FormField) (Modal
 	field.Cursor = edit.cursor
 	m.formErr = ""
 	return m, Consumed, nil
+}
+
+func isUnmodifiedSpace(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeySpace && msg.Mod == 0
 }
 
 func (m Modal) formValues() FormValues {

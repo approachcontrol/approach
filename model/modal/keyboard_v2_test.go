@@ -95,6 +95,63 @@ func TestCtrlEnterDoesNotSubmitSingleLineForm(t *testing.T) {
 	}
 }
 
+func TestCtrlSpaceDoesNotMutateModalValues(t *testing.T) {
+	ctrlSpace := tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl}
+
+	t.Run("input", func(t *testing.T) {
+		m := modal.OpenInput("Prompt", "", "ab", nil, nil)
+		next, _, _ := m.Update(ctrlSpace)
+		if got := next.View().Input; got != "ab" {
+			t.Fatalf("ctrl+space input = %q, want unchanged", got)
+		}
+	})
+
+	tests := []struct {
+		name  string
+		field modal.FormField
+		check func(t *testing.T, field modal.FormField)
+	}{
+		{
+			name:  "text",
+			field: modal.FormField{ID: "text", Kind: modal.FormText, Value: "ab", Cursor: 2},
+			check: func(t *testing.T, field modal.FormField) {
+				if field.Value != "ab" {
+					t.Fatalf("ctrl+space text = %q, want unchanged", field.Value)
+				}
+			},
+		},
+		{
+			name:  "checkbox",
+			field: modal.FormField{ID: "check", Kind: modal.FormCheckbox},
+			check: func(t *testing.T, field modal.FormField) {
+				if field.Checked {
+					t.Fatal("ctrl+space toggled checkbox")
+				}
+			},
+		},
+		{
+			name: "choice",
+			field: modal.FormField{ID: "choice", Kind: modal.FormChoice, Options: []modal.SelectItem{
+				{Label: "First", Value: "first"},
+				{Label: "Second", Value: "second"},
+			}},
+			check: func(t *testing.T, field modal.FormField) {
+				if field.SelectedIndex != 0 {
+					t.Fatalf("ctrl+space choice index = %d, want 0", field.SelectedIndex)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := modal.OpenForm(modal.FormSpec{Fields: []modal.FormField{tt.field}})
+			next, _, _ := m.Update(ctrlSpace)
+			tt.check(t, next.View().Form.Fields[0])
+		})
+	}
+}
+
 func TestPasteInsertsAtModalCursor(t *testing.T) {
 	m := modal.OpenMultiLineInput("Prompt", "", "ab", nil, nil)
 	m, _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
