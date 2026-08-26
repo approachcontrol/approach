@@ -8,6 +8,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowownership"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/internal/flowlease"
 	"github.com/approachcontrol/approach/sessions"
 )
@@ -172,6 +173,40 @@ func flowLaunchRole(kind flowLaunchKind) actions.FlowLaunchRole {
 	}
 }
 
+func untrackedOwnerRole(kind flowLaunchKind) (flowstore.UntrackedOwnerRole, bool) {
+	switch kind {
+	case flowLaunchKindWorktreeAgent:
+		return flowstore.UntrackedOwnerWorktreeAgent, true
+	case flowLaunchKindAutofix:
+		return flowstore.UntrackedOwnerAutofix, true
+	case flowLaunchKindRepair:
+		return flowstore.UntrackedOwnerRepair, true
+	default:
+		return "", false
+	}
+}
+
+func claimUntrackedOwner(seams flowLaunchSeams, flowID, launchID string, kind flowLaunchKind) error {
+	role, ok := untrackedOwnerRole(kind)
+	if !ok {
+		return nil
+	}
+	if seams.ClaimUntrackedOwner == nil {
+		return nil
+	}
+	launcherPID := os.Getpid()
+	launcherToken, _ := controlplane.ProcessIdentity(launcherPID)
+	_, err := seams.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: flowID, Owner: flowstore.UntrackedOwner{
+		LaunchID: launchID,
+		Role:     role,
+		Transport: flowstore.UntrackedOwnerTransport{
+			Kind: flowstore.UntrackedTransportLauncher,
+			PID:  launcherPID, ProcessToken: launcherToken,
+		},
+	}})
+	return err
+}
+
 func (m Model) flowLaunchInstallOccupancy(kind flowLaunchKind, flowID string) flowownership.Verdict {
 	return flowownership.Evaluate(flowownership.Sources{
 		Runtime: flowOccupancyRuntime{model: m},
@@ -200,14 +235,19 @@ func (m Model) trackedPhaseOccupancy(flowID string, stage flowownership.Stage) f
 	if strings.TrimSpace(flowID) == "" {
 		return flowownership.Free()
 	}
-	return flowownership.Evaluate(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.Evaluate(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RoleTrackedPhase,
@@ -223,6 +263,13 @@ func trackedPhaseAuthoritativeOccupancy(
 	phaseID string,
 	stage flowownership.Stage,
 ) flowownership.Verdict {
+	if seams.ResolveUntrackedOwner != nil {
+		resolved, err := seams.ResolveUntrackedOwner(record)
+		if err != nil {
+			return flowownership.Failed(err)
+		}
+		record = resolved
+	}
 	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
@@ -243,6 +290,13 @@ func flowAuthoritativeOccupancy(
 	record flowstore.FlowRecord,
 	role actions.FlowLaunchRole,
 ) flowownership.Verdict {
+	if seams.ResolveUntrackedOwner != nil {
+		resolved, err := seams.ResolveUntrackedOwner(record)
+		if err != nil {
+			return flowownership.Failed(err)
+		}
+		record = resolved
+	}
 	return flowownership.Evaluate(flowownership.Sources{
 		Flows:    flowOccupancyAuthoritativeFlow{record: record},
 		Sessions: flowOccupancyAuthoritativeSessions{list: seams.ListFlowSessions},
@@ -301,14 +355,19 @@ func (m Model) repairOccupancy(flowID string, stage flowownership.Stage) flowown
 	if strings.TrimSpace(flowID) == "" {
 		return flowownership.Free()
 	}
-	return flowownership.Evaluate(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.Evaluate(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RoleRepair,
@@ -318,14 +377,19 @@ func (m Model) repairOccupancy(flowID string, stage flowownership.Stage) flowown
 }
 
 func (m Model) autofixFooterAdvice(flowID string) flowownership.Advisory {
-	return flowownership.EvaluateAdvisory(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.EvaluateAdvisory(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RoleAutofix,
@@ -335,14 +399,19 @@ func (m Model) autofixFooterAdvice(flowID string) flowownership.Advisory {
 }
 
 func (m Model) phaseResumeAdvice(flowID string, stage flowownership.Stage) flowownership.Advisory {
-	return flowownership.EvaluateAdvisory(flowownership.Sources{
+	sources := flowownership.Sources{
+		FlowCache: flowOccupancyFlowCache{},
 		Lease: flowOccupancyLeaseInspector{
 			root:     m.sessionStateRoot,
 			injected: m.leaseInspectInjected,
 			inspect:  m.inspectFlowLease,
 		},
 		Runtime: flowOccupancyRuntime{model: m},
-	}, flowownership.Query{
+	}
+	if record, ok := m.cachedFlowRecord(flowID); ok {
+		sources.FlowCache = flowOccupancyFlowCache{record: record}
+	}
+	return flowownership.EvaluateAdvisory(sources, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
 			Role:  actions.RolePhaseResume,
@@ -435,6 +504,11 @@ type flowLaunchSeams struct {
 	AddPhaseLaunchID         func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	SetStartMetadata         func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase                 func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	ClaimUntrackedOwner      func(flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error)
+	PrepareOwnerTransport    func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
+	ActivateUntrackedOwner   func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
+	ReleaseUntrackedOwner    func(flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error)
+	ResolveUntrackedOwner    func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	PlanMarkdownPath         func(planID string) (string, error)
 	ReadPlan                 func(planID string) (string, error)
 	InspectWorktreeDirectory func(path string) error

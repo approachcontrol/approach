@@ -42,6 +42,65 @@ func TestPrivateFlowTmuxCommandsDispatchBeforeConfig(t *testing.T) {
 	}
 }
 
+func TestUntrackedOwnerReleaseCommandEndsExactOwner(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleMigrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{Title: "owner", Instructions: "test", RepoPath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processToken, alive := controlplane.ProcessIdentity(os.Getpid())
+	if !alive || processToken == "" {
+		t.Fatal("current process identity unavailable")
+	}
+	if _, err := store.ClaimUntrackedOwner(flowstore.UntrackedOwnerClaim{FlowID: record.FlowID, Owner: flowstore.UntrackedOwner{
+		LaunchID: "launch-1", Role: flowstore.UntrackedOwnerAutofix,
+		Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: os.Getpid(), ProcessToken: processToken},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{"approach", actions.UntrackedOwnerReleaseCommand, "--state-root", root, "--flow-id", record.FlowID, "--launch-id", "launch-1"}
+	err = run(args, runDeps{
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		getppid:    os.Getppid,
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("agent-child release error = %v, want caller rejection", err)
+	}
+
+	err = run(args, runDeps{
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		getppid:    os.Getpid,
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Role: flowstore.RoleReader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	got, err := reader.Read(record.FlowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UntrackedOwner == nil || got.UntrackedOwner.State != flowstore.UntrackedOwnerEnded {
+		t.Fatalf("owner = %#v, want ended", got.UntrackedOwner)
+	}
+}
+
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 	var stdout bytes.Buffer
 	err := run([]string{"approach", "--version"}, runDeps{

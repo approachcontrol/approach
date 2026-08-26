@@ -222,9 +222,15 @@ type Model struct {
 	// never the authority — RepoTmuxSessionAttached is — so it needs no expiry
 	// beyond the result message that clears it.
 	repoTmuxTerminalPending map[string]bool
-	inspectFlowLease        func(string, string) (flowlease.LeaseState, error)
-	leaseInspectInjected    bool
-	tmuxAttachHint          bool
+	// pendingUntrackedOwnerReleases retains exact cleanup failures for retry on
+	// subsequent update-loop activity. One active durable owner can exist per
+	// Flow, so the Flow ID is the natural key.
+	pendingUntrackedOwnerReleases       map[string]string
+	untrackedOwnerReleaseRetryScheduled bool
+	untrackedOwnerReleaseRetryDelay     time.Duration
+	inspectFlowLease                    func(string, string) (flowlease.LeaseState, error)
+	leaseInspectInjected                bool
+	tmuxAttachHint                      bool
 	embeddedTerminalState
 	autoAdvanceState
 	epicProgressionBaselines map[string]epicProgressionBaseline
@@ -380,6 +386,10 @@ type Options struct {
 	CreateFlow                func(FlowStartRequest) (FlowStartResult, error)
 	ReadFlow                  func(flowID string) (flowstore.FlowRecord, error)
 	SetFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	ClaimUntrackedOwner       func(flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error)
+	PrepareOwnerTransport     func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
+	ActivateUntrackedOwner    func(flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error)
+	ReleaseUntrackedOwner     func(flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error)
 	SetFlowPhaseAgentSettings func(flowstore.PhaseAgentSettingsUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMerge          func(flowstore.AutoMergeUpdate) (flowstore.FlowRecord, error)
@@ -424,7 +434,10 @@ type Options struct {
 	// RepoTmuxLaunchStatus distinguishes a confirmed missing window from
 	// an inconclusive tmux probe. Notification sweeps consume watches only on a
 	// successful probe that reports no live window.
-	RepoTmuxLaunchStatus func(repoPath string, launchIDs ...string) (bool, error)
+	RepoTmuxLaunchStatus   func(repoPath string, launchIDs ...string) (bool, error)
+	ProbeRepoTmuxOwner     func(session, window string) actions.TransportLiveness
+	ProbeEmbeddedTmuxOwner func(socket, session string) actions.TransportLiveness
+	ProcessIdentity        func(pid int) (string, bool)
 	// RepoTmuxSessionAttached probes whether a terminal is already watching a
 	// repo's tmux session. It decides whether a tmux-mode launch opens the
 	// repo's first terminal window, and runs only inside a command goroutine.
@@ -1037,6 +1050,114 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	launchSeams.BootstrapHookForRepo = bootstrapHookForRepo
 	launchSeams.RunBootstrapHook = runBootstrapHook
 	launchSeams.SetStartMetadata = setFlowStartMetadata
+	launchSeams.ClaimUntrackedOwner = func(update flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.ClaimUntrackedOwner(update)
+	}
+	launchSeams.PrepareOwnerTransport = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.PrepareUntrackedOwnerTransport(update)
+	}
+	launchSeams.ActivateUntrackedOwner = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.ActivateUntrackedOwner(update)
+	}
+	launchSeams.ReleaseUntrackedOwner = func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.ReleaseUntrackedOwner(update)
+	}
+	if opts.ClaimUntrackedOwner != nil {
+		launchSeams.ClaimUntrackedOwner = opts.ClaimUntrackedOwner
+	}
+	if opts.PrepareOwnerTransport != nil {
+		launchSeams.PrepareOwnerTransport = opts.PrepareOwnerTransport
+	}
+	if opts.ActivateUntrackedOwner != nil {
+		launchSeams.ActivateUntrackedOwner = opts.ActivateUntrackedOwner
+	}
+	if opts.ReleaseUntrackedOwner != nil {
+		launchSeams.ReleaseUntrackedOwner = opts.ReleaseUntrackedOwner
+	}
+	customFlowStorage := customPhaseLaunchPersistence || (opts.FlowStore == nil && (opts.ListFlows != nil || opts.ReadFlow != nil))
+	if customFlowStorage {
+		if opts.ClaimUntrackedOwner == nil {
+			launchSeams.ClaimUntrackedOwner = func(update flowstore.UntrackedOwnerClaim) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			}
+		}
+		if opts.PrepareOwnerTransport == nil {
+			launchSeams.PrepareOwnerTransport = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			}
+		}
+		if opts.ActivateUntrackedOwner == nil {
+			launchSeams.ActivateUntrackedOwner = func(update flowstore.UntrackedOwnerActivation) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			}
+		}
+		if opts.ReleaseUntrackedOwner == nil {
+			launchSeams.ReleaseUntrackedOwner = func(update flowstore.UntrackedOwnerRelease) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			}
+		}
+	}
+	probeRepoTmuxOwner := opts.ProbeRepoTmuxOwner
+	if probeRepoTmuxOwner == nil {
+		probeRepoTmuxOwner = actions.RepoTmuxWindowLiveness
+	}
+	probeEmbeddedTmuxOwner := opts.ProbeEmbeddedTmuxOwner
+	if probeEmbeddedTmuxOwner == nil {
+		probeEmbeddedTmuxOwner = actions.EmbeddedTmuxSessionLiveness
+	}
+	processIdentity := opts.ProcessIdentity
+	if processIdentity == nil {
+		processIdentity = controlplane.ProcessIdentity
+	}
+	launchSeams.ResolveUntrackedOwner = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		owner := record.UntrackedOwner
+		if owner == nil || owner.State == flowstore.UntrackedOwnerEnded {
+			return record, nil
+		}
+		if owner.State == flowstore.UntrackedOwnerReserved && owner.LauncherPID > 0 {
+			if identity, alive := processIdentity(owner.LauncherPID); alive {
+				if identity == "" || owner.LauncherToken == "" || identity == owner.LauncherToken {
+					return record, nil
+				}
+			}
+		}
+		liveness := actions.TransportLivenessUnknown
+		switch owner.Transport.Kind {
+		case flowstore.UntrackedTransportRepoTmux:
+			liveness = probeRepoTmuxOwner(owner.Transport.Session, owner.Transport.Window)
+		case flowstore.UntrackedTransportEmbeddedTmux:
+			liveness = probeEmbeddedTmuxOwner(owner.Transport.Socket, owner.Transport.Session)
+		case flowstore.UntrackedTransportLauncher, flowstore.UntrackedTransportDirect:
+			if owner.Transport.PID > 0 {
+				identity, alive := processIdentity(owner.Transport.PID)
+				if alive && owner.Transport.ProcessToken != "" && identity == owner.Transport.ProcessToken {
+					liveness = actions.TransportLivenessLive
+				} else if !alive || (owner.Transport.ProcessToken != "" && identity != "" && identity != owner.Transport.ProcessToken) {
+					liveness = actions.TransportLivenessDead
+				}
+			}
+		}
+		if liveness == actions.TransportLivenessDead {
+			return launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: record.FlowID, LaunchID: owner.LaunchID})
+		}
+		return record, nil
+	}
 	launchSeams.ReconcileEpicSuccessor = reconcileEpicSuccessor
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
@@ -2082,6 +2203,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
+		var ownerRetryCmd tea.Cmd
+		modelNext, ownerRetryCmd = modelNext.scheduleDurableUntrackedOwnerReleaseRetry()
+		cmd = batchNonNil(cmd, ownerRetryCmd)
 		if modelNext.quitAfterFlowLaunch && modelNext.flowLaunchOwnershipCount() == 0 {
 			shutdownCmd := tea.Quit
 			if modelNext.interruptAfterFlowLaunch {
@@ -2092,6 +2216,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next = modelNext
 	}()
 	switch msg := msg.(type) {
+	case untrackedOwnerReleaseRetryMsg:
+		return m, m.durableUntrackedOwnerReleaseRetryCmd()
+	case untrackedOwnerReleaseRetryResultMsg:
+		return m.handleDurableUntrackedOwnerReleaseRetryResult(msg), nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:
@@ -2537,14 +2665,25 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
 		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
 		if resultErr != "" {
+			if msg.FlowLaunchOwnerRetained {
+				m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+				return m.setStatus(statusOther, "Flow "+ctx.FlowID+": "+resultErr), interactiveExitCmd
+			}
 			m, cmd := m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
 			return m, batchNonNil(interactiveExitCmd, cmd)
 		}
 		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	} else if msg.FlowLaunchRelease != nil {
-		// A stale or duplicate lifecycle result is fenced completely: it cannot
-		// release a reservation now owned by a newer attempt, persist failure, or
-		// fall through to generic detached-launch status handling.
+		// The result carries its own sync.Once-protected reservation, so releasing
+		// it cannot touch a newer attempt. A failed spawn also has no live agent to
+		// own its exact durable claim.
+		releaseFlowLaunchReservation(msg.FlowLaunchRelease)
+		if resultErr != "" && !msg.FlowLaunchOwnerRetained {
+			switch actions.FlowLaunchRoleOf(ctx) {
+			case actions.RoleRepair, actions.RoleAutofix, actions.RoleWorktreeAgent:
+				m.releaseDurableUntrackedOwner(ctx.FlowID, ctx.LaunchID)
+			}
+		}
 		return m, nil
 	}
 	if resultErr != "" {

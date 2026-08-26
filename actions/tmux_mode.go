@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,10 +38,17 @@ var ErrRepoTmuxUnavailable = errors.New("tmux is not available for tmux launch m
 type RepoTmuxAgentSpec struct {
 	SessionName string
 	WindowName  string
+	// WindowID reports tmux's stable window identity after Launch succeeds.
+	// Before then it returns an empty string.
+	WindowID func() string
 	// AttachCommand is the command to show the user so they can reach the
 	// session from their own terminal.
 	AttachCommand string
 	Launch        TerminalLaunchSpec
+	// Terminate removes this exact window if post-spawn publication fails. The
+	// launcher must not release its durable reservation while an unpublished
+	// agent is still running.
+	Terminate func() error
 }
 
 // TmuxAvailable reports whether tmux mode can run launches right now.
@@ -109,6 +118,18 @@ const repoTmuxLiveWindowFormat = "#{window_name} #{pane_dead}"
 const (
 	repoTmuxLaunchMarker       = "@approach_launch_id"
 	repoTmuxLaunchMarkerFormat = "#{" + repoTmuxLaunchMarker + "} #{pane_dead}"
+)
+
+const repoTmuxOwnerWindowFormat = "#{window_id}\t#{window_name}\t#{pane_dead}"
+
+// TransportLiveness is the result of an authoritative transport probe.
+// Unknown must remain occupied; only Dead permits reclaiming durable ownership.
+type TransportLiveness uint8
+
+const (
+	TransportLivenessUnknown TransportLiveness = iota
+	TransportLivenessLive
+	TransportLivenessDead
 )
 
 // tmuxProbeCommand builds a read-only tmux query. TMUX/ZELLIJ are stripped so a
@@ -309,6 +330,103 @@ func launchMarkerRunningInListing(listing string, launchIDs []string) (live, fou
 	return false, found
 }
 
+// RepoTmuxWindowLiveness probes one persisted repo-tmux window identity.
+func RepoTmuxWindowLiveness(sessionName, windowIdentity string) TransportLiveness {
+	sessionName, windowIdentity = strings.TrimSpace(sessionName), strings.TrimSpace(windowIdentity)
+	if sessionName == "" || windowIdentity == "" || !TmuxAvailable() {
+		return TransportLivenessUnknown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "list-windows", "-t", tmuxExactWindowTarget(sessionName), "-F", repoTmuxOwnerWindowFormat).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return TransportLivenessUnknown
+		}
+		return missingTmuxTargetLiveness(string(out))
+	}
+	return repoTmuxOwnerLivenessInListing(string(out), windowIdentity)
+}
+
+// RepoTmuxWindowOwnsProcess reports whether pid is the pane shell for one
+// exact repo-tmux window. The post-exit owner callback is a child of that shell;
+// an agent process deeper in the pane is not.
+func RepoTmuxWindowOwnsProcess(sessionName, windowIdentity string, pid int) bool {
+	sessionName, windowIdentity = strings.TrimSpace(sessionName), strings.TrimSpace(windowIdentity)
+	if sessionName == "" || windowIdentity == "" || pid <= 0 || !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "list-panes", "-t", tmuxExactWindowTarget(sessionName)+windowIdentity, "-F", "#{pane_pid}").Output()
+	return err == nil && listingContainsPID(string(out), pid)
+}
+
+func repoTmuxOwnerLivenessInListing(listing, windowIdentity string) TransportLiveness {
+	for _, line := range strings.Split(listing, "\n") {
+		fields := strings.Split(strings.TrimSpace(line), "\t")
+		if len(fields) == 3 && (fields[0] == windowIdentity || fields[1] == windowIdentity) {
+			dead := fields[2]
+			if dead == "0" {
+				return TransportLivenessLive
+			}
+			return TransportLivenessDead
+		}
+	}
+	return TransportLivenessDead
+}
+
+// EmbeddedTmuxSessionLiveness probes one isolated socket and session identity.
+func EmbeddedTmuxSessionLiveness(socketName, sessionName string) TransportLiveness {
+	socketName, sessionName = strings.TrimSpace(socketName), strings.TrimSpace(sessionName)
+	if socketName == "" || sessionName == "" || !TmuxAvailable() {
+		return TransportLivenessUnknown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "-f", "/dev/null", "-L", socketName, "has-session", "-t", tmuxExactTarget(sessionName)).CombinedOutput()
+	if err == nil {
+		return TransportLivenessLive
+	}
+	if ctx.Err() != nil {
+		return TransportLivenessUnknown
+	}
+	return missingTmuxTargetLiveness(string(out))
+}
+
+// EmbeddedTmuxSessionOwnsProcess is the isolated-socket counterpart to
+// RepoTmuxWindowOwnsProcess.
+func EmbeddedTmuxSessionOwnsProcess(socketName, sessionName string, pid int) bool {
+	socketName, sessionName = strings.TrimSpace(socketName), strings.TrimSpace(sessionName)
+	if socketName == "" || sessionName == "" || pid <= 0 || !TmuxAvailable() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTmuxProbeTimeout)
+	defer cancel()
+	out, err := tmuxProbeCommand(ctx, "-f", "/dev/null", "-L", socketName, "list-panes", "-t", tmuxExactTarget(sessionName), "-F", "#{pane_pid}").Output()
+	return err == nil && listingContainsPID(string(out), pid)
+}
+
+func listingContainsPID(listing string, pid int) bool {
+	want := strconv.Itoa(pid)
+	for _, line := range strings.Split(listing, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func missingTmuxTargetLiveness(output string) TransportLiveness {
+	output = strings.ToLower(strings.TrimSpace(output))
+	for _, marker := range []string{"can't find session", "no server running", "no sessions"} {
+		if strings.Contains(output, marker) {
+			return TransportLivenessDead
+		}
+	}
+	return TransportLivenessUnknown
+}
+
 // launchWindowRunningInListing scans repoTmuxLiveWindowFormat output for a live
 // window belonging to any of these launches. It is split out because the
 // dead-pane filter is the part worth testing without a tmux server.
@@ -358,24 +476,32 @@ dir=$3
 cmd=$4
 launch_id=$5
 mark_window() {
-	if tmux set-option -w -t "=$session:=$window" @approach_launch_id "$launch_id"; then
+	created_id=$1
+	target=$created_id
+	if [ -z "$target" ]; then
+		target="=$session:=$window"
+	fi
+	if tmux set-option -w -t "$target" @approach_launch_id "$launch_id"; then
+		if [ -n "$created_id" ]; then
+			printf '%s\n' "$created_id"
+		fi
 		return 0
 	fi
-	tmux kill-window -t "=$session:=$window" 2>/dev/null || true
+	tmux kill-window -t "$target" 2>/dev/null || true
 	return 1
 }
 if tmux has-session -t "=$session" 2>/dev/null; then
-	if tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
-		mark_window
+	if created_id=$(tmux new-window -d -P -F '#{window_id}' -t "=$session:" -n "$window" -c "$dir" "$cmd" 2>/dev/null); then
+		mark_window "$created_id"
 		exit $?
 	fi
 fi
-if tmux new-session -d -s "$session" -n "$window" -c "$dir" "$cmd" 2>/dev/null; then
-	mark_window
+if created_id=$(tmux new-session -d -P -F '#{window_id}' -s "$session" -n "$window" -c "$dir" "$cmd" 2>/dev/null); then
+	mark_window "$created_id"
 	exit $?
 fi
-if tmux new-window -d -t "=$session:" -n "$window" -c "$dir" "$cmd"; then
-	mark_window
+if created_id=$(tmux new-window -d -P -F '#{window_id}' -t "=$session:" -n "$window" -c "$dir" "$cmd"); then
+	mark_window "$created_id"
 	exit $?
 fi
 exit 1
@@ -517,6 +643,9 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 		return RepoTmuxAgentSpec{
 			SessionName: sessionName, WindowName: windowName,
 			AttachCommand: RepoTmuxAttachCommand(sessionName),
+			Terminate: func() error {
+				return terminateRepoTmuxWindow(sessionName, windowName)
+			},
 			Launch: TerminalLaunchSpec{
 				Cmd: spawnCmd, Detached: true, Cleanup: cleanup,
 				ErrorDetail: errorDetail,
@@ -529,8 +658,18 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	if err != nil {
 		return RepoTmuxAgentSpec{}, err
 	}
+	configureUntrackedOwnerRelease(termCommand, ctx)
 	tmuxCmd := exec.Command("sh", "-c", repoTmuxLaunchScript, "approach", sessionName, windowName, cmd.Dir, termCommand.shellCommand(), ctx.LaunchID)
 	tmuxCmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	var createdWindowID bytes.Buffer
+	tmuxCmd.Stdout = &createdWindowID
+	windowID := func() string {
+		fields := strings.Fields(createdWindowID.String())
+		if len(fields) == 0 {
+			return ""
+		}
+		return fields[len(fields)-1]
+	}
 	// Without this the script's last attempt — the only one that does not
 	// suppress stderr — writes to /dev/null and every tmux failure reduces to
 	// "exit status 1". A Flow launch persists that string into the phase's
@@ -548,7 +687,15 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 	return RepoTmuxAgentSpec{
 		SessionName:   sessionName,
 		WindowName:    windowName,
+		WindowID:      windowID,
 		AttachCommand: RepoTmuxAttachCommand(sessionName),
+		Terminate: func() error {
+			identity := windowID()
+			if identity == "" {
+				identity = windowName
+			}
+			return terminateRepoTmuxWindow(sessionName, identity)
+		},
 		Launch: TerminalLaunchSpec{
 			Cmd: tmuxCmd,
 			// The tmux command returns as soon as the window exists; the agent
@@ -558,6 +705,20 @@ func repoTmuxAgentLaunchWithExecutable(ctx AgentLaunchContext, lookPath lookPath
 			ErrorDetail: stderr.String,
 		},
 	}, nil
+}
+
+func terminateRepoTmuxWindow(sessionName, windowName string) error {
+	target := "=" + sessionName + ":" + windowName
+	cmd := exec.Command("tmux", "kill-window", "-t", target)
+	cmd.Env = envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		return fmt.Errorf("terminate tmux window %q: %w: %s", target, err, detail)
+	}
+	return fmt.Errorf("terminate tmux window %q: %w", target, err)
 }
 
 // validateTrackedRepoTmuxRole refuses every launch the tracked tmux route does

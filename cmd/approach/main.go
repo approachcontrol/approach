@@ -41,6 +41,7 @@ type runDeps struct {
 	loadConfig              func() (config.Config, error)
 	getenv                  func(string) string
 	getwd                   func() (string, error)
+	getppid                 func() int
 	scan                    func(scanner.ScanOptions) ([]scanner.Repo, error)
 	startProgram            func([]scanner.Repo, config.Config) error
 	startProgramWithOptions func([]scanner.Repo, startProgramOptions) error
@@ -79,6 +80,9 @@ func run(args []string, deps runDeps) error {
 				fmt.Fprintf(deps.stderr, "approach: record launch exit: %v\n", err)
 			}
 		})
+	}
+	if len(args) > 1 && args[1] == actions.UntrackedOwnerReleaseCommand {
+		return runUntrackedOwnerRelease(args[2:], deps)
 	}
 	if len(args) == 2 && isHelpArg(args[1]) {
 		printMainHelp(deps.stdout)
@@ -168,6 +172,58 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
+}
+
+func runUntrackedOwnerRelease(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet(actions.UntrackedOwnerReleaseCommand, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", deps.getenv("APPROACH_FLOW_ID"), "flow id")
+	launchID := flags.String("launch-id", deps.getenv("APPROACH_LAUNCH_ID"), "launch id")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*flowID) == "" || strings.TrimSpace(*launchID) == "" {
+		return errors.New("untracked owner release requires --flow-id and --launch-id")
+	}
+	store, err := newFlowStore(*stateRoot, deps, flowstore.RoleWriter)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Read(*flowID)
+	if errors.Is(err, flowstore.ErrFlowNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owner := record.UntrackedOwner
+	if owner == nil || owner.LaunchID != strings.TrimSpace(*launchID) || owner.State == flowstore.UntrackedOwnerEnded {
+		return nil
+	}
+	if !untrackedOwnerReleaseCallerMatches(*owner, deps.getppid()) {
+		return errors.New("untracked owner release caller does not match the owning transport")
+	}
+	_, err = store.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: *flowID, LaunchID: *launchID})
+	if errors.Is(err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(err, flowstore.ErrFlowNotFound) {
+		return nil
+	}
+	return err
+}
+
+func untrackedOwnerReleaseCallerMatches(owner flowstore.UntrackedOwner, parentPID int) bool {
+	switch owner.Transport.Kind {
+	case flowstore.UntrackedTransportDirect:
+		identity, alive := controlplane.ProcessIdentity(parentPID)
+		return parentPID == owner.Transport.PID && alive && owner.Transport.ProcessToken != "" && identity == owner.Transport.ProcessToken
+	case flowstore.UntrackedTransportRepoTmux:
+		return actions.RepoTmuxWindowOwnsProcess(owner.Transport.Session, owner.Transport.Window, parentPID)
+	case flowstore.UntrackedTransportEmbeddedTmux:
+		return actions.EmbeddedTmuxSessionOwnsProcess(owner.Transport.Socket, owner.Transport.Session, parentPID)
+	default:
+		return false
+	}
 }
 
 // truthyEnv accepts the spellings a shell script is likely to use for an
@@ -297,6 +353,9 @@ func fillRunDeps(deps runDeps) runDeps {
 	}
 	if deps.getwd == nil {
 		deps.getwd = os.Getwd
+	}
+	if deps.getppid == nil {
+		deps.getppid = os.Getppid
 	}
 	if deps.scan == nil {
 		deps.scan = scanner.Scan

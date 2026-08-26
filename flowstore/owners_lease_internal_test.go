@@ -17,7 +17,7 @@ import (
 func predecessorRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	db := createParentReleaseV6DatabaseAt(t, filepath.Join(root, databaseFilename))
+	db := createParentReleaseV7DatabaseAt(t, filepath.Join(root, databaseFilename))
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}

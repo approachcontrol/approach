@@ -16,6 +16,16 @@ import (
 
 const testSchemaVersion = 6
 
+func TestProcessIdentityFencesPIDByBirth(t *testing.T) {
+	identity, ok := ProcessIdentity(os.Getpid())
+	if !ok || strings.TrimSpace(identity) == "" {
+		t.Fatalf("current process identity = %q ok=%v", identity, ok)
+	}
+	if _, ok := ProcessIdentity(-1); ok {
+		t.Fatal("invalid PID reported an identity")
+	}
+}
+
 // stubExecutable writes a fake "running binary" and points the package's
 // executable resolver at it, so tests can replace or delete the source the way
 // `brew upgrade` does without touching the real test binary.

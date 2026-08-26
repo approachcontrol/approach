@@ -18,6 +18,7 @@
 //	StageAdmission       runs on a keypress; in-process sources plus the lease
 //	StageAutoAdvance     the AutoMode advance poll's admission and read
 //	StageAuthoritative   runs in a command; full store access
+//	StageLeasePreflight  runs the lease-only check before an authoritative read
 //	StageReserved        runs under the cross-process reservation
 //	StageInstall         the last check before a terminal slot is allocated
 //	StageDrain           gates an AutoMode launch at 1 Hz

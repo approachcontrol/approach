@@ -33,7 +33,7 @@ const (
 // v6 flows.preparation_nonce projection, backfill, and nonce-protection trigger;
 // v7 recovery-generation projection and predecessor-writer compatibility
 // trigger.
-const databaseSchemaVersion = 7
+const databaseSchemaVersion = 8
 
 // DatabaseSchemaVersion is the physical flow database schema this build writes.
 // It is exported so launch and diagnostic surfaces can report the schema an
@@ -111,6 +111,21 @@ CREATE TABLE IF NOT EXISTS flows (
     prepared_at TEXT NOT NULL DEFAULT '',
     preparation_nonce TEXT NOT NULL DEFAULT '',
     recovery_generation INTEGER NOT NULL DEFAULT 0
+ )`
+
+const flowTableSchemaV8 = `
+CREATE TABLE IF NOT EXISTS flows (
+    flow_id TEXT PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    record BLOB NOT NULL,
+    bead_id TEXT NOT NULL DEFAULT '',
+    epic_id TEXT NOT NULL DEFAULT '',
+    prepared_at TEXT NOT NULL DEFAULT '',
+    preparation_nonce TEXT NOT NULL DEFAULT '',
+    recovery_generation INTEGER NOT NULL DEFAULT 0,
+    untracked_owner_launch_id TEXT NOT NULL DEFAULT ''
  )`
 
 const epicProgressionTableSchema = `
@@ -197,7 +212,24 @@ BEGIN
     SELECT RAISE(ABORT, 'older approach version cannot remove persisted recovered launch state');
 END`
 
-const flowSchemaSQL = flowTableSchemaV7 + `;
+const flowUntrackedOwnerCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_untracked_owner_update
+BEFORE UPDATE OF record, untracked_owner_launch_id ON flows
+WHEN OLD.untracked_owner_launch_id <> ''
+    AND COALESCE(json_extract(CAST(NEW.record AS TEXT), '$.untracked_owner.launch_id'), '') <> NEW.untracked_owner_launch_id
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot remove persisted phase-untracked owner');
+END`
+
+const flowUntrackedOwnerDeleteCompatibilityTrigger = `
+CREATE TRIGGER IF NOT EXISTS guard_untracked_owner_delete
+BEFORE DELETE ON flows
+WHEN OLD.untracked_owner_launch_id <> ''
+BEGIN
+    SELECT RAISE(ABORT, 'older approach version cannot delete a Flow with a persisted phase-untracked owner');
+END`
+
+const flowSchemaSQL = flowTableSchemaV8 + `;
 CREATE INDEX IF NOT EXISTS idx_flows_updated
     ON flows(updated_at DESC, flow_id ASC);
 CREATE INDEX IF NOT EXISTS idx_flows_repo_updated
@@ -211,7 +243,9 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
 ` + epicProgressionDoneInsertCompatibilityTrigger + `;
 ` + epicProgressionDoneUpdateCompatibilityTrigger + `;
 ` + flowPreparationNonceCompatibilityTrigger + `;
-` + flowRecoveryGenerationCompatibilityTrigger + `;`
+` + flowRecoveryGenerationCompatibilityTrigger + `;
+` + flowUntrackedOwnerCompatibilityTrigger + `;
+` + flowUntrackedOwnerDeleteCompatibilityTrigger + `;`
 
 type sqliteBackend struct {
 	db *sql.DB
@@ -621,6 +655,8 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0"}
 	case 7:
 		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0", "recovery_generation:INTEGER:1:0:0:0"}
+	case 8:
+		wantColumns = []string{"flow_id:TEXT:0:1:<nil>:0", "repo_path:TEXT:1:0:<nil>:0", "status:TEXT:1:0:<nil>:0", "updated_at:TEXT:1:0:<nil>:0", "record:BLOB:1:0:<nil>:0", "bead_id:TEXT:1:0:'':0", "epic_id:TEXT:1:0:'':0", "prepared_at:TEXT:1:0:'':0", "preparation_nonce:TEXT:1:0:'':0", "recovery_generation:INTEGER:1:0:0:0", "untracked_owner_launch_id:TEXT:1:0:'':0"}
 	default:
 		return fmt.Errorf("no flow database schema contract for version %d", version)
 	}
@@ -654,7 +690,13 @@ func validateSQLiteSchemaVersion(db *sql.DB, version int64) error {
 					return err
 				}
 				if version >= 7 {
-					return validateSQLiteRecoveryGenerationCompatibilityTrigger(db)
+					if err := validateSQLiteRecoveryGenerationCompatibilityTrigger(db); err != nil {
+						return err
+					}
+					if version >= 8 {
+						return validateSQLiteUntrackedOwnerCompatibilityTrigger(db)
+					}
+					return nil
 				}
 				return nil
 			}
@@ -685,6 +727,8 @@ func validateSQLiteFlowTableDefinition(db *sql.DB, version int64) error {
 		want = flowTableSchemaV6
 	case 7:
 		want = flowTableSchemaV7
+	case 8:
+		want = flowTableSchemaV8
 	default:
 		return fmt.Errorf("no flow database table contract for version %d", version)
 	}
@@ -757,6 +801,12 @@ func validateSQLiteSchemaObjectSet(objects []string, version int64) error {
 				want = append(want, "trigger:guard_preparation_nonce_update:flows")
 				if version >= 7 {
 					want = append(want, "trigger:guard_recovered_launch_state_update:flows")
+					if version >= 8 {
+						want = append(want,
+							"trigger:guard_untracked_owner_delete:flows",
+							"trigger:guard_untracked_owner_update:flows",
+						)
+					}
 				}
 			}
 		}
@@ -774,7 +824,7 @@ func validateSQLiteBeadCompatibilityTrigger(db *sql.DB, version int64) error {
 	if version == 1 {
 		return nil
 	}
-	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 {
+	if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 {
 		return fmt.Errorf("no flow database trigger contract for version %d", version)
 	}
 	var got string
@@ -848,6 +898,23 @@ func validateSQLiteRecoveryGenerationCompatibilityTrigger(db *sql.DB) error {
 	}
 	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowRecoveryGenerationCompatibilityTrigger) {
 		return fmt.Errorf("flow database has incompatible recovery generation compatibility trigger: got %q, want %q", normalizeSQLiteSchemaSQL(got), normalizeSQLiteSchemaSQL(flowRecoveryGenerationCompatibilityTrigger))
+	}
+	return nil
+}
+
+func validateSQLiteUntrackedOwnerCompatibilityTrigger(db *sql.DB) error {
+	var got string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_untracked_owner_update'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database phase-untracked owner compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowUntrackedOwnerCompatibilityTrigger) {
+		return errors.New("flow database has incompatible phase-untracked owner compatibility trigger")
+	}
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='guard_untracked_owner_delete'").Scan(&got); err != nil {
+		return fmt.Errorf("validate flow database phase-untracked owner delete compatibility trigger: %w", err)
+	}
+	if normalizeSQLiteSchemaSQL(got) != normalizeSQLiteSchemaSQL(flowUntrackedOwnerDeleteCompatibilityTrigger) {
+		return errors.New("flow database has incompatible phase-untracked owner delete compatibility trigger")
 	}
 	return nil
 }
@@ -986,20 +1053,20 @@ func (b *sqliteBackend) get(flowID string) (storedFlow, bool, error) {
 		return storedFlow{}, false, err
 	}
 	return queryStoredFlow(b.db.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows WHERE flow_id = ?", flowID,
 	), flowID)
 }
 
 func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (storedFlow, bool, error) {
-	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+	var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string
 	var record []byte
-	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+	if err := row.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &untrackedOwnerLaunchID, &record); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storedFlow{}, false, nil
 		}
 		return storedFlow{}, false, fmt.Errorf("read flow %q row: %w", requestedID, err)
 	}
-	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+	decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID, record)
 	if err != nil {
 		return storedFlow{}, false, err
 	}
@@ -1007,7 +1074,7 @@ func queryStoredFlow(row interface{ Scan(...any) error }, requestedID string) (s
 }
 
 func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
-	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows"
+	query := "SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows"
 	var args []any
 	if filter.RepoPath != "" {
 		query += " WHERE repo_path = ?"
@@ -1021,13 +1088,13 @@ func (b *sqliteBackend) list(filter FlowFilter) ([]storedFlow, error) {
 	flows := make([]storedFlow, 0)
 	partial := &PartialListError{}
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string
 		var record []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &untrackedOwnerLaunchID, &record); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan flow list row: %w", err)
 		}
-		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+		decoded, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID, record)
 		if err != nil {
 			partial.Entries = append(partial.Entries, PartialListEntry{FlowID: flowID, Cause: err})
 			continue
@@ -1126,7 +1193,7 @@ type sqliteSession struct {
 
 func (s sqliteSession) get() (storedFlow, bool, error) {
 	return queryStoredFlow(s.tx.QueryRow(
-		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows WHERE flow_id = ?", s.flowID,
+		"SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows WHERE flow_id = ?", s.flowID,
 	), s.flowID)
 }
 
@@ -1143,7 +1210,7 @@ func (s sqliteSession) exists() (bool, error) {
 // and reopen the race the guard exists to close.
 func (s sqliteSession) beadLinkedFlows(repoPath string) ([]beadFlowCandidate, error) {
 	rows, err := s.tx.Query(`
-SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record
+SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record
 FROM flows
 WHERE repo_path = ? AND bead_id <> '' AND flow_id <> ?
 ORDER BY updated_at DESC, flow_id ASC`, filepath.Clean(repoPath), s.flowID)
@@ -1153,13 +1220,13 @@ ORDER BY updated_at DESC, flow_id ASC`, filepath.Clean(repoPath), s.flowID)
 	defer func() { _ = rows.Close() }()
 	flows := make([]beadFlowCandidate, 0)
 	for rows.Next() {
-		var flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID string
 		var record []byte
-		if err := rows.Scan(&flowID, &rowRepoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &record); err != nil {
+		if err := rows.Scan(&flowID, &rowRepoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &untrackedOwnerLaunchID, &record); err != nil {
 			return nil, fmt.Errorf("scan bead-linked flow row: %w", err)
 		}
 		candidate := beadFlowCandidate{flowID: flowID, beadID: beadID}
-		decoded, err := decodeStoredFlowWithPreparation(flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, record)
+		decoded, err := decodeStoredFlowWithPreparation(flowID, rowRepoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, untrackedOwnerLaunchID, record)
 		if err != nil {
 			// Reported, not fatal and not dropped — see the interface
 			// contract. The bead_id projection above is what lets the store
@@ -1186,8 +1253,8 @@ func (s sqliteSession) save(record FlowRecord) error {
 		return err
 	}
 	_, err = s.tx.Exec(`
-INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO flows(flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(flow_id) DO UPDATE SET
     repo_path=excluded.repo_path,
     status=excluded.status,
@@ -1196,9 +1263,10 @@ ON CONFLICT(flow_id) DO UPDATE SET
 	epic_id=excluded.epic_id,
 	prepared_at=excluded.prepared_at,
 	preparation_nonce=excluded.preparation_nonce,
+	untracked_owner_launch_id=excluded.untracked_owner_launch_id,
 	recovery_generation=flows.recovery_generation+1,
     record=excluded.record`,
-		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, data)
+		projection.flowID, projection.repoPath, projection.status, projection.updatedAt, projection.beadID, projection.epicID, projection.preparedAt, projection.preparationNonce, projection.untrackedOwnerLaunchID, data)
 	if err != nil {
 		return fmt.Errorf("save flow %q: %w", record.FlowID, err)
 	}

@@ -131,7 +131,7 @@ func (m Model) admitPhaseResumeFlowLaunch(intent flowLaunchIntent) (Model, tea.C
 	case flowownership.HolderFlowTerminal:
 		return m.setStatus(statusOther, flowPhaseResumeTerminalStatus), nil, false
 	}
-	if advice.Defer() {
+	if advice.Defer() && advice.Holder() != flowownership.HolderUntrackedOwner {
 		return m, nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -313,7 +313,7 @@ func (m Model) phaseResumeFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings 
 		// launch, close, repair, or resume on this Flow would block until the
 		// lock timed out, in this process and in peers.
 		event.Release = release
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+		if occupied, inspectErr := m.trackedFlowReservedOccupied(msg.FlowID); inspectErr != nil {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(inspectErr)

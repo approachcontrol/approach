@@ -7,7 +7,8 @@
 // SQLite schema versions: v3 adds prepared_at + receipt trigger; v4 requires
 // boolean `done` in epic progression JSON; v5 fences the progression-claim
 // marker; v6 adds the protected flows.preparation_nonce generation projection;
-// v7 fences recovered-launch capabilities from older writers.
+// v7 fences recovered-launch capabilities from older writers; v8 projects and
+// fences the durable phase-untracked owner identity.
 package flowstore
 
 import (
@@ -127,6 +128,14 @@ var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
 // error return, and only the first may block a caller: callers that must stay
 // permissive when a Flow is missing test for this rather than for any error.
 var ErrFlowClosed = errors.New("flow is closed")
+
+// ErrFlowUntrackedOwned reports that a live or reserved phase-untracked launch
+// already owns the Flow worktree.
+var ErrFlowUntrackedOwned = errors.New("flow worktree is owned by a phase-untracked launch")
+
+// ErrUntrackedOwnerChanged reports that an identity-fenced owner mutation no
+// longer names the persisted launch.
+var ErrUntrackedOwnerChanged = errors.New("phase-untracked Flow owner changed")
 
 const (
 	StatusPending        = "pending"
@@ -619,6 +628,9 @@ type FlowRecord struct {
 	// stays distinguishable from a legacy record that predates the field.
 	Headless bool        `json:"headless"`
 	Phases   []FlowPhase `json:"phases"`
+	// UntrackedOwner is the durable Flow-level owner for worktree-writing
+	// launches that deliberately do not attach to a phase.
+	UntrackedOwner *UntrackedOwner `json:"untracked_owner,omitempty"`
 	// ProgressionClaim marks an identity created for the external Beads claim
 	// protocol. Recovery repeats the idempotent claim; the marker is retry
 	// provenance, not proof that ownership already landed. SQLite schema v5
@@ -878,11 +890,13 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 }
 
 func (s *Store) createWithOptions(record FlowRecord, opts CreateOptions, preparationNonce string) (FlowRecord, error) {
-	// A preparation receipt is a capability minted only by a successful
-	// preparation finalizer. General creation never trusts a caller-supplied one.
+	// Preparation receipts and untracked owners are lifecycle capabilities
+	// minted only by their fenced store operations. General creation never
+	// trusts caller-supplied values for either one.
 	record.PreparedAt = nil
 	record.PreparationNonce = strings.TrimSpace(preparationNonce)
 	record.PreparationGeneration = opts.preparationGeneration
+	record.UntrackedOwner = nil
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, errors.New("flow title is required")
 	}
@@ -2674,6 +2688,20 @@ func (s *Store) Delete(flowID string) error {
 		return err
 	}
 	defer release()
+	record, err := s.Read(flowID)
+	if err != nil {
+		return err
+	}
+	if owner := record.UntrackedOwner; owner != nil && owner.State != UntrackedOwnerEnded {
+		return fmt.Errorf("%w: %s owns %s", ErrFlowUntrackedOwned, owner.LaunchID, flowID)
+	} else if owner != nil {
+		if _, err := s.updateFlowMetadataOnly(flowID, func(record FlowRecord, _ time.Time) (FlowRecord, error) {
+			record.UntrackedOwner = nil
+			return record, nil
+		}); err != nil {
+			return err
+		}
+	}
 	return s.backend.delete(flowID)
 }
 

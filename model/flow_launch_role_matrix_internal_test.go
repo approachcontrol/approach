@@ -288,7 +288,7 @@ func TestFlowLaunchRoleMatrixConsumerDecisions(t *testing.T) {
 			},
 			want: flowLaunchRoleMatrixDecisions{
 				Identity:          "agent",
-				Detach:            embeddedTerminalDetachNever,
+				Detach:            embeddedTerminalDetachAllowed,
 				SlotAgent:         true,
 				FocusesInput:      true,
 				TmuxEligible:      true,

@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPageTextBuildsInteractiveLessCommand(t *testing.T) {
@@ -635,6 +637,9 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 		t.Fatal("expected status path for tmux exit propagation")
 	}
 	socketName := spec.HasSessionCommand.Args[4]
+	if spec.SocketName != socketName {
+		t.Fatalf("socket identity = %q, want %q", spec.SocketName, socketName)
+	}
 	if !strings.HasPrefix(socketName, "approach-agent-") || len(socketName) != len("approach-agent-00000000") {
 		t.Fatalf("socket name = %q, want short hashed approach-agent name", socketName)
 	}
@@ -695,6 +700,104 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	}
 	if _, err := os.Stat(spec.StatusPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("status cleanup error = %v, want removed", err)
+	}
+}
+
+func TestUntrackedFlowTerminalCommandReleasesOwnerAfterAgentExit(t *testing.T) {
+	command, err := newTerminalCommand(t.TempDir(), nil, []string{"true"}, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(command.cleanup)
+	ctx := AgentLaunchContext{
+		FlowID: "flow-1", LaunchID: "launch-1", FlowAutofix: true,
+		Executable: "/pinned/approach", SessionStateRoot: "/custom/state root",
+	}
+	configureUntrackedOwnerRelease(command, ctx)
+	got := command.shellCommand()
+	for _, want := range []string{"/pinned/approach", UntrackedOwnerReleaseCommand, "--state-root '/custom/state root'", "--flow-id 'flow-1'", "--launch-id 'launch-1'", `exit "$status"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shell command %q does not contain %q", got, want)
+		}
+	}
+
+	tracked, err := newTerminalCommand(t.TempDir(), nil, []string{"true"}, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tracked.cleanup)
+	configureUntrackedOwnerRelease(tracked, AgentLaunchContext{FlowID: "flow-1", LaunchID: "launch-2", FlowLaunchTracked: true, FlowPhaseID: "implementation"})
+	if strings.Contains(tracked.shellCommand(), UntrackedOwnerReleaseCommand) {
+		t.Fatalf("tracked launch received untracked release callback: %q", tracked.shellCommand())
+	}
+}
+
+func TestDirectEmbeddedCommandReleasesOwnerAndPreservesAgentExit(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "release.log")
+	releaseExecutable := filepath.Join(dir, "approach")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(releaseExecutable, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentCmd := exec.Command("sh", "-c", "exit 7")
+	agentCmd.Dir = dir
+	agentCmd.Env = append(os.Environ(), "APPROACH_DIRECT_WRAPPER_TEST=1")
+	wrapped := wrapDirectUntrackedOwnerRelease(agentCmd, AgentLaunchContext{
+		FlowID: "flow-1", LaunchID: "launch-1", FlowRepair: true,
+		Executable: releaseExecutable, SessionStateRoot: "/custom/state root",
+	})
+	err := wrapped.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("wrapped exit = %v, want agent status 7", err)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "untracked-owner-release\n--state-root\n/custom/state root\n--flow-id\nflow-1\n--launch-id\nlaunch-1\n"
+	if string(logged) != want {
+		t.Fatalf("release argv = %q, want %q", logged, want)
+	}
+	if wrapped.Dir != agentCmd.Dir || !slices.Contains(wrapped.Env, "APPROACH_DIRECT_WRAPPER_TEST=1") {
+		t.Fatalf("wrapper lost command environment: dir=%q env=%v", wrapped.Dir, wrapped.Env)
+	}
+}
+
+func TestDirectEmbeddedCommandWaitsForStartGate(t *testing.T) {
+	dir := t.TempDir()
+	gateDir := filepath.Join(dir, "gate")
+	if err := os.Mkdir(gateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gate := filepath.Join(gateDir, "start.gate")
+	marker := filepath.Join(dir, "agent.ran")
+	agentCmd := exec.Command("sh", "-c", "printf ran > \"$1\"", "agent", marker)
+	wrapped := wrapDirectUntrackedOwnerRelease(agentCmd, AgentLaunchContext{
+		FlowID: "flow-1", LaunchID: "launch-1", FlowRepair: true,
+		Executable: "/usr/bin/true", DirectStartGate: gate,
+	})
+	if err := wrapped.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if wrapped.Process != nil {
+			_ = wrapped.Process.Kill()
+		}
+	})
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("agent ran before durable start signal: %v", err)
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapped.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+		t.Fatalf("agent marker = %q, err=%v", data, err)
 	}
 }
 

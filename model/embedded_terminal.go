@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +21,8 @@ import (
 	"github.com/approachcontrol/approach/cursorstream"
 	"github.com/approachcontrol/approach/embeddedterm"
 	"github.com/approachcontrol/approach/flowownership"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/controlplane"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -233,7 +236,7 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 	if !errors.Is(err, actions.ErrEmbeddedTmuxUnavailable) {
 		return nil, err
 	}
-	cmd, err := actions.AgentCommand(ctx)
+	cmd, err := actions.DirectEmbeddedAgentCommand(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +248,7 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 }
 
 func startStreamJSONTerminal(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
-	cmd, err := actions.AgentCommand(ctx)
+	cmd, err := actions.DirectEmbeddedAgentCommand(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -279,6 +282,36 @@ func (t realEmbeddedTerminal) Wait(ctx context.Context) error {
 	return t.term.Wait(ctx)
 }
 func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
+func (t realEmbeddedTerminal) untrackedOwnerTransport() flowstore.UntrackedOwnerTransport {
+	if tmuxTerm, ok := t.term.(interface {
+		SocketName() string
+		SessionName() string
+	}); ok {
+		return flowstore.UntrackedOwnerTransport{
+			Kind:    flowstore.UntrackedTransportEmbeddedTmux,
+			Socket:  tmuxTerm.SocketName(),
+			Session: tmuxTerm.SessionName(),
+		}
+	}
+	if direct, ok := t.term.(interface{ ProcessID() int }); ok {
+		pid := direct.ProcessID()
+		token, _ := controlplane.ProcessIdentity(pid)
+		return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: token}
+	}
+	pid := os.Getpid()
+	token, _ := controlplane.ProcessIdentity(pid)
+	return flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: token}
+}
+
+func (t realEmbeddedTerminal) durableOwnerEndsWithTerminal() bool {
+	if tmuxTerm, ok := t.term.(interface {
+		SocketName() string
+		SessionName() string
+	}); ok {
+		return strings.TrimSpace(tmuxTerm.SocketName()) == "" || strings.TrimSpace(tmuxTerm.SessionName()) == ""
+	}
+	return true
+}
 func (t realEmbeddedTerminal) Detach() error {
 	detachable, ok := t.term.(interface{ Detach() error })
 	if !ok {
@@ -1009,7 +1042,7 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 
 func flowEmbeddedTerminalDetachPolicy(ctx actions.AgentLaunchContext) embeddedTerminalDetachPolicy {
 	switch actions.FlowLaunchRoleOf(ctx) {
-	case actions.RoleWorktreeAgent, actions.RoleSavedSessionResume:
+	case actions.RoleSavedSessionResume:
 		return embeddedTerminalDetachNever
 	default:
 		return embeddedTerminalDetachAllowed
@@ -1125,6 +1158,14 @@ func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason em
 			next = append(next, slot)
 		} else {
 			removed = true
+			terminalExitEndsOwner := true
+			if classified, ok := slot.Terminal.(interface{ durableOwnerEndsWithTerminal() bool }); ok {
+				terminalExitEndsOwner = classified.durableOwnerEndsWithTerminal()
+			}
+			if strings.TrimSpace(slot.FlowID) != "" && strings.TrimSpace(slot.LaunchID) != "" && reason != embeddedTerminalRemovalDetach &&
+				(reason == embeddedTerminalRemovalTerminate || slot.Terminal == nil || terminalExitEndsOwner && (slot.Terminal.State() == "exited" || slot.Terminal.State() == "terminated")) {
+				m.releaseDurableUntrackedOwner(slot.FlowID, slot.LaunchID)
+			}
 			m = m.recordRepairTerminalRemoval(slot, reason)
 		}
 	}

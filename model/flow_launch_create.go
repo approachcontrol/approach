@@ -537,7 +537,8 @@ func createFlowLaunchReserveCmd(seams flowLaunchSeams, attempt flowLaunchAttempt
 }
 
 func createFlowReservedRecordClaimed(created, reserved flowstore.FlowRecord) bool {
-	if !createFlowSameGeneration(created, reserved) || flowstore.FlowClosed(reserved) || reserved.Status != created.Status {
+	if !createFlowSameGeneration(created, reserved) || flowstore.FlowClosed(reserved) || reserved.Status != created.Status ||
+		(reserved.UntrackedOwner != nil && reserved.UntrackedOwner.State != flowstore.UntrackedOwnerEnded) {
 		return true
 	}
 	for _, pair := range [][2]string{

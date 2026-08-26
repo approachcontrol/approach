@@ -15,7 +15,7 @@ func TestSlotRetentionPolicy(t *testing.T) {
 		{name: "prefill pending", slot: Slot{FlowID: "flow-1", Flow: true, TerminalPresent: true, PrefillPending: true}, wantHeld: true},
 		{name: "terminal-less repair", slot: Slot{FlowID: "flow-1", Flow: true, Repair: true}, wantRepair: true},
 		{name: "exited ordinary Flow", slot: Slot{FlowID: "flow-1", Flow: true, TerminalPresent: true, TerminalExited: true}, wantHeld: true, wantAutoClose: true},
-		{name: "exited worktree agent", slot: Slot{FlowID: "flow-1", Flow: true, TerminalPresent: true, TerminalExited: true, WorktreeAgent: true}, wantHeld: true, wantNoDetach: true},
+		{name: "exited worktree agent", slot: Slot{FlowID: "flow-1", Flow: true, TerminalPresent: true, TerminalExited: true, WorktreeAgent: true}, wantHeld: true, wantAutoClose: true},
 		{name: "exited saved-session resume", slot: Slot{FlowID: "flow-1", Flow: true, TerminalPresent: true, TerminalExited: true, SavedSessionResume: true}, wantHeld: true, wantNoDetach: true},
 		{name: "generic session", slot: Slot{TerminalPresent: true, TerminalRunning: true}},
 	}

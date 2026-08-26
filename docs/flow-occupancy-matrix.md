@@ -37,6 +37,20 @@ the Flow store, the session store, or the lease file at the moment of the call.
 | S14 | Pending headless write | `model/model_keys.go:1070` `flowHeadlessWritePending` over `m.pendingFlowHeadlessWrites`; status at `:1012` | A headless toggle is in flight and the persisted preference is about to change | Enqueue → resolve (`:1055` `clearFlowHeadlessWritePending`) | In-process, transient |
 | S15 | tmux autofix agent probe | `model/tmux_mode.go:446` `tmuxAutofixAgentStillRunning`; registry written at `model/model.go:2731` `withFlowAutofixTmuxLaunch` and read at `model/tmux_mode.go:462` `flowAutofixTmuxLaunchIDs` | A phase-untracked autofix agent still has a live tmux window in this Flow's worktree | Registry entry lifetime, in-process only | Authoritative but *shells out*; never called from a poll (`model/tmux_mode.go:426`) |
 | S16 | Pending repair auto-drain marker | `model/flow_phase_launch.go:555` `hasPendingRepairAutoDrainMarker`, written at `:551` | A repair terminal was removed and its outcome has not been consumed by the AutoMode poll yet | Removal → poll consumption (`:564` `withoutRepairAutoDrainMarker`) | In-process |
+| S17 | Durable phase-untracked owner | `FlowRecord.UntrackedOwner`, mutated by `flowstore.ClaimUntrackedOwner`, `ActivateUntrackedOwner`, `ReplaceUntrackedOwner`, and `ReleaseUntrackedOwner` | The exact repair, autofix, or generic worktree-agent launch owns the Flow worktree | Reserved → live → ended, fenced by launch ID | Persisted and cross-process; cached reads only defer, authoritative reads may reclaim proven-dead owners |
+
+S17 replaces the in-process tmux registry as authority. Every authoritative
+launch read checks it before admitting tracked phases, resumes, repair, autofix,
+generic worktree agents, saved-session resumes, or AutoMode work. A reservation
+stores the launcher's PID until activation replaces it with the exact transport:
+repo-tmux session/window, isolated embedded-tmux socket/session, or direct child
+PID. Probes return live, dead, or unknown. Missing tools, timeouts, and probe
+errors stay occupied; only proven death permits an identity-fenced release.
+Provider hooks are not exit evidence because Codex Stop is a turn boundary and
+Claude SessionEnd can be `/clear`. The agent wrapper invokes the pinned
+`untracked-owner-release` callback on process exit, so detached tmux completion
+updates the mirror without waiting for another launch attempt. Cached footer and
+drain queries do not probe processes or walk stores.
 
 Two composites are built from the above and are what most consumers actually
 call:
@@ -84,11 +98,11 @@ values.
 | Worktree-agent prepare | `model/flow_launch_generic_agent.go:244`, `:263`, `:267` | S1/S2 under the reservation, then S13 and S10∨S11 again |
 | Create sessions read | `model/flow_launch_create.go:468` | S13 whole-Flow (any record at all, then any active one) |
 | Saved-session Flow read | `model/flow_launch_saved_session_resume.go:170` `validateSavedSessionResumeFlow` (`:184`) | S10 (`:192`), S11 (`:195`), S13 (`:200`) |
-| Generic prepare (tracked) | `model/flow_launch_lifecycle.go:801` | S1/S2 under the cross-process reservation |
+| Generic prepare (tracked) | `model/flow_launch_lifecycle.go:801` | S1/S2 and S17 under the cross-process reservation |
 | Repair prepare | `model/flow_launch_repair.go:379` | S1/S2 under repair's own reservation |
 | Autofix prepare | `model/flow_launch_autofix.go:330` | S1/S2 under the reservation |
-| Resume prepare | `model/flow_launch_resume.go:325` | S1/S2 under the reservation |
-| Saved-session prepare | `model/flow_launch_saved_session_resume.go:248` | S1/S2 under the reservation |
+| Resume prepare | `model/flow_launch_resume.go:325` | S1/S2 and S17 under the reservation |
+| Saved-session prepare | `model/flow_launch_saved_session_resume.go:248` | S1/S2 and S17 under the reservation |
 | Saved-session slot recheck | `model/flow_launch_lifecycle.go:889` | S6 |
 | Install backstop | `model/flow_launch_lifecycle.go:1269` `flowLaunchEmbeddedBackstop` | S6, S7, per kind — see §4.2 |
 

@@ -3,6 +3,7 @@ package flowstore
 import (
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestAStoreWhoseUserVersionMovedAbortsEveryWrite(t *testing.T) {
 	if !errors.Is(err, ErrDatabaseGenerationChanged) {
 		t.Fatalf("write after a user_version change = %v, want ErrDatabaseGenerationChanged", err)
 	}
-	if !strings.Contains(err.Error(), "6") || !strings.Contains(err.Error(), "7") {
+	if !strings.Contains(err.Error(), strconv.Itoa(databaseSchemaVersion)) || !strings.Contains(err.Error(), strconv.Itoa(databaseSchemaVersion+1)) {
 		t.Fatalf("refusal %q must name both the observed and the expected version", err)
 	}
 	// Sticky: every SUBSEQUENT operation aborts too, so a caller cannot retry

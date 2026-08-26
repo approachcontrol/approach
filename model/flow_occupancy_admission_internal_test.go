@@ -99,6 +99,44 @@ func TestManualPhasePreviewAndFooterNeverProbeTmux(t *testing.T) {
 	}
 }
 
+func TestDurableOwnerWithdrawsCachedReadinessButUserActionsReachAuthoritativeReclaim(t *testing.T) {
+	withOwner := func(record flowstore.FlowRecord) flowstore.FlowRecord {
+		record.UntrackedOwner = &flowstore.UntrackedOwner{
+			LaunchID: "other-process", Role: flowstore.UntrackedOwnerWorktreeAgent,
+			State:     flowstore.UntrackedOwnerLive,
+			Transport: flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportRepoTmux, Session: "repo", Window: "other"},
+		}
+		return record
+	}
+	tests := []struct {
+		name   string
+		record flowstore.FlowRecord
+		kind   flowLaunchKind
+		ready  func(Model) bool
+	}{
+		{name: "manual phase", record: withOwner(manualLaunchFlowRecord()), kind: flowLaunchKindManualPhase, ready: func(m Model) bool { return m.selectedFlowHasLaunchablePhase() }},
+		{name: "repair", record: withOwner(occupancyRepairFlowRecord()), kind: flowLaunchKindRepair, ready: func(m Model) bool { return m.selectedFlowRepairReady() }},
+		{name: "autofix", record: withOwner(autofixFlowRecord()), kind: flowLaunchKindAutofix, ready: func(m Model) bool { return m.selectedFlowAutofixReady() }},
+		{name: "phase resume", record: withOwner(manualLaunchFlowRecord()), kind: flowLaunchKindPhaseResume, ready: func(m Model) bool { return m.previewPhaseResume(m.selectedFlowID()) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOccupancyFixtureFor(t, tc.record)
+			if tc.ready(f.m) {
+				t.Fatal("cached durable owner left the action advertised")
+			}
+			intent := flowLaunchIntent{Kind: tc.kind, FlowID: tc.record.FlowID}
+			if tc.kind == flowLaunchKindPhaseResume {
+				intent.PhaseID = tc.record.Phases[0].PhaseID
+			}
+			_, cmd, admitted := f.m.requestFlowLaunch(intent)
+			if !admitted || cmd == nil {
+				t.Fatalf("user action did not reach authoritative reclaim: admitted=%t cmd=%T", admitted, cmd)
+			}
+		})
+	}
+}
+
 func TestManualPhaseFooterSkipsLeaseForUnlaunchableFlow(t *testing.T) {
 	f := newOccupancyFixtureFor(t, occupancyRepairFlowRecord())
 	if f.m.selectedFlowHasLaunchablePhase() {

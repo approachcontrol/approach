@@ -57,6 +57,20 @@ func TestAdvisoryCachedRunningPhaseDefers(t *testing.T) {
 	}
 }
 
+func TestDurableUntrackedOwnerDefersCachedAndAuthoritativeAdmissions(t *testing.T) {
+	record := flowstore.FlowRecord{FlowID: "flow-1", UntrackedOwner: &flowstore.UntrackedOwner{LaunchID: "launch-1", Role: flowstore.UntrackedOwnerAutofix, State: flowstore.UntrackedOwnerLive}}
+	cache := &flowCacheFixture{found: true, record: record}
+	advice := New(Sources{FlowCache: cache, Cache: &sessionCacheFixture{wantFlowID: "flow-1"}, Lease: &leaseFixture{t: t, wantFlowID: "flow-1"}, Runtime: runtimeFixture{}}).Advise(Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleWorktreeAgent, Stage: StageFooter}})
+	if advice.Holder() != HolderUntrackedOwner {
+		t.Fatalf("cached holder=%v", advice.Holder())
+	}
+	reader := &flowReaderFixture{t: t, wantFlowID: "flow-1", record: record}
+	verdict := New(Sources{Flows: reader}).Query(Query{FlowID: "flow-1", Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageAuthoritative}, PhaseID: "implementation"})
+	if verdict.Holder() != HolderUntrackedOwner {
+		t.Fatalf("authoritative holder=%v err=%v", verdict.Holder(), verdict.Err())
+	}
+}
+
 type sessionCacheFixture struct {
 	records    []sessions.SessionRecord
 	wantFlowID string
@@ -492,6 +506,8 @@ func TestPhaseResumeAuthoritativeOccupancyRemainsPhaseScopedWithSessionExemption
 
 func TestReservedAuthoritativePurposesCheckLeaseBeforeStores(t *testing.T) {
 	for _, role := range []actions.FlowLaunchRole{
+		actions.RoleTrackedPhase,
+		actions.RolePhaseResume,
 		actions.RoleRepair,
 		actions.RoleAutofix,
 		actions.RoleWorktreeAgent,
@@ -508,6 +524,25 @@ func TestReservedAuthoritativePurposesCheckLeaseBeforeStores(t *testing.T) {
 			})
 			if verdict.Holder() != HolderPeerLease || verdict.Err() != nil {
 				t.Fatalf("verdict = (%v, %v), want peer lease", verdict.Holder(), verdict.Err())
+			}
+		})
+	}
+}
+
+func TestTrackedReservedPurposesRecheckDurableOwnerAfterFreeLease(t *testing.T) {
+	for _, role := range []actions.FlowLaunchRole{actions.RoleTrackedPhase, actions.RolePhaseResume} {
+		t.Run(role.String(), func(t *testing.T) {
+			verdict := Evaluate(Sources{
+				Lease: &leaseFixture{t: t, wantFlowID: "flow-1"},
+				Flows: &flowReaderFixture{t: t, wantFlowID: "flow-1", record: flowstore.FlowRecord{
+					FlowID: "flow-1",
+					UntrackedOwner: &flowstore.UntrackedOwner{
+						LaunchID: "repair-1", Role: flowstore.UntrackedOwnerRepair, State: flowstore.UntrackedOwnerLive,
+					},
+				}},
+			}, Query{FlowID: "flow-1", Purpose: Purpose{Role: role, Stage: StageReserved}})
+			if verdict.Holder() != HolderUntrackedOwner || verdict.Err() != nil {
+				t.Fatalf("verdict = (%v, %v), want durable untracked owner", verdict.Holder(), verdict.Err())
 			}
 		})
 	}
@@ -771,7 +806,7 @@ func TestAdvisoryFailsClosedForInvalidQueriesAndMissingCaches(t *testing.T) {
 func TestPurposeValidRegistry(t *testing.T) {
 	validStages := map[actions.FlowLaunchRole][]Stage{
 		actions.RoleNone:               {StagePreview, StageFooter, StageSessionRelease},
-		actions.RoleTrackedPhase:       {StagePreview, StageFooter, StageAdmission, StageAutoAdvance, StageAuthoritative, StageReserved, StageInstall, StageDrain, StageDrainControl},
+		actions.RoleTrackedPhase:       {StagePreview, StageFooter, StageAdmission, StageAutoAdvance, StageAuthoritative, StageLeasePreflight, StageReserved, StageInstall, StageDrain, StageDrainControl},
 		actions.RoleCreatePhase:        {StageAdmission, StageAuthoritative, StageInstall},
 		actions.RolePhaseResume:        {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
 		actions.RoleRepair:             {StagePreview, StageFooter, StageAdmission, StageAuthoritative, StageReserved, StageInstall},
@@ -892,7 +927,7 @@ func TestQueryAnswersFromLeaseSource(t *testing.T) {
 				tc.lease.t = t
 				tc.lease.wantFlowID = "flow-exact"
 			}
-			sources := Sources{Runtime: runtimeFixture{}}
+			sources := Sources{FlowCache: &flowCacheFixture{}, Runtime: runtimeFixture{}}
 			if tc.lease != nil {
 				sources.Lease = tc.lease
 			}
@@ -951,8 +986,9 @@ func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			verdict := New(Sources{
-				Lease:   &leaseFixture{occupied: tc.leaseOccupied, t: t, wantFlowID: "flow-1"},
-				Runtime: tc.runtime,
+				FlowCache: &flowCacheFixture{},
+				Lease:     &leaseFixture{occupied: tc.leaseOccupied, t: t, wantFlowID: "flow-1"},
+				Runtime:   tc.runtime,
 			}).Query(Query{
 				FlowID:  "flow-1",
 				Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: tc.stage},
@@ -965,8 +1001,9 @@ func TestTrackedPhaseLeaseAndRuntimePrecedence(t *testing.T) {
 
 	t.Run("footer headless write outranks unreadable lease", func(t *testing.T) {
 		verdict := New(Sources{
-			Lease:   &leaseFixture{err: errors.New("lease unreadable"), t: t, wantFlowID: "flow-1"},
-			Runtime: runtimeFixture{headless: map[string]bool{"flow-1": true}},
+			FlowCache: &flowCacheFixture{},
+			Lease:     &leaseFixture{err: errors.New("lease unreadable"), t: t, wantFlowID: "flow-1"},
+			Runtime:   runtimeFixture{headless: map[string]bool{"flow-1": true}},
 		}).Query(Query{
 			FlowID:  "flow-1",
 			Purpose: Purpose{Role: actions.RoleTrackedPhase, Stage: StageFooter},
@@ -1032,7 +1069,7 @@ func TestRepairPurposeHolderPrecedence(t *testing.T) {
 		} {
 			t.Run(tc.name+"/"+stage.name, func(t *testing.T) {
 				lease := &leaseFixture{occupied: tc.leaseOccupied, err: tc.leaseErr, t: t, wantFlowID: "flow-1"}
-				verdict := New(Sources{Lease: lease, Runtime: tc.runtime}).Query(Query{
+				verdict := New(Sources{FlowCache: &flowCacheFixture{}, Lease: lease, Runtime: tc.runtime}).Query(Query{
 					FlowID:  "flow-1",
 					Purpose: Purpose{Role: actions.RoleRepair, Stage: stage.stage},
 				})

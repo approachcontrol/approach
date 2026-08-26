@@ -155,7 +155,7 @@ func (m Model) admitRepairFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 	}
 	flowID := strings.TrimSpace(record.FlowID)
 	intent.FlowID = flowID
-	if verdict := m.repairOccupancy(flowID, flowownership.StageAdmission); verdict.Occupied() {
+	if verdict := m.repairOccupancy(flowID, flowownership.StageAdmission); verdict.Occupied() && verdict.Holder() != flowownership.HolderUntrackedOwner {
 		return m.setStatus(statusOther, flowRepairOccupancyStatus(verdict)), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -321,6 +321,9 @@ func flowRepairAuthoritativeOccupancyStatus(flowID string, record flowstore.Flow
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
+	if verdict.Holder() == flowownership.HolderUntrackedOwner {
+		return flowRepairPendingStatus
+	}
 	if verdict.Holder() == flowownership.HolderPhaseSession {
 		if phase, ok := flowPhaseByID(record, verdict.PhaseID()); ok {
 			return flowRepairLiveSessionStatus(flowID, phase)
@@ -433,6 +436,11 @@ func (m Model) repairFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowL
 		event.Context = ctx
 		event.Route = decision.Route
 		event.FallbackNote = decision.FallbackNote
+		if err := claimUntrackedOwner(m.launchSeams, msg.FlowID, msg.Token, msg.Kind); err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		event.UntrackedOwnerClaimed = true
 		return event
 	}
 }

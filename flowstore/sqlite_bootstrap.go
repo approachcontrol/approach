@@ -347,14 +347,14 @@ func validateMigratedRecordRoundTrip(db *sql.DB, tolerated map[string]bool) erro
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, nonce string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, nonce, ownerLaunchID string
 		var blob []byte
 		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID,
-			&preparedAt, &nonce, &blob); err != nil {
+			&preparedAt, &nonce, &ownerLaunchID, &blob); err != nil {
 			return fmt.Errorf("read migrated flow record: %w", err)
 		}
 		if _, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt,
-			beadID, epicID, preparedAt, nonce, blob); err != nil {
+			beadID, epicID, preparedAt, nonce, ownerLaunchID, blob); err != nil {
 			if tolerated[flowID] {
 				continue
 			}
@@ -381,12 +381,18 @@ func migratedRecordSampleQuery(schema int64) string {
 	if schema <= 1 {
 		bead, epic = "''", "''"
 	}
-	prepared, nonce := "''", "''"
-	if schema >= databaseSchemaVersion {
-		prepared, nonce = "prepared_at", "preparation_nonce"
+	prepared, nonce, ownerLaunchID := "''", "''", "''"
+	if schema >= 3 {
+		prepared = "prepared_at"
+	}
+	if schema >= 6 {
+		nonce = "preparation_nonce"
+	}
+	if schema >= 8 {
+		ownerLaunchID = "untracked_owner_launch_id"
 	}
 	columns := strings.Join([]string{
-		"flow_id", "repo_path", "status", "updated_at", bead, epic, prepared, nonce, "record",
+		"flow_id", "repo_path", "status", "updated_at", bead, epic, prepared, nonce, ownerLaunchID, "record",
 	}, ", ")
 	return "SELECT " + columns + " FROM flows ORDER BY flow_id LIMIT ?"
 }
@@ -410,14 +416,14 @@ func sampleUndecodableFlows(db *sql.DB, predecessor int64) map[string]bool {
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, nonce string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, nonce, ownerLaunchID string
 		var blob []byte
 		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID,
-			&preparedAt, &nonce, &blob); err != nil {
+			&preparedAt, &nonce, &ownerLaunchID, &blob); err != nil {
 			return undecodable
 		}
 		if _, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt,
-			beadID, epicID, preparedAt, nonce, blob); err != nil {
+			beadID, epicID, preparedAt, nonce, ownerLaunchID, blob); err != nil {
 			undecodable[flowID] = true
 		}
 	}
@@ -486,7 +492,7 @@ func (o migrationOutcome) backupPathOrNil() *string {
 // it — and without an executing migration test for it — fails the build's own
 // gate rather than shipping an untested upgrade path. Version 0 is the
 // unstamped original, whose shape is v1's.
-var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5, 6}
+var supportedPredecessorVersions = []int64{0, 1, 2, 3, 4, 5, 6, 7}
 
 // migrateAuthoritativeDatabase upgrades only the accepted predecessor schema.
 // It runs while newSQLiteStoreBackend holds the bootstrap lease, before the
@@ -673,6 +679,14 @@ func migrateAuthoritativeDatabase(path string, lockTimeout time.Duration, canoni
 		statements = append(statements,
 			"ALTER TABLE flows ADD COLUMN recovery_generation INTEGER NOT NULL DEFAULT 0",
 			flowRecoveryGenerationCompatibilityTrigger,
+		)
+	}
+	if predecessor <= 7 {
+		statements = append(statements,
+			"ALTER TABLE flows ADD COLUMN untracked_owner_launch_id TEXT NOT NULL DEFAULT ''",
+			"UPDATE flows SET untracked_owner_launch_id = CASE WHEN json_valid(CAST(record AS TEXT)) THEN COALESCE(json_extract(CAST(record AS TEXT), '$.untracked_owner.launch_id'), '') ELSE '' END",
+			flowUntrackedOwnerCompatibilityTrigger,
+			flowUntrackedOwnerDeleteCompatibilityTrigger,
 		)
 	}
 	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion))
@@ -1300,7 +1314,7 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 		return nil, nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1308,13 +1322,13 @@ func summarizePromotedDatabase(path string) (map[string]bool, []string, error) {
 	promoted := map[string]bool{}
 	var unresolved []string
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, ownerLaunchID string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &ownerLaunchID, &data); err != nil {
 			return nil, nil, err
 		}
 		promoted[flowID] = true
-		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, data)
+		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, ownerLaunchID, data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1711,21 +1725,21 @@ func validateStagedDatabase(path string, expected []FlowRecord, compareRecords b
 		_ = db.Close()
 		return fmt.Errorf("staged flow database integrity check = %q, err=%v", integrity, err)
 	}
-	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, record FROM flows ORDER BY flow_id")
+	rows, err := db.Query("SELECT flow_id, repo_path, status, updated_at, bead_id, epic_id, prepared_at, preparation_nonce, untracked_owner_launch_id, record FROM flows ORDER BY flow_id")
 	if err != nil {
 		_ = db.Close()
 		return err
 	}
 	var actual []FlowRecord
 	for rows.Next() {
-		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce string
+		var flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, ownerLaunchID string
 		var data []byte
-		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &data); err != nil {
+		if err := rows.Scan(&flowID, &repoPath, &status, &updatedAt, &beadID, &epicID, &preparedAt, &preparationNonce, &ownerLaunchID, &data); err != nil {
 			_ = rows.Close()
 			_ = db.Close()
 			return err
 		}
-		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, data)
+		stored, err := decodeStoredFlowWithPreparation(flowID, repoPath, status, updatedAt, beadID, epicID, preparedAt, preparationNonce, ownerLaunchID, data)
 		if err != nil {
 			_ = rows.Close()
 			_ = db.Close()

@@ -3,6 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +19,39 @@ import (
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
+
+func (m Model) flowLaunchEmbeddedTerminal(flowID, launchID string) (EmbeddedTerminal, bool) {
+	for _, slot := range m.embeddedTerminals {
+		if slot.FlowID == flowID && slot.LaunchID == launchID && slot.Terminal != nil {
+			return slot.Terminal, true
+		}
+	}
+	return nil, false
+}
+
+func reserveDirectEmbeddedStartGate() (string, error) {
+	dir, err := os.MkdirTemp("", "approach-direct-start-*")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "start"), nil
+}
+
+func signalDirectEmbeddedStart(path string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+func cleanupDirectEmbeddedStartGate(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = os.Remove(path)
+	_ = os.Remove(filepath.Dir(path))
+}
 
 // noLaunchableFlowPhaseStatus covers every reason a launch is refused before it
 // reaches preflight: no eligible phase, an occupied Flow, or a live session on
@@ -190,20 +225,21 @@ type flowLaunchEventMsg struct {
 	// FlowMissing distinguishes the saved-session compatibility case from every
 	// other read failure: a saved session outlives a deleted Flow and resumes via
 	// its established non-Flow route instead of being stranded by stale linkage.
-	FlowMissing     bool
-	Err             string
-	LeaseDeferred   bool
-	LeaseSetupError bool
-	Release         func()
-	Create          flowLaunchCreateRequest
-	StartupRoots    []flowstore.FlowPhase
-	Worktree        actions.FlowWorktreeCreateResult
-	Commit          string
-	Proof           flowLaunchCreateProof
-	GenerationLost  bool
-	RecoveryErrs    []string
-	Settings        flowLaunchAgentSettingsSnapshot
-	ErrOp           string
+	FlowMissing           bool
+	Err                   string
+	LeaseDeferred         bool
+	LeaseSetupError       bool
+	UntrackedOwnerClaimed bool
+	Release               func()
+	Create                flowLaunchCreateRequest
+	StartupRoots          []flowstore.FlowPhase
+	Worktree              actions.FlowWorktreeCreateResult
+	Commit                string
+	Proof                 flowLaunchCreateProof
+	GenerationLost        bool
+	RecoveryErrs          []string
+	Settings              flowLaunchAgentSettingsSnapshot
+	ErrOp                 string
 }
 
 // flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
@@ -308,7 +344,7 @@ func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, b
 		status, _ := m.retainedFlowTerminalLaunchStatus(record.FlowID)
 		return m.setStatus(statusOther, status), nil, false
 	}
-	if occupancy.Occupied() {
+	if occupancy.Occupied() && occupancy.Holder() != flowownership.HolderUntrackedOwner {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
@@ -450,15 +486,51 @@ func (m Model) trackedFlowLeaseOccupied(flowID string) (bool, error) {
 	}
 	verdict := flowownership.Evaluate(flowownership.Sources{
 		Lease: flowOccupancyLeaseInspector{
-			root:     m.sessionStateRoot,
-			injected: m.leaseInspectInjected,
-			inspect:  m.inspectFlowLease,
+			root: m.sessionStateRoot, injected: m.leaseInspectInjected, inspect: m.inspectFlowLease,
 		},
 	}, flowownership.Query{
 		FlowID: flowID,
 		Purpose: flowownership.Purpose{
-			Role:  actions.RoleTrackedPhase,
-			Stage: flowownership.StageReserved,
+			Role: actions.RoleTrackedPhase, Stage: flowownership.StageLeasePreflight,
+		},
+	})
+	if err := verdict.Err(); err != nil {
+		return false, err
+	}
+	return verdict.Occupied(), nil
+}
+
+// trackedFlowReservedOccupied rechecks both cross-process ownership forms
+// while the caller holds the shared launch reservation. The earlier
+// authoritative read is intentionally insufficient: an untracked owner can be
+// claimed between that read and this lock acquisition.
+func (m Model) trackedFlowReservedOccupied(flowID string) (bool, error) {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false, nil
+	}
+	if m.launchSeams.ReadFlow == nil {
+		return false, errors.New("Flow reader is unavailable")
+	}
+	record, err := m.launchSeams.ReadFlow(flowID)
+	if err != nil {
+		return false, err
+	}
+	if m.launchSeams.ResolveUntrackedOwner != nil {
+		record, err = m.launchSeams.ResolveUntrackedOwner(record)
+		if err != nil {
+			return false, err
+		}
+	}
+	verdict := flowownership.Evaluate(flowownership.Sources{
+		Flows: flowOccupancyAuthoritativeFlow{record: record},
+		Lease: flowOccupancyLeaseInspector{
+			root: m.sessionStateRoot, injected: m.leaseInspectInjected, inspect: m.inspectFlowLease,
+		},
+	}, flowownership.Query{
+		FlowID: flowID,
+		Purpose: flowownership.Purpose{
+			Role: actions.RoleTrackedPhase, Stage: flowownership.StageReserved,
 		},
 	})
 	if err := verdict.Err(); err != nil {
@@ -701,7 +773,7 @@ func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher flowLaunchPreparation
 			event.Err = occupancy.Err().Error()
 			return event
 		}
-		if occupancy.Holder() == flowownership.HolderRunningPhase || occupancy.Holder() == flowownership.HolderPhaseSession {
+		if occupancy.Occupied() {
 			event.Outcome = flowLaunchOutcomeRetry
 			return event
 		}
@@ -818,7 +890,7 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 			return event
 		}
 		event.Release = release
-		if occupied, inspectErr := m.trackedFlowLeaseOccupied(msg.FlowID); inspectErr != nil {
+		if occupied, inspectErr := m.trackedFlowReservedOccupied(msg.FlowID); inspectErr != nil {
 			event.LeaseDeferred = true
 			event.LeaseSetupError = true
 			event.Err = flowLeaseSetupErrorStatus(inspectErr)
@@ -845,23 +917,27 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 }
 
 // handleFlowLaunchEvent is the only handler for lifecycle-emitted events. A
-// fence mismatch returns without touching anything: no phase write, no
-// terminal, no release, and no status replacement.
+// fence mismatch cannot touch the current attempt, phase, terminal, or status.
+// A stale event that already claimed its own durable owner is the exception:
+// its exact launch ID is released without disturbing the newer fence.
 func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	if msg.Kind == flowLaunchKindCreatePhase {
 		return m.handleCreateFlowLaunchEvent(msg)
 	}
 	want, validStage := flowLaunchStageState(msg.Stage)
 	if !validStage || msg.From != want {
+		m.releaseClaimedUntrackedOwner(msg)
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
 	attempt, ok := m.matchingFlowLaunchAttempt(msg.FlowID, msg.Token, msg.Kind, want)
 	if !ok {
+		m.releaseClaimedUntrackedOwner(msg)
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
 	if msg.Kind == flowLaunchKindSavedSessionResume && (attempt.SessionKey != msg.SessionKey || !msg.SessionKey.valid()) {
+		m.releaseClaimedUntrackedOwner(msg)
 		releaseFlowLaunchReservation(msg.Release)
 		return m, nil
 	}
@@ -909,6 +985,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
 			command = agent.Normalize(command)
 			if command != attempt.Settings.Command || !agent.Supported(command) {
+				m.releaseClaimedUntrackedOwner(msg)
 				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, flowWorktreeAgentChangedStatus), nil
 			}
 			settings.Command = command
@@ -917,6 +994,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		}
 		next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStateReading, flowLaunchStatePreparing)
 		if !ok {
+			m.releaseClaimedUntrackedOwner(msg)
 			return m, nil
 		}
 		m = next.withFlowLaunchAttemptPhase(attempt.FlowID, attempt.Token, msg.PhaseID)
@@ -926,6 +1004,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		return m, m.flowLaunchPrepareCmd(msg, settings)
 	case flowLaunchStagePrepared:
 		if msg.LeaseDeferred {
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 			if attempt.Kind == flowLaunchKindAutoPhase {
@@ -937,10 +1016,12 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m.setStatus(statusOther, msg.Err), nil
 		}
 		if msg.Skipped {
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token), nil
 		}
 		if msg.Err != "" {
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath, msg.Err)
 		}
@@ -948,6 +1029,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			command, modelName, reasoningEffort := m.flowLaunchAgentSettings()
 			command = agent.Normalize(command)
 			if command != attempt.Settings.Command || !agent.Supported(command) {
+				m.releaseClaimedUntrackedOwner(msg)
 				releaseFlowLaunchReservation(msg.Release)
 				return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).
 					setStatus(statusOther, flowWorktreeAgentChangedStatus), nil
@@ -981,12 +1063,19 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		case flowLaunchRouteTmux:
 			return m.handoffFlowLaunchTmux(attempt, msg)
 		default:
+			m.releaseClaimedUntrackedOwner(msg)
 			releaseFlowLaunchReservation(msg.Release)
 			return m.failFlowLaunch(attempt, msg.Context, msg.RepoPath,
 				fmt.Sprintf("unsupported flow launch route %d", msg.Route))
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) releaseClaimedUntrackedOwner(msg flowLaunchEventMsg) {
+	if msg.UntrackedOwnerClaimed {
+		m.releaseDurableUntrackedOwner(msg.FlowID, msg.Token)
+	}
 }
 
 // handleAutoFlowLaunchRead splits by stage, not by error class, so no error
@@ -1130,9 +1219,37 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 	if attempt.Kind == flowLaunchKindWorktreeAgent && m.tmuxAutofixAgentStillRunning(msg.Record, msg.WorktreePath) {
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, flowWorktreeAgentPendingStatus)
 	}
+	directStartGate := ""
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable && m.launchSeams.PrepareOwnerTransport != nil {
+		if socketName, sessionName, identityErr := actions.EmbeddedTmuxAgentIdentity(ctx); identityErr == nil {
+			activation := flowstore.UntrackedOwnerActivation{
+				FlowID: attempt.FlowID, LaunchID: attempt.Token,
+				Transport: flowstore.UntrackedOwnerTransport{
+					Kind: flowstore.UntrackedTransportEmbeddedTmux, Socket: socketName, Session: sessionName,
+				},
+			}
+			if _, err := m.launchSeams.PrepareOwnerTransport(activation); err != nil {
+				errText := "Prepare durable Flow owner transport: " + err.Error()
+				if attempt.Kind == flowLaunchKindCreatePhase {
+					return m.failCreateFlowLaunchEmbedded(attempt, ctx, errText, msg.Release)
+				}
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
+			}
+		} else if errors.Is(identityErr, actions.ErrEmbeddedTmuxUnavailable) {
+			var err error
+			directStartGate, err = reserveDirectEmbeddedStartGate()
+			if err != nil {
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Reserve direct embedded agent start: "+err.Error())
+			}
+			ctx.DirectStartGate = directStartGate
+		}
+	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
 	if err != nil || !opened {
+		if directStartGate != "" {
+			cleanupDirectEmbeddedStartGate(directStartGate)
+		}
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
 			errText = err.Error()
@@ -1143,6 +1260,58 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 		return next.failFlowLaunch(attempt, ctx, msg.RepoPath, errText)
 	}
 	m = next
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
+		if m.launchSeams.ActivateUntrackedOwner != nil {
+			pid := os.Getpid()
+			processToken, _ := controlplane.ProcessIdentity(pid)
+			transport := flowstore.UntrackedOwnerTransport{Kind: flowstore.UntrackedTransportDirect, PID: pid, ProcessToken: processToken}
+			terminal, terminalFound := m.flowLaunchEmbeddedTerminal(ctx.FlowID, ctx.LaunchID)
+			if terminalFound {
+				if identified, ok := terminal.(interface {
+					untrackedOwnerTransport() flowstore.UntrackedOwnerTransport
+				}); ok {
+					transport = identified.untrackedOwnerTransport()
+				}
+			}
+			activation := flowstore.UntrackedOwnerActivation{
+				FlowID: attempt.FlowID, LaunchID: attempt.Token,
+				Transport: transport, LauncherHandoffComplete: true,
+			}
+			var publicationErr error
+			publicationOp := "Activate durable Flow owner"
+			if m.launchSeams.PrepareOwnerTransport != nil {
+				_, publicationErr = m.launchSeams.PrepareOwnerTransport(activation)
+				publicationOp = "Prepare durable Flow owner transport"
+			}
+			if publicationErr == nil {
+				_, publicationErr = m.launchSeams.ActivateUntrackedOwner(activation)
+				publicationOp = "Activate durable Flow owner"
+			}
+			if publicationErr == nil && directStartGate != "" {
+				publicationErr = signalDirectEmbeddedStart(directStartGate)
+				publicationOp = "Start published direct embedded agent"
+			}
+			if publicationErr != nil {
+				if directStartGate != "" {
+					cleanupDirectEmbeddedStartGate(directStartGate)
+				}
+				activationErr := publicationOp + ": " + publicationErr.Error()
+				if terminalFound {
+					if terminateErr := terminal.Terminate(); terminateErr != nil {
+						m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+						return m.setStatus(statusOther, activationErr+"; terminate unpublished embedded terminal: "+terminateErr.Error()), nil
+					}
+					for _, slot := range m.embeddedTerminals {
+						if slot.FlowID == ctx.FlowID && slot.LaunchID == ctx.LaunchID {
+							m = m.dismissEmbeddedTerminalForReason(slot.ID, embeddedTerminalRemovalTerminate)
+							break
+						}
+					}
+				}
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, activationErr)
+			}
+		}
+	}
 	if attempt.Kind == flowLaunchKindCreatePhase && prefillCmd != nil {
 		create := attempt.Create
 		originalPrefillCmd := prefillCmd
@@ -1224,6 +1393,24 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		releaseFlowLaunchReservation(msg.Release)
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, err.Error())
 	}
+	var activation *flowstore.UntrackedOwnerActivation
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable && m.launchSeams.ActivateUntrackedOwner != nil {
+		activation = &flowstore.UntrackedOwnerActivation{
+			FlowID: attempt.FlowID, LaunchID: attempt.Token,
+			Transport: flowstore.UntrackedOwnerTransport{
+				Kind: flowstore.UntrackedTransportRepoTmux, Session: spec.SessionName, Window: spec.WindowName,
+			},
+		}
+		if m.launchSeams.PrepareOwnerTransport != nil {
+			if _, err := m.launchSeams.PrepareOwnerTransport(*activation); err != nil {
+				releaseFlowLaunchReservation(msg.Release)
+				if spec.Launch.Cleanup != nil {
+					spec.Launch.Cleanup()
+				}
+				return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Prepare durable Flow owner transport: "+err.Error())
+			}
+		}
+	}
 	if attempt.Kind == flowLaunchKindAutofix {
 		// A phase-untracked launch writes no running phase, so on this route
 		// nothing would cover the agent's work once the attempt is released and
@@ -1246,7 +1433,7 @@ func (m Model) handoffFlowLaunchTmux(attempt flowLaunchAttempt, msg flowLaunchEv
 		}
 		return m.failFlowLaunch(attempt, ctx, msg.RepoPath, "Flow launch handoff canceled before spawn")
 	}
-	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec.Launch, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
+	m, launchCmd := m.runFlowLifecycleTmuxLaunchWithStatus(ctx, spec, activation, msg.Release, withFallbackNote(tmuxLaunchStatus(spec), msg.WorktreeNote))
 	launchCmd = markTmuxAgentResult(launchCmd)
 	// Placed after the handoffPending transition above, so a handoff canceled
 	// before its spawn opens no window. It is a sibling command: it touches no
@@ -1308,6 +1495,9 @@ func (m Model) flowLaunchEmbeddedBackstop(kind flowLaunchKind, flowID string) (s
 // persistable produces no flowLaunchFailurePersistedMsg, so entering
 // failurePersisting first would strand the attempt and block the Flow forever.
 func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunchContext, repoPath, errText string) (Model, tea.Cmd) {
+	if _, durable := untrackedOwnerRole(attempt.Kind); durable {
+		m.releaseDurableUntrackedOwner(attempt.FlowID, attempt.Token)
+	}
 	if attempt.Kind == flowLaunchKindRepair || attempt.Kind == flowLaunchKindWorktreeAgent || attempt.Kind == flowLaunchKindSavedSessionResume {
 		// Repair and generic Flow agents report with a bare status on every
 		// stage. Neither writes a phase, so the MutatedPhase ladder below has
@@ -1360,6 +1550,85 @@ func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunch
 		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).setStatus(statusOther, errText), nil
 	}
 	return next, flowLaunchFailurePersistCmd(next.launchSeams.SetPhase, update, ctx, errText)
+}
+
+func (m *Model) releaseDurableUntrackedOwner(flowID, launchID string) error {
+	flowID, launchID = strings.TrimSpace(flowID), strings.TrimSpace(launchID)
+	if flowID == "" || launchID == "" || m.launchSeams.ReleaseUntrackedOwner == nil {
+		return nil
+	}
+	_, err := m.launchSeams.ReleaseUntrackedOwner(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
+	if err == nil || errors.Is(err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(err, flowstore.ErrFlowNotFound) {
+		if m.pendingUntrackedOwnerReleases[flowID] == launchID {
+			delete(m.pendingUntrackedOwnerReleases, flowID)
+		}
+		return nil
+	}
+	if m.pendingUntrackedOwnerReleases == nil {
+		m.pendingUntrackedOwnerReleases = make(map[string]string)
+	}
+	m.pendingUntrackedOwnerReleases[flowID] = launchID
+	return err
+}
+
+func (m Model) scheduleDurableUntrackedOwnerReleaseRetry() (Model, tea.Cmd) {
+	if len(m.pendingUntrackedOwnerReleases) == 0 || m.untrackedOwnerReleaseRetryScheduled {
+		return m, nil
+	}
+	delay := m.untrackedOwnerReleaseRetryDelay
+	if delay <= 0 {
+		delay = time.Second
+	}
+	m.untrackedOwnerReleaseRetryScheduled = true
+	return m, tea.Tick(delay, func(time.Time) tea.Msg { return untrackedOwnerReleaseRetryMsg{} })
+}
+
+func (m Model) durableUntrackedOwnerReleaseRetryCmd() tea.Cmd {
+	pending := make(map[string]string, len(m.pendingUntrackedOwnerReleases))
+	for flowID, launchID := range m.pendingUntrackedOwnerReleases {
+		pending[flowID] = launchID
+	}
+	release := m.launchSeams.ReleaseUntrackedOwner
+	return func() tea.Msg {
+		results := make([]untrackedOwnerReleaseRetryResult, 0, len(pending))
+		for flowID, launchID := range pending {
+			var err error
+			if release != nil {
+				_, err = release(flowstore.UntrackedOwnerRelease{FlowID: flowID, LaunchID: launchID})
+			}
+			results = append(results, untrackedOwnerReleaseRetryResult{FlowID: flowID, LaunchID: launchID, Err: err})
+		}
+		return untrackedOwnerReleaseRetryResultMsg{Results: results}
+	}
+}
+
+func (m Model) handleDurableUntrackedOwnerReleaseRetryResult(msg untrackedOwnerReleaseRetryResultMsg) Model {
+	m.untrackedOwnerReleaseRetryScheduled = false
+	failed := false
+	for _, result := range msg.Results {
+		if m.pendingUntrackedOwnerReleases[result.FlowID] != result.LaunchID {
+			continue
+		}
+		if result.Err == nil || errors.Is(result.Err, flowstore.ErrUntrackedOwnerChanged) || errors.Is(result.Err, flowstore.ErrFlowNotFound) {
+			delete(m.pendingUntrackedOwnerReleases, result.FlowID)
+			continue
+		}
+		failed = true
+	}
+	if !failed {
+		m.untrackedOwnerReleaseRetryDelay = 0
+		return m
+	}
+	delay := m.untrackedOwnerReleaseRetryDelay
+	if delay <= 0 {
+		delay = time.Second
+	}
+	delay *= 2
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+	m.untrackedOwnerReleaseRetryDelay = delay
+	return m
 }
 
 func flowLaunchFailurePersistCmd(

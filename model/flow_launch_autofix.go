@@ -262,6 +262,9 @@ func autofixAuthoritativeOccupancyStatus(flowID string, record flowstore.FlowRec
 	if verdict.Err() != nil {
 		return verdict.Err().Error()
 	}
+	if verdict.Holder() == flowownership.HolderUntrackedOwner {
+		return flowAutofixInFlightStatus
+	}
 	if verdict.Holder() == flowownership.HolderPhaseSession {
 		return flowAutofixLiveSessionStatus
 	}
@@ -370,6 +373,11 @@ func (m Model) autofixFlowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flow
 		event.Context = ctx
 		event.Route = decision.Route
 		event.FallbackNote = decision.FallbackNote
+		if err := claimUntrackedOwner(m.launchSeams, msg.FlowID, msg.Token, msg.Kind); err != nil {
+			event.Err = err.Error()
+			return event
+		}
+		event.UntrackedOwnerClaimed = true
 		return event
 	}
 }

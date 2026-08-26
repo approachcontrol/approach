@@ -538,6 +538,10 @@ type AgentResultMsg struct {
 	// The command must retain the cross-process reservation after it exits until
 	// a matching handoffPending attempt consumes this result.
 	FlowLaunchRelease func()
+	// FlowLaunchOwnerRetained reports a failed post-spawn publication whose
+	// exact tmux window could not be terminated. The launcher reservation must
+	// remain durable until that window's exit callback releases it.
+	FlowLaunchOwnerRetained bool
 	// Detached reports that the agent was launched into an external
 	// terminal/multiplexer session that keeps running after the launch command
 	// returns. Detached launches must not finalize the captured session here;
@@ -548,6 +552,18 @@ type AgentResultMsg struct {
 	// tmux mode naming the session and its attach command. Empty keeps the
 	// generic text.
 	LaunchedStatus string
+}
+
+type untrackedOwnerReleaseRetryMsg struct{}
+
+type untrackedOwnerReleaseRetryResult struct {
+	FlowID   string
+	LaunchID string
+	Err      error
+}
+
+type untrackedOwnerReleaseRetryResultMsg struct {
+	Results []untrackedOwnerReleaseRetryResult
 }
 
 type agentSessionFinalizedMsg struct {
