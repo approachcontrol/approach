@@ -520,7 +520,7 @@ func TestRecordLaunchExitWritesExitJSON(t *testing.T) {
 	}
 	log, _ := OpenLog(root, "launch-1")
 	exit, ok, err := log.Exit()
-	if err != nil || !ok || exit.ExitCode != 137 || !exit.Signaled || exit.PhaseID != "plan" || !exit.EndedAt.Equal(ended) || exit.Source != "lease_runner" {
+	if err != nil || !ok || exit.ExitCode != 137 || !exit.Signaled || exit.FlowID != "flow-1" || exit.PhaseID != "plan" || !exit.EndedAt.Equal(ended) || exit.Source != string(SourceLeaseRunnerExit) {
 		t.Fatalf("exit = %#v %v %v", exit, ok, err)
 	}
 }

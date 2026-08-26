@@ -264,8 +264,8 @@ func runTmuxSpawn(spec PrivateSpec, stderr io.Writer, ops tmuxSpawnOps) error {
 // LaunchExit is what the lease runner reports once the agent's whole process
 // group is gone. Code is the child-compatible exit status (128+signal when
 // Signaled). It is delivered to RunLeaseRunner's onExit exactly once per
-// started agent, never before the agent started, and while the runner still
-// holds the Flow lease.
+// started agent, never before the agent started, and after the runner releases
+// the Flow lease.
 type LaunchExit struct {
 	Root     string
 	FlowID   string
@@ -278,8 +278,8 @@ type LaunchExit struct {
 
 // RunLeaseRunner owns the Flow lease while supervising the original agent.
 // onExit may be nil; when set it is called once after the agent's process
-// group has ended, on the normal path and on the terminate paths that follow
-// a started agent.
+// group has ended and its Flow lease has been released, on the normal path and
+// on the terminate paths that follow a started agent.
 func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer, onExit func(LaunchExit)) (retErr error) {
 	spec, agentArgv, err := parsePrivateArgs(args, true)
 	if err != nil {
@@ -372,6 +372,9 @@ func RunLeaseRunner(args []string, stdin io.Reader, stdout, stderr io.Writer, on
 	// The agent has started: from here every path that returns has ended its
 	// process group, and each reports that end exactly once.
 	reportExit := func(err error) {
+		// Exit handling may open stores and wait on the launch log. Release the
+		// Flow lease first so that work cannot defer the next launch attempt.
+		_ = lease.Close()
 		if onExit == nil {
 			return
 		}

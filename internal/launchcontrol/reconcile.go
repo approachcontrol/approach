@@ -57,8 +57,10 @@ const (
 // Reconcile is the exit-evidence entry point. It replays the launch's
 // pending requests first (a landed result means no demotion), then demotes
 // the phase only when it is still `running` under this exact launch and the
-// Flow lease is not held. Session evidence must carry a provider death
-// certificate. Everything goes through Execute.
+// Flow lease is not held. Terminal exits and a lease runner reporting the
+// process group it owns are authoritative and bypass that lease veto.
+// Session evidence must carry a provider death certificate. Everything goes
+// through Execute.
 func (c *Controller) Reconcile(flowID, phaseID, launchID string, ev ExitEvidence) (Outcome, error) {
 	if !artifacts.IsSafeID(launchID) {
 		return Outcome{Action: ActionNone}, fmt.Errorf("launch control refuses unsafe launch id %q", launchID)
@@ -127,7 +129,7 @@ func (c *Controller) reconcileLocked(log *Log, flowID, phaseID, launchID string,
 	if ev.Source == SourceSessionEnd && !ev.DeathCertificate {
 		return outcome, nil
 	}
-	if ev.Source != SourceTerminalExit {
+	if ev.Source != SourceTerminalExit && ev.Source != SourceLeaseRunnerExit {
 		state, err := c.inspectLease(c.root, flowID)
 		if err == nil && state == flowlease.Held {
 			outcome.Action = ActionVetoed

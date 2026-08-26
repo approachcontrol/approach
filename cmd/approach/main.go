@@ -73,12 +73,7 @@ func run(args []string, deps runDeps) error {
 	}
 	if len(args) > 1 && args[1] == flowlease.LeaseRunCommand {
 		return flowlease.RunLeaseRunner(args[2:], deps.stdin, deps.stdout, deps.stderr, func(exit flowlease.LaunchExit) {
-			// exit.json is the sweep's authoritative exit evidence for a
-			// tracked tmux launch. Best effort: the runner's job is the lease
-			// and the exit status, and a failed write must not change either.
-			if err := launchcontrol.RecordLaunchExit(exit.Root, exit.FlowID, exit.PhaseID, exit.LaunchID, exit.Code, exit.Signaled, exit.EndedAt); err != nil {
-				fmt.Fprintf(deps.stderr, "approach: record launch exit: %v\n", err)
-			}
+			reconcileLeaseRunnerExit(exit, deps.stderr)
 		})
 	}
 	if len(args) > 1 && args[1] == actions.UntrackedOwnerReleaseCommand {
@@ -223,6 +218,48 @@ func untrackedOwnerReleaseCallerMatches(owner flowstore.UntrackedOwner, parentPI
 		return actions.EmbeddedTmuxSessionOwnsProcess(owner.Transport.Socket, owner.Transport.Session, parentPID)
 	default:
 		return false
+	}
+}
+
+// reconcileLeaseRunnerExit records the process-group exit before opening the
+// Flow store, then reconciles after RunLeaseRunner releases this Flow's lease.
+// Every failure is diagnostic only: the supervised agent's process result
+// remains RunLeaseRunner's result.
+func reconcileLeaseRunnerExit(exit flowlease.LaunchExit, stderr io.Writer) {
+	report := func(format string, args ...any) {
+		fmt.Fprintf(stderr, "approach: reconcile lease-runner exit: "+format+"\n", args...)
+	}
+	if err := launchcontrol.RecordLaunchExit(exit.Root, exit.FlowID, exit.PhaseID, exit.LaunchID, exit.Code, exit.Signaled, exit.EndedAt); err != nil {
+		report("record exit evidence: %v", err)
+		return
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: exit.Root, Role: flowstore.RoleWriter})
+	if err != nil {
+		report("open Flow store: %v", err)
+		return
+	}
+	controller, err := launchcontrol.New(launchcontrol.Options{Root: exit.Root, Store: store})
+	if err != nil {
+		report("open launch controller: %v", err)
+		if closeErr := store.Close(); closeErr != nil {
+			report("close Flow store: %v", closeErr)
+		}
+		return
+	}
+	outcome, reconcileErr := controller.Reconcile(exit.FlowID, exit.PhaseID, exit.LaunchID, launchcontrol.ExitEvidence{
+		Source: launchcontrol.SourceLeaseRunnerExit, Code: exit.Code, CodeKnown: true, EndedAt: exit.EndedAt,
+	})
+	for _, notice := range outcome.Notices {
+		report("%s", notice)
+	}
+	if reconcileErr != nil {
+		report("reconcile launch %s: %v", exit.LaunchID, reconcileErr)
+	}
+	if closeErr := controller.Close(); closeErr != nil {
+		report("close launch controller: %v", closeErr)
+	}
+	if closeErr := store.Close(); closeErr != nil {
+		report("close Flow store: %v", closeErr)
 	}
 }
 

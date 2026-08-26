@@ -609,7 +609,7 @@ func RecordLaunchExit(root, flowID, phaseID, launchID string, code int, signaled
 		ExitCode: code,
 		Signaled: signaled,
 		EndedAt:  endedAt.UTC(),
-		Source:   "lease_runner",
+		Source:   string(SourceLeaseRunnerExit),
 	})
 }
 
