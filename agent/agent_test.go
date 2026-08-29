@@ -27,11 +27,11 @@ func TestNormalizeStoredMapsRetiredCommands(t *testing.T) {
 	}
 }
 
-func TestSupportedAgents(t *testing.T) {
-	for _, command := range []string{agent.CommandCodex, agent.CommandClaude, agent.CommandCursor} {
+func TestSupportedAgentsNormalizeInput(t *testing.T) {
+	for _, command := range []string{" Codex ", "CLAUDE", "  cursor-agent "} {
 		t.Run(command, func(t *testing.T) {
 			if !agent.Supported(command) {
-				t.Fatalf("expected %q to be supported", command)
+				t.Fatalf("expected %q to be supported after Normalize", command)
 			}
 			if err := agent.Validate(command); err != nil {
 				t.Fatalf("Validate(%q) returned error: %v", command, err)

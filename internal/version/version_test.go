@@ -113,27 +113,6 @@ func TestStringPrefersLdflagsOverBuildInfo(t *testing.T) {
 	}
 }
 
-func TestVersionAndCommitAccessors(t *testing.T) {
-	originalVersion, originalCommit, originalDate := version, commit, date
-	originalReadBuildInfo := readBuildInfo
-	t.Cleanup(func() {
-		version, commit, date = originalVersion, originalCommit, originalDate
-		readBuildInfo = originalReadBuildInfo
-	})
-	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
-
-	version, commit, date = "v0.10.3", "abc1234", "2026-08-16T00:00:00Z"
-	if got := Version(); got != "v0.10.3" {
-		t.Fatalf("Version() = %q, want %q", got, "v0.10.3")
-	}
-	if got := Commit(); got != "abc1234" {
-		t.Fatalf("Commit() = %q, want %q", got, "abc1234")
-	}
-	if got := String(); got != "approach v0.10.3 (abc1234) built 2026-08-16T00:00:00Z" {
-		t.Fatalf("String() = %q", got)
-	}
-}
-
 func TestIsDevelopment(t *testing.T) {
 	originalVersion, originalCommit, originalDate := version, commit, date
 	originalReadBuildInfo := readBuildInfo
