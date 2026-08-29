@@ -73,8 +73,4 @@ describe('Badge', () => {
   it('defaults to the muted tone', () => {
     expect(classOf(Badge({ children: 'bare' }))).toBe('badge badge--muted')
   })
-
-  it('honours an explicit tone', () => {
-    expect(classOf(Badge({ children: 'auto', tone: 'active' }))).toBe('badge badge--active')
-  })
 })

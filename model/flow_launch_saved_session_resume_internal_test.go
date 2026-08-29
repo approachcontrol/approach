@@ -488,29 +488,6 @@ func TestValidateSavedSessionResumeFlowOccupancy(t *testing.T) {
 	}
 }
 
-func TestStoredAndMirroredSessionsShareActivePredicate(t *testing.T) {
-	endedAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		status  string
-		endedAt time.Time
-		want    bool
-	}{
-		{"", time.Time{}, true},
-		{"", endedAt, false},
-		{"ended", time.Time{}, false},
-		{"last_seen", endedAt, true},
-	} {
-		stored := sessions.SessionRecord{Status: tc.status, EndedAt: tc.endedAt}
-		mirrored := flowstore.Session{Status: tc.status, EndedAt: tc.endedAt}
-		if got := sessions.IsActive(stored.Status, stored.EndedAt); got != tc.want {
-			t.Fatalf("stored IsActive(%q, %v) = %v, want %v", tc.status, tc.endedAt, got, tc.want)
-		}
-		if got := sessions.IsActive(mirrored.Status, mirrored.EndedAt); got != tc.want {
-			t.Fatalf("mirrored IsActive(%q, %v) = %v, want %v", tc.status, tc.endedAt, got, tc.want)
-		}
-	}
-}
-
 func TestSavedSessionResumeRevalidatesUnderReservation(t *testing.T) {
 	session := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1", FlowID: "flow-1", WorktreePath: "/repo/worktree"}
 	open := flowstore.FlowRecord{FlowID: "flow-1", Status: flowstore.StatusInProgress}

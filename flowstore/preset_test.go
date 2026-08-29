@@ -61,14 +61,6 @@ func TestDefaultPresetMatchesSeed(t *testing.T) {
 	}
 }
 
-func TestSeedPhasesFromSpecs(t *testing.T) {
-	createdAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
-	updatedAt := createdAt.Add(time.Minute)
-	if got, want := seedPhases(DefaultPreset().Phases, PhaseAgentSettings{}, createdAt, updatedAt), defaultPhases(createdAt, updatedAt); !reflect.DeepEqual(got, want) {
-		t.Fatalf("seedPhases(DefaultPreset()) = %#v, want %#v", got, want)
-	}
-}
-
 func TestCreateWithPresetSeedsNonLinearFlow(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

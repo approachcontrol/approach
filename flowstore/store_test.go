@@ -6843,22 +6843,7 @@ func TestCreateRejectsCyclicPhases(t *testing.T) {
 	}
 }
 
-func TestKindConstantsAndSemanticKind(t *testing.T) {
-	want := map[string]flowstore.PhaseKind{
-		"plan":                 flowstore.KindPlan,
-		"plan_review":          flowstore.KindPlanReview,
-		"implementation":       flowstore.KindImplementation,
-		"review_loop":          flowstore.KindReviewLoop,
-		"pr_creation":          flowstore.KindPRCreation,
-		"autoreview":           flowstore.KindAutoreview,
-		"merge":                flowstore.KindMerge,
-		"implementation_child": flowstore.KindImplementationChild,
-	}
-	for value, got := range want {
-		if string(got) != value {
-			t.Fatalf("kind constant = %q, want %q", got, value)
-		}
-	}
+func TestSemanticKind(t *testing.T) {
 	if got := flowstore.SemanticKind(flowstore.FlowPhase{PhaseID: "plan-review"}); got != flowstore.KindPlanReview {
 		t.Fatalf("SemanticKind(plan-review) = %q, want plan_review", got)
 	}

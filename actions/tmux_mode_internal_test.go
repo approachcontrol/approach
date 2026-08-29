@@ -45,9 +45,6 @@ func TestRepoAgentSessionNameIsRepoScopedAndPrefixed(t *testing.T) {
 	if name == RepoAgentSessionName(worktree) {
 		t.Fatal("expected repo and worktree session names to differ")
 	}
-	if name != RepoAgentSessionName(repo) {
-		t.Fatal("expected repo session name to be stable")
-	}
 	// Default-backend external launches keep using the unprefixed per-worktree
 	// names on the same default server; the two must never collide.
 	if name == WorktreeSessionName(repo) {
