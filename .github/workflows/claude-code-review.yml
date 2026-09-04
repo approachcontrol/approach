@@ -4,10 +4,12 @@ name: Claude Code Review
 # reopened, or ready-for-review pull request; that trigger is gone. Start a
 # review by hand from the Actions tab or with
 # `gh workflow run claude-code-review.yml -f pr_number=<N>`, which runs the copy
-# of this file on the ref it is dispatched with — the default branch unless
-# `--ref` names another. GitHub only offers the dispatch (and this input) once
-# the file is on the default branch. Drafts are reviewable now too: the old
-# draft skip belonged to the automatic trigger.
+# of this file on the ref it is dispatched with. Dispatch from the default
+# branch: `--ref <branch>` runs that branch's copy of this workflow against the
+# same secrets, which the `pull_request` trigger could never do. GitHub only
+# offers the dispatch (and this input) once the file is on the default branch.
+# Drafts are reviewable now too: the old draft skip belonged to the automatic
+# trigger.
 on:
   workflow_dispatch:
     inputs:
