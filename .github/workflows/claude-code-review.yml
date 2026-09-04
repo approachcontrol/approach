@@ -60,12 +60,14 @@ jobs:
       - name: Checkout pull request
         uses: actions/checkout@v6
         with:
-          # The pull request's merge ref, which is what actions/checkout landed
-          # on under the removed pull_request trigger. Without it the review
-          # would read the dispatch ref and quote the base version of every
-          # file it opens. The step above has already refused fork pull
-          # requests, so this is still first-party code.
-          ref: refs/pull/${{ inputs.pr_number }}/merge
+          # The pull request's own head, so the review reads the proposed code
+          # rather than the ref the run was dispatched on. `refs/pull/<n>/head`
+          # rather than `/merge`: GitHub computes the merge ref asynchronously
+          # and publishes none at all for a conflicted pull request, and a
+          # review that cannot start is worse than one that reads the branch
+          # without the base merged in. The step above has already refused fork
+          # pull requests, so this is still first-party code.
+          ref: refs/pull/${{ inputs.pr_number }}/head
           fetch-depth: 1
 
       - name: Run Claude Code Review
