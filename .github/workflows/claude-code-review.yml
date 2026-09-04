@@ -4,7 +4,9 @@ name: Claude Code Review
 # reopened, or ready-for-review pull request; that trigger is gone. Start a
 # review by hand from the Actions tab or with
 # `gh workflow run claude-code-review.yml -f pr_number=<N>`, which runs the copy
-# of this file on the default branch. Drafts are reviewable now too: the old
+# of this file on the ref it is dispatched with — the default branch unless
+# `--ref` names another. GitHub only offers the dispatch (and this input) once
+# the file is on the default branch. Drafts are reviewable now too: the old
 # draft skip belonged to the automatic trigger.
 on:
   workflow_dispatch:
@@ -55,14 +57,15 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout repository
+      - name: Checkout pull request
         uses: actions/checkout@v6
         with:
-          # Whatever ref the run was dispatched on (`main` by default). The
-          # review reads the pull request itself through `gh pr diff`, so this
-          # checkout only supplies the repository's own agent configuration;
-          # only a user with write access can dispatch, and the step above
-          # refuses fork pull requests.
+          # The pull request's merge ref, which is what actions/checkout landed
+          # on under the removed pull_request trigger. Without it the review
+          # would read the dispatch ref and quote the base version of every
+          # file it opens. The step above has already refused fork pull
+          # requests, so this is still first-party code.
+          ref: refs/pull/${{ inputs.pr_number }}/merge
           fetch-depth: 1
 
       - name: Run Claude Code Review
