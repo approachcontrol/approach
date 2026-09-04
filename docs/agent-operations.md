@@ -44,9 +44,9 @@ from `web/`). Only run it when you change files under `web/`; see
   its input schema from the copy of the workflow on `main`, so the command works
   only once the file is there; dispatch from `main` rather than passing `--ref`,
   since `--ref` runs that branch's own workflow definition with this job's
-  secrets. A separate workflow still answers `@claude` in an issue, an issue or
-  pull-request comment, and a pull-request review — though not in a pull
-  request's body.
+  secrets. A separate workflow still answers `@claude` in a newly opened issue,
+  in an issue or pull-request comment, and in a pull-request review — though not
+  in a pull request's body, and not when a mention is added by editing.
 - **A development build has its own artifact root.** `make build` stamps
   `version=dev`, and any binary whose version is not a published release tag
   (`vX.Y.Z`) defaults to `$XDG_STATE_HOME/approach-dev/sessions/v1` (or

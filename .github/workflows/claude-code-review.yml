@@ -61,7 +61,7 @@ jobs:
             --json headRepository,headRepositoryOwner \
             --jq '"\(.headRepositoryOwner.login // "")/\(.headRepository.name // "")"')
           if [[ "$head_repo" == /* || "$head_repo" == */ ]]; then
-            echo "PR #$PR_NUMBER reports no head repository; its branch or fork was probably deleted." >&2
+            echo "PR #$PR_NUMBER reports no head repository; the fork it came from was probably deleted." >&2
             exit 1
           fi
           if [[ "$head_repo" != "$REPO" ]]; then
