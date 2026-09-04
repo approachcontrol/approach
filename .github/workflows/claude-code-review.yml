@@ -37,9 +37,13 @@ jobs:
       id-token: write # required: used to fetch the GitHub OIDC token
 
     steps:
-      # Keeps the protection the removed pull_request trigger's `if:` guard
-      # gave: this job holds CLAUDE_CODE_OAUTH_TOKEN and `pull-requests: write`,
-      # so it must not be pointed at a pull request from a fork.
+      # Replaces the fork half of the removed pull_request trigger's `if:`
+      # guard. It is not the same kind of protection: a fork-triggered
+      # pull_request run was denied repository secrets by GitHub itself, while
+      # this run always holds CLAUDE_CODE_OAUTH_TOKEN and `pull-requests:
+      # write`, so the refusal now lives in the workflow's own content and
+      # holds only for dispatches of this definition. Write access is the outer
+      # boundary either way.
       - name: Validate pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,13 +51,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "pr_number must be a pull request number, got: $PR_NUMBER" >&2
+          # No leading zeros: `7` and `007` name the same pull request but
+          # produce different concurrency groups, so both could run at once.
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "pr_number must be a pull request number without leading zeros, got: $PR_NUMBER" >&2
             exit 1
           fi
           head_repo=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
             --json headRepository,headRepositoryOwner \
-            --jq '"\(.headRepositoryOwner.login)/\(.headRepository.name)"')
+            --jq '"\(.headRepositoryOwner.login // "")/\(.headRepository.name // "")"')
+          if [[ "$head_repo" == /* || "$head_repo" == */ ]]; then
+            echo "PR #$PR_NUMBER reports no head repository; its branch or fork was probably deleted." >&2
+            exit 1
+          fi
           if [[ "$head_repo" != "$REPO" ]]; then
             echo "PR #$PR_NUMBER is from $head_repo, not $REPO; refusing to review a fork." >&2
             exit 1
