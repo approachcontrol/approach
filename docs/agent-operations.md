@@ -39,8 +39,10 @@ from `web/`). Only run it when you change files under `web/`; see
 - Claude's code review does not run automatically on a pull request. Ask for one
   with `gh workflow run claude-code-review.yml -f pr_number=<N>` (or the Actions
   tab), which works for drafts too; the workflow refuses a non-numeric input and
-  refuses a pull request whose head is a fork. `@claude` mentions on an issue or
-  pull request are a separate workflow and still work as before.
+  refuses a pull request whose head is a fork. GitHub reads the dispatch and its
+  input from the copy of the workflow on `main`, so dispatch from there — a
+  feature branch's copy is not offered. `@claude` mentions on an issue or pull
+  request are a separate workflow and still work as before.
 - **A development build has its own artifact root.** `make build` stamps
   `version=dev`, and any binary whose version is not a published release tag
   (`vX.Y.Z`) defaults to `$XDG_STATE_HOME/approach-dev/sessions/v1` (or
