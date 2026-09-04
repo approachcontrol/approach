@@ -38,8 +38,9 @@ from `web/`). Only run it when you change files under `web/`; see
 - Run `make fmt-check`, `make test`, and `make build` before shipping.
 - Claude's code review does not run automatically on a pull request. Ask for one
   with `gh workflow run claude-code-review.yml -f pr_number=<N>` (or the Actions
-  tab), which works for drafts too; the workflow refuses a non-numeric input and
-  refuses a pull request whose head is a fork. GitHub registers the dispatch and
+  tab), which works for drafts too; the workflow refuses anything that is not a
+  positive pull-request number without leading zeros, and refuses a pull request
+  whose head is a fork. GitHub registers the dispatch and
   its input schema from the copy of the workflow on `main`, so the command works
   only once the file is there; dispatch from `main` rather than passing `--ref`,
   since `--ref` runs that branch's own workflow definition with this job's
