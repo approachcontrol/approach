@@ -1,11 +1,25 @@
 name: Claude Code Review
 
+# On demand only. This review used to run automatically on every opened,
+# reopened, or ready-for-review pull request; that trigger is gone. Start a
+# review by hand from the Actions tab or with
+# `gh workflow run claude-code-review.yml -f pr_number=<N>`, which runs the copy
+# of this file on the ref it is dispatched with. Dispatch from the default
+# branch: `--ref <branch>` executes that branch's workflow definition with this
+# job's secrets, the same exposure the old trigger had for same-repo pull
+# requests. GitHub only offers the dispatch (and this input) once the file is on
+# the default branch. Drafts are reviewable now too: the old draft skip belonged
+# to the automatic trigger.
 on:
-  pull_request:
-    types: [opened, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
 
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: claude-review-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 permissions:
@@ -13,11 +27,6 @@ permissions:
 
 jobs:
   claude-review:
-    # Skip drafts, and skip forks: pull_request from a fork has no access to
-    # repository secrets, so the run could only ever fail its auth exchange.
-    if: >-
-      !github.event.pull_request.draft &&
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -28,9 +37,49 @@ jobs:
       id-token: write # required: used to fetch the GitHub OIDC token
 
     steps:
-      - name: Checkout repository
+      # Replaces the fork half of the removed pull_request trigger's `if:`
+      # guard. It is not the same kind of protection: a fork-triggered
+      # pull_request run was denied repository secrets by GitHub itself, while
+      # this run always holds CLAUDE_CODE_OAUTH_TOKEN and `pull-requests:
+      # write`, so the refusal now lives in the workflow's own content and
+      # holds only for dispatches of this definition. Write access is the outer
+      # boundary either way.
+      - name: Validate pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # No leading zeros: `7` and `007` name the same pull request but
+          # produce different concurrency groups, so both could run at once.
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "pr_number must be a pull request number without leading zeros, got: $PR_NUMBER" >&2
+            exit 1
+          fi
+          head_repo=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json headRepository,headRepositoryOwner \
+            --jq '"\(.headRepositoryOwner.login // "")/\(.headRepository.name // "")"')
+          if [[ "$head_repo" == /* || "$head_repo" == */ ]]; then
+            echo "PR #$PR_NUMBER reports no head repository; the fork it came from was probably deleted." >&2
+            exit 1
+          fi
+          if [[ "$head_repo" != "$REPO" ]]; then
+            echo "PR #$PR_NUMBER is from $head_repo, not $REPO; refusing to review a fork." >&2
+            exit 1
+          fi
+
+      - name: Checkout pull request
         uses: actions/checkout@v6
         with:
+          # The pull request's own head, so the review reads the proposed code
+          # rather than the ref the run was dispatched on. `refs/pull/<n>/head`
+          # rather than `/merge`: GitHub computes the merge ref asynchronously
+          # and publishes none at all for a conflicted pull request, and a
+          # review that cannot start is worse than one that reads the branch
+          # without the base merged in. The step above has already refused fork
+          # pull requests, so this is still first-party code.
+          ref: refs/pull/${{ inputs.pr_number }}/head
           fetch-depth: 1
 
       - name: Run Claude Code Review
@@ -40,7 +89,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
-          prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+          prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ inputs.pr_number }}"
           additional_permissions: |
             actions: read
           # The code-review plugin drives GitHub through the gh CLI; allowlisting
